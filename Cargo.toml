@@ -1,0 +1,61 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/oe_core",
+    "crates/oe_render",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/coconutbird/openensemble"
+
+[workspace.dependencies]
+# Internal crates
+oe_core = { path = "crates/oe_core" }
+oe_render = { path = "crates/oe_render" }
+
+# Windowing and Graphics (pure Rust)
+winit = "0.30"
+wgpu = "24.0"
+pollster = "0.4"  # For blocking on async wgpu calls
+
+# Immediate mode GUI
+egui = "0.31"
+egui-wgpu = "0.31"
+egui-winit = "0.31"
+
+# Audio (pure Rust)
+rodio = "0.20"
+
+# Math and linear algebra
+glam = "0.29"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Binary parsing (useful for game formats)
+byteorder = "1.5"
+binrw = "0.14"
+
+[package]
+name = "openensemble"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+oe_core = { workspace = true }
+oe_render = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+anyhow = { workspace = true }

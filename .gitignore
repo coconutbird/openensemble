@@ -1,0 +1,76 @@
+# Build artifacts
+/target
+debug/
+release/
+
+# Cargo
+# Note: Cargo.lock is committed for binaries (like this project)
+# Uncomment below if this becomes a library
+# Cargo.lock
+
+# IDE and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+.project
+.classpath
+.settings/
+*.code-workspace
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Rust specific
+**/*.rs.bk
+*.pdb
+
+# Profiling and debugging
+perf.data
+perf.data.old
+flamegraph.svg
+cachegrind.out.*
+callgrind.out.*
+massif.out.*
+heaptrack.*
+
+# Test and coverage
+*.profraw
+*.profdata
+lcov.info
+tarpaulin-report.html
+coverage/
+
+# Documentation build
+/doc/
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# Game assets (uncomment if you want to ignore large binary assets)
+# *.pak
+# *.bundle
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.orig

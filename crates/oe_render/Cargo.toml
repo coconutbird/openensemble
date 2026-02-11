@@ -1,0 +1,18 @@
+[package]
+name = "oe_render"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+oe_core = { workspace = true }
+winit = { workspace = true }
+wgpu = { workspace = true }
+pollster = { workspace = true }
+glam = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+egui = { workspace = true }
+egui-wgpu = { workspace = true }
+egui-winit = { workspace = true }
+

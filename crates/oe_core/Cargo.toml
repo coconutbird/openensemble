@@ -1,0 +1,12 @@
+[package]
+name = "oe_core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+glam = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+egui = { workspace = true }
+
