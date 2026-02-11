@@ -3,9 +3,9 @@
 //! Rendering subsystem using wgpu (pure Rust).
 //! Provides a fully abstracted window and rendering system with egui integration.
 
+use core::app::{Application, FrameContext, Input, KeyCode, WindowConfig};
+use core::prelude::*;
 use egui_wgpu::ScreenDescriptor;
-use oe_core::app::{Application, FrameContext, Input, KeyCode, WindowConfig};
-use oe_core::prelude::*;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
@@ -87,15 +87,16 @@ impl<A: Application> ApplicationHandler for Engine<A> {
 
             // Initialize egui
             let egui_ctx = egui::Context::default();
-            let egui_winit_state =
-                egui_winit::State::new(egui_ctx.clone(), egui_ctx.viewport_id(), &window, None, None, None);
-            let egui_renderer = egui_wgpu::Renderer::new(
-                &renderer.device,
-                renderer.config.format,
+            let egui_winit_state = egui_winit::State::new(
+                egui_ctx.clone(),
+                egui_ctx.viewport_id(),
+                &window,
                 None,
-                1,
-                false,
+                None,
+                None,
             );
+            let egui_renderer =
+                egui_wgpu::Renderer::new(&renderer.device, renderer.config.format, None, 1, false);
             let egui_state = EguiState {
                 ctx: egui_ctx,
                 winit_state: egui_winit_state,
@@ -117,14 +118,13 @@ impl<A: Application> ApplicationHandler for Engine<A> {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         // Pass events to egui first
-        let egui_consumed = if let (Some(window), Some(egui_state)) =
-            (&self.window, &mut self.egui_state)
-        {
-            let response = egui_state.winit_state.on_window_event(window, &event);
-            response.consumed
-        } else {
-            false
-        };
+        let egui_consumed =
+            if let (Some(window), Some(egui_state)) = (&self.window, &mut self.egui_state) {
+                let response = egui_state.winit_state.on_window_event(window, &event);
+                response.consumed
+            } else {
+                false
+            };
 
         // Only handle input if egui didn't consume it
         if !egui_consumed {
@@ -141,7 +141,8 @@ impl<A: Application> ApplicationHandler for Engine<A> {
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize(physical_size.width, physical_size.height);
                 }
-                self.app.on_resize(physical_size.width, physical_size.height);
+                self.app
+                    .on_resize(physical_size.width, physical_size.height);
             }
             WindowEvent::RedrawRequested => {
                 let now = Instant::now();
@@ -196,7 +197,11 @@ impl<A: Application> ApplicationHandler for Engine<A> {
                         .handle_platform_output(window, full_output.platform_output);
 
                     // Render with egui
-                    match renderer.render_with_egui(egui_state, full_output.textures_delta, full_output.shapes) {
+                    match renderer.render_with_egui(
+                        egui_state,
+                        full_output.textures_delta,
+                        full_output.shapes,
+                    ) {
                         Ok(_) => {}
                         Err(wgpu::SurfaceError::Lost) => {
                             let size = renderer.size();
@@ -291,9 +296,21 @@ impl InputState {
 
     fn build_input(&self) -> Input {
         Input {
-            keys_held: self.keys_held.iter().filter_map(|k| convert_key(*k)).collect(),
-            keys_pressed: self.keys_pressed.iter().filter_map(|k| convert_key(*k)).collect(),
-            keys_released: self.keys_released.iter().filter_map(|k| convert_key(*k)).collect(),
+            keys_held: self
+                .keys_held
+                .iter()
+                .filter_map(|k| convert_key(*k))
+                .collect(),
+            keys_pressed: self
+                .keys_pressed
+                .iter()
+                .filter_map(|k| convert_key(*k))
+                .collect(),
+            keys_released: self
+                .keys_released
+                .iter()
+                .filter_map(|k| convert_key(*k))
+                .collect(),
             mouse_position: (self.mouse_x, self.mouse_y),
             mouse_buttons: self.mouse_buttons,
         }
@@ -578,4 +595,3 @@ impl Renderer {
         self.size
     }
 }
-

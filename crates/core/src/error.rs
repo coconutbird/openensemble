@@ -23,4 +23,3 @@ pub enum Error {
 
 /// Result type alias using our Error
 pub type Result<T> = std::result::Result<T, Error>;
-

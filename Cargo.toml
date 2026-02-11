@@ -1,8 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/oe_core",
-    "crates/oe_render",
+    "crates/core",
+    "crates/render",
+    "crates/sim",
 ]
 
 [workspace.package]
@@ -13,8 +14,9 @@ repository = "https://github.com/coconutbird/openensemble"
 
 [workspace.dependencies]
 # Internal crates
-oe_core = { path = "crates/oe_core" }
-oe_render = { path = "crates/oe_render" }
+core = { path = "crates/core" }
+render = { path = "crates/render" }
+sim = { path = "crates/sim" }
 
 # Windowing and Graphics (pure Rust)
 winit = "0.30"
@@ -54,8 +56,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-oe_core = { workspace = true }
-oe_render = { workspace = true }
+core = { workspace = true }
+render = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
 anyhow = { workspace = true }

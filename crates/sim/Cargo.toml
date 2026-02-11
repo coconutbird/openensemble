@@ -1,0 +1,14 @@
+[package]
+name = "sim"
+version.workspace = true
+edition.workspace = true
+description = "Deterministic simulation for Halo Wars network compatibility"
+
+[dependencies]
+glam = { workspace = true }
+thiserror = { workspace = true }
+byteorder = { workspace = true }
+binrw = { workspace = true }
+
+[dev-dependencies]
+

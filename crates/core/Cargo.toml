@@ -1,5 +1,5 @@
 [package]
-name = "oe_core"
+name = "core"
 version.workspace = true
 edition.workspace = true
 

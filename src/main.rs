@@ -3,7 +3,7 @@
 //! A Rust implementation of the Phoenix Engine from Halo Wars (2008).
 
 use anyhow::Result;
-use oe_core::prelude::*;
+use core::prelude::*;
 
 /// The main game application
 struct Game {
@@ -88,7 +88,11 @@ impl Application for Game {
 
                     ui.separator();
                     if ui.button("Apply").clicked() {
-                        log::info!("Settings applied: name={}, volume={}", self.player_name, self.volume);
+                        log::info!(
+                            "Settings applied: name={}, volume={}",
+                            self.player_name,
+                            self.volume
+                        );
                     }
                 });
         }
@@ -130,7 +134,7 @@ fn main() -> Result<()> {
 
     // Configure and run
     let config = WindowConfig::new("OpenEnsemble - Halo Wars Engine", 1280, 720);
-    oe_render::run(config, Game::default())?;
+    render::run(config, Game::default())?;
 
     Ok(())
 }
