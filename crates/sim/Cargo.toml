@@ -9,6 +9,7 @@ glam = { workspace = true }
 thiserror = { workspace = true }
 byteorder = { workspace = true }
 binrw = { workspace = true }
+data = { path = "../data" }
 
 [dev-dependencies]
 

@@ -2336,6 +2336,7 @@ version = "0.1.0"
 dependencies = [
  "binrw",
  "byteorder",
+ "data",
  "glam",
  "thiserror 2.0.18",
 ]

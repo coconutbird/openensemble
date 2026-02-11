@@ -17,6 +17,7 @@ pub mod session;
 pub mod simulation;
 pub mod sync;
 pub mod time_sync;
+pub mod trigger;
 
 pub use command::{Command, CommandType, EntityType};
 pub use command_queue::{CommandEntry, CommandQueue, QueuedCommand};
@@ -31,3 +32,7 @@ pub use session::{ClientState, PlayerInfo, Session, SessionState};
 pub use simulation::{CommandHandler, SimState, SimUpdateResult, Simulation, MS_PER_TICK, TICK_RATE};
 pub use sync::{SimpleChecksum, SyncChecksum};
 pub use time_sync::{ClientTimeHistory, TimeSync, TimingRecord};
+pub use trigger::{
+    Condition, ConditionType, Effect, EffectType, Trigger, TriggerEngine, TriggerScript,
+    TriggerValue, TriggerId, TriggerScriptId, VarId, VarType,
+};
