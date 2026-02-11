@@ -4,6 +4,8 @@ members = [
     "crates/core",
     "crates/render",
     "crates/sim",
+    "crates/net",
+    "crates/data",
 ]
 
 [workspace.package]
@@ -17,6 +19,8 @@ repository = "https://github.com/coconutbird/openensemble"
 core = { path = "crates/core" }
 render = { path = "crates/render" }
 sim = { path = "crates/sim" }
+net = { path = "crates/net" }
+data = { path = "crates/data" }
 
 # Windowing and Graphics (pure Rust)
 winit = "0.30"

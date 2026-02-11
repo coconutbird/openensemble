@@ -1,0 +1,16 @@
+[package]
+name = "net"
+version.workspace = true
+edition.workspace = true
+description = "Network transport for Halo Wars multiplayer"
+
+[dependencies]
+sim = { path = "../sim" }
+thiserror = { workspace = true }
+byteorder = { workspace = true }
+tokio = { version = "1", features = ["net", "io-util", "sync", "time", "rt-multi-thread", "macros"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio-test = "0.4"
+

@@ -9,7 +9,7 @@ use std::num::Wrapping;
 ///
 /// Uses KISS (Keep It Simple Stupid) + SWB (Subtract With Borrow) generators.
 /// Period is approximately 2^7700.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Random {
     // MWC state
     z: Wrapping<u32>,
