@@ -155,4 +155,3 @@ mod tests {
         assert_eq!(squad.state, SquadState::Moving);
     }
 }
-

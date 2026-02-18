@@ -98,4 +98,3 @@ impl Connection {
         self.last_send_time = Instant::now();
     }
 }
-

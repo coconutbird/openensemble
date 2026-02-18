@@ -17,4 +17,3 @@ mod squad;
 
 pub use base::BaseEntity;
 pub use squad::{Squad, SquadState};
-

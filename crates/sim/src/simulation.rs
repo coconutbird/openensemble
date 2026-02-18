@@ -217,4 +217,3 @@ impl Simulation {
         all_commands
     }
 }
-

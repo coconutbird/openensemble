@@ -55,9 +55,10 @@ impl ArchiveManager {
             .iter()
             .enumerate()
             .find(|(_, entry)| {
-                entry.filename.as_ref().is_some_and(|name| {
-                    name.ends_with(".scn.xmb") || name.ends_with(".scn")
-                })
+                entry
+                    .filename
+                    .as_ref()
+                    .is_some_and(|name| name.ends_with(".scn.xmb") || name.ends_with(".scn"))
             })
             .map(|(i, _)| i)
             .ok_or_else(|| {
@@ -81,10 +82,7 @@ impl ArchiveManager {
     /// Useful for debugging and exploring archive contents.
     pub fn list_era_contents<P: AsRef<Path>>(era_path: P) -> Result<Vec<String>, ArchiveError> {
         let archive = EraArchive::open(era_path)?;
-        Ok(archive
-            .iter()
-            .filter_map(|e| e.filename.clone())
-            .collect())
+        Ok(archive.iter().filter_map(|e| e.filename.clone()).collect())
     }
 
     /// Load a specific file from an ERA archive by name.
@@ -125,12 +123,15 @@ mod tests {
 
     // These tests require actual game files and are ignored by default
     // Run with: cargo test --package sim -- archive --ignored
+    //
+    // Set OPENENSEMBLE_GAME_DIR to your Halo Wars installation directory:
+    //   export OPENENSEMBLE_GAME_DIR="/path/to/HaloWarsDE"
 
     #[test]
     #[ignore = "requires game files"]
     fn test_list_era_contents() {
-        let era_path = r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE\blood_gulch.era";
-        let contents = ArchiveManager::list_era_contents(era_path).unwrap();
+        let era_path = data::era_path("blood_gulch");
+        let contents = ArchiveManager::list_era_contents(&era_path).unwrap();
         println!("Files in blood_gulch.era:");
         for file in &contents {
             println!("  {}", file);
@@ -141,8 +142,8 @@ mod tests {
     #[test]
     #[ignore = "requires game files"]
     fn test_load_scenario_from_era() {
-        let era_path = r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE\blood_gulch.era";
-        let scenario = ArchiveManager::load_scenario_from_era(era_path).unwrap();
+        let era_path = data::era_path("blood_gulch");
+        let scenario = ArchiveManager::load_scenario_from_era(&era_path).unwrap();
 
         println!("=== Loaded Scenario ===");
         println!("Name: {:?}", scenario.name);
@@ -180,4 +181,3 @@ mod tests {
         assert!(!scenario.objects.is_empty(), "Should have objects");
     }
 }
-

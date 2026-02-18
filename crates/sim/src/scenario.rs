@@ -360,7 +360,8 @@ impl Scenario {
 
                 // Map scenario ID to entity ID
                 if obj.scenario_id >= 0 {
-                    self.scenario_id_to_entity_id.insert(obj.scenario_id, entity_id);
+                    self.scenario_id_to_entity_id
+                        .insert(obj.scenario_id, entity_id);
                 }
             }
             // TODO: Handle non-squad objects (buildings, props, etc.)
@@ -480,4 +481,3 @@ mod tests {
         assert!(scenario.objects.is_empty());
     }
 }
-

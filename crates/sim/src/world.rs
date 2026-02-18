@@ -5,7 +5,7 @@
 use crate::entities::Squad;
 use crate::entity::EntityManager;
 use crate::entity_id::EntityClass;
-use crate::player::{Player, PlayerId, GAIA_PLAYER};
+use crate::player::{GAIA_PLAYER, Player, PlayerId};
 use crate::random::Random;
 
 /// Maximum supported players.
@@ -157,4 +157,3 @@ impl World {
         self.squads.update_all(dt);
     }
 }
-

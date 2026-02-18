@@ -38,9 +38,7 @@ impl NetClient {
     /// Connect to a host.
     pub async fn connect(&mut self, host: SocketAddr) -> Result<(), ClientError> {
         // Bind to any available port
-        self.transport
-            .bind("0.0.0.0:0".parse().unwrap())
-            .await?;
+        self.transport.bind("0.0.0.0:0".parse().unwrap()).await?;
 
         self.host_addr = Some(host);
 
@@ -148,4 +146,3 @@ impl Default for NetClient {
         Self::new()
     }
 }
-

@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{Trigger, TriggerScript, TriggerScriptId, INVALID_TRIGGER_SCRIPT_ID};
+use super::{INVALID_TRIGGER_SCRIPT_ID, Trigger, TriggerScript, TriggerScriptId};
 
 /// Result of evaluating conditions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,4 +172,3 @@ impl TriggerEngine {
         ConditionResult::True
     }
 }
-

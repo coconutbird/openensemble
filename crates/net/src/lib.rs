@@ -13,4 +13,3 @@ pub use connection::{Connection, ConnectionState};
 pub use host::NetHost;
 pub use packet::{NetPacket, PacketType};
 pub use transport::Transport;
-

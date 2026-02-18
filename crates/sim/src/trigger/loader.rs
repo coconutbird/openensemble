@@ -103,8 +103,8 @@ impl VanillaLoader {
         let id: VarId = get_attr_u32(node, "ID")?;
 
         let type_str = get_attr_string(node, "Type")?;
-        let var_type = parse_var_type(&type_str)
-            .ok_or_else(|| LoadError::UnknownVarType(type_str.clone()))?;
+        let var_type =
+            parse_var_type(&type_str).ok_or_else(|| LoadError::UnknownVarType(type_str.clone()))?;
 
         let mut var = TriggerVar::new(id, var_type);
 
@@ -221,8 +221,8 @@ impl VanillaLoader {
     /// Parse a Condition node.
     fn parse_condition(node: &data::xmb::Node) -> LoadResult<Condition> {
         let dbid = get_attr_i32(node, "DBID")?;
-        let condition_type = ConditionType::from_u16(dbid as u16)
-            .ok_or(LoadError::UnknownConditionType(dbid))?;
+        let condition_type =
+            ConditionType::from_u16(dbid as u16).ok_or(LoadError::UnknownConditionType(dbid))?;
 
         let id = node
             .get_attribute("ID")
@@ -299,8 +299,6 @@ impl VanillaLoader {
         Ok(())
     }
 }
-
-
 
 // ============================================================================
 // Helper functions
@@ -508,7 +506,10 @@ fn parse_var_value(text: &str, var_type: VarType) -> TriggerValue {
                 let r: f32 = parts[0].trim().parse().unwrap_or(0.0);
                 let g: f32 = parts[1].trim().parse().unwrap_or(0.0);
                 let b: f32 = parts[2].trim().parse().unwrap_or(0.0);
-                let a: f32 = parts.get(3).and_then(|s| s.trim().parse().ok()).unwrap_or(1.0);
+                let a: f32 = parts
+                    .get(3)
+                    .and_then(|s| s.trim().parse().ok())
+                    .unwrap_or(1.0);
                 // Convert from 0-1 float to 0-255 u8
                 TriggerValue::Color(Color::new(
                     (r * 255.0) as u8,

@@ -163,4 +163,3 @@ impl Trigger {
         self.next_evaluate_time = current_time + self.evaluate_frequency;
     }
 }
-

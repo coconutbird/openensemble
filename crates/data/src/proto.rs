@@ -164,4 +164,3 @@ impl ProtoDatabase {
             .and_then(|&id| self.objects.get(&id))
     }
 }
-

@@ -84,4 +84,3 @@ impl BaseEntity {
         self.alive = false;
     }
 }
-

@@ -112,9 +112,8 @@ impl NetPacket {
         }
 
         let mut cursor = Cursor::new(data);
-        let packet_type = PacketType::from_u8(cursor.read_u8()?).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "Invalid packet type")
-        })?;
+        let packet_type = PacketType::from_u8(cursor.read_u8()?)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid packet type"))?;
         let sequence = cursor.read_u32::<LittleEndian>()?;
         let ack = cursor.read_u32::<LittleEndian>()?;
         let ack_bits = cursor.read_u32::<LittleEndian>()?;
@@ -131,4 +130,3 @@ impl NetPacket {
         })
     }
 }
-

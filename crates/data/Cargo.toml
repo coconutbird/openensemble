@@ -8,6 +8,7 @@ description = "Proto data loading for Halo Wars game definitions"
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+log = { workspace = true }
 
 # File format parsers from ensemble-rs
 xmb = { git = "https://github.com/coconutbird/ensemble-rs.git" }

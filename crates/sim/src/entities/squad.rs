@@ -148,4 +148,3 @@ impl Entity for Squad {
         self.base.is_alive() && self.state != SquadState::Dead
     }
 }
-

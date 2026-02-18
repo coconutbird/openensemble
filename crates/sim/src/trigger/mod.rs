@@ -39,4 +39,3 @@ pub const INVALID_TRIGGER_ID: TriggerId = 0xFFFFFFFF;
 
 /// Invalid trigger script ID constant.
 pub const INVALID_TRIGGER_SCRIPT_ID: TriggerScriptId = 0xFFFFFFFF;
-
