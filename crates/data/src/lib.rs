@@ -11,6 +11,7 @@ pub mod proto;
 pub use era;
 pub use xmb;
 pub use xtd;
+pub use xtt;
 
 pub use database::{
     Ability, Civilization, DamageType, DatabaseError, GameDatabase, GameMode, Leader, Power,

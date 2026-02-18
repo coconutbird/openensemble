@@ -601,6 +601,8 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "xmb",
+ "xtd",
+ "xtt",
 ]
 
 [[package]]
@@ -669,6 +671,15 @@ name = "dpi"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
+
+[[package]]
+name = "ecf"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "flate2",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "ecf"
@@ -817,7 +828,7 @@ version = "0.1.0"
 source = "git+https://github.com/coconutbird/ensemble-rs.git#41f85c4bedfab058d38d68e2472f69bb0110ac9f"
 dependencies = [
  "byteorder",
- "ecf",
+ "ecf 0.1.0 (git+https://github.com/coconutbird/ensemble-rs.git)",
  "flate2",
  "memmap2",
  "rayon",
@@ -2592,6 +2603,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "texture2ddecoder"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "427ae8ec7f2f0fdd3146b77cfa44bea880caf066f7e55398a8467afe2645c832"
+dependencies = [
+ "paste",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3691,7 +3711,7 @@ source = "git+https://github.com/coconutbird/ensemble-rs.git#41f85c4bedfab058d38
 dependencies = [
  "bdt",
  "byteorder",
- "ecf",
+ "ecf 0.1.0 (git+https://github.com/coconutbird/ensemble-rs.git)",
  "quick-xml 0.37.5",
  "thiserror 2.0.18",
 ]
@@ -3701,6 +3721,25 @@ name = "xml-rs"
 version = "0.8.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ae8337f8a065cfc972643663ea4279e04e7256de865aa66fe25cec5fb912d3f"
+
+[[package]]
+name = "xtd"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "ecf 0.1.0",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "xtt"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "ecf 0.1.0",
+ "texture2ddecoder",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "yoke"

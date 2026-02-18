@@ -13,6 +13,8 @@ log = { workspace = true }
 # File format parsers from ensemble-rs
 xmb = { git = "https://github.com/coconutbird/ensemble-rs.git" }
 era = { git = "https://github.com/coconutbird/ensemble-rs.git" }
+xtd = { path = "../../../ensemble-rs/crates/xtd" }
+xtt = { path = "../../../ensemble-rs/crates/xtt" }
 
 [dev-dependencies]
 
