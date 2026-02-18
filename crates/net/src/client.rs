@@ -96,10 +96,10 @@ impl NetClient {
         }
 
         // Check for timeout
-        if let Some(conn) = &self.connection {
-            if conn.is_timed_out() {
-                return Err(ClientError::Timeout);
-            }
+        if let Some(conn) = &self.connection
+            && conn.is_timed_out()
+        {
+            return Err(ClientError::Timeout);
         }
 
         Ok(received)

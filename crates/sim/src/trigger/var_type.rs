@@ -128,7 +128,7 @@ impl VarType {
     pub fn from_u8(value: u8) -> Option<Self> {
         if value <= 109 {
             // SAFETY: All values 0-109 are valid enum variants
-            Some(unsafe { std::mem::transmute(value) })
+            Some(unsafe { std::mem::transmute::<u8, VarType>(value) })
         } else {
             None
         }

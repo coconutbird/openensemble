@@ -357,7 +357,7 @@ impl ConditionType {
             | 1028
             | 1053
             | 1056
-            | 1059 => Some(unsafe { std::mem::transmute(value) }),
+            | 1059 => Some(unsafe { std::mem::transmute::<u16, ConditionType>(value) }),
             _ => None,
         }
     }

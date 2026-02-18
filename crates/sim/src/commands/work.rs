@@ -126,12 +126,12 @@ impl WorkCommand {
         if work_flags & flags::RANGE != 0 {
             writer.write_f32::<LittleEndian>(self.range)?;
         }
-        if let Some(pt) = self.terrain_point {
-            if work_flags & flags::TERRAIN_POINT != 0 {
-                writer.write_f32::<LittleEndian>(pt.x)?;
-                writer.write_f32::<LittleEndian>(pt.y)?;
-                writer.write_f32::<LittleEndian>(pt.z)?;
-            }
+        if let Some(pt) = self.terrain_point
+            && work_flags & flags::TERRAIN_POINT != 0
+        {
+            writer.write_f32::<LittleEndian>(pt.x)?;
+            writer.write_f32::<LittleEndian>(pt.y)?;
+            writer.write_f32::<LittleEndian>(pt.z)?;
         }
         if work_flags & flags::SPEED != 0 {
             writer.write_f32::<LittleEndian>(self.speed_multiplier)?;
@@ -215,17 +215,8 @@ impl WorkCommand {
             self.hit_zone_index = -1;
         }
 
-        if work_flags & flags::OVERRIDE_POSITION != 0 {
-            self.override_position = true;
-        } else {
-            self.override_position = false;
-        }
-
-        if work_flags & flags::OVERRIDE_RANGE != 0 {
-            self.override_range = true;
-        } else {
-            self.override_range = false;
-        }
+        self.override_position = work_flags & flags::OVERRIDE_POSITION != 0;
+        self.override_range = work_flags & flags::OVERRIDE_RANGE != 0;
 
         Ok(())
     }

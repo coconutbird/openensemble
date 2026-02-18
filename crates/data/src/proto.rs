@@ -163,4 +163,44 @@ impl ProtoDatabase {
             .get(name)
             .and_then(|&id| self.objects.get(&id))
     }
+
+    /// Add a proto squad.
+    pub fn add_squad(&mut self, squad: ProtoSquad) {
+        let id = squad.id;
+        let name = squad.name.clone();
+        self.squads.insert(id, squad);
+        self.squads_by_name.insert(name, id);
+    }
+
+    /// Get a proto squad by ID.
+    pub fn get_squad(&self, id: ProtoId) -> Option<&ProtoSquad> {
+        self.squads.get(&id)
+    }
+
+    /// Get a proto squad by name.
+    pub fn get_squad_by_name(&self, name: &str) -> Option<&ProtoSquad> {
+        self.squads_by_name
+            .get(name)
+            .and_then(|&id| self.squads.get(&id))
+    }
+
+    /// Add a proto tech.
+    pub fn add_tech(&mut self, tech: ProtoTech) {
+        let id = tech.id;
+        let name = tech.name.clone();
+        self.techs.insert(id, tech);
+        self.techs_by_name.insert(name, id);
+    }
+
+    /// Get a proto tech by ID.
+    pub fn get_tech(&self, id: ProtoId) -> Option<&ProtoTech> {
+        self.techs.get(&id)
+    }
+
+    /// Get a proto tech by name.
+    pub fn get_tech_by_name(&self, name: &str) -> Option<&ProtoTech> {
+        self.techs_by_name
+            .get(name)
+            .and_then(|&id| self.techs.get(&id))
+    }
 }

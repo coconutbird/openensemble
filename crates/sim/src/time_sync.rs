@@ -53,7 +53,7 @@ impl TimingRecord {
 }
 
 /// Client time history for tracking timing data.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ClientTimeHistory {
     /// Ring buffer of client times.
     times: [u32; 32],
@@ -65,18 +65,6 @@ pub struct ClientTimeHistory {
     insert_index: u32,
     /// Earliest index in ring buffer.
     earliest_index: u32,
-}
-
-impl Default for ClientTimeHistory {
-    fn default() -> Self {
-        Self {
-            times: [0; 32],
-            last_time: 0,
-            earliest_time: 0,
-            insert_index: 0,
-            earliest_index: 0,
-        }
-    }
 }
 
 impl ClientTimeHistory {

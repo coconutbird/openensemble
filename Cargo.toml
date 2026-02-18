@@ -65,9 +65,20 @@ edition.workspace = true
 [dependencies]
 core = { workspace = true }
 render = { workspace = true }
+sim = { workspace = true }
+net = { workspace = true }
+data = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
 anyhow = { workspace = true }
+
+[[bin]]
+name = "openensemble"
+path = "src/main.rs"
+
+[[bin]]
+name = "headless"
+path = "src/bin/headless.rs"
 
 [dev-dependencies]
 cargo-husky = { version = "1.5.0", features = ["precommit-hook", "user-hooks"] }

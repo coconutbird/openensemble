@@ -1883,9 +1883,12 @@ dependencies = [
  "anyhow",
  "cargo-husky",
  "core",
+ "data",
  "env_logger",
  "log",
+ "net",
  "render",
+ "sim",
 ]
 
 [[package]]

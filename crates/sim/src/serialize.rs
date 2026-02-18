@@ -236,7 +236,7 @@ pub fn deserialize_command<R: Read>(reader: &mut R) -> Result<Command, Serialize
 
     // mFlags
     let flag_bit_count = reader.read_u8()? as usize;
-    let flag_byte_count = (flag_bit_count + 7) / 8;
+    let flag_byte_count = flag_bit_count.div_ceil(8);
     if flags.has(CommandFlags::EXTRA_FLAG_DATA) {
         cmd.flags = vec![0u8; flag_byte_count];
         reader.read_exact(&mut cmd.flags)?;

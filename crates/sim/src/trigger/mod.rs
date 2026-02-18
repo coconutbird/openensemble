@@ -12,6 +12,7 @@ mod effect;
 mod engine;
 mod loader;
 mod script;
+#[allow(clippy::module_inception)]
 mod trigger;
 mod value;
 mod var_type;

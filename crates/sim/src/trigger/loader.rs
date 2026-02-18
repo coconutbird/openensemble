@@ -113,11 +113,11 @@ impl VanillaLoader {
         }
 
         // Check if null - leave value as default
-        if let Some(is_null_attr) = node.get_attribute("IsNull") {
-            if is_null_attr.value_string().eq_ignore_ascii_case("true") {
-                // Leave var.value as default
-                return Ok(var);
-            }
+        if let Some(is_null_attr) = node.get_attribute("IsNull")
+            && is_null_attr.value_string().eq_ignore_ascii_case("true")
+        {
+            // Leave var.value as default
+            return Ok(var);
         }
 
         // Parse the value from node text based on type

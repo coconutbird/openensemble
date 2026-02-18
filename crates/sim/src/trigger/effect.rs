@@ -422,7 +422,7 @@ impl EffectType {
             | 480..=484
             | 489..=493
             | 498
-            | 499..=501 => Some(unsafe { std::mem::transmute(value) }),
+            | 499..=501 => Some(unsafe { std::mem::transmute::<u16, EffectType>(value) }),
             _ => None,
         }
     }

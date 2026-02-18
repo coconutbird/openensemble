@@ -109,7 +109,7 @@ pub mod channel_packet_type {
     pub const COMMAND_PACKETS_START: u8 = NUMBER_OF_MP_CHANNEL_PACKETS;
 
     // Command types (offset from COMMAND_PACKETS_START)
-    pub const COMMAND_WORK: u8 = COMMAND_PACKETS_START + 0;
+    pub const COMMAND_WORK: u8 = COMMAND_PACKETS_START;
     pub const COMMAND_POWER: u8 = COMMAND_PACKETS_START + 1;
     pub const COMMAND_POWER_INPUT: u8 = COMMAND_PACKETS_START + 2;
     pub const COMMAND_BUILDING: u8 = COMMAND_PACKETS_START + 3;

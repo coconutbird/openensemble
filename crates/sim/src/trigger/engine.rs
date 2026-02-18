@@ -6,6 +6,7 @@ use super::{INVALID_TRIGGER_SCRIPT_ID, Trigger, TriggerScript, TriggerScriptId};
 
 /// Result of evaluating conditions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ConditionResult {
     True,
     False,
@@ -30,6 +31,7 @@ pub struct TriggerEngine {
     evaluate_count: u32,
 
     /// Performance threshold for warnings.
+    #[allow(dead_code)]
     performance_warning_threshold: u32,
 
     /// Infinite loop detection threshold.
