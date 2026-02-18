@@ -10,6 +10,7 @@ pub mod proto;
 // Re-export file format parsers from ensemble-rs
 pub use era;
 pub use xmb;
+pub use xtd;
 
 pub use database::{
     Ability, Civilization, DamageType, DatabaseError, GameDatabase, GameMode, Leader, Power,

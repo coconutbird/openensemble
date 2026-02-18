@@ -206,7 +206,7 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 [[package]]
 name = "bdt"
 version = "0.1.0"
-source = "git+https://github.com/coconutbird/ensemble-rs.git#a33d6c0075a7c73277b2a164db3ac78c6228cc54"
+source = "git+https://github.com/coconutbird/ensemble-rs.git#41f85c4bedfab058d38d68e2472f69bb0110ac9f"
 dependencies = [
  "byteorder",
  "thiserror 2.0.18",
@@ -673,7 +673,7 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 [[package]]
 name = "ecf"
 version = "0.1.0"
-source = "git+https://github.com/coconutbird/ensemble-rs.git#a33d6c0075a7c73277b2a164db3ac78c6228cc54"
+source = "git+https://github.com/coconutbird/ensemble-rs.git#41f85c4bedfab058d38d68e2472f69bb0110ac9f"
 dependencies = [
  "byteorder",
  "flate2",
@@ -814,7 +814,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 [[package]]
 name = "era"
 version = "0.1.0"
-source = "git+https://github.com/coconutbird/ensemble-rs.git#a33d6c0075a7c73277b2a164db3ac78c6228cc54"
+source = "git+https://github.com/coconutbird/ensemble-rs.git#41f85c4bedfab058d38d68e2472f69bb0110ac9f"
 dependencies = [
  "byteorder",
  "ecf",
@@ -1881,10 +1881,13 @@ name = "openensemble"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytemuck",
  "cargo-husky",
  "core",
  "data",
+ "egui",
  "env_logger",
+ "glam",
  "log",
  "net",
  "render",
@@ -3684,7 +3687,7 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 [[package]]
 name = "xmb"
 version = "0.1.0"
-source = "git+https://github.com/coconutbird/ensemble-rs.git#a33d6c0075a7c73277b2a164db3ac78c6228cc54"
+source = "git+https://github.com/coconutbird/ensemble-rs.git#41f85c4bedfab058d38d68e2472f69bb0110ac9f"
 dependencies = [
  "bdt",
  "byteorder",

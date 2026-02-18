@@ -53,6 +53,7 @@ env_logger = "0.11"
 # Binary parsing (useful for game formats)
 byteorder = "1.5"
 binrw = "0.14"
+bytemuck = { version = "1.19", features = ["derive"] }
 
 # XML parsing
 quick-xml = "0.37"
@@ -71,6 +72,9 @@ data = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
 anyhow = { workspace = true }
+glam = { workspace = true }
+egui = { workspace = true }
+bytemuck = { workspace = true }
 
 [[bin]]
 name = "openensemble"
@@ -79,6 +83,10 @@ path = "src/main.rs"
 [[bin]]
 name = "headless"
 path = "src/bin/headless.rs"
+
+[[bin]]
+name = "terrain_viewer"
+path = "src/bin/terrain_viewer.rs"
 
 [dev-dependencies]
 cargo-husky = { version = "1.5.0", features = ["precommit-hook", "user-hooks"] }
