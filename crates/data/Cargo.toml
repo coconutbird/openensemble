@@ -15,6 +15,7 @@ xmb = { git = "https://github.com/coconutbird/ensemble-rs.git" }
 era = { git = "https://github.com/coconutbird/ensemble-rs.git" }
 xtd = { path = "../../../ensemble-rs/crates/xtd" }
 xtt = { path = "../../../ensemble-rs/crates/xtt" }
+ddx = { path = "../../../ensemble-rs/crates/ddx" }
 
 [dev-dependencies]
 

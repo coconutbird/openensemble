@@ -595,6 +595,7 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 name = "data"
 version = "0.1.0"
 dependencies = [
+ "ddx",
  "era",
  "log",
  "serde",
@@ -603,6 +604,17 @@ dependencies = [
  "xmb",
  "xtd",
  "xtt",
+]
+
+[[package]]
+name = "ddx"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "ecf 0.1.0",
+ "flate2",
+ "texture2ddecoder",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -659,6 +671,12 @@ checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
 dependencies = [
  "litrs",
 ]
+
+[[package]]
+name = "dotenvy"
+version = "0.15.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "downcast-rs"
@@ -1241,7 +1259,7 @@ dependencies = [
  "byteorder-lite",
  "moxcms",
  "num-traits",
- "png",
+ "png 0.18.1",
  "tiff",
 ]
 
@@ -1896,11 +1914,13 @@ dependencies = [
  "cargo-husky",
  "core",
  "data",
+ "dotenvy",
  "egui",
  "env_logger",
  "glam",
  "log",
  "net",
+ "png 0.17.16",
  "render",
  "sim",
 ]
@@ -2005,6 +2025,19 @@ name = "pkg-config"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
+
+[[package]]
+name = "png"
+version = "0.17.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82151a2fc869e011c153adc57cf2789ccb8d9906ce52c0b39a6b5697749d7526"
+dependencies = [
+ "bitflags 1.3.2",
+ "crc32fast",
+ "fdeflate",
+ "flate2",
+ "miniz_oxide",
+]
 
 [[package]]
 name = "png"

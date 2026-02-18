@@ -75,6 +75,8 @@ anyhow = { workspace = true }
 glam = { workspace = true }
 egui = { workspace = true }
 bytemuck = { workspace = true }
+dotenvy = "0.15"
+png = "0.17"
 
 [[bin]]
 name = "openensemble"

@@ -8,6 +8,7 @@ pub mod paths;
 pub mod proto;
 
 // Re-export file format parsers from ensemble-rs
+pub use ddx;
 pub use era;
 pub use xmb;
 pub use xtd;
