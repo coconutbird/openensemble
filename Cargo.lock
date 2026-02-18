@@ -2338,6 +2338,7 @@ dependencies = [
  "byteorder",
  "data",
  "glam",
+ "quick-xml 0.37.5",
  "thiserror 2.0.18",
 ]
 

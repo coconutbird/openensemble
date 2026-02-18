@@ -4,8 +4,10 @@
 //! at their scheduled execution times.
 
 use crate::command_queue::{CommandEntry, CommandQueue};
+use crate::executor::CommandExecutor;
 use crate::random::Random;
 use crate::sync::SyncChecksum;
+use crate::world::World;
 
 /// Simulation tick rate (updates per second).
 pub const TICK_RATE: u32 = 20;
@@ -163,6 +165,56 @@ impl Simulation {
         self.checksum.set_update(self.tick as u32);
 
         commands
+    }
+
+    /// Process a single tick with world and command execution.
+    ///
+    /// This is the high-level API that:
+    /// 1. Drains commands ready for this tick
+    /// 2. Executes them against the world
+    /// 3. Updates all entities
+    ///
+    /// Returns the commands that were processed.
+    pub fn tick_with_world(&mut self, world: &mut World) -> Vec<CommandEntry> {
+        // Get commands for this tick
+        let commands = self.tick_once();
+
+        // Execute commands
+        let executor = CommandExecutor::new();
+        executor.execute_all(world, &commands);
+
+        // Update entities (movement, etc.)
+        let dt = MS_PER_TICK as f32 / 1000.0;
+        world.update_entities(dt);
+
+        // Sync world time
+        world.game_time_ms = self.game_time_ms;
+
+        commands
+    }
+
+    /// Update the simulation with world integration.
+    ///
+    /// This is the high-level API that processes multiple ticks
+    /// based on real-time delta, executing commands and updating entities.
+    pub fn update_with_world(&mut self, dt_seconds: f32, world: &mut World) -> Vec<CommandEntry> {
+        if self.state != SimState::Running {
+            return Vec::new();
+        }
+
+        let dt_ms = dt_seconds * 1000.0 * self.speed;
+        self.accumulated_ms += dt_ms;
+
+        let mut all_commands = Vec::new();
+
+        // Process fixed timestep ticks
+        while self.accumulated_ms >= MS_PER_TICK as f32 {
+            self.accumulated_ms -= MS_PER_TICK as f32;
+            let commands = self.tick_with_world(world);
+            all_commands.extend(commands);
+        }
+
+        all_commands
     }
 }
 
