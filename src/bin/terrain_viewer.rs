@@ -262,7 +262,7 @@ impl TerrainViewer {
             load_error: None,
             gpu: None,
             surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
-            debug_mode: 0,
+            debug_mode: 9, // Default to XTT albedo with HD detail
         }
     }
 
@@ -282,6 +282,24 @@ impl TerrainViewer {
                         xtd.header.num_x_verts,
                         xtd.header.num_x_verts,
                         xtd.header.tile_scale
+                    );
+                    log::info!(
+                        "XTD world_min: [{:.2}, {:.2}, {:.2}]",
+                        xtd.header.world_min[0],
+                        xtd.header.world_min[1],
+                        xtd.header.world_min[2]
+                    );
+                    log::info!(
+                        "XTD world_max: [{:.2}, {:.2}, {:.2}]",
+                        xtd.header.world_max[0],
+                        xtd.header.world_max[1],
+                        xtd.header.world_max[2]
+                    );
+                    log::info!(
+                        "XTD world_size: [{:.2}, {:.2}, {:.2}]",
+                        xtd.header.world_max[0] - xtd.header.world_min[0],
+                        xtd.header.world_max[1] - xtd.header.world_min[1],
+                        xtd.header.world_max[2] - xtd.header.world_min[2]
                     );
 
                     match xtd.decode_vertices() {
@@ -361,6 +379,17 @@ impl TerrainViewer {
 
                     // Debug: Print first few linkers' splat info
                     if !xtt.linkers.is_empty() {
+                        // Print first 5 and last linker grid positions
+                        for (i, linker) in xtt.linkers.iter().enumerate() {
+                            if i < 5 || i == xtt.linkers.len() - 1 {
+                                log::info!(
+                                    "Linker [{}]: grid=({},{})",
+                                    i,
+                                    linker.grid_x,
+                                    linker.grid_z
+                                );
+                            }
+                        }
                         let linker = &xtt.linkers[0];
                         log::info!(
                             "First linker: grid=({},{}), {} splat layers, {} decal layers",
@@ -890,8 +919,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let chunk_uv = in.uv * params.chunk_count;
     let chunk_x = u32(clamp(floor(chunk_uv.x), 0.0, params.chunk_count.x - 1.0));
     let chunk_y = u32(clamp(floor(chunk_uv.y), 0.0, params.chunk_count.y - 1.0));
-    // X-major order: index = gridX * numChunks + gridZ (matches Halo Wars terrain indexing)
-    let chunk_idx = chunk_x * u32(params.chunk_count.y) + chunk_y;
+    // Z-major order: index = gridZ * numChunks + gridX (matches Halo Wars linker storage order)
+    let chunk_idx = chunk_y * u32(params.chunk_count.x) + chunk_x;
 
     // UV within the chunk (0-1) for alpha sampling
     let in_chunk_uv = fract(chunk_uv);
@@ -975,8 +1004,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let has_layer1 = select(0.0, 1.0, layer1 > 0u);
         return vec4<f32>(f32(layer1) / 7.0, alphas.r, has_layer1, 1.0);
     } else if (debug_mode == 9) {
-        // Debug: Show XTT albedo (original pre-composited from game export)
-        // This should have perfect blending with no chunk boundary issues
+        // XTT albedo (original pre-composited from game export)
         let xtt_color = textureSample(t_xtt_albedo, s_terrain, in.uv);
         return vec4<f32>(xtt_color.rgb * lighting, 1.0);
     }
@@ -2024,8 +2052,8 @@ impl TerrainViewer {
         let mut layer_data = vec![0u32; 256 * 8];
 
         for chunk in &self.chunk_splat_data {
-            // X-major order: index = gridX * numChunks + gridZ (matches Halo Wars terrain indexing)
-            let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
+            // Z-major order: index = gridZ * numChunks + gridX (matches Halo Wars linker storage order)
+            let chunk_idx = (chunk.grid_z * 16 + chunk.grid_x) as usize;
             let base = chunk_idx * 8;
 
             for (i, &layer_id) in chunk.layer_texture_ids.iter().enumerate().take(8) {
