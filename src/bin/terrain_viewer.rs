@@ -9,7 +9,7 @@ use core::app::{Application, FrameContext, Input, KeyCode, WindowConfig};
 use core::prelude::*;
 use data::ddx::DdxTexture;
 use data::era::EraArchive;
-use data::xtd::{TerrainVertices, XtdReader};
+use data::xtd::{TerrainVertices, TessellatedMesh, TessellationData, XtdReader};
 use data::xtt::{ActiveTextureInfo, XttReader};
 use glam::{Mat4, Vec3};
 use render::{Application3D, RenderContext, wgpu};
@@ -140,6 +140,23 @@ impl TerrainMesh {
         }
     }
 
+    fn from_tessellated(
+        tessellated: TessellatedMesh,
+        world_min: [f32; 3],
+        world_max: [f32; 3],
+        tile_scale: f32,
+    ) -> Self {
+        Self {
+            positions: tessellated.positions,
+            normals: tessellated.normals,
+            uvs: tessellated.uvs,
+            indices: tessellated.indices,
+            world_min,
+            world_max,
+            tile_scale,
+        }
+    }
+
     fn center(&self) -> Vec3 {
         Vec3::new(
             (self.world_min[0] + self.world_max[0]) / 2.0,
@@ -171,6 +188,10 @@ struct GpuResources {
     params_buffer: wgpu::Buffer,
     terrain_size: [f32; 2],
     tile_scale: f32,
+    /// GPU tessellation mode - use instanced patch rendering
+    use_gpu_tessellation: bool,
+    /// Number of patch instances to draw (64x64 = 4096)
+    num_patch_instances: u32,
 }
 
 /// Albedo atlas data from XTT file.
@@ -198,6 +219,27 @@ struct TerrainParams {
 // SAFETY: TerrainParams is repr(C) with all f32 fields, safe to cast as bytes
 unsafe impl bytemuck::Pod for TerrainParams {}
 unsafe impl bytemuck::Zeroable for TerrainParams {}
+
+/// GPU tessellation shader parameters.
+/// Contains data needed to decode packed positions/normals in the shader.
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct GpuTessParams {
+    /// Atlas mid point for position decoding [x, y, z, pad]
+    mid: [f32; 4],
+    /// Atlas range for position decoding [x, y, z, pad]
+    range: [f32; 4],
+    /// Terrain size [num_verts_per_axis, tile_scale, num_patches_x, num_patches_z]
+    terrain_info: [f32; 4],
+    /// World bounds min [x, y, z, pad]
+    world_min: [f32; 4],
+    /// World bounds max [x, y, z, pad]
+    world_max: [f32; 4],
+}
+
+// SAFETY: GpuTessParams is repr(C) with all f32 fields
+unsafe impl bytemuck::Pod for GpuTessParams {}
+unsafe impl bytemuck::Zeroable for GpuTessParams {}
 
 /// A single terrain texture loaded from ERA.
 #[allow(dead_code)]
@@ -231,6 +273,51 @@ struct ChunkSplatData {
     alpha_maps: Vec<Vec<u8>>,
 }
 
+/// Tessellation mode for terrain rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TessellationMode {
+    /// No tessellation - use raw XTD mesh.
+    None,
+    /// CPU tessellation - subdivide mesh on CPU (slow but accurate).
+    Cpu,
+    /// GPU tessellation - use instanced patches with vertex shader displacement (fast).
+    Gpu,
+}
+
+impl TessellationMode {
+    fn next(self) -> Self {
+        match self {
+            TessellationMode::None => TessellationMode::Gpu,
+            TessellationMode::Gpu => TessellationMode::Cpu,
+            TessellationMode::Cpu => TessellationMode::None,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            TessellationMode::None => "None",
+            TessellationMode::Gpu => "GPU",
+            TessellationMode::Cpu => "CPU",
+        }
+    }
+}
+
+/// Raw XTD vertex data for GPU tessellation (before decoding to world positions).
+struct RawXtdData {
+    /// Packed position data (R10G10B10A2 format).
+    packed_positions: Vec<u32>,
+    /// Packed normal data.
+    packed_normals: Vec<u32>,
+    /// Number of vertices per axis (e.g., 1025).
+    num_verts_per_axis: u32,
+    /// Atlas mid point for decoding.
+    mid: [f32; 3],
+    /// Atlas range for decoding.
+    range: [f32; 3],
+    /// Tile scale for world position.
+    tile_scale: f32,
+}
+
 /// The terrain viewer application.
 struct TerrainViewer {
     xtd_path: Option<PathBuf>,
@@ -246,6 +333,12 @@ struct TerrainViewer {
     surface_format: wgpu::TextureFormat,
     /// Debug mode: 0=normal, 1=alpha values, 2=in-chunk UV, 3=raw atlas, 4=terrain UV
     debug_mode: u32,
+    /// Tessellation mode: None, CPU, or GPU.
+    tessellation_mode: TessellationMode,
+    /// Tessellation data from XTD file.
+    tessellation_data: Option<TessellationData>,
+    /// Raw XTD data for GPU tessellation.
+    raw_xtd_data: Option<RawXtdData>,
 }
 
 impl TerrainViewer {
@@ -263,6 +356,9 @@ impl TerrainViewer {
             gpu: None,
             surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
             debug_mode: 9, // Default to XTT albedo with HD detail
+            tessellation_mode: TessellationMode::Gpu, // Default to GPU tessellation (fast)
+            tessellation_data: None,
+            raw_xtd_data: None,
         }
     }
 
@@ -302,6 +398,46 @@ impl TerrainViewer {
                         xtd.header.world_max[2] - xtd.header.world_min[2]
                     );
 
+                    // Decode tessellation data
+                    if let Some(tess) = xtd.decode_tessellation() {
+                        log::info!(
+                            "Tessellation: {}x{} patches, max_level={}",
+                            tess.num_x_patches,
+                            tess.num_z_patches,
+                            tess.max_tess_level
+                        );
+                        self.tessellation_data = Some(tess);
+                    } else {
+                        log::warn!("No tessellation data available in XTD");
+                        self.tessellation_data = None;
+                    }
+
+                    // Extract raw data for GPU tessellation
+                    match xtd.extract_raw_data() {
+                        Ok(raw) => {
+                            log::info!(
+                                "Extracted raw terrain data: {}x{} vertices",
+                                raw.num_verts_per_axis,
+                                raw.num_verts_per_axis
+                            );
+                            self.raw_xtd_data = Some(RawXtdData {
+                                packed_positions: raw.packed_positions,
+                                packed_normals: raw.packed_normals,
+                                num_verts_per_axis: raw.num_verts_per_axis,
+                                mid: raw.mid,
+                                range: raw.range,
+                                tile_scale: raw.tile_scale,
+                            });
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "Failed to extract raw XTD data for GPU tessellation: {}",
+                                e
+                            );
+                            self.raw_xtd_data = None;
+                        }
+                    }
+
                     match xtd.decode_vertices() {
                         Ok(vertices) => {
                             log::info!(
@@ -310,15 +446,64 @@ impl TerrainViewer {
                                 vertices.generate_indices().len() / 3
                             );
 
-                            let mesh = TerrainMesh::from_xtd(
-                                &vertices,
-                                xtd.header.world_min,
-                                xtd.header.world_max,
-                                xtd.header.tile_scale,
-                            );
+                            let mesh = match self.tessellation_mode {
+                                TessellationMode::Cpu => {
+                                    if let Some(ref tess_data) = self.tessellation_data {
+                                        log::info!(
+                                            "Applying CPU tessellation (this may take a while)..."
+                                        );
+                                        let start = std::time::Instant::now();
+                                        let tessellated = vertices.tessellate(tess_data);
+                                        log::info!(
+                                            "Tessellation complete: {} vertices, {} triangles ({:.1}s)",
+                                            tessellated.positions.len(),
+                                            tessellated.indices.len() / 3,
+                                            start.elapsed().as_secs_f32()
+                                        );
+                                        TerrainMesh::from_tessellated(
+                                            tessellated,
+                                            xtd.header.world_min,
+                                            xtd.header.world_max,
+                                            xtd.header.tile_scale,
+                                        )
+                                    } else {
+                                        log::warn!(
+                                            "CPU tessellation enabled but no tessellation data available"
+                                        );
+                                        TerrainMesh::from_xtd(
+                                            &vertices,
+                                            xtd.header.world_min,
+                                            xtd.header.world_max,
+                                            xtd.header.tile_scale,
+                                        )
+                                    }
+                                }
+                                TessellationMode::Gpu => {
+                                    // For GPU tessellation, we still need a basic mesh for fallback
+                                    // The actual tessellation happens in the GPU resources creation
+                                    log::info!(
+                                        "GPU tessellation mode - will use instanced patches"
+                                    );
+                                    TerrainMesh::from_xtd(
+                                        &vertices,
+                                        xtd.header.world_min,
+                                        xtd.header.world_max,
+                                        xtd.header.tile_scale,
+                                    )
+                                }
+                                TessellationMode::None => TerrainMesh::from_xtd(
+                                    &vertices,
+                                    xtd.header.world_min,
+                                    xtd.header.world_max,
+                                    xtd.header.tile_scale,
+                                ),
+                            };
 
-                            // Position camera at terrain center
-                            self.camera.position = mesh.center() + Vec3::new(0.0, 200.0, -300.0);
+                            // Position camera at terrain center (only on first load)
+                            if self.terrain.is_none() {
+                                self.camera.position =
+                                    mesh.center() + Vec3::new(0.0, 200.0, -300.0);
+                            }
                             self.terrain = Some(mesh);
                             self.load_error = None;
 
@@ -611,6 +796,9 @@ impl TerrainViewer {
         xtd_path: &PathBuf,
         active_textures: &[ActiveTextureInfo],
     ) {
+        // Clear existing textures to avoid duplication on reload
+        self.terrain_textures.clear();
+
         // Get game directory from environment variable
         let game_dir = match std::env::var("OPENENSEMBLE_GAME_DIR") {
             Ok(dir) => PathBuf::from(dir),
@@ -786,6 +974,43 @@ impl Application for TerrainViewer {
             log::info!("Debug mode: 9 (XTT albedo - original pre-composited from game)");
         }
 
+        // Toggle tessellation mode (T key) - toggles between GPU and None
+        // (CPU mode is skipped because it takes ~30 seconds)
+        if input.is_key_pressed(KeyCode::T) {
+            // Save camera state before reloading
+            let saved_camera_pos = self.camera.position;
+            let saved_camera_yaw = self.camera.yaw;
+            let saved_camera_pitch = self.camera.pitch;
+
+            // Toggle between GPU and None only (skip slow CPU tessellation)
+            self.tessellation_mode = match self.tessellation_mode {
+                TessellationMode::Gpu => TessellationMode::None,
+                TessellationMode::None => TessellationMode::Gpu,
+                TessellationMode::Cpu => TessellationMode::Gpu, // Skip CPU, go to GPU
+            };
+            log::info!(
+                "Tessellation mode: {} (reloading terrain...)",
+                self.tessellation_mode.name()
+            );
+            // Clear GPU resources so they get recreated with new mesh
+            self.gpu = None;
+            // Reload terrain with new tessellation setting
+            self.load_terrain();
+
+            // Restore camera state after reloading
+            self.camera.position = saved_camera_pos;
+            self.camera.yaw = saved_camera_yaw;
+            self.camera.pitch = saved_camera_pitch;
+
+            if let Some(ref terrain) = self.terrain {
+                log::info!(
+                    "Terrain reloaded: {} vertices, {} triangles",
+                    terrain.positions.len(),
+                    terrain.indices.len() / 3
+                );
+            }
+        }
+
         self.camera.update(input, ctx.delta_time);
 
         true
@@ -811,6 +1036,7 @@ impl Application for TerrainViewer {
                             terrain.size().y,
                             terrain.size().z
                         ));
+                        ui.label(format!("Tessellation: {}", self.tessellation_mode.name()));
                     }
 
                     if let Some(err) = &self.load_error {
@@ -826,6 +1052,8 @@ impl Application for TerrainViewer {
                     ui.label("  Shift - Fast");
                     ui.label("  Tab - Toggle info");
                     ui.label("  F - Toggle wireframe");
+                    ui.label("  T - Toggle tessellation");
+                    ui.label("  0-9 - Debug modes");
                     ui.label("  Escape - Quit");
                 });
         }
@@ -1032,6 +1260,176 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
+/// GPU tessellation shader using instanced patches with vertex displacement.
+/// Each instance is a terrain patch, and vertices sample position/normal textures.
+const GPU_TESS_SHADER: &str = r#"
+struct CameraUniform {
+    view_proj: mat4x4<f32>,
+};
+@group(0) @binding(0)
+var<uniform> camera: CameraUniform;
+
+// Tessellation parameters for decoding packed positions
+struct TessParams {
+    mid: vec4<f32>,           // x, y, z, pad
+    range: vec4<f32>,         // x, y, z, pad
+    terrain_info: vec4<f32>,  // num_verts, tile_scale, num_patches_x, num_patches_z
+    world_min: vec4<f32>,     // x, y, z, pad
+    world_max: vec4<f32>,     // x, y, z, pad
+};
+@group(1) @binding(0)
+var<uniform> tess_params: TessParams;
+
+// Position texture (R32Uint - packed R10G10B10A2)
+@group(1) @binding(1)
+var t_positions: texture_2d<u32>;
+
+// Normal texture (R32Uint - packed)
+@group(1) @binding(2)
+var t_normals: texture_2d<u32>;
+
+// XTT albedo texture for coloring
+@group(1) @binding(3)
+var t_xtt_albedo: texture_2d<f32>;
+@group(1) @binding(4)
+var s_terrain: sampler;
+
+// Terrain params (reuse from main shader for debug mode)
+struct TerrainParams {
+    terrain_size: vec2<f32>,
+    chunk_count: vec2<f32>,
+    texture_tile_scale: f32,
+    debug_mode: f32,
+    _pad2: f32,
+    _pad3: f32,
+};
+@group(1) @binding(5)
+var<uniform> params: TerrainParams;
+
+struct VertexInput {
+    // Per-vertex: local UV within patch [0, 1]
+    @location(0) local_uv: vec2<f32>,
+    // Per-instance: patch index (x + z * num_patches_x)
+    @location(1) patch_index: u32,
+};
+
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) normal: vec3<f32>,
+    @location(1) world_pos: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+};
+
+// Decode packed R10G10B10A2 position
+// Must match Rust decode.rs: (bits / 1023.0) * range - mid
+fn unpack_position(packed: u32, mid: vec3<f32>, range: vec3<f32>) -> vec3<f32> {
+    let x_bits = packed & 0x3FFu;
+    let y_bits = (packed >> 10u) & 0x3FFu;
+    let z_bits = (packed >> 20u) & 0x3FFu;
+
+    // Normalize to [0, 1]
+    let norm = vec3<f32>(
+        f32(x_bits) / 1023.0,
+        f32(y_bits) / 1023.0,
+        f32(z_bits) / 1023.0
+    );
+
+    // Apply range and offset to get displacement
+    // Formula: (bits / 1023) * range - mid
+    return norm * range - mid;
+}
+
+// Decode packed normal
+// IMPORTANT: Normal packing uses different bit layout than position!
+// Must match Rust decode.rs: x = bits 22-31, y = bits 11-20, z = bits 0-9
+fn unpack_normal(packed: u32) -> vec3<f32> {
+    let x_bits = (packed >> 22u) & 0x3FFu;  // bits 22-31
+    let y_bits = (packed >> 11u) & 0x3FFu;  // bits 11-20
+    let z_bits = packed & 0x3FFu;           // bits 0-9
+
+    // Convert to [-1, 1] range: (bits / 1023) * 2 - 1
+    let norm = vec3<f32>(
+        (f32(x_bits) / 1023.0) * 2.0 - 1.0,
+        (f32(y_bits) / 1023.0) * 2.0 - 1.0,
+        (f32(z_bits) / 1023.0) * 2.0 - 1.0
+    );
+
+    return normalize(norm);
+}
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+
+    let num_verts = u32(tess_params.terrain_info.x);
+    let tile_scale = tess_params.terrain_info.y;
+    let num_patches_x = u32(tess_params.terrain_info.z);
+    let num_patches_z = u32(tess_params.terrain_info.w);
+
+    // Calculate patch position from index
+    let patch_x = in.patch_index % num_patches_x;
+    let patch_z = in.patch_index / num_patches_x;
+
+    // Calculate vertices per patch (terrain has num_verts vertices, num_verts-1 quads)
+    // For 64 patches across 1024 vertices: ~16 vertices per patch
+    let verts_per_patch_f = f32(num_verts - 1u) / f32(num_patches_x);
+
+    // Global UV across entire terrain [0, 1]
+    let global_u = (f32(patch_x) + in.local_uv.x) / f32(num_patches_x);
+    let global_v = (f32(patch_z) + in.local_uv.y) / f32(num_patches_z);
+
+    // Convert UV to texture coordinate (pixel coordinate)
+    let tex_x = u32(global_u * f32(num_verts - 1u));
+    let tex_z = u32(global_v * f32(num_verts - 1u));
+
+    // Clamp to valid range
+    let clamped_x = min(tex_x, num_verts - 1u);
+    let clamped_z = min(tex_z, num_verts - 1u);
+
+    // Sample position texture (using textureLoad for integer texture)
+    let packed_pos = textureLoad(t_positions, vec2<i32>(i32(clamped_x), i32(clamped_z)), 0).r;
+    let packed_norm = textureLoad(t_normals, vec2<i32>(i32(clamped_x), i32(clamped_z)), 0).r;
+
+    // Decode position
+    let local_pos = unpack_position(packed_pos, tess_params.mid.xyz, tess_params.range.xyz);
+
+    // Calculate world position using grid and displacement
+    // This must match decode.rs: position = [grid_x * tile_scale + unpacked[0], unpacked[1], grid_z * tile_scale + unpacked[2]]
+    let grid_x = global_u * f32(num_verts - 1u);
+    let grid_z = global_v * f32(num_verts - 1u);
+
+    let world_pos = vec3<f32>(
+        grid_x * tile_scale + local_pos.x,  // X = grid*scale + displacement
+        local_pos.y,                         // Y = height from texture
+        grid_z * tile_scale + local_pos.z   // Z = grid*scale + displacement
+    );
+
+    // Decode normal
+    let normal = unpack_normal(packed_norm);
+
+    out.clip_position = camera.view_proj * vec4<f32>(world_pos, 1.0);
+    out.normal = normal;
+    out.world_pos = world_pos;
+    out.uv = vec2<f32>(global_u, global_v);
+
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let light_dir = normalize(vec3<f32>(0.5, 1.0, 0.3));
+    let normal = normalize(in.normal);
+    let diff = max(dot(normal, light_dir), 0.0);
+    let ambient = 0.4;
+    let lighting = ambient + diff * 0.6;
+
+    // Sample XTT albedo texture
+    let xtt_color = textureSample(t_xtt_albedo, s_terrain, in.uv);
+
+    return vec4<f32>(xtt_color.rgb * lighting, 1.0);
+}
+"#;
+
 fn create_depth_texture(
     device: &wgpu::Device,
     width: u32,
@@ -1083,17 +1481,55 @@ impl Application3D for TerrainViewer {
     fn render_3d(&mut self, ctx: &mut RenderContext) {
         // Create GPU resources if not yet created and terrain is loaded
         if self.gpu.is_none() && self.terrain.is_some() {
-            // Extract values we need before calling create_gpu_resources
-            let terrain = self.terrain.as_ref().unwrap();
-            let positions = terrain.positions.clone();
-            let normals = terrain.normals.clone();
-            let uvs = terrain.uvs.clone();
-            let indices = terrain.indices.clone();
-            let albedo = self.albedo.take();
-            self.create_gpu_resources_from_data(
-                ctx.device, ctx.queue, &positions, &normals, &uvs, &indices, albedo, ctx.size.0,
-                ctx.size.1,
-            );
+            // Check if we should use GPU tessellation
+            if self.tessellation_mode == TessellationMode::Gpu {
+                if let Some(raw_data) = &self.raw_xtd_data {
+                    let raw_data_clone = RawXtdData {
+                        packed_positions: raw_data.packed_positions.clone(),
+                        packed_normals: raw_data.packed_normals.clone(),
+                        num_verts_per_axis: raw_data.num_verts_per_axis,
+                        mid: raw_data.mid,
+                        range: raw_data.range,
+                        tile_scale: raw_data.tile_scale,
+                    };
+                    let albedo = self.albedo.take();
+                    self.create_gpu_tessellation_resources(
+                        ctx.device,
+                        ctx.queue,
+                        &raw_data_clone,
+                        albedo,
+                        ctx.size.0,
+                        ctx.size.1,
+                    );
+                } else {
+                    // Fallback to regular rendering if no raw data
+                    log::warn!(
+                        "GPU tessellation requested but no raw XTD data available, falling back to regular rendering"
+                    );
+                    let terrain = self.terrain.as_ref().unwrap();
+                    let positions = terrain.positions.clone();
+                    let normals = terrain.normals.clone();
+                    let uvs = terrain.uvs.clone();
+                    let indices = terrain.indices.clone();
+                    let albedo = self.albedo.take();
+                    self.create_gpu_resources_from_data(
+                        ctx.device, ctx.queue, &positions, &normals, &uvs, &indices, albedo,
+                        ctx.size.0, ctx.size.1,
+                    );
+                }
+            } else {
+                // Regular rendering (no tessellation or CPU tessellation)
+                let terrain = self.terrain.as_ref().unwrap();
+                let positions = terrain.positions.clone();
+                let normals = terrain.normals.clone();
+                let uvs = terrain.uvs.clone();
+                let indices = terrain.indices.clone();
+                let albedo = self.albedo.take();
+                self.create_gpu_resources_from_data(
+                    ctx.device, ctx.queue, &positions, &normals, &uvs, &indices, albedo,
+                    ctx.size.0, ctx.size.1,
+                );
+            }
         }
 
         let Some(gpu) = &self.gpu else {
@@ -1151,8 +1587,18 @@ impl Application3D for TerrainViewer {
             render_pass.set_bind_group(0, &gpu.camera_bind_group, &[]);
             render_pass.set_bind_group(1, &gpu.texture_bind_group, &[]);
             render_pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(gpu.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..gpu.index_count, 0, 0..1);
+
+            if gpu.use_gpu_tessellation {
+                // GPU tessellation: instanced draw with patch vertices
+                // index_buffer contains instance indices (patch indices)
+                render_pass.set_vertex_buffer(1, gpu.index_buffer.slice(..));
+                // Draw non-indexed triangles, instanced per patch
+                render_pass.draw(0..gpu.index_count, 0..gpu.num_patch_instances);
+            } else {
+                // Regular indexed draw
+                render_pass.set_index_buffer(gpu.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..gpu.index_count, 0, 0..1);
+            }
         }
     }
 }
@@ -1501,6 +1947,8 @@ impl TerrainViewer {
             params_buffer,
             terrain_size: [terrain_size.x, terrain_size.z],
             tile_scale,
+            use_gpu_tessellation: false,
+            num_patch_instances: 0,
         });
 
         log::info!(
@@ -1509,6 +1957,475 @@ impl TerrainViewer {
             indices.len(),
             self.terrain_textures.len()
         );
+    }
+
+    /// Create GPU resources for GPU tessellation mode.
+    /// Uses instanced patch rendering with vertex shader displacement.
+    #[allow(clippy::too_many_arguments)]
+    fn create_gpu_tessellation_resources(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        raw_data: &RawXtdData,
+        albedo: Option<AlbedoData>,
+        width: u32,
+        height: u32,
+    ) {
+        use wgpu::util::DeviceExt;
+
+        let num_verts = raw_data.num_verts_per_axis;
+        let num_patches = 64u32; // 64x64 patches like original game
+        let verts_per_patch = 16u32; // 16x16 vertices per patch for subdivision
+
+        log::info!(
+            "Creating GPU tessellation resources: {}x{} patches, {}x{} verts per patch",
+            num_patches,
+            num_patches,
+            verts_per_patch,
+            verts_per_patch
+        );
+
+        // Create subdivided patch mesh template
+        // Each patch has verts_per_patch x verts_per_patch vertices
+        // with local UVs from [0, 1]
+        let mut patch_vertices: Vec<[f32; 2]> = Vec::new();
+        let mut patch_indices: Vec<u32> = Vec::new();
+
+        for z in 0..verts_per_patch {
+            for x in 0..verts_per_patch {
+                let u = x as f32 / (verts_per_patch - 1) as f32;
+                let v = z as f32 / (verts_per_patch - 1) as f32;
+                patch_vertices.push([u, v]);
+            }
+        }
+
+        // Generate indices for patch triangles
+        for z in 0..(verts_per_patch - 1) {
+            for x in 0..(verts_per_patch - 1) {
+                let top_left = z * verts_per_patch + x;
+                let top_right = top_left + 1;
+                let bottom_left = (z + 1) * verts_per_patch + x;
+                let bottom_right = bottom_left + 1;
+
+                // Two triangles per quad
+                patch_indices.push(top_left);
+                patch_indices.push(bottom_left);
+                patch_indices.push(top_right);
+
+                patch_indices.push(top_right);
+                patch_indices.push(bottom_left);
+                patch_indices.push(bottom_right);
+            }
+        }
+
+        // Create instance data (patch indices)
+        let total_patches = num_patches * num_patches;
+        let instance_data: Vec<u32> = (0..total_patches).collect();
+
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Tess Patch Vertex Buffer"),
+            contents: bytemuck::cast_slice(&patch_vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Tess Patch Index Buffer"),
+            contents: bytemuck::cast_slice(&patch_indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Tess Instance Buffer"),
+            contents: bytemuck::cast_slice(&instance_data),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        // Create position texture (R32Uint format)
+        let position_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Position Texture"),
+            size: wgpu::Extent3d {
+                width: num_verts,
+                height: num_verts,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R32Uint,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &position_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(&raw_data.packed_positions),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(num_verts * 4),
+                rows_per_image: Some(num_verts),
+            },
+            wgpu::Extent3d {
+                width: num_verts,
+                height: num_verts,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let position_view = position_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Create normal texture (R32Uint format)
+        let normal_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Normal Texture"),
+            size: wgpu::Extent3d {
+                width: num_verts,
+                height: num_verts,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R32Uint,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &normal_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(&raw_data.packed_normals),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(num_verts * 4),
+                rows_per_image: Some(num_verts),
+            },
+            wgpu::Extent3d {
+                width: num_verts,
+                height: num_verts,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let normal_view = normal_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Create XTT albedo texture
+        let (xtt_albedo_texture, xtt_albedo_view) =
+            self.create_xtt_albedo_texture(device, queue, &albedo);
+
+        // Create tessellation params uniform buffer
+        let tess_params = GpuTessParams {
+            mid: [raw_data.mid[0], raw_data.mid[1], raw_data.mid[2], 0.0],
+            range: [raw_data.range[0], raw_data.range[1], raw_data.range[2], 0.0],
+            terrain_info: [
+                num_verts as f32,
+                raw_data.tile_scale,
+                num_patches as f32,
+                num_patches as f32,
+            ],
+            world_min: [0.0, 0.0, 0.0, 0.0], // Not used directly, computed from tile_scale
+            world_max: [0.0, 0.0, 0.0, 0.0],
+        };
+
+        let tess_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Tess Params Buffer"),
+            contents: bytemuck::bytes_of(&tess_params),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        // Create terrain params buffer for debug mode
+        let terrain_size = if let Some(terrain) = &self.terrain {
+            terrain.size()
+        } else {
+            Vec3::new(1024.0, 100.0, 1024.0)
+        };
+
+        let params = TerrainParams {
+            terrain_size: [terrain_size.x, terrain_size.z],
+            chunk_count: [16.0, 16.0],
+            texture_tile_scale: 32.0,
+            debug_mode: self.debug_mode as f32,
+            _padding2: 0.0,
+            _padding3: 0.0,
+        };
+
+        let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Terrain Params Buffer"),
+            contents: bytemuck::bytes_of(&params),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        // Create sampler
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Terrain Sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        // Camera uniform buffer
+        let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Camera Uniform Buffer"),
+            size: 64, // mat4x4<f32>
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let camera_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Camera Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Camera Bind Group"),
+            layout: &camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+        });
+
+        // Texture bind group layout for GPU tessellation
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("GPU Tess Texture Bind Group Layout"),
+                entries: &[
+                    // binding 0: tess params uniform
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 1: position texture (R32Uint)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Uint,
+                        },
+                        count: None,
+                    },
+                    // binding 2: normal texture (R32Uint)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Uint,
+                        },
+                        count: None,
+                    },
+                    // binding 3: XTT albedo texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    // binding 4: sampler
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    // binding 5: terrain params
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("GPU Tess Texture Bind Group"),
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: tess_params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&position_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&normal_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&xtt_albedo_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: params_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("GPU Tessellation Shader"),
+            source: wgpu::ShaderSource::Wgsl(GPU_TESS_SHADER.into()),
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("GPU Tess Pipeline Layout"),
+            bind_group_layouts: &[&camera_bind_group_layout, &texture_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        // Two vertex buffers: patch vertices (per-vertex) and instance data (per-instance)
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("GPU Tessellation Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[
+                    // Per-vertex: local UV
+                    wgpu::VertexBufferLayout {
+                        array_stride: 8, // 2 floats
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &[wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x2,
+                            offset: 0,
+                            shader_location: 0, // local_uv
+                        }],
+                    },
+                    // Per-instance: patch index
+                    wgpu::VertexBufferLayout {
+                        array_stride: 4, // 1 u32
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &[wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Uint32,
+                            offset: 0,
+                            shader_location: 1, // patch_index
+                        }],
+                    },
+                ],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: self.surface_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        let (depth_texture, depth_view) = create_depth_texture(device, width, height);
+
+        // Create non-indexed patch vertices (expanded triangles)
+        // This is less efficient but simpler - each triangle has its own vertices
+        let mut expanded_vertices: Vec<[f32; 2]> = Vec::new();
+        for idx in &patch_indices {
+            expanded_vertices.push(patch_vertices[*idx as usize]);
+        }
+
+        let expanded_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Tess Expanded Vertex Buffer"),
+            contents: bytemuck::cast_slice(&expanded_vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        // Now we have:
+        // - expanded_vertex_buffer: patch triangle vertices (non-indexed)
+        // - instance_buffer: patch indices for instancing
+
+        self.gpu = Some(GpuResources {
+            pipeline,
+            vertex_buffer: expanded_vertex_buffer,
+            index_buffer: instance_buffer,
+            index_count: expanded_vertices.len() as u32, // vertex count for draw()
+            camera_buffer,
+            camera_bind_group,
+            texture_bind_group,
+            depth_texture,
+            depth_view,
+            params_buffer,
+            terrain_size: [terrain_size.x, terrain_size.z],
+            tile_scale: raw_data.tile_scale,
+            use_gpu_tessellation: true,
+            num_patch_instances: total_patches,
+        });
+
+        log::info!(
+            "GPU tessellation resources created: {} patches, {} vertices per patch, {} total triangles",
+            total_patches,
+            expanded_vertices.len(),
+            (expanded_vertices.len() / 3) * total_patches as usize
+        );
+
+        // Suppress unused variable warnings
+        let _ = xtt_albedo_texture;
+        let _ = index_buffer;
+        let _ = vertex_buffer;
     }
 
     /// Creates a 2D texture array from loaded terrain textures.
