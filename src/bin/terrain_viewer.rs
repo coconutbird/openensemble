@@ -316,6 +316,18 @@ struct RawXtdData {
     range: [f32; 3],
     /// Tile scale for world position.
     tile_scale: f32,
+    /// Ambient occlusion data (R8 values, half resolution).
+    /// Based on IDA RE: stored at 512×1024 for a 1024×1024 terrain.
+    ao_data: Option<AoTextureData>,
+}
+
+/// Half-resolution AO texture data as decoded from the game.
+/// The game samples this with bilinear filtering via gVertSampler_ao_Texture.
+#[derive(Clone)]
+struct AoTextureData {
+    values: Vec<u8>,
+    width: u32,
+    height: u32,
 }
 
 /// The terrain viewer application.
@@ -420,6 +432,29 @@ impl TerrainViewer {
                                 raw.num_verts_per_axis,
                                 raw.num_verts_per_axis
                             );
+
+                            // Decode AO data if available
+                            // Based on IDA RE: AO is half-resolution (512×1024 for 1024×1024 terrain)
+                            let ao_data = match xtd.decode_ao() {
+                                Ok(ao) => {
+                                    log::info!(
+                                        "Decoded AO data: {}x{} texture ({} total bytes, half-resolution)",
+                                        ao.width,
+                                        ao.height,
+                                        ao.values.len()
+                                    );
+                                    Some(AoTextureData {
+                                        values: ao.values,
+                                        width: ao.width as u32,
+                                        height: ao.height as u32,
+                                    })
+                                }
+                                Err(e) => {
+                                    log::warn!("Failed to decode AO data: {}", e);
+                                    None
+                                }
+                            };
+
                             self.raw_xtd_data = Some(RawXtdData {
                                 packed_positions: raw.packed_positions,
                                 packed_normals: raw.packed_normals,
@@ -427,6 +462,7 @@ impl TerrainViewer {
                                 mid: raw.mid,
                                 range: raw.range,
                                 tile_scale: raw.tile_scale,
+                                ao_data,
                             });
                         }
                         Err(e) => {
@@ -1306,6 +1342,10 @@ struct TerrainParams {
 @group(1) @binding(5)
 var<uniform> params: TerrainParams;
 
+// AO texture (R8Unorm - 0=occluded, 1=fully lit)
+@group(1) @binding(6)
+var t_ao: texture_2d<f32>;
+
 struct VertexInput {
     // Per-vertex: local UV within patch [0, 1]
     @location(0) local_uv: vec2<f32>,
@@ -1420,11 +1460,27 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let light_dir = normalize(vec3<f32>(0.5, 1.0, 0.3));
     let normal = normalize(in.normal);
     let diff = max(dot(normal, light_dir), 0.0);
-    let ambient = 0.4;
-    let lighting = ambient + diff * 0.6;
+
+    // Sample AO texture (R8Unorm: 0=fully occluded, 1=fully lit)
+    let ao = textureSample(t_ao, s_terrain, in.uv).r;
+
+    // Apply AO to ambient light (AO primarily affects indirect/ambient lighting)
+    // TerrainAODiffuseIntensity in original game controls how much AO affects diffuse
+    let ao_intensity = 0.8; // How strongly AO affects the result
+    let ao_factor = mix(1.0, ao, ao_intensity);
+
+    // Ambient is affected by AO, diffuse is partially affected
+    let ambient = 0.4 * ao_factor;
+    let diffuse = diff * 0.6 * mix(1.0, ao_factor, 0.3); // AO slightly affects diffuse too
+    let lighting = ambient + diffuse;
 
     // Sample XTT albedo texture
     let xtt_color = textureSample(t_xtt_albedo, s_terrain, in.uv);
+
+    // Debug mode 8: Show AO only
+    if (params.debug_mode > 7.5 && params.debug_mode < 8.5) {
+        return vec4<f32>(ao, ao, ao, 1.0);
+    }
 
     return vec4<f32>(xtt_color.rgb * lighting, 1.0);
 }
@@ -1491,6 +1547,7 @@ impl Application3D for TerrainViewer {
                         mid: raw_data.mid,
                         range: raw_data.range,
                         tile_scale: raw_data.tile_scale,
+                        ao_data: raw_data.ao_data.clone(),
                     };
                     let albedo = self.albedo.take();
                     self.create_gpu_tessellation_resources(
@@ -2116,6 +2173,66 @@ impl TerrainViewer {
 
         let normal_view = normal_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
+        // Create AO texture (R8Unorm format, half resolution)
+        // Based on IDA RE: AO is stored at 512×1024 for a 1024×1024 terrain
+        // The game samples with bilinear filtering via gVertSampler_ao_Texture
+        let (ao_width, ao_height, ao_values) = raw_data.ao_data.as_ref().map_or_else(
+            || {
+                log::warn!(
+                    "No AO data available, using default fully-lit values at half resolution"
+                );
+                let half_w = num_verts / 2;
+                let half_h = num_verts;
+                (half_w, half_h, vec![255u8; (half_w * half_h) as usize])
+            },
+            |ao| {
+                log::info!(
+                    "Using half-resolution AO texture: {}x{} ({} bytes)",
+                    ao.width,
+                    ao.height,
+                    ao.values.len()
+                );
+                (ao.width, ao.height, ao.values.clone())
+            },
+        );
+
+        let ao_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("AO Texture (Half Resolution)"),
+            size: wgpu::Extent3d {
+                width: ao_width,
+                height: ao_height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &ao_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &ao_values,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(ao_width),
+                rows_per_image: Some(ao_height),
+            },
+            wgpu::Extent3d {
+                width: ao_width,
+                height: ao_height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let ao_view = ao_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
         // Create XTT albedo texture
         let (xtt_albedo_texture, xtt_albedo_view) =
             self.create_xtt_albedo_texture(device, queue, &albedo);
@@ -2272,6 +2389,17 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
+                    // binding 6: AO texture (R8Unorm)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -2302,6 +2430,10 @@ impl TerrainViewer {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&ao_view),
                 },
             ],
         });
