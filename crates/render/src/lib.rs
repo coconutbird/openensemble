@@ -5,10 +5,6 @@
 
 pub mod terrain;
 
-use core::app::{
-    Application, FrameContext, GamepadButton, GamepadState, Input, KeyCode, WindowConfig,
-};
-use core::prelude::*;
 use egui_wgpu::ScreenDescriptor;
 use gilrs::{Axis, Button, Gilrs};
 use std::collections::HashSet;
@@ -20,6 +16,10 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode as WinitKeyCode, PhysicalKey};
 use winit::window::{Window, WindowAttributes, WindowId};
+use xcore::app::{
+    Application, FrameContext, GamepadButton, GamepadState, Input, KeyCode, WindowConfig,
+};
+use xcore::prelude::*;
 
 // Re-export wgpu for applications that need direct GPU access
 pub use wgpu;

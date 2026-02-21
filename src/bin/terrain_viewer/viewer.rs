@@ -1,32 +1,11 @@
-//! Terrain Viewer for Halo Wars XTD files.
-//!
-//! Loads and renders terrain from XTD files using wgpu.
-//! Supports XTT texturing for albedo atlas rendering.
-//! WASD + mouse to fly around the terrain.
-//!
-//! ## Missing Rendering Features (TODO)
-//!
-//! Texture quality improvements needed:
-//! - [x] Mipmaps - generate mipmaps for splat textures (fixes distance aliasing)
-//! - [ ] Normal maps - load `_nm.ddx` files alongside `_df.ddx` for surface detail
-//! - [ ] Specular maps - add specular lighting (Blinn-Phong or PBR)
-//!
-//! Terrain features:
-//! - [ ] Alpha chunk (0xDDDD) - terrain holes/transparency, same compression as AO
-//! - [ ] Lighting chunk (0xBBBB) - baked lightmap (empty on blood_gulch)
-//! - [ ] Decals - road marks, scorch marks from XTT linker decal data
-//!
-//! Visual effects:
-//! - [ ] Fog - atmospheric depth
-//! - [ ] Environment reflections - gUniqueEnvMaskTexture
-//! - [ ] Dynamic shadows
+//! TerrainViewer struct and implementation.
+
+use std::path::PathBuf;
 
 use anyhow::Result;
-use core::app::{Application, FrameContext, GamepadButton, Input, KeyCode, WindowConfig};
-use core::prelude::*;
 use data::ddx::DdxTexture;
 use data::era::EraArchive;
-use data::xtd::{TerrainVertices, TessellatedMesh, TessellationData, XtdReader};
+use data::xtd::{TessellationData, XtdReader};
 use data::xtt::{ActiveTextureInfo, XttReader};
 use glam::Vec3;
 use render::terrain::{
@@ -34,301 +13,44 @@ use render::terrain::{
     generate_mipmaps, mip_level_count,
 };
 use render::{Application3D, RenderContext, wgpu};
-use std::path::PathBuf;
+use xcore::app::{Application, FrameContext, Input, KeyCode};
+use xcore::prelude::*;
 
-/// Extension trait for Camera to add input handling.
-trait CameraInput {
-    fn update(&mut self, input: &Input, dt: f32);
-}
-
-impl CameraInput for Camera {
-    fn update(&mut self, input: &Input, dt: f32) {
-        // Speed modifier: LShift on keyboard, or left trigger on gamepad
-        let speed = if input.is_key_held(KeyCode::LShift) || input.gamepad.left_trigger > 0.5 {
-            self.speed * 3.0
-        } else {
-            self.speed
-        };
-
-        // Keyboard movement
-        if input.is_key_held(KeyCode::W) {
-            self.move_forward(speed * dt);
-        }
-        if input.is_key_held(KeyCode::S) {
-            self.move_forward(-speed * dt);
-        }
-        if input.is_key_held(KeyCode::A) {
-            self.move_right(-speed * dt);
-        }
-        if input.is_key_held(KeyCode::D) {
-            self.move_right(speed * dt);
-        }
-        if input.is_key_held(KeyCode::Space) {
-            self.move_up(speed * dt);
-        }
-        if input.is_key_held(KeyCode::LCtrl) {
-            self.move_up(-speed * dt);
-        }
-
-        // Keyboard look (arrow keys)
-        if input.is_key_held(KeyCode::Left) {
-            self.yaw -= 1.5 * dt;
-        }
-        if input.is_key_held(KeyCode::Right) {
-            self.yaw += 1.5 * dt;
-        }
-        if input.is_key_held(KeyCode::Up) {
-            self.pitch = (self.pitch + 1.0 * dt).clamp(-1.5, 1.5);
-        }
-        if input.is_key_held(KeyCode::Down) {
-            self.pitch = (self.pitch - 1.0 * dt).clamp(-1.5, 1.5);
-        }
-
-        // Gamepad controls (Xbox controller)
-        if input.gamepad.connected {
-            // Left stick: movement (forward/back, strafe left/right)
-            let move_x = input.gamepad.left_stick_x;
-            let move_y = input.gamepad.left_stick_y; // Up on stick = forward
-
-            if move_y.abs() > 0.0 {
-                self.move_forward(move_y * speed * dt);
-            }
-            if move_x.abs() > 0.0 {
-                self.move_right(move_x * speed * dt);
-            }
-
-            // Right stick: look (yaw/pitch)
-            let look_x = input.gamepad.right_stick_x;
-            let look_y = input.gamepad.right_stick_y;
-            let look_sensitivity = 2.0;
-
-            if look_x.abs() > 0.0 {
-                self.yaw += look_x * look_sensitivity * dt;
-            }
-            if look_y.abs() > 0.0 {
-                // Up on stick = look up (increase pitch)
-                self.pitch = (self.pitch + look_y * look_sensitivity * dt).clamp(-1.5, 1.5);
-            }
-
-            // Bumpers: up/down movement
-            if input.gamepad.is_button_held(GamepadButton::RightBumper) {
-                self.move_up(speed * dt);
-            }
-            if input.gamepad.is_button_held(GamepadButton::LeftBumper) {
-                self.move_up(-speed * dt);
-            }
-        }
-    }
-}
-
-/// Terrain mesh data for rendering.
-struct TerrainMesh {
-    positions: Vec<[f32; 3]>,
-    normals: Vec<[f32; 3]>,
-    uvs: Vec<[f32; 2]>,
-    indices: Vec<u32>,
-    world_min: [f32; 3],
-    world_max: [f32; 3],
-    tile_scale: f32,
-}
-
-impl TerrainMesh {
-    fn from_xtd(
-        vertices: &TerrainVertices,
-        world_min: [f32; 3],
-        world_max: [f32; 3],
-        tile_scale: f32,
-    ) -> Self {
-        let indices = vertices.generate_indices();
-        Self {
-            positions: vertices.positions.clone(),
-            normals: vertices.normals.clone(),
-            uvs: vertices.uvs.clone(),
-            indices,
-            world_min,
-            world_max,
-            tile_scale,
-        }
-    }
-
-    fn from_tessellated(
-        tessellated: TessellatedMesh,
-        world_min: [f32; 3],
-        world_max: [f32; 3],
-        tile_scale: f32,
-    ) -> Self {
-        Self {
-            positions: tessellated.positions,
-            normals: tessellated.normals,
-            uvs: tessellated.uvs,
-            indices: tessellated.indices,
-            world_min,
-            world_max,
-            tile_scale,
-        }
-    }
-
-    fn center(&self) -> Vec3 {
-        Vec3::new(
-            (self.world_min[0] + self.world_max[0]) / 2.0,
-            (self.world_min[1] + self.world_max[1]) / 2.0,
-            (self.world_min[2] + self.world_max[2]) / 2.0,
-        )
-    }
-
-    fn size(&self) -> Vec3 {
-        Vec3::new(
-            self.world_max[0] - self.world_min[0],
-            self.world_max[1] - self.world_min[1],
-            self.world_max[2] - self.world_min[2],
-        )
-    }
-}
-
-/// GPU resources for terrain rendering
-struct GpuResources {
-    pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    index_count: u32,
-    camera_buffer: wgpu::Buffer,
-    camera_bind_group: wgpu::BindGroup,
-    texture_bind_group: wgpu::BindGroup,
-    depth_texture: wgpu::Texture,
-    depth_view: wgpu::TextureView,
-    params_buffer: wgpu::Buffer,
-    terrain_size: [f32; 2],
-    tile_scale: f32,
-    /// GPU tessellation mode - use instanced patch rendering
-    use_gpu_tessellation: bool,
-    /// Number of patch instances to draw (64x64 = 4096)
-    num_patch_instances: u32,
-}
-
-/// Albedo atlas data from XTT file.
-struct AlbedoData {
-    width: u32,
-    height: u32,
-    pixels: Vec<u8>,
-}
-
-/// A single terrain texture loaded from ERA.
-#[allow(dead_code)]
-struct TerrainTexture {
-    /// Texture name (e.g., "grass_01")
-    name: String,
-    /// Width in pixels.
-    width: u32,
-    /// Height in pixels.
-    height: u32,
-    /// RGBA pixel data.
-    pixels: Vec<u8>,
-    /// U scale from XTT.
-    u_scale: i32,
-    /// V scale from XTT.
-    v_scale: i32,
-}
-
-/// A normal map texture loaded from ERA (_nm.ddx files).
-#[allow(dead_code)]
-struct NormalMapTexture {
-    /// Texture name (e.g., "grass_01")
-    name: String,
-    /// Width in pixels.
-    width: u32,
-    /// Height in pixels.
-    height: u32,
-    /// RGBA pixel data (normal map encoded as RGB, A may be height/unused).
-    pixels: Vec<u8>,
-}
-
-/// Splat data for a single terrain chunk.
-#[derive(Clone)]
-#[allow(dead_code)]
-struct ChunkSplatData {
-    /// Grid X position (0-15 for 16x16 grid).
-    grid_x: i32,
-    /// Grid Z position (0-15 for 16x16 grid).
-    grid_z: i32,
-    /// Indices into terrain_textures for this chunk's layers.
-    layer_texture_ids: Vec<i32>,
-    /// Alpha maps for layers 1..n (layer 0 has no alpha, it's the base).
-    /// Each is 64x64 = 4096 bytes.
-    alpha_maps: Vec<Vec<u8>>,
-}
-
-/// Raw XTD vertex data for GPU tessellation (before decoding to world positions).
-struct RawXtdData {
-    /// Packed position data (R10G10B10A2 format).
-    packed_positions: Vec<u32>,
-    /// Packed normal data.
-    packed_normals: Vec<u32>,
-    /// Number of vertices per axis (e.g., 1025).
-    num_verts_per_axis: u32,
-    /// Atlas mid point for decoding.
-    mid: [f32; 3],
-    /// Atlas range for decoding.
-    range: [f32; 3],
-    /// Tile scale for world position.
-    tile_scale: f32,
-    /// Ambient occlusion data (R8 values, half resolution).
-    /// Based on IDA RE: stored at 1024×512 for a 1024×1024 terrain (full width, half height).
-    ao_data: Option<AoTextureData>,
-    /// Alpha/transparency data (R8 values, half resolution).
-    /// Same compression as AO. Used for terrain holes (water edges, cliffs).
-    /// Sampled via gVertSampler_alpha_Texture in the game's vertex shader.
-    alpha_data: Option<AlphaTextureData>,
-}
-
-/// Half-resolution AO texture data as decoded from the game.
-/// Dimensions: full width × half height (e.g., 1024×512 for 1024×1024 terrain).
-/// The game samples this with bilinear filtering via gVertSampler_ao_Texture.
-#[derive(Clone)]
-struct AoTextureData {
-    values: Vec<u8>,
-    width: u32,
-    height: u32,
-}
-
-/// Half-resolution Alpha texture data as decoded from the game.
-/// Dimensions: full width × half height (same as AO).
-/// Used for terrain transparency (holes, cliff edges).
-/// 255 = fully opaque, 0 = fully transparent/hole.
-#[derive(Clone)]
-struct AlphaTextureData {
-    values: Vec<u8>,
-    width: u32,
-    height: u32,
-}
+use crate::camera::CameraInput;
+use crate::gpu::create_depth_texture;
+use crate::types::{
+    AlbedoData, AlphaTextureData, AoTextureData, ChunkSplatData, GpuResources, NormalMapTexture,
+    RawXtdData, TerrainMesh, TerrainTexture,
+};
 
 /// The terrain viewer application.
-struct TerrainViewer {
-    xtd_path: Option<PathBuf>,
-    terrain: Option<TerrainMesh>,
-    albedo: Option<AlbedoData>,
-    terrain_textures: Vec<TerrainTexture>,
-    normal_textures: Vec<NormalMapTexture>,
-    chunk_splat_data: Vec<ChunkSplatData>,
-    camera: Camera,
-    show_info: bool,
-    wireframe: bool,
-    load_error: Option<String>,
-    gpu: Option<GpuResources>,
-    surface_format: wgpu::TextureFormat,
+pub struct TerrainViewer {
+    pub xtd_path: Option<PathBuf>,
+    pub terrain: Option<TerrainMesh>,
+    pub albedo: Option<AlbedoData>,
+    pub terrain_textures: Vec<TerrainTexture>,
+    pub normal_textures: Vec<NormalMapTexture>,
+    pub chunk_splat_data: Vec<ChunkSplatData>,
+    pub camera: Camera,
+    pub show_info: bool,
+    pub wireframe: bool,
+    pub load_error: Option<String>,
+    pub gpu: Option<GpuResources>,
+    pub surface_format: wgpu::TextureFormat,
     /// Debug mode: 0=normal, 1=alpha values, 2=in-chunk UV, 3=raw atlas, 4=terrain UV
-    debug_mode: u32,
+    pub debug_mode: u32,
     /// Tessellation mode: None, CPU, or GPU.
-    tessellation_mode: TessellationMode,
+    pub tessellation_mode: TessellationMode,
     /// Tessellation data from XTD file.
-    tessellation_data: Option<TessellationData>,
+    pub tessellation_data: Option<TessellationData>,
     /// Raw XTD data for GPU tessellation.
-    raw_xtd_data: Option<RawXtdData>,
-    /// Normal map strength (gBumpPower in game, scales XY components)
-    bump_power: f32,
+    pub raw_xtd_data: Option<RawXtdData>,
+    /// Normal map strength (gBumpPower in game, scales XY components).
+    pub bump_power: f32,
 }
 
 impl TerrainViewer {
-    fn new(xtd_path: Option<PathBuf>) -> Self {
+    pub fn new(xtd_path: Option<PathBuf>) -> Self {
         Self {
             xtd_path,
             terrain: None,
@@ -1026,7 +748,6 @@ impl TerrainViewer {
         }
     }
 }
-
 impl Application for TerrainViewer {
     fn init(&mut self) {
         log::info!("Terrain Viewer initialized");
@@ -1263,29 +984,6 @@ impl Application for TerrainViewer {
         // Sky blue clear color
         Color::new(0.4, 0.6, 0.9, 1.0)
     }
-}
-
-fn create_depth_texture(
-    device: &wgpu::Device,
-    width: u32,
-    height: u32,
-) -> (wgpu::Texture, wgpu::TextureView) {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("Depth Texture"),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Depth32Float,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        view_formats: &[],
-    });
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    (texture, view)
 }
 
 impl Application3D for TerrainViewer {
@@ -3365,39 +3063,4 @@ impl TerrainViewer {
             usage: wgpu::BufferUsages::STORAGE,
         })
     }
-}
-
-fn main() -> Result<()> {
-    // Load .env file if present (ignore errors if not found)
-    let _ = dotenvy::dotenv();
-
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    log::info!("Terrain Viewer starting...");
-
-    // Parse args for XTD path
-    let args: Vec<String> = std::env::args().collect();
-    let xtd_path = if args.len() > 1 {
-        Some(PathBuf::from(&args[1]))
-    } else {
-        // Default to test file
-        let default_path = PathBuf::from(
-            "../ensemble-rs/test_extract/scenario/skirmish/design/blood_gulch/blood_gulch.xtd",
-        );
-        if default_path.exists() {
-            Some(default_path)
-        } else {
-            None
-        }
-    };
-
-    if let Some(path) = &xtd_path {
-        log::info!("XTD file: {}", path.display());
-    } else {
-        log::warn!("No XTD file specified. Usage: terrain_viewer <path/to/file.xtd>");
-    }
-
-    let config = WindowConfig::new("Terrain Viewer - Halo Wars XTD", 1280, 720);
-    render::run_3d(config, TerrainViewer::new(xtd_path))?;
-
-    Ok(())
 }

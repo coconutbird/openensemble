@@ -2,19 +2,22 @@
 //!
 //! This module provides reusable components for rendering terrain from XTD/XTT files:
 //! - Camera: Fly camera with WASD + mouse controls
-//! - Mesh: Terrain mesh generation and data structures  
+//! - Compositing: GPU-based texture compositing for pre-baked chunk textures
+//! - Mesh: Terrain mesh generation and data structures
 //! - Texture: Mipmap generation and texture utilities
 //! - Shaders: WGSL shader code for terrain rendering
 //! - Uniforms: GPU uniform structs (TerrainParams, GpuTessParams)
 
 mod camera;
+mod compositing;
 mod mesh;
 mod shaders;
 mod texture;
 mod uniforms;
 
 pub use camera::Camera;
+pub use compositing::{CompositeParams, CompositingConfig, CompositorResources};
 pub use mesh::{TerrainMesh, TessellationMode};
-pub use shaders::{GPU_TESS_SHADER, TERRAIN_SHADER};
+pub use shaders::{COMPOSITE_SHADER, GPU_TESS_SHADER, TERRAIN_SHADER};
 pub use texture::{generate_mipmaps, mip_dimensions, mip_level_count};
 pub use uniforms::{CameraUniform, GpuTessParams, TerrainParams};

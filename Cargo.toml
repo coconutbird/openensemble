@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/core",
+    "crates/xcore",
     "crates/render",
     "crates/sim",
     "crates/net",
@@ -16,7 +16,7 @@ repository = "https://github.com/coconutbird/openensemble"
 
 [workspace.dependencies]
 # Internal crates
-core = { path = "crates/core" }
+xcore = { path = "crates/xcore" }
 render = { path = "crates/render" }
 sim = { path = "crates/sim" }
 net = { path = "crates/net" }
@@ -64,7 +64,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-core = { workspace = true }
+xcore = { workspace = true }
 render = { workspace = true }
 sim = { workspace = true }
 net = { workspace = true }
@@ -88,7 +88,7 @@ path = "src/bin/headless.rs"
 
 [[bin]]
 name = "terrain_viewer"
-path = "src/bin/terrain_viewer.rs"
+path = "src/bin/terrain_viewer/main.rs"
 
 [dev-dependencies]
 cargo-husky = { version = "1.5.0", features = ["precommit-hook", "user-hooks"] }

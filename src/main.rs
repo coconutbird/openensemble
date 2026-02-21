@@ -3,7 +3,7 @@
 //! A Rust implementation of the Phoenix Engine from Halo Wars (2008).
 
 use anyhow::Result;
-use core::prelude::*;
+use xcore::prelude::*;
 
 /// The main game application
 struct Game {
