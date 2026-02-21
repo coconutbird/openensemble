@@ -299,7 +299,7 @@ struct TerrainParams {
     chunk_count: [f32; 2],   // offset 8, size 8
     texture_tile_scale: f32, // offset 16, size 4
     debug_mode: f32, // offset 20, size 4 (0=normal, 1=alpha, 2=in-chunk UV, 3=raw atlas, 4=terrain UV)
-    _padding2: f32,  // offset 24, size 4
+    bump_power: f32, // offset 24, size 4 - scales normal map XY (game default = 1.0)
     _padding3: f32,  // offset 28, size 4
                      // Total: 32 bytes
 }
@@ -469,6 +469,8 @@ struct TerrainViewer {
     tessellation_data: Option<TessellationData>,
     /// Raw XTD data for GPU tessellation.
     raw_xtd_data: Option<RawXtdData>,
+    /// Normal map strength (gBumpPower in game, scales XY components)
+    bump_power: f32,
 }
 
 impl TerrainViewer {
@@ -490,6 +492,7 @@ impl TerrainViewer {
             tessellation_mode: TessellationMode::Gpu, // Default to GPU tessellation (fast)
             tessellation_data: None,
             raw_xtd_data: None,
+            bump_power: 1.0, // Default normal map strength (game default)
         }
     }
 
@@ -1237,6 +1240,16 @@ impl Application for TerrainViewer {
             log::info!("Debug mode: 10 (Direct texture array test - left=layer0, right=layer1)");
         }
 
+        // Bump power (normal map strength) adjustment: B to decrease, N to increase
+        if input.is_key_pressed(KeyCode::B) {
+            self.bump_power = (self.bump_power - 0.25).max(0.0);
+            log::info!("Bump power: {:.2}", self.bump_power);
+        }
+        if input.is_key_pressed(KeyCode::N) {
+            self.bump_power = (self.bump_power + 0.25).min(4.0);
+            log::info!("Bump power: {:.2}", self.bump_power);
+        }
+
         // Toggle tessellation mode (T key) - toggles between GPU and None
         // (CPU mode is skipped because it takes ~30 seconds)
         if input.is_key_pressed(KeyCode::T) {
@@ -1427,7 +1440,7 @@ struct TerrainParams {
     chunk_count: vec2<f32>,       // offset 8: Number of chunks (16, 16)
     texture_tile_scale: f32,      // offset 16: How many times textures tile
     debug_mode: f32,              // offset 20: Debug visualization mode
-    _pad2: f32,                   // offset 24: padding
+    bump_power: f32,              // offset 24: Normal map XY scale (gBumpPower)
     _pad3: f32,                   // offset 28: padding
 };
 @group(1) @binding(4)
@@ -1661,7 +1674,7 @@ struct TerrainParams {
     chunk_count: vec2<f32>,
     texture_tile_scale: f32,
     debug_mode: f32,
-    _pad2: f32,
+    bump_power: f32,
     _pad3: f32,
 };
 @group(1) @binding(5)
@@ -1883,6 +1896,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Blend normal maps from individual textures for surface detail
+    // Use game's unpackDXNNormalScaled approach: scale XY by bump_power, recalc Z
     var tangent_normal = textureSample(t_normal_array, s_terrain, uv0, layer0).rgb * 2.0 - 1.0;
     if (layer1 > 0u && alphas.r > 0.0) {
         let layer1_normal = textureSample(t_normal_array, s_terrain, uv1, layer1).rgb * 2.0 - 1.0;
@@ -1897,7 +1911,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         tangent_normal = mix(tangent_normal, layer3_normal, alphas.b);
     }
 
-    // Normalize the blended tangent-space normal
+    // Apply bump power scaling (matches game's unpackDXNNormalScaled)
+    // Scale XY components, then recalculate Z from scaled XY
+    tangent_normal.x = tangent_normal.x * params.bump_power;
+    tangent_normal.y = tangent_normal.y * params.bump_power;
+    tangent_normal.z = sqrt(max(0.0, 1.0 - tangent_normal.x * tangent_normal.x - tangent_normal.y * tangent_normal.y));
     tangent_normal = normalize(tangent_normal);
 
     // Build TBN matrix (Tangent, Bitangent, Normal)
@@ -2191,13 +2209,13 @@ impl Application3D for TerrainViewer {
             bytemuck::cast_slice(&view_proj.to_cols_array()),
         );
 
-        // Update terrain params (for debug mode changes)
+        // Update terrain params (for debug mode and bump power changes)
         let params = TerrainParams {
             terrain_size: gpu.terrain_size,
             chunk_count: [16.0, 16.0],
             texture_tile_scale: gpu.tile_scale,
             debug_mode: self.debug_mode as f32,
-            _padding2: 0.0,
+            bump_power: self.bump_power,
             _padding3: 0.0,
         };
         ctx.queue
@@ -2345,7 +2363,7 @@ impl TerrainViewer {
             chunk_count: [16.0, 16.0],
             texture_tile_scale: tile_scale,
             debug_mode: self.debug_mode as f32,
-            _padding2: 0.0,
+            bump_power: self.bump_power,
             _padding3: 0.0,
         };
 
@@ -2965,7 +2983,7 @@ impl TerrainViewer {
             chunk_count: [16.0, 16.0],
             texture_tile_scale: 32.0,
             debug_mode: self.debug_mode as f32,
-            _padding2: 0.0,
+            bump_power: self.bump_power,
             _padding3: 0.0,
         };
 
