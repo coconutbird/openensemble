@@ -1480,8 +1480,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let chunk_uv = in.uv * params.chunk_count;
     let chunk_x = u32(clamp(floor(chunk_uv.x), 0.0, params.chunk_count.x - 1.0));
     let chunk_y = u32(clamp(floor(chunk_uv.y), 0.0, params.chunk_count.y - 1.0));
-    // Z-major order: index = gridZ * numChunks + gridX (matches file storage order)
-    let chunk_idx = chunk_y * u32(params.chunk_count.x) + chunk_x;
+    // X-major order: index = gridX * numXChunks + gridZ (game's indexing formula)
+    let chunk_idx = chunk_x * u32(params.chunk_count.y) + chunk_y;
 
     // UV within the chunk (0-1) for alpha sampling
     let in_chunk_uv = fract(chunk_uv);
@@ -1814,8 +1814,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let chunk_uv = in.uv * chunk_count;
     let chunk_x = u32(clamp(floor(chunk_uv.x), 0.0, chunk_count.x - 1.0));
     let chunk_y = u32(clamp(floor(chunk_uv.y), 0.0, chunk_count.y - 1.0));
-    // Z-major order: index = gridZ * numChunks + gridX (matches file storage order)
-    let chunk_idx = chunk_y * u32(chunk_count.x) + chunk_x;
+    // X-major order: index = gridX * numXChunks + gridZ (game's indexing formula)
+    let chunk_idx = chunk_x * u32(chunk_count.y) + chunk_y;
 
     // UV within the chunk (0-1) for alpha sampling
     let in_chunk_uv = fract(chunk_uv);
@@ -3652,6 +3652,9 @@ impl TerrainViewer {
                 }
             }
 
+            // The alpha data in the file is stored inverted, so we need to mirror horizontally
+            // then rotate 90° CCW to match the terrain's coordinate system
+
             // Step 1: Mirror horizontally (flip X)
             let mut mirrored_atlas = vec![0u8; (ATLAS_SIZE * ATLAS_SIZE * 4) as usize];
             for y in 0..ATLAS_SIZE {
@@ -4043,8 +4046,8 @@ impl TerrainViewer {
         let mut layer_data = vec![0u32; 256 * 8];
 
         for chunk in &self.chunk_splat_data {
-            // Z-major order: index = gridZ * numChunks + gridX (matches file storage order)
-            let chunk_idx = (chunk.grid_z * 16 + chunk.grid_x) as usize;
+            // X-major order: index = gridX * numXChunks + gridZ (game's indexing formula)
+            let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
             let base = chunk_idx * 8;
 
             for (i, &layer_id) in chunk.layer_texture_ids.iter().enumerate().take(8) {
