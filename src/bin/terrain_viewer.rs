@@ -1787,8 +1787,14 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let verts_per_patch_f = f32(num_verts - 1u) / f32(num_patches_x);
 
     // Global UV across entire terrain [0, 1]
-    let global_u = (f32(patch_x) + in.local_uv.x) / f32(num_patches_x);
-    let global_v = (f32(patch_z) + in.local_uv.y) / f32(num_patches_z);
+    // Use round() to snap UVs to exact grid values and avoid floating point precision issues at patch boundaries
+    // This ensures vertices at patch edges get identical UV values from both adjacent patches
+    let raw_u = (f32(patch_x) + in.local_uv.x) / f32(num_patches_x);
+    let raw_v = (f32(patch_z) + in.local_uv.y) / f32(num_patches_z);
+    // Snap to nearest 1/1023 (for 1024 vertices = 1023 intervals)
+    let uv_steps = f32(num_verts - 1u);
+    let global_u = round(raw_u * uv_steps) / uv_steps;
+    let global_v = round(raw_v * uv_steps) / uv_steps;
 
     // Convert UV to texture coordinate (pixel coordinate)
     let tex_x = u32(global_u * f32(num_verts - 1u));
@@ -1829,18 +1835,33 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // Compute UV from world position to ensure continuity across patch boundaries
+    // world_pos is interpolated smoothly, so UV derived from it will be continuous
+    let num_verts = u32(tess_params.terrain_info.x);
+    let tile_scale = tess_params.terrain_info.y;
+    let terrain_extent = f32(num_verts - 1u) * tile_scale;
+    let uv_from_world = vec2<f32>(
+        in.world_pos.x / terrain_extent,
+        in.world_pos.z / terrain_extent
+    );
+    // Use world-derived UV instead of interpolated vertex UV
+    let sample_uv = uv_from_world;
+
     // Sample alpha texture for terrain holes/transparency
-    let alpha = textureSample(t_alpha, s_terrain, in.uv).r;
+    let alpha = textureSample(t_alpha, s_terrain, sample_uv).r;
     if (alpha < 0.5) {
         discard;
     }
 
     let light_dir = normalize(vec3<f32>(0.5, 1.0, 0.3));
-    let vertex_normal = normalize(in.normal);
+
+    // Base vertex normal for TBN matrix - terrain is roughly horizontal
+    // Actual surface detail comes from normal maps sampled below
+    let vertex_normal = normalize(vec3<f32>(0.0, 1.0, 0.0));
 
     // Determine which chunk this pixel belongs to (0-15 in each axis)
     let chunk_count = vec2<f32>(params.chunk_count.x, params.chunk_count.y);
-    let chunk_uv = in.uv * chunk_count;
+    let chunk_uv = sample_uv * chunk_count;
     let chunk_x = u32(clamp(floor(chunk_uv.x), 0.0, chunk_count.x - 1.0));
     let chunk_y = u32(clamp(floor(chunk_uv.y), 0.0, chunk_count.y - 1.0));
     // The alpha atlas has mirror+rotate transform applied, which transposes chunk positions.
@@ -1867,8 +1888,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Calculate per-layer tiled UVs using each texture's scale factors
     // The game multiplies UVs by u_scale/v_scale to control tiling density
-    // Base UV: in.uv * chunk_count gives 0-16 range (one tile per chunk at scale=1)
-    let base_uv = in.uv * chunk_count;
+    // Base UV: sample_uv * chunk_count gives 0-16 range (one tile per chunk at scale=1)
+    let base_uv = sample_uv * chunk_count;
     let uv0 = base_uv * texture_scales[layer0];
     let uv1 = base_uv * texture_scales[layer1];
     let uv2 = base_uv * texture_scales[layer2];
@@ -1878,43 +1899,46 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // NOTE: The game uses a GPU compute shader (gpuTerrainComposite.bin) to composite
     // textures at runtime into "unique" per-chunk textures. Our approach is similar but
     // done per-pixel in the fragment shader.
-    var color = textureSample(t_terrain_array, s_terrain, uv0, layer0).rgb;
+    //
+    // Restored: normal splatting path (not early return)
+    var color = textureSampleLevel(t_terrain_array, s_terrain, uv0, layer0, 0.0).rgb;
 
     // Blend layers 1-3 using alpha values
     // IMPORTANT: Only blend if layer ID is non-zero (ID=0 for layers 1+ means padding/unused)
     if (layer1 > 0u && alphas.r > 0.0) {
-        let layer1_color = textureSample(t_terrain_array, s_terrain, uv1, layer1).rgb;
+        let layer1_color = textureSampleLevel(t_terrain_array, s_terrain, uv1, layer1, 0.0).rgb;
         color = mix(color, layer1_color, alphas.r);
     }
     if (layer2 > 0u && alphas.g > 0.0) {
-        let layer2_color = textureSample(t_terrain_array, s_terrain, uv2, layer2).rgb;
+        let layer2_color = textureSampleLevel(t_terrain_array, s_terrain, uv2, layer2, 0.0).rgb;
         color = mix(color, layer2_color, alphas.g);
     }
     if (layer3 > 0u && alphas.b > 0.0) {
-        let layer3_color = textureSample(t_terrain_array, s_terrain, uv3, layer3).rgb;
+        let layer3_color = textureSampleLevel(t_terrain_array, s_terrain, uv3, layer3, 0.0).rgb;
         color = mix(color, layer3_color, alphas.b);
     }
 
     // Blend normal maps from individual textures for surface detail
     // BC5/DXN format only stores X and Y components - Z must be reconstructed!
     // Sample .rg only (B channel is 0/uninitialized from BC5 decode)
+    // Use explicit mip 0 to avoid seams at patch boundaries
 
     // Helper: unpack BC5 normal - sample RG, convert to -1..+1, reconstruct Z
-    let nm0 = textureSample(t_normal_array, s_terrain, uv0, layer0).rg * 2.0 - 1.0;
+    let nm0 = textureSampleLevel(t_normal_array, s_terrain, uv0, layer0, 0.0).rg * 2.0 - 1.0;
     var tangent_normal = vec3<f32>(nm0.x, nm0.y, sqrt(max(0.0, 1.0 - nm0.x * nm0.x - nm0.y * nm0.y)));
 
     if (layer1 > 0u && alphas.r > 0.0) {
-        let nm1 = textureSample(t_normal_array, s_terrain, uv1, layer1).rg * 2.0 - 1.0;
+        let nm1 = textureSampleLevel(t_normal_array, s_terrain, uv1, layer1, 0.0).rg * 2.0 - 1.0;
         let layer1_normal = vec3<f32>(nm1.x, nm1.y, sqrt(max(0.0, 1.0 - nm1.x * nm1.x - nm1.y * nm1.y)));
         tangent_normal = mix(tangent_normal, layer1_normal, alphas.r);
     }
     if (layer2 > 0u && alphas.g > 0.0) {
-        let nm2 = textureSample(t_normal_array, s_terrain, uv2, layer2).rg * 2.0 - 1.0;
+        let nm2 = textureSampleLevel(t_normal_array, s_terrain, uv2, layer2, 0.0).rg * 2.0 - 1.0;
         let layer2_normal = vec3<f32>(nm2.x, nm2.y, sqrt(max(0.0, 1.0 - nm2.x * nm2.x - nm2.y * nm2.y)));
         tangent_normal = mix(tangent_normal, layer2_normal, alphas.g);
     }
     if (layer3 > 0u && alphas.b > 0.0) {
-        let nm3 = textureSample(t_normal_array, s_terrain, uv3, layer3).rg * 2.0 - 1.0;
+        let nm3 = textureSampleLevel(t_normal_array, s_terrain, uv3, layer3, 0.0).rg * 2.0 - 1.0;
         let layer3_normal = vec3<f32>(nm3.x, nm3.y, sqrt(max(0.0, 1.0 - nm3.x * nm3.x - nm3.y * nm3.y)));
         tangent_normal = mix(tangent_normal, layer3_normal, alphas.b);
     }
@@ -1938,11 +1962,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let tbn = mat3x3<f32>(tangent, bitangent, vertex_normal);
     let perturbed_normal = normalize(tbn * tangent_normal);
 
-    // Use perturbed normal for diffuse lighting
     let diff = max(dot(perturbed_normal, light_dir), 0.0);
 
-    // Sample AO texture
-    let ao = textureSample(t_ao, s_terrain, in.uv).r;
+    let ao = textureSample(t_ao, s_terrain, sample_uv).r;
     let ao_intensity = 0.8;
     let ao_factor = mix(1.0, ao, ao_intensity);
 
@@ -1951,11 +1973,32 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let lighting = ambient + diffuse;
 
     // Debug modes
+    // Mode 11: Show sample UV as color gradient
+    if (params.debug_mode > 10.5 && params.debug_mode < 11.5) {
+        return vec4<f32>(sample_uv.x, sample_uv.y, 0.0, 1.0);
+    }
+    // Mode 10: SOLID COLOR - no texture sampling at all
+    // If lines appear here, they are GEOMETRIC GAPS between patches
+    if (params.debug_mode > 9.5 && params.debug_mode < 10.5) {
+        return vec4<f32>(0.5, 0.7, 0.3, 1.0);  // Solid green - no sampling
+    }
+    // Mode 8: Show AO texture directly (to test if AO itself has seams)
     if (params.debug_mode > 7.5 && params.debug_mode < 8.5) {
+        // Return AO as grayscale - if seams appear here, the AO sampling is the culprit
         return vec4<f32>(ao, ao, ao, 1.0);
     }
+    // Debug mode 9: XTT albedo (original pre-composited from game export)
+    // DEBUG: Use constant lighting to test if seams are from normal maps or positions
     if (params.debug_mode > 8.5 && params.debug_mode < 9.5) {
-        return vec4<f32>(alpha, alpha, alpha, 1.0);
+        let xtt_color = textureSample(t_xtt_albedo, s_terrain, sample_uv);
+        let constant_lighting = 0.7;  // Constant brightness - no normals used at all
+        return vec4<f32>(xtt_color.rgb * constant_lighting, 1.0);
+    }
+    // Debug mode 7: XTT albedo with FLAT lighting (no normals)
+    // Use this to check if lines are caused by normal discontinuities
+    if (params.debug_mode > 6.5 && params.debug_mode < 7.5) {
+        let xtt_color = textureSample(t_xtt_albedo, s_terrain, sample_uv);
+        return vec4<f32>(xtt_color.rgb, 1.0);  // No lighting applied
     }
 
     // Debug mode 1: Show chunk boundaries (red lines at edges)
@@ -3051,10 +3094,10 @@ impl TerrainViewer {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("GPU Tess Texture Bind Group Layout"),
                 entries: &[
-                    // binding 0: tess params uniform
+                    // binding 0: tess params uniform (needed by both VS and FS for normal sampling)
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
@@ -3073,10 +3116,10 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
-                    // binding 2: normal texture (R32Uint)
+                    // binding 2: normal texture (R32Uint) - needed by both VS and FS for normal sampling
                     wgpu::BindGroupLayoutEntry {
                         binding: 2,
-                        visibility: wgpu::ShaderStages::VERTEX,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
                             multisampled: false,
                             view_dimension: wgpu::TextureViewDimension::D2,
