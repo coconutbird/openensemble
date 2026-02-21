@@ -317,11 +317,12 @@ struct RawXtdData {
     /// Tile scale for world position.
     tile_scale: f32,
     /// Ambient occlusion data (R8 values, half resolution).
-    /// Based on IDA RE: stored at 512×1024 for a 1024×1024 terrain.
+    /// Based on IDA RE: stored at 1024×512 for a 1024×1024 terrain (full width, half height).
     ao_data: Option<AoTextureData>,
 }
 
 /// Half-resolution AO texture data as decoded from the game.
+/// Dimensions: full width × half height (e.g., 1024×512 for 1024×1024 terrain).
 /// The game samples this with bilinear filtering via gVertSampler_ao_Texture.
 #[derive(Clone)]
 struct AoTextureData {
@@ -2174,16 +2175,17 @@ impl TerrainViewer {
         let normal_view = normal_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Create AO texture (R8Unorm format, half resolution)
-        // Based on IDA RE: AO is stored at 512×1024 for a 1024×1024 terrain
+        // Based on IDA RE: AO is stored at 1024×512 for a 1024×1024 terrain
+        // (full width, half height)
         // The game samples with bilinear filtering via gVertSampler_ao_Texture
         let (ao_width, ao_height, ao_values) = raw_data.ao_data.as_ref().map_or_else(
             || {
                 log::warn!(
                     "No AO data available, using default fully-lit values at half resolution"
                 );
-                let half_w = num_verts / 2;
-                let half_h = num_verts;
-                (half_w, half_h, vec![255u8; (half_w * half_h) as usize])
+                let w = num_verts; // full width
+                let h = num_verts / 2; // half height
+                (w, h, vec![255u8; (w * h) as usize])
             },
             |ao| {
                 log::info!(
