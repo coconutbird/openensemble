@@ -3,6 +3,23 @@
 //! Loads and renders terrain from XTD files using wgpu.
 //! Supports XTT texturing for albedo atlas rendering.
 //! WASD + mouse to fly around the terrain.
+//!
+//! ## Missing Rendering Features (TODO)
+//!
+//! Texture quality improvements needed:
+//! - [x] Mipmaps - generate mipmaps for splat textures (fixes distance aliasing)
+//! - [ ] Normal maps - load `_nm.ddx` files alongside `_df.ddx` for surface detail
+//! - [ ] Specular maps - add specular lighting (Blinn-Phong or PBR)
+//!
+//! Terrain features:
+//! - [ ] Alpha chunk (0xDDDD) - terrain holes/transparency, same compression as AO
+//! - [ ] Lighting chunk (0xBBBB) - baked lightmap (empty on blood_gulch)
+//! - [ ] Decals - road marks, scorch marks from XTT linker decal data
+//!
+//! Visual effects:
+//! - [ ] Fog - atmospheric depth
+//! - [ ] Environment reflections - gUniqueEnvMaskTexture
+//! - [ ] Dynamic shadows
 
 use anyhow::Result;
 use core::app::{Application, FrameContext, Input, KeyCode, WindowConfig};
@@ -14,6 +31,77 @@ use data::xtt::{ActiveTextureInfo, XttReader};
 use glam::{Mat4, Vec3};
 use render::{Application3D, RenderContext, wgpu};
 use std::path::PathBuf;
+
+/// Generate mipmaps for an RGBA image on CPU.
+/// Returns a vector of mip levels, each containing RGBA pixel data.
+/// Level 0 is the original image, level 1 is half size, etc.
+fn generate_mipmaps(pixels: &[u8], width: u32, height: u32) -> Vec<Vec<u8>> {
+    let mut mips = Vec::new();
+
+    // Level 0 is the original
+    mips.push(pixels.to_vec());
+
+    let mut current_width = width;
+    let mut current_height = height;
+    let mut current_pixels = pixels.to_vec();
+
+    // Generate mip levels until we reach 1x1
+    while current_width > 1 || current_height > 1 {
+        let new_width = (current_width / 2).max(1);
+        let new_height = (current_height / 2).max(1);
+        let mut new_pixels = vec![0u8; (new_width * new_height * 4) as usize];
+
+        // Box filter: average 2x2 blocks
+        for y in 0..new_height {
+            for x in 0..new_width {
+                let src_x = (x * 2).min(current_width - 1);
+                let src_y = (y * 2).min(current_height - 1);
+
+                // Sample up to 4 pixels (handle edge cases)
+                let mut r: u32 = 0;
+                let mut g: u32 = 0;
+                let mut b: u32 = 0;
+                let mut a: u32 = 0;
+                let mut count: u32 = 0;
+
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let sx = (src_x + dx).min(current_width - 1);
+                        let sy = (src_y + dy).min(current_height - 1);
+                        let idx = ((sy * current_width + sx) * 4) as usize;
+                        if idx + 3 < current_pixels.len() {
+                            r += current_pixels[idx] as u32;
+                            g += current_pixels[idx + 1] as u32;
+                            b += current_pixels[idx + 2] as u32;
+                            a += current_pixels[idx + 3] as u32;
+                            count += 1;
+                        }
+                    }
+                }
+
+                if count > 0 {
+                    let dst_idx = ((y * new_width + x) * 4) as usize;
+                    new_pixels[dst_idx] = (r / count) as u8;
+                    new_pixels[dst_idx + 1] = (g / count) as u8;
+                    new_pixels[dst_idx + 2] = (b / count) as u8;
+                    new_pixels[dst_idx + 3] = (a / count) as u8;
+                }
+            }
+        }
+
+        mips.push(new_pixels.clone());
+        current_width = new_width;
+        current_height = new_height;
+        current_pixels = new_pixels;
+    }
+
+    mips
+}
+
+/// Calculate the number of mip levels for a given texture size.
+fn mip_level_count(width: u32, height: u32) -> u32 {
+    ((width.max(height) as f32).log2().floor() as u32) + 1
+}
 
 /// Camera for flying around the terrain.
 struct Camera {
@@ -2575,12 +2663,14 @@ impl TerrainViewer {
             let tex_width = self.terrain_textures[0].width;
             let tex_height = self.terrain_textures[0].height;
             let layer_count = self.terrain_textures.len() as u32;
+            let num_mips = mip_level_count(tex_width, tex_height);
 
             log::info!(
-                "Creating terrain texture array: {}x{} x {} layers",
+                "Creating terrain texture array: {}x{} x {} layers with {} mip levels",
                 tex_width,
                 tex_height,
-                layer_count
+                layer_count,
+                num_mips
             );
 
             let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -2590,7 +2680,7 @@ impl TerrainViewer {
                     height: tex_height,
                     depth_or_array_layers: layer_count,
                 },
-                mip_level_count: 1,
+                mip_level_count: num_mips,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -2598,31 +2688,41 @@ impl TerrainViewer {
                 view_formats: &[],
             });
 
-            // Upload each layer
+            // Upload each layer with mipmaps
             for (i, tex) in self.terrain_textures.iter().enumerate() {
-                queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d {
-                            x: 0,
-                            y: 0,
-                            z: i as u32,
+                // Generate mipmaps for this texture
+                let mips = generate_mipmaps(&tex.pixels, tex_width, tex_height);
+
+                // Upload each mip level
+                let mut mip_width = tex_width;
+                let mut mip_height = tex_height;
+                for (mip_level, mip_data) in mips.iter().enumerate() {
+                    queue.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &texture,
+                            mip_level: mip_level as u32,
+                            origin: wgpu::Origin3d {
+                                x: 0,
+                                y: 0,
+                                z: i as u32,
+                            },
+                            aspect: wgpu::TextureAspect::All,
                         },
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    &tex.pixels,
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(4 * tex_width),
-                        rows_per_image: Some(tex_height),
-                    },
-                    wgpu::Extent3d {
-                        width: tex_width,
-                        height: tex_height,
-                        depth_or_array_layers: 1,
-                    },
-                );
+                        mip_data,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(4 * mip_width),
+                            rows_per_image: Some(mip_height),
+                        },
+                        wgpu::Extent3d {
+                            width: mip_width,
+                            height: mip_height,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                    mip_width = (mip_width / 2).max(1);
+                    mip_height = (mip_height / 2).max(1);
+                }
             }
 
             let view = texture.create_view(&wgpu::TextureViewDescriptor {
