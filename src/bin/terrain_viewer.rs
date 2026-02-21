@@ -407,6 +407,10 @@ struct RawXtdData {
     /// Ambient occlusion data (R8 values, half resolution).
     /// Based on IDA RE: stored at 1024×512 for a 1024×1024 terrain (full width, half height).
     ao_data: Option<AoTextureData>,
+    /// Alpha/transparency data (R8 values, half resolution).
+    /// Same compression as AO. Used for terrain holes (water edges, cliffs).
+    /// Sampled via gVertSampler_alpha_Texture in the game's vertex shader.
+    alpha_data: Option<AlphaTextureData>,
 }
 
 /// Half-resolution AO texture data as decoded from the game.
@@ -414,6 +418,17 @@ struct RawXtdData {
 /// The game samples this with bilinear filtering via gVertSampler_ao_Texture.
 #[derive(Clone)]
 struct AoTextureData {
+    values: Vec<u8>,
+    width: u32,
+    height: u32,
+}
+
+/// Half-resolution Alpha texture data as decoded from the game.
+/// Dimensions: full width × half height (same as AO).
+/// Used for terrain transparency (holes, cliff edges).
+/// 255 = fully opaque, 0 = fully transparent/hole.
+#[derive(Clone)]
+struct AlphaTextureData {
     values: Vec<u8>,
     width: u32,
     height: u32,
@@ -544,6 +559,28 @@ impl TerrainViewer {
                                 }
                             };
 
+                            // Decode Alpha data if available (same compression as AO)
+                            // Used for terrain holes/transparency
+                            let alpha_data = match xtd.decode_alpha() {
+                                Ok(alpha) => {
+                                    log::info!(
+                                        "Decoded Alpha data: {}x{} texture ({} total bytes, half-resolution)",
+                                        alpha.width,
+                                        alpha.height,
+                                        alpha.values.len()
+                                    );
+                                    Some(AlphaTextureData {
+                                        values: alpha.values,
+                                        width: alpha.width as u32,
+                                        height: alpha.height as u32,
+                                    })
+                                }
+                                Err(e) => {
+                                    log::warn!("Failed to decode Alpha data: {}", e);
+                                    None
+                                }
+                            };
+
                             self.raw_xtd_data = Some(RawXtdData {
                                 packed_positions: raw.packed_positions,
                                 packed_normals: raw.packed_normals,
@@ -552,6 +589,7 @@ impl TerrainViewer {
                                 range: raw.range,
                                 tile_scale: raw.tile_scale,
                                 ao_data,
+                                alpha_data,
                             });
                         }
                         Err(e) => {
@@ -1435,6 +1473,11 @@ var<uniform> params: TerrainParams;
 @group(1) @binding(6)
 var t_ao: texture_2d<f32>;
 
+// Alpha texture (R8Unorm - 255=opaque, 0=transparent/hole)
+// Same compression as AO, used for terrain holes (water edges, cliffs)
+@group(1) @binding(7)
+var t_alpha: texture_2d<f32>;
+
 struct VertexInput {
     // Per-vertex: local UV within patch [0, 1]
     @location(0) local_uv: vec2<f32>,
@@ -1546,6 +1589,16 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // Sample alpha texture for terrain holes/transparency
+    // Alpha: 1.0 = fully opaque, 0.0 = fully transparent (hole)
+    let alpha = textureSample(t_alpha, s_terrain, in.uv).r;
+
+    // Discard transparent fragments (terrain holes)
+    // Using 0.5 threshold - values below this are considered holes
+    if (alpha < 0.5) {
+        discard;
+    }
+
     let light_dir = normalize(vec3<f32>(0.5, 1.0, 0.3));
     let normal = normalize(in.normal);
     let diff = max(dot(normal, light_dir), 0.0);
@@ -1569,6 +1622,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Debug mode 8: Show AO only
     if (params.debug_mode > 7.5 && params.debug_mode < 8.5) {
         return vec4<f32>(ao, ao, ao, 1.0);
+    }
+
+    // Debug mode 9: Show Alpha only
+    if (params.debug_mode > 8.5 && params.debug_mode < 9.5) {
+        return vec4<f32>(alpha, alpha, alpha, 1.0);
     }
 
     return vec4<f32>(xtt_color.rgb * lighting, 1.0);
@@ -1637,6 +1695,7 @@ impl Application3D for TerrainViewer {
                         range: raw_data.range,
                         tile_scale: raw_data.tile_scale,
                         ao_data: raw_data.ao_data.clone(),
+                        alpha_data: raw_data.alpha_data.clone(),
                     };
                     let albedo = self.albedo.take();
                     self.create_gpu_tessellation_resources(
@@ -2323,6 +2382,64 @@ impl TerrainViewer {
 
         let ao_view = ao_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
+        // Create Alpha texture (same format/dimensions as AO - terrain holes/transparency)
+        let (alpha_width, alpha_height, alpha_values) = raw_data.alpha_data.as_ref().map_or_else(
+            || {
+                log::warn!(
+                    "No Alpha data available, using default fully-opaque values at half resolution"
+                );
+                let w = num_verts; // full width
+                let h = num_verts / 2; // half height
+                (w, h, vec![255u8; (w * h) as usize])
+            },
+            |alpha| {
+                log::info!(
+                    "Using half-resolution Alpha texture: {}x{} ({} bytes)",
+                    alpha.width,
+                    alpha.height,
+                    alpha.values.len()
+                );
+                (alpha.width, alpha.height, alpha.values.clone())
+            },
+        );
+
+        let alpha_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Alpha Texture (Half Resolution)"),
+            size: wgpu::Extent3d {
+                width: alpha_width,
+                height: alpha_height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &alpha_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &alpha_values,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(alpha_width),
+                rows_per_image: Some(alpha_height),
+            },
+            wgpu::Extent3d {
+                width: alpha_width,
+                height: alpha_height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let alpha_view = alpha_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
         // Create XTT albedo texture
         let (xtt_albedo_texture, xtt_albedo_view) =
             self.create_xtt_albedo_texture(device, queue, &albedo);
@@ -2490,6 +2607,17 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
+                    // binding 7: Alpha texture (R8Unorm) - terrain holes/transparency
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -2524,6 +2652,10 @@ impl TerrainViewer {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: wgpu::BindingResource::TextureView(&ao_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(&alpha_view),
                 },
             ],
         });
