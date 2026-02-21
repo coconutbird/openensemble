@@ -80,6 +80,10 @@ var t_composited: texture_2d<f32>;
 @group(1) @binding(14)
 var<storage, read> texture_scales: array<vec2<f32>>;
 
+// GPU-composited albedo atlas (from compositor, 8K×8K for 256 chunks)
+@group(1) @binding(15)
+var t_gpu_composited: texture_2d<f32>;
+
 struct VertexInput {
     // Per-vertex: local UV within patch [0, 1]
     @location(0) local_uv: vec2<f32>,
@@ -282,7 +286,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let lighting = ambient + diffuse;
 
     // Debug modes
+    if (params.debug_mode > 11.5 && params.debug_mode < 12.5) {
+        // Debug mode 12: GPU-composited atlas output
+        // Sample from the 8K×8K GPU-composited atlas
+        let gpu_composited_color = textureSample(t_gpu_composited, s_terrain, sample_uv);
+        return vec4<f32>(gpu_composited_color.rgb, 1.0);
+    }
     if (params.debug_mode > 10.5 && params.debug_mode < 11.5) {
+        // Debug mode 11: terrain UV visualization
         return vec4<f32>(sample_uv.x, sample_uv.y, 0.0, 1.0);
     }
     if (params.debug_mode > 9.5 && params.debug_mode < 10.5) {

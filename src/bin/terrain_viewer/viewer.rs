@@ -975,10 +975,10 @@ impl Application for TerrainViewer {
                         }
                     });
                     ui.horizontal(|ui| {
-                        if ui.button("11: MAGENTA").clicked() {
+                        if ui.button("11: TerrUV").clicked() {
                             self.debug_mode = 11;
                         }
-                        if ui.button("12: L0 ID").clicked() {
+                        if ui.button("12: GPUComp").clicked() {
                             self.debug_mode = 12;
                         }
                     });
@@ -2140,6 +2140,17 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
+                    // binding 15: GPU-composited albedo atlas (from compositor)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 15,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -2219,6 +2230,12 @@ impl TerrainViewer {
                 wgpu::BindGroupEntry {
                     binding: 14,
                     resource: texture_scales_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 15,
+                    resource: wgpu::BindingResource::TextureView(
+                        self.compositor.as_ref().unwrap().albedo_atlas_view(),
+                    ),
                 },
             ],
         });
