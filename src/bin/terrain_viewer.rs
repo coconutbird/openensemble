@@ -346,6 +346,19 @@ struct TerrainTexture {
     v_scale: i32,
 }
 
+/// A normal map texture loaded from ERA (_nm.ddx files).
+#[allow(dead_code)]
+struct NormalMapTexture {
+    /// Texture name (e.g., "grass_01")
+    name: String,
+    /// Width in pixels.
+    width: u32,
+    /// Height in pixels.
+    height: u32,
+    /// RGBA pixel data (normal map encoded as RGB, A may be height/unused).
+    pixels: Vec<u8>,
+}
+
 /// Splat data for a single terrain chunk.
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -440,6 +453,7 @@ struct TerrainViewer {
     terrain: Option<TerrainMesh>,
     albedo: Option<AlbedoData>,
     terrain_textures: Vec<TerrainTexture>,
+    normal_textures: Vec<NormalMapTexture>,
     chunk_splat_data: Vec<ChunkSplatData>,
     camera: Camera,
     show_info: bool,
@@ -464,6 +478,7 @@ impl TerrainViewer {
             terrain: None,
             albedo: None,
             terrain_textures: Vec::new(),
+            normal_textures: Vec::new(),
             chunk_splat_data: Vec::new(),
             camera: Camera::default(),
             show_info: true,
@@ -962,6 +977,12 @@ impl TerrainViewer {
         // Clear existing textures to avoid duplication on reload
         self.terrain_textures.clear();
 
+        // Log active textures so we can see the index-to-name mapping
+        log::info!("Active textures in XTT ({} total):", active_textures.len());
+        for (i, tex) in active_textures.iter().enumerate() {
+            log::info!("  [{}] {}", i, tex.filename);
+        }
+
         // Get game directory from environment variable
         let game_dir = match std::env::var("OPENENSEMBLE_GAME_DIR") {
             Ok(dir) => PathBuf::from(dir),
@@ -1004,24 +1025,27 @@ impl TerrainViewer {
             }
         };
 
-        // Debug: print first few ERA entries to understand the path format
-        log::debug!("First 10 ERA entries:");
-        for (i, entry) in archive.iter().take(10).enumerate() {
+        // Debug: print ERA entries containing terrain or _nm
+        log::debug!("ERA entries with 'terrain' or '_nm':");
+        for (i, entry) in archive.iter().enumerate() {
             if let Some(name) = &entry.filename {
-                log::debug!("  [{}] {}", i, name);
+                let lower = name.to_lowercase();
+                if lower.contains("terrain") || lower.contains("_nm") {
+                    log::debug!("  [{}] {}", i, name);
+                }
             }
         }
 
-        // Load each texture
+        // Load each texture (diffuse and normal map)
         for tex_info in active_textures {
             // Convert texture name to ERA path
             // XTT stores "sw interior\grass_01", we need "art/terrain/sw interior/grass_01_df.ddx"
             let tex_name = tex_info.filename.replace('\\', "/");
+
+            // Load diffuse texture (_df.ddx)
             let ddx_path = format!("art/terrain/{}_df.ddx", tex_name);
+            log::debug!("Looking for diffuse texture: {}", ddx_path);
 
-            log::debug!("Looking for texture: {}", ddx_path);
-
-            // Find the file in the archive (normalize slashes for comparison)
             let ddx_path_normalized = ddx_path.replace('/', "\\").to_lowercase();
             let file_index = archive.iter().enumerate().find(|(_, e)| {
                 e.filename
@@ -1030,40 +1054,105 @@ impl TerrainViewer {
                     .unwrap_or(false)
             });
 
-            match file_index {
+            // Track if we successfully loaded this texture
+            let mut loaded = false;
+
+            if let Some((idx, _)) = file_index {
+                if let Ok(data) = archive.read_entry(idx) {
+                    if let Ok(ddx) = DdxTexture::from_bytes(&data) {
+                        if let Ok(decoded) = ddx.decode_to_rgba() {
+                            log::info!(
+                                "Loaded terrain texture [{}]: {} ({}x{})",
+                                self.terrain_textures.len(),
+                                tex_info.filename,
+                                decoded.width,
+                                decoded.height
+                            );
+                            self.terrain_textures.push(TerrainTexture {
+                                name: tex_info.filename.clone(),
+                                width: decoded.width,
+                                height: decoded.height,
+                                pixels: decoded.pixels,
+                                u_scale: tex_info.u_scale,
+                                v_scale: tex_info.v_scale,
+                            });
+                            loaded = true;
+                        }
+                    }
+                }
+            }
+
+            // IMPORTANT: Always maintain index alignment with active_textures
+            // If loading failed, add a placeholder texture
+            if !loaded {
+                log::warn!(
+                    "Failed to load texture [{}]: {} - using placeholder",
+                    self.terrain_textures.len(),
+                    tex_info.filename
+                );
+                // Create a small placeholder texture (magenta for visibility)
+                let placeholder_size = 64u32;
+                let mut pixels = vec![0u8; (placeholder_size * placeholder_size * 4) as usize];
+                for i in 0..(placeholder_size * placeholder_size) as usize {
+                    pixels[i * 4] = 255; // R
+                    pixels[i * 4 + 1] = 0; // G
+                    pixels[i * 4 + 2] = 255; // B (magenta)
+                    pixels[i * 4 + 3] = 255; // A
+                }
+                self.terrain_textures.push(TerrainTexture {
+                    name: format!("placeholder_{}", tex_info.filename),
+                    width: placeholder_size,
+                    height: placeholder_size,
+                    pixels,
+                    u_scale: 1,
+                    v_scale: 1,
+                });
+            }
+
+            // Load normal map texture (_nm.ddx)
+            let nm_path = format!("art/terrain/{}_nm.ddx", tex_name);
+            log::debug!("Looking for normal map: {}", nm_path);
+
+            let nm_path_normalized = nm_path.replace('/', "\\").to_lowercase();
+            let nm_index = archive.iter().enumerate().find(|(_, e)| {
+                e.filename
+                    .as_ref()
+                    .map(|n| n.replace('/', "\\").to_lowercase() == nm_path_normalized)
+                    .unwrap_or(false)
+            });
+
+            match nm_index {
                 Some((idx, _)) => match archive.read_entry(idx) {
                     Ok(data) => match DdxTexture::from_bytes(&data) {
                         Ok(ddx) => match ddx.decode_to_rgba() {
                             Ok(decoded) => {
                                 log::info!(
-                                    "Loaded terrain texture: {} ({}x{})",
+                                    "Loaded normal map: {} ({}x{})",
                                     tex_info.filename,
                                     decoded.width,
                                     decoded.height
                                 );
-                                self.terrain_textures.push(TerrainTexture {
+                                self.normal_textures.push(NormalMapTexture {
                                     name: tex_info.filename.clone(),
                                     width: decoded.width,
                                     height: decoded.height,
                                     pixels: decoded.pixels,
-                                    u_scale: tex_info.u_scale,
-                                    v_scale: tex_info.v_scale,
                                 });
                             }
                             Err(e) => {
-                                log::warn!("Failed to decode {}: {}", ddx_path, e);
+                                log::warn!("Failed to decode normal map {}: {}", nm_path, e);
                             }
                         },
                         Err(e) => {
-                            log::warn!("Failed to parse DDX {}: {}", ddx_path, e);
+                            log::warn!("Failed to parse normal map DDX {}: {}", nm_path, e);
                         }
                     },
                     Err(e) => {
-                        log::warn!("Failed to read {} from ERA: {}", ddx_path, e);
+                        log::warn!("Failed to read normal map {} from ERA: {}", nm_path, e);
                     }
                 },
                 None => {
-                    log::debug!("Terrain texture not found in ERA: {}", ddx_path);
+                    log::debug!("Normal map not found in ERA: {}", nm_path);
                 }
             }
         }
@@ -1072,6 +1161,11 @@ impl TerrainViewer {
             log::info!("No terrain textures loaded from ERA");
         } else {
             log::info!("Loaded {} terrain textures", self.terrain_textures.len());
+        }
+        if self.normal_textures.is_empty() {
+            log::info!("No normal maps loaded from ERA");
+        } else {
+            log::info!("Loaded {} normal maps", self.normal_textures.len());
         }
     }
 }
@@ -1137,6 +1231,10 @@ impl Application for TerrainViewer {
             log::info!(
                 "Debug mode: 9 (Alpha - terrain holes/transparency, white=solid, black=hole)"
             );
+        }
+        if input.is_key_pressed(KeyCode::Backspace) {
+            self.debug_mode = 10;
+            log::info!("Debug mode: 10 (Direct texture array test - left=layer0, right=layer1)");
         }
 
         // Toggle tessellation mode (T key) - toggles between GPU and None
@@ -1210,6 +1308,77 @@ impl Application for TerrainViewer {
                     }
 
                     ui.separator();
+                    ui.label(format!("Debug Mode: {}", self.debug_mode));
+                    ui.horizontal(|ui| {
+                        if ui.button("0: Splat").clicked() {
+                            self.debug_mode = 0;
+                        }
+                        if ui.button("1: Alpha").clicked() {
+                            self.debug_mode = 1;
+                        }
+                        if ui.button("2: UV").clicked() {
+                            self.debug_mode = 2;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("3: Atlas").clicked() {
+                            self.debug_mode = 3;
+                        }
+                        if ui.button("4: TerrUV").clicked() {
+                            self.debug_mode = 4;
+                        }
+                        if ui.button("5: Comp").clicked() {
+                            self.debug_mode = 5;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("6: LayerID").clicked() {
+                            self.debug_mode = 6;
+                        }
+                        if ui.button("7: ChunkPos").clicked() {
+                            self.debug_mode = 7;
+                        }
+                        if ui.button("8: L1Info").clicked() {
+                            self.debug_mode = 8;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("9: XTT").clicked() {
+                            self.debug_mode = 9;
+                        }
+                        if ui.button("10: TexTest").clicked() {
+                            self.debug_mode = 10;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("11: MAGENTA").clicked() {
+                            self.debug_mode = 11;
+                        }
+                        if ui.button("12: L0 ID").clicked() {
+                            self.debug_mode = 12;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("13: L0 Only").clicked() {
+                            self.debug_mode = 13;
+                        }
+                        if ui.button("14: L1 ID").clicked() {
+                            self.debug_mode = 14;
+                        }
+                        if ui.button("15: L1 Only").clicked() {
+                            self.debug_mode = 15;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("16: Rock").clicked() {
+                            self.debug_mode = 16;
+                        }
+                        if ui.button("17: CPU Blend").clicked() {
+                            self.debug_mode = 17;
+                        }
+                    });
+
+                    ui.separator();
                     ui.label("Controls:");
                     ui.label("  WASD - Move");
                     ui.label("  Space/Ctrl - Up/Down");
@@ -1218,7 +1387,6 @@ impl Application for TerrainViewer {
                     ui.label("  Tab - Toggle info");
                     ui.label("  F - Toggle wireframe");
                     ui.label("  T - Toggle tessellation");
-                    ui.label("  0-9 - Debug modes");
                     ui.label("  Escape - Quit");
                 });
         }
@@ -1312,7 +1480,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let chunk_uv = in.uv * params.chunk_count;
     let chunk_x = u32(clamp(floor(chunk_uv.x), 0.0, params.chunk_count.x - 1.0));
     let chunk_y = u32(clamp(floor(chunk_uv.y), 0.0, params.chunk_count.y - 1.0));
-    // Z-major order: index = gridZ * numChunks + gridX (matches Halo Wars linker storage order)
+    // Z-major order: index = gridZ * numChunks + gridX (matches file storage order)
     let chunk_idx = chunk_y * u32(params.chunk_count.x) + chunk_x;
 
     // UV within the chunk (0-1) for alpha sampling
@@ -1400,6 +1568,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // XTT albedo (original pre-composited from game export)
         let xtt_color = textureSample(t_xtt_albedo, s_terrain, in.uv);
         return vec4<f32>(xtt_color.rgb * lighting, 1.0);
+    } else if (debug_mode == 10) {
+        // Debug: Direct texture array test - sample layer 0 explicitly
+        // Left half shows layer 0 (should be grass_01), right half shows layer 1 (should be floodmud_01)
+        if (in.uv.x < 0.5) {
+            let tex0 = textureSample(t_terrain_array, s_terrain, tiled_uv, 0u).rgb;
+            return vec4<f32>(tex0 * lighting, 1.0);
+        } else {
+            let tex1 = textureSample(t_terrain_array, s_terrain, tiled_uv, 1u).rgb;
+            return vec4<f32>(tex1 * lighting, 1.0);
+        }
+    } else if (debug_mode == 11) {
+        // Debug: Solid magenta to verify debug_mode is reaching shader
+        return vec4<f32>(1.0, 0.0, 1.0, 1.0);
+    } else if (debug_mode >= 12) {
+        // Debug: Show debug_mode value as grayscale (mode 12 = 0.12, mode 20 = 0.20, etc)
+        let mode_color = f32(debug_mode) / 100.0;
+        return vec4<f32>(mode_color, mode_color, mode_color, 1.0);
     }
 
     // Mode 0: Runtime texture splatting
@@ -1479,6 +1664,30 @@ var t_ao: texture_2d<f32>;
 // Same compression as AO, used for terrain holes (water edges, cliffs)
 @group(1) @binding(7)
 var t_alpha: texture_2d<f32>;
+
+// Normal map texture array (tangent-space normals)
+@group(1) @binding(8)
+var t_normal_array: texture_2d_array<f32>;
+
+// Terrain texture array (diffuse textures for splatting)
+@group(1) @binding(9)
+var t_terrain_array: texture_2d_array<f32>;
+
+// Alpha atlas for all chunks (16x16 chunks, 64x64 per chunk = 1024x1024)
+@group(1) @binding(10)
+var t_alpha_atlas: texture_2d<f32>;
+
+// Per-chunk layer data (256 chunks * 8 layer IDs = 2048 u32s)
+@group(1) @binding(11)
+var<storage, read> chunk_layers: array<u32>;
+
+// Alpha sampler (nearest filtering to avoid chunk boundary bleeding)
+@group(1) @binding(12)
+var s_alpha: sampler;
+
+// Pre-composited albedo atlas (all layers blended on CPU)
+@group(1) @binding(13)
+var t_composited: texture_2d<f32>;
 
 struct VertexInput {
     // Per-vertex: local UV within patch [0, 1]
@@ -1592,46 +1801,249 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Sample alpha texture for terrain holes/transparency
-    // Alpha: 1.0 = fully opaque, 0.0 = fully transparent (hole)
     let alpha = textureSample(t_alpha, s_terrain, in.uv).r;
-
-    // Discard transparent fragments (terrain holes)
-    // Using 0.5 threshold - values below this are considered holes
     if (alpha < 0.5) {
         discard;
     }
 
     let light_dir = normalize(vec3<f32>(0.5, 1.0, 0.3));
-    let normal = normalize(in.normal);
-    let diff = max(dot(normal, light_dir), 0.0);
+    let vertex_normal = normalize(in.normal);
 
-    // Sample AO texture (R8Unorm: 0=fully occluded, 1=fully lit)
+    // Determine which chunk this pixel belongs to (0-15 in each axis)
+    let chunk_count = vec2<f32>(params.chunk_count.x, params.chunk_count.y);
+    let chunk_uv = in.uv * chunk_count;
+    let chunk_x = u32(clamp(floor(chunk_uv.x), 0.0, chunk_count.x - 1.0));
+    let chunk_y = u32(clamp(floor(chunk_uv.y), 0.0, chunk_count.y - 1.0));
+    // Z-major order: index = gridZ * numChunks + gridX (matches file storage order)
+    let chunk_idx = chunk_y * u32(chunk_count.x) + chunk_x;
+
+    // UV within the chunk (0-1) for alpha sampling
+    let in_chunk_uv = fract(chunk_uv);
+
+    // Calculate alpha atlas UV - each chunk is 64x64 in a 1024x1024 atlas
+    let alpha_atlas_uv = (vec2<f32>(f32(chunk_x), f32(chunk_y)) + in_chunk_uv) / chunk_count;
+
+    // Sample alpha values for this chunk (RGBA = 4 alpha channels for layers 1-4)
+    let alphas = textureSample(t_alpha_atlas, s_alpha, alpha_atlas_uv);
+
+    // Calculate tiled UV for detail textures (textures tile once per chunk by default)
+    let tiled_uv = in.uv * chunk_count;
+
+    // Get layer indices for this chunk (8 layers max per chunk)
+    let layer_base = chunk_idx * 8u;
+    let layer0 = chunk_layers[layer_base];
+    let layer1 = chunk_layers[layer_base + 1u];
+    let layer2 = chunk_layers[layer_base + 2u];
+    let layer3 = chunk_layers[layer_base + 3u];
+
+    // Runtime texture splatting (same as CPU tessellation)
+    // NOTE: The game uses a GPU compute shader (gpuTerrainComposite.bin) to composite
+    // textures at runtime into "unique" per-chunk textures. Our approach is similar but
+    // done per-pixel in the fragment shader.
+    var color = textureSample(t_terrain_array, s_terrain, tiled_uv, layer0).rgb;
+
+    // Blend layers 1-3 using alpha values
+    // IMPORTANT: Only blend if layer ID is non-zero (ID=0 for layers 1+ means padding/unused)
+    if (layer1 > 0u && alphas.r > 0.0) {
+        let layer1_color = textureSample(t_terrain_array, s_terrain, tiled_uv, layer1).rgb;
+        color = mix(color, layer1_color, alphas.r);
+    }
+    if (layer2 > 0u && alphas.g > 0.0) {
+        let layer2_color = textureSample(t_terrain_array, s_terrain, tiled_uv, layer2).rgb;
+        color = mix(color, layer2_color, alphas.g);
+    }
+    if (layer3 > 0u && alphas.b > 0.0) {
+        let layer3_color = textureSample(t_terrain_array, s_terrain, tiled_uv, layer3).rgb;
+        color = mix(color, layer3_color, alphas.b);
+    }
+
+    // Blend normal maps from individual textures for surface detail
+    var tangent_normal = textureSample(t_normal_array, s_terrain, tiled_uv, layer0).rgb * 2.0 - 1.0;
+    if (layer1 > 0u && alphas.r > 0.0) {
+        let layer1_normal = textureSample(t_normal_array, s_terrain, tiled_uv, layer1).rgb * 2.0 - 1.0;
+        tangent_normal = mix(tangent_normal, layer1_normal, alphas.r);
+    }
+    if (layer2 > 0u && alphas.g > 0.0) {
+        let layer2_normal = textureSample(t_normal_array, s_terrain, tiled_uv, layer2).rgb * 2.0 - 1.0;
+        tangent_normal = mix(tangent_normal, layer2_normal, alphas.g);
+    }
+    if (layer3 > 0u && alphas.b > 0.0) {
+        let layer3_normal = textureSample(t_normal_array, s_terrain, tiled_uv, layer3).rgb * 2.0 - 1.0;
+        tangent_normal = mix(tangent_normal, layer3_normal, alphas.b);
+    }
+
+    // Normalize the blended tangent-space normal
+    tangent_normal = normalize(tangent_normal);
+
+    // Build TBN matrix (Tangent, Bitangent, Normal)
+    let up = vec3<f32>(0.0, 1.0, 0.0);
+    var tangent = normalize(cross(up, vertex_normal));
+    if (length(tangent) < 0.001) {
+        tangent = vec3<f32>(1.0, 0.0, 0.0);
+    }
+    let bitangent = normalize(cross(vertex_normal, tangent));
+
+    // Transform tangent-space normal to world space
+    let tbn = mat3x3<f32>(tangent, bitangent, vertex_normal);
+    let perturbed_normal = normalize(tbn * tangent_normal);
+
+    // Use perturbed normal for diffuse lighting
+    let diff = max(dot(perturbed_normal, light_dir), 0.0);
+
+    // Sample AO texture
     let ao = textureSample(t_ao, s_terrain, in.uv).r;
-
-    // Apply AO to ambient light (AO primarily affects indirect/ambient lighting)
-    // TerrainAODiffuseIntensity in original game controls how much AO affects diffuse
-    let ao_intensity = 0.8; // How strongly AO affects the result
+    let ao_intensity = 0.8;
     let ao_factor = mix(1.0, ao, ao_intensity);
 
-    // Ambient is affected by AO, diffuse is partially affected
     let ambient = 0.4 * ao_factor;
-    let diffuse = diff * 0.6 * mix(1.0, ao_factor, 0.3); // AO slightly affects diffuse too
+    let diffuse = diff * 0.6 * mix(1.0, ao_factor, 0.3);
     let lighting = ambient + diffuse;
 
-    // Sample XTT albedo texture
-    let xtt_color = textureSample(t_xtt_albedo, s_terrain, in.uv);
-
-    // Debug mode 8: Show AO only
+    // Debug modes
     if (params.debug_mode > 7.5 && params.debug_mode < 8.5) {
         return vec4<f32>(ao, ao, ao, 1.0);
     }
-
-    // Debug mode 9: Show Alpha only
     if (params.debug_mode > 8.5 && params.debug_mode < 9.5) {
         return vec4<f32>(alpha, alpha, alpha, 1.0);
     }
 
-    return vec4<f32>(xtt_color.rgb * lighting, 1.0);
+    // Debug mode 1: Show chunk boundaries (red lines at edges)
+    if (params.debug_mode > 0.5 && params.debug_mode < 1.5) {
+        let edge_threshold = 0.02;
+        let is_edge = in_chunk_uv.x < edge_threshold || in_chunk_uv.x > (1.0 - edge_threshold) ||
+                      in_chunk_uv.y < edge_threshold || in_chunk_uv.y > (1.0 - edge_threshold);
+        if (is_edge) {
+            return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+        }
+        return vec4<f32>(color * lighting, 1.0);
+    }
+
+    // Debug mode 2: Show chunk indices as colors (each chunk a unique color)
+    if (params.debug_mode > 1.5 && params.debug_mode < 2.5) {
+        let chunk_color = vec3<f32>(
+            f32(chunk_x % 4u) / 3.0,
+            f32(chunk_y % 4u) / 3.0,
+            f32((chunk_x + chunk_y) % 4u) / 3.0
+        );
+        return vec4<f32>(chunk_color, 1.0);
+    }
+
+    // Debug mode 3: Show layer0 IDs as colors
+    if (params.debug_mode > 2.5 && params.debug_mode < 3.5) {
+        let layer_color = vec3<f32>(
+            f32(layer0 % 8u) / 7.0,
+            f32((layer0 / 8u) % 8u) / 7.0,
+            f32((layer0 / 64u) % 8u) / 7.0
+        );
+        return vec4<f32>(layer_color, 1.0);
+    }
+
+    // Debug mode 4: Show alpha values (RGBA = layers 1-4 blend weights)
+    if (params.debug_mode > 3.5 && params.debug_mode < 4.5) {
+        return vec4<f32>(alphas.rgb, 1.0);
+    }
+
+    // Debug mode 5: Show in_chunk_uv (should be smooth gradient within each chunk)
+    if (params.debug_mode > 4.5 && params.debug_mode < 5.5) {
+        return vec4<f32>(in_chunk_uv.x, in_chunk_uv.y, 0.0, 1.0);
+    }
+
+    // Debug mode 6: Show tiled_uv (texture coordinates)
+    if (params.debug_mode > 5.5 && params.debug_mode < 6.5) {
+        return vec4<f32>(fract(tiled_uv.x), fract(tiled_uv.y), 0.0, 1.0);
+    }
+
+    // Debug mode 10: Direct texture array test
+    // UV.x < 0.5 = texture[0] (should be grass_01) - GREEN corner marker
+    // UV.x >= 0.5 = texture[1] (should be floodmud_01) - BLUE corner marker
+    if (params.debug_mode > 9.5 && params.debug_mode < 10.5) {
+        // Draw thick red boundary line at UV.x = 0.5
+        if (abs(in.uv.x - 0.5) < 0.01) {
+            return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+        }
+        // Solid GREEN corner marker for left side (UV.x < 0.1 && UV.y < 0.1)
+        if (in.uv.x < 0.1 && in.uv.y < 0.1) {
+            return vec4<f32>(0.0, 1.0, 0.0, 1.0);
+        }
+        // Solid BLUE corner marker for right side (UV.x > 0.9 && UV.y < 0.1)
+        if (in.uv.x > 0.9 && in.uv.y < 0.1) {
+            return vec4<f32>(0.0, 0.0, 1.0, 1.0);
+        }
+        if (in.uv.x < 0.5) {
+            // LEFT of red line = texture array index 0
+            let tex0 = textureSample(t_terrain_array, s_terrain, tiled_uv, 0u).rgb;
+            return vec4<f32>(tex0 * lighting, 1.0);
+        } else {
+            // RIGHT of red line = texture array index 1
+            let tex1 = textureSample(t_terrain_array, s_terrain, tiled_uv, 1u).rgb;
+            return vec4<f32>(tex1 * lighting, 1.0);
+        }
+    }
+
+    // Debug mode 11: Solid magenta to verify debug_mode is reaching shader
+    if (params.debug_mode > 10.5 && params.debug_mode < 11.5) {
+        return vec4<f32>(1.0, 0.0, 1.0, 1.0);
+    }
+
+    // Debug mode 12: Show layer0 value as color
+    // layer0=0 -> red, layer0=1 -> green, layer0=2 -> blue, layer0=3+ -> yellow shades
+    if (params.debug_mode > 11.5 && params.debug_mode < 12.5) {
+        var layer_color = vec3<f32>(1.0, 1.0, 1.0); // white = unknown
+        if (layer0 == 0u) { layer_color = vec3<f32>(1.0, 0.0, 0.0); }      // RED = 0
+        else if (layer0 == 1u) { layer_color = vec3<f32>(0.0, 1.0, 0.0); } // GREEN = 1
+        else if (layer0 == 2u) { layer_color = vec3<f32>(0.0, 0.0, 1.0); } // BLUE = 2
+        else if (layer0 == 3u) { layer_color = vec3<f32>(1.0, 1.0, 0.0); } // YELLOW = 3
+        else if (layer0 == 4u) { layer_color = vec3<f32>(1.0, 0.0, 1.0); } // MAGENTA = 4
+        else if (layer0 == 5u) { layer_color = vec3<f32>(0.0, 1.0, 1.0); } // CYAN = 5
+        else if (layer0 == 6u) { layer_color = vec3<f32>(1.0, 0.5, 0.0); } // ORANGE = 6
+        else { layer_color = vec3<f32>(0.5, 0.5, 0.5); } // GRAY = 7+
+        return vec4<f32>(layer_color, 1.0);
+    }
+
+    // Debug mode 13: Show ONLY base layer texture (layer0) - NO blending
+    if (params.debug_mode > 12.5 && params.debug_mode < 13.5) {
+        let base_tex = textureSample(t_terrain_array, s_terrain, tiled_uv, layer0).rgb;
+        return vec4<f32>(base_tex * lighting, 1.0);
+    }
+
+    // Debug mode 14: Show layer1 value as color (overlay layer)
+    if (params.debug_mode > 13.5 && params.debug_mode < 14.5) {
+        var layer_color = vec3<f32>(0.0, 0.0, 0.0); // BLACK = 0 (no overlay)
+        if (layer1 == 0u) { layer_color = vec3<f32>(0.0, 0.0, 0.0); }      // BLACK = 0 (unused)
+        else if (layer1 == 1u) { layer_color = vec3<f32>(0.0, 1.0, 0.0); } // GREEN = 1
+        else if (layer1 == 2u) { layer_color = vec3<f32>(0.0, 0.0, 1.0); } // BLUE = 2
+        else if (layer1 == 3u) { layer_color = vec3<f32>(1.0, 1.0, 0.0); } // YELLOW = 3 (cliffwall)
+        else if (layer1 == 4u) { layer_color = vec3<f32>(1.0, 0.0, 1.0); } // MAGENTA = 4
+        else if (layer1 == 5u) { layer_color = vec3<f32>(0.0, 1.0, 1.0); } // CYAN = 5
+        else if (layer1 == 6u) { layer_color = vec3<f32>(1.0, 0.5, 0.0); } // ORANGE = 6
+        else { layer_color = vec3<f32>(1.0, 1.0, 1.0); } // WHITE = 7+
+        return vec4<f32>(layer_color, 1.0);
+    }
+
+    // Debug mode 15: Show ONLY layer1 texture (overlay without blending)
+    if (params.debug_mode > 14.5 && params.debug_mode < 15.5) {
+        if (layer1 > 0u) {
+            let layer1_tex = textureSample(t_terrain_array, s_terrain, tiled_uv, layer1).rgb;
+            return vec4<f32>(layer1_tex * lighting, 1.0);
+        } else {
+            // No layer1, show magenta
+            return vec4<f32>(1.0, 0.0, 1.0, 1.0);
+        }
+    }
+
+    // Debug mode 16: Show texture[3] directly (cliffwall_04 - should be rock)
+    if (params.debug_mode > 15.5 && params.debug_mode < 16.5) {
+        let rock_tex = textureSample(t_terrain_array, s_terrain, tiled_uv, 3u).rgb;
+        return vec4<f32>(rock_tex * lighting, 1.0);
+    }
+
+    // Debug mode 17: Show CPU-composited albedo (pre-blended on CPU, should be correct)
+    if (params.debug_mode > 16.5 && params.debug_mode < 17.5) {
+        let comp_color = textureSample(t_composited, s_terrain, in.uv).rgb;
+        return vec4<f32>(comp_color * lighting, 1.0);
+    }
+
+    return vec4<f32>(color * lighting, 1.0);
 }
 "#;
 
@@ -2443,8 +2855,38 @@ impl TerrainViewer {
         let alpha_view = alpha_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Create XTT albedo texture
-        let (xtt_albedo_texture, xtt_albedo_view) =
+        let (_xtt_albedo_texture, xtt_albedo_view) =
             self.create_xtt_albedo_texture(device, queue, &albedo);
+
+        // Create normal map texture array
+        let (_normal_map_array, normal_map_array_view) =
+            self.create_normal_map_array(device, queue);
+
+        // Create terrain texture array (for splatting)
+        let (_terrain_array, terrain_array_view) =
+            self.create_terrain_texture_array(device, queue, &albedo);
+
+        // Create alpha atlas from chunk splat data (for texture splatting)
+        let (_alpha_atlas, alpha_atlas_view) = self.create_alpha_atlas(device, queue);
+
+        // Create chunk layers storage buffer (for texture splatting)
+        let chunk_layers_buffer = self.create_chunk_layers_buffer(device);
+
+        // Create CPU-composited albedo atlas (for comparison/debugging)
+        let (_composited_texture, composited_view) =
+            self.create_composited_albedo_atlas(device, queue);
+
+        // Create alpha sampler (nearest filtering to avoid chunk boundary bleeding)
+        let alpha_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Alpha Atlas Sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
 
         // Create tessellation params uniform buffer
         let tess_params = GpuTessParams {
@@ -2488,14 +2930,16 @@ impl TerrainViewer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        // Create sampler
+        // Create sampler - MUST use Repeat for texture tiling (UVs go 0-16 for 16 chunks)
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Terrain Sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            anisotropy_clamp: 16,
             ..Default::default()
         });
 
@@ -2620,6 +3064,68 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
+                    // binding 8: Normal map texture array
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 8,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    // binding 9: Terrain texture array (for splatting with normal maps)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 9,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    // binding 10: Alpha atlas texture (for texture splatting blend weights)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 10,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        },
+                        count: None,
+                    },
+                    // binding 11: Chunk layers storage buffer (per-chunk texture IDs)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 11,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 12: Alpha sampler (nearest filtering)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 12,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                        count: None,
+                    },
+                    // binding 13: CPU-composited albedo atlas
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 13,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -2658,6 +3164,30 @@ impl TerrainViewer {
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: wgpu::BindingResource::TextureView(&alpha_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::TextureView(&normal_map_array_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: wgpu::BindingResource::TextureView(&terrain_array_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: wgpu::BindingResource::TextureView(&alpha_atlas_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: chunk_layers_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: wgpu::BindingResource::Sampler(&alpha_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: wgpu::BindingResource::TextureView(&composited_view),
                 },
             ],
         });
@@ -2779,7 +3309,7 @@ impl TerrainViewer {
         );
 
         // Suppress unused variable warnings
-        let _ = xtt_albedo_texture;
+        let _ = _xtt_albedo_texture;
         let _ = index_buffer;
         let _ = vertex_buffer;
     }
@@ -2823,7 +3353,9 @@ impl TerrainViewer {
             });
 
             // Upload each layer with mipmaps
+            log::info!("=== Uploading textures to GPU array ===");
             for (i, tex) in self.terrain_textures.iter().enumerate() {
+                log::info!("  GPU layer [{}] = {}", i, tex.name);
                 // Generate mipmaps for this texture
                 let mips = generate_mipmaps(&tex.pixels, tex_width, tex_height);
 
@@ -2906,6 +3438,136 @@ impl TerrainViewer {
                 wgpu::Extent3d {
                     width: tex_width,
                     height: tex_height,
+                    depth_or_array_layers: 1,
+                },
+            );
+
+            let view = texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
+
+            (texture, view)
+        }
+    }
+
+    /// Creates a 2D texture array from loaded normal map textures.
+    fn create_normal_map_array(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
+        if !self.normal_textures.is_empty() {
+            // All normal maps should be same size as terrain textures
+            let tex_width = self.normal_textures[0].width;
+            let tex_height = self.normal_textures[0].height;
+            let layer_count = self.normal_textures.len() as u32;
+            let num_mips = mip_level_count(tex_width, tex_height);
+
+            log::info!(
+                "Creating normal map array: {}x{} x {} layers with {} mip levels",
+                tex_width,
+                tex_height,
+                layer_count,
+                num_mips
+            );
+
+            // Normal maps should NOT be sRGB - they contain linear data
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Normal Map Array"),
+                size: wgpu::Extent3d {
+                    width: tex_width,
+                    height: tex_height,
+                    depth_or_array_layers: layer_count,
+                },
+                mip_level_count: num_mips,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm, // NOT sRGB for normal maps
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+
+            // Upload each layer with mipmaps
+            for (i, tex) in self.normal_textures.iter().enumerate() {
+                // Generate mipmaps for this texture
+                let mips = generate_mipmaps(&tex.pixels, tex_width, tex_height);
+
+                // Upload each mip level
+                let mut mip_width = tex_width;
+                let mut mip_height = tex_height;
+                for (mip_level, mip_data) in mips.iter().enumerate() {
+                    queue.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &texture,
+                            mip_level: mip_level as u32,
+                            origin: wgpu::Origin3d {
+                                x: 0,
+                                y: 0,
+                                z: i as u32,
+                            },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        mip_data,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(4 * mip_width),
+                            rows_per_image: Some(mip_height),
+                        },
+                        wgpu::Extent3d {
+                            width: mip_width,
+                            height: mip_height,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                    mip_width = (mip_width / 2).max(1);
+                    mip_height = (mip_height / 2).max(1);
+                }
+            }
+
+            let view = texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
+
+            (texture, view)
+        } else {
+            // Fallback: flat normal (pointing up)
+            log::info!("Using flat normal fallback texture");
+            // Normal map flat = (0.5, 0.5, 1.0) in tangent space = (128, 128, 255) in 0-255
+            let flat_normal = vec![128u8, 128, 255, 255];
+
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Normal Map Array (Fallback)"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &flat_normal,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4),
+                    rows_per_image: Some(1),
+                },
+                wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
                     depth_or_array_layers: 1,
                 },
             );
@@ -3082,6 +3744,22 @@ impl TerrainViewer {
                 self.terrain_textures.len()
             );
 
+            // Debug: log texture names in order
+            for (i, tex) in self.terrain_textures.iter().enumerate() {
+                log::info!("  CPU blend texture[{}] = {}", i, tex.name);
+            }
+
+            // Debug: log first few chunks' layer IDs
+            for (i, chunk) in self.chunk_splat_data.iter().take(5).enumerate() {
+                log::info!(
+                    "  CPU blend chunk[{}] grid=({},{}) layers={:?}",
+                    i,
+                    chunk.grid_x,
+                    chunk.grid_z,
+                    chunk.layer_texture_ids
+                );
+            }
+
             let tex_width = self.terrain_textures[0].width;
             let tex_height = self.terrain_textures[0].height;
 
@@ -3146,7 +3824,7 @@ impl TerrainViewer {
                         let tex_idx = ((tex_y * tex_width + tex_x) * 4) as usize;
 
                         // Get layer texture IDs for this chunk
-                        // Note: layer ID of 0 for layers 1+ means padding/unused (like original game)
+                        // Layer IDs are direct indices into active_textures/terrain_textures
                         let layer0_id = chunk.layer_texture_ids.get(0).copied().unwrap_or(0);
                         let layer1_id = chunk.layer_texture_ids.get(1).copied().unwrap_or(0);
                         let layer2_id = chunk.layer_texture_ids.get(2).copied().unwrap_or(0);
@@ -3337,11 +4015,12 @@ impl TerrainViewer {
         let mut layer_data = vec![0u32; 256 * 8];
 
         for chunk in &self.chunk_splat_data {
-            // Z-major order: index = gridZ * numChunks + gridX (matches Halo Wars linker storage order)
+            // Z-major order: index = gridZ * numChunks + gridX (matches file storage order)
             let chunk_idx = (chunk.grid_z * 16 + chunk.grid_x) as usize;
             let base = chunk_idx * 8;
 
             for (i, &layer_id) in chunk.layer_texture_ids.iter().enumerate().take(8) {
+                // Use layer IDs directly - they appear to be 0-based indices into active_textures
                 layer_data[base + i] = layer_id as u32;
             }
         }
@@ -3350,6 +4029,18 @@ impl TerrainViewer {
             "Creating chunk layers buffer: {} chunks",
             self.chunk_splat_data.len()
         );
+        // Log first few chunks for debugging
+        log::info!("=== First 5 chunk layer IDs in buffer ===");
+        for chunk in self.chunk_splat_data.iter().take(5) {
+            let chunk_idx = (chunk.grid_z * 16 + chunk.grid_x) as usize;
+            log::info!(
+                "  Chunk ({}, {}) idx={}: layers={:?}",
+                chunk.grid_x,
+                chunk.grid_z,
+                chunk_idx,
+                &chunk.layer_texture_ids
+            );
+        }
 
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Chunk Layers Buffer"),
