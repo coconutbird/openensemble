@@ -9,8 +9,8 @@ use data::xtd::{TessellationData, XtdReader};
 use data::xtt::{ActiveTextureInfo, XttReader};
 use glam::Vec3;
 use render::terrain::{
-    Camera, GPU_TESS_SHADER, GpuTessParams, TERRAIN_SHADER, TerrainParams, TessellationMode,
-    generate_mipmaps, mip_level_count,
+    Camera, CompositingConfig, CompositorResources, GPU_TESS_SHADER, GpuTessParams, TERRAIN_SHADER,
+    TerrainParams, TessellationMode, generate_mipmaps, mip_level_count,
 };
 use render::{Application3D, RenderContext, wgpu};
 use xcore::app::{Application, FrameContext, Input, KeyCode};
@@ -47,6 +47,12 @@ pub struct TerrainViewer {
     pub raw_xtd_data: Option<RawXtdData>,
     /// Normal map strength (gBumpPower in game, scales XY components).
     pub bump_power: f32,
+    /// GPU terrain texture compositor (for pre-baked chunk textures).
+    pub compositor: Option<CompositorResources>,
+    /// Bind group for compositor (separate from main texture bind group).
+    pub compositor_bind_group: Option<wgpu::BindGroup>,
+    /// Whether to use GPU compositing (vs runtime splatting).
+    pub use_gpu_compositing: bool,
 }
 
 impl TerrainViewer {
@@ -69,6 +75,9 @@ impl TerrainViewer {
             tessellation_data: None,
             raw_xtd_data: None,
             bump_power: 1.0, // Default normal map strength (game default)
+            compositor: None,
+            compositor_bind_group: None,
+            use_gpu_compositing: false, // Disabled by default for now
         }
     }
 
@@ -815,6 +824,25 @@ impl Application for TerrainViewer {
             log::info!("Debug mode: 10 (Direct texture array test - left=layer0, right=layer1)");
         }
 
+        // Toggle GPU compositing: C key
+        if input.is_key_pressed(KeyCode::C) {
+            self.use_gpu_compositing = !self.use_gpu_compositing;
+            if self.use_gpu_compositing {
+                // Mark all chunks as dirty so they get composited
+                if let Some(compositor) = &mut self.compositor {
+                    compositor.mark_all_dirty();
+                }
+            }
+            log::info!(
+                "GPU compositing: {}",
+                if self.use_gpu_compositing {
+                    "ON"
+                } else {
+                    "OFF"
+                }
+            );
+        }
+
         // Bump power (normal map strength) adjustment: B to decrease, N to increase
         if input.is_key_pressed(KeyCode::B) {
             self.bump_power = (self.bump_power - 0.25).max(0.0);
@@ -888,6 +916,14 @@ impl Application for TerrainViewer {
                             terrain.size().z
                         ));
                         ui.label(format!("Tessellation: {}", self.tessellation_mode.name()));
+                        ui.label(format!(
+                            "GPU Compositing: {} (C to toggle)",
+                            if self.use_gpu_compositing {
+                                "ON"
+                            } else {
+                                "OFF"
+                            }
+                        ));
                     }
 
                     if let Some(err) = &self.load_error {
@@ -1093,6 +1129,27 @@ impl Application3D for TerrainViewer {
         };
         ctx.queue
             .write_buffer(&gpu.params_buffer, 0, bytemuck::bytes_of(&params));
+
+        // Run GPU compositing pass for dirty chunks (if enabled)
+        if self.use_gpu_compositing {
+            if let (Some(compositor), Some(bind_group)) =
+                (&mut self.compositor, &self.compositor_bind_group)
+            {
+                // Get layer counts per chunk
+                let chunk_layer_counts: Vec<u32> = self
+                    .chunk_splat_data
+                    .iter()
+                    .map(|c| c.layer_texture_ids.len() as u32)
+                    .collect();
+
+                compositor.composite_all_dirty(
+                    ctx.encoder,
+                    bind_group,
+                    ctx.queue,
+                    &chunk_layer_counts,
+                );
+            }
+        }
 
         // Render terrain
         {
@@ -1372,6 +1429,16 @@ impl TerrainViewer {
 
         // Create texture scales buffer
         let texture_scales_buffer = self.create_texture_scales_buffer(device);
+
+        // Initialize GPU compositor (for pre-baked terrain textures)
+        self.init_compositor(
+            device,
+            &terrain_array_view,
+            &alpha_atlas_view,
+            &chunk_layers_buffer,
+            &texture_scales_buffer,
+            &sampler,
+        );
 
         let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Texture Bind Group"),
@@ -2078,6 +2145,16 @@ impl TerrainViewer {
 
         // Create texture scales buffer
         let texture_scales_buffer = self.create_texture_scales_buffer(device);
+
+        // Initialize GPU compositor (for pre-baked terrain textures)
+        self.init_compositor(
+            device,
+            &terrain_array_view,
+            &alpha_atlas_view,
+            &chunk_layers_buffer,
+            &texture_scales_buffer,
+            &sampler,
+        );
 
         let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("GPU Tess Texture Bind Group"),
@@ -3062,5 +3139,44 @@ impl TerrainViewer {
             contents: bytemuck::cast_slice(&scale_data),
             usage: wgpu::BufferUsages::STORAGE,
         })
+    }
+
+    /// Initialize the GPU compositor for pre-baking terrain textures.
+    /// This creates an 8K×8K atlas (16×16 chunks, 512×512 each) where terrain
+    /// layers are composited once and then sampled efficiently during rendering.
+    fn init_compositor(
+        &mut self,
+        device: &wgpu::Device,
+        terrain_array_view: &wgpu::TextureView,
+        alpha_atlas_view: &wgpu::TextureView,
+        chunk_layers_buffer: &wgpu::Buffer,
+        texture_scales_buffer: &wgpu::Buffer,
+        sampler: &wgpu::Sampler,
+    ) {
+        let config = CompositingConfig::default();
+        log::info!(
+            "Initializing GPU compositor: {}×{} atlas ({} chunks)",
+            config.atlas_width,
+            config.atlas_height,
+            config.total_chunks()
+        );
+
+        // Create compositor resources (atlas textures, pipeline, bind group layout)
+        let compositor = CompositorResources::new(device, config);
+
+        // Create bind group with actual terrain textures
+        let bind_group = compositor.create_bind_group(
+            device,
+            terrain_array_view,
+            alpha_atlas_view,
+            chunk_layers_buffer,
+            texture_scales_buffer,
+            sampler,
+        );
+
+        self.compositor = Some(compositor);
+        self.compositor_bind_group = Some(bind_group);
+
+        log::info!("GPU compositor initialized successfully");
     }
 }
