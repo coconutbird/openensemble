@@ -463,6 +463,17 @@ impl CompositorResources {
         queue: &wgpu::Queue,
         chunk_layer_counts: &[u32], // Number of layers per chunk
     ) {
+        let dirty_count = self.dirty_chunks.iter().filter(|&&d| d).count();
+        if dirty_count > 0 {
+            log::debug!(
+                "Compositing {} dirty chunks to {}×{} atlas",
+                dirty_count,
+                self.config.atlas_width,
+                self.config.atlas_height
+            );
+        }
+
+        let mut composited_count = 0u32;
         for chunk_idx in 0..self.config.total_chunks() {
             if self.dirty_chunks[chunk_idx as usize] {
                 let num_layers = chunk_layer_counts
@@ -470,7 +481,12 @@ impl CompositorResources {
                     .copied()
                     .unwrap_or(1);
                 self.composite_chunk(encoder, bind_group, queue, chunk_idx, num_layers);
+                composited_count += 1;
             }
+        }
+
+        if composited_count > 0 {
+            log::info!("Composited {} chunks to GPU atlas", composited_count);
         }
     }
 

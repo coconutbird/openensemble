@@ -81,7 +81,7 @@ impl TerrainViewer {
             bump_power: 1.0, // Default normal map strength (game default)
             compositor: None,
             compositor_bind_group: None,
-            use_gpu_compositing: false, // Disabled by default for now
+            use_gpu_compositing: true, // Enabled by default to test GPU compositing
             lod_config: LodConfig::default(),
             chunk_centers: Vec::new(),
         }
@@ -3126,8 +3126,8 @@ impl TerrainViewer {
         let mut layer_data = vec![0u32; 256 * 8];
 
         for chunk in &self.chunk_splat_data {
-            // X-major order: index = gridX * numXChunks + gridZ (game's indexing formula)
-            let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
+            // Z-major order: index = gridZ * 16 + gridX (matches shader's chunk_x = idx % 16, chunk_z = idx / 16)
+            let chunk_idx = (chunk.grid_z * 16 + chunk.grid_x) as usize;
             let base = chunk_idx * 8;
 
             for (i, &layer_id) in chunk.layer_texture_ids.iter().enumerate().take(8) {
