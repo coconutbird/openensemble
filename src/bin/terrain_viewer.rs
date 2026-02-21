@@ -471,7 +471,7 @@ impl TerrainViewer {
             load_error: None,
             gpu: None,
             surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
-            debug_mode: 9, // Default to XTT albedo with HD detail
+            debug_mode: 0, // Default to normal rendering (XTT albedo with lighting)
             tessellation_mode: TessellationMode::Gpu, // Default to GPU tessellation (fast)
             tessellation_data: None,
             raw_xtd_data: None,
@@ -1134,7 +1134,9 @@ impl Application for TerrainViewer {
         }
         if input.is_key_pressed(KeyCode::Key9) {
             self.debug_mode = 9;
-            log::info!("Debug mode: 9 (XTT albedo - original pre-composited from game)");
+            log::info!(
+                "Debug mode: 9 (Alpha - terrain holes/transparency, white=solid, black=hole)"
+            );
         }
 
         // Toggle tessellation mode (T key) - toggles between GPU and None
