@@ -3,9 +3,14 @@
 //! Rendering subsystem using wgpu (pure Rust).
 //! Provides a fully abstracted window and rendering system with egui integration.
 
-use core::app::{Application, FrameContext, Input, KeyCode, WindowConfig};
+pub mod terrain;
+
+use core::app::{
+    Application, FrameContext, GamepadButton, GamepadState, Input, KeyCode, WindowConfig,
+};
 use core::prelude::*;
 use egui_wgpu::ScreenDescriptor;
+use gilrs::{Axis, Button, Gilrs};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
@@ -88,6 +93,7 @@ struct Engine<A: Application> {
     renderer: Option<Renderer>,
     egui_state: Option<EguiState>,
     input_state: InputState,
+    gilrs: Gilrs,
     start_time: Instant,
     last_frame_time: Instant,
 }
@@ -101,6 +107,11 @@ struct EguiState {
 
 impl<A: Application> Engine<A> {
     fn new(config: WindowConfig, app: A) -> Self {
+        let gilrs = Gilrs::new().unwrap_or_else(|e| {
+            log::warn!("Failed to initialize gamepad support: {}", e);
+            // Create a dummy gilrs that won't find any gamepads
+            Gilrs::new().expect("Failed to initialize gilrs twice")
+        });
         Self {
             config,
             app,
@@ -108,6 +119,7 @@ impl<A: Application> Engine<A> {
             renderer: None,
             egui_state: None,
             input_state: InputState::new(),
+            gilrs,
             start_time: Instant::now(),
             last_frame_time: Instant::now(),
         }
@@ -215,7 +227,8 @@ impl<A: Application> ApplicationHandler for Engine<A> {
                     window_size,
                 };
 
-                // Build input for the app
+                // Poll gamepad and build input for the app
+                self.input_state.poll_gamepad(&mut self.gilrs);
                 let input = self.input_state.build_input();
 
                 // Update the application
@@ -291,6 +304,7 @@ struct Engine3D<A: Application3D> {
     renderer: Option<Renderer>,
     egui_state: Option<EguiState>,
     input_state: InputState,
+    gilrs: Gilrs,
     start_time: Instant,
     last_frame_time: Instant,
     gpu_initialized: bool,
@@ -298,6 +312,10 @@ struct Engine3D<A: Application3D> {
 
 impl<A: Application3D> Engine3D<A> {
     fn new(config: WindowConfig, app: A) -> Self {
+        let gilrs = Gilrs::new().unwrap_or_else(|e| {
+            log::warn!("Failed to initialize gamepad support: {}", e);
+            Gilrs::new().expect("Failed to initialize gilrs twice")
+        });
         Self {
             config,
             app,
@@ -305,6 +323,7 @@ impl<A: Application3D> Engine3D<A> {
             renderer: None,
             egui_state: None,
             input_state: InputState::new(),
+            gilrs,
             start_time: Instant::now(),
             last_frame_time: Instant::now(),
             gpu_initialized: false,
@@ -417,6 +436,8 @@ impl<A: Application3D> ApplicationHandler for Engine3D<A> {
                     window_size,
                 };
 
+                // Poll gamepad and build input
+                self.input_state.poll_gamepad(&mut self.gilrs);
                 let input = self.input_state.build_input();
 
                 let should_continue = self.app.update(&input, &ctx);
@@ -484,6 +505,13 @@ struct InputState {
     mouse_x: f64,
     mouse_y: f64,
     mouse_buttons: [bool; 3],
+    // Gamepad state
+    gamepad_connected: bool,
+    gamepad_left_stick: (f32, f32),
+    gamepad_right_stick: (f32, f32),
+    gamepad_triggers: (f32, f32),
+    gamepad_buttons_held: HashSet<Button>,
+    gamepad_buttons_pressed: HashSet<Button>,
 }
 
 impl InputState {
@@ -495,6 +523,12 @@ impl InputState {
             mouse_x: 0.0,
             mouse_y: 0.0,
             mouse_buttons: [false; 3],
+            gamepad_connected: false,
+            gamepad_left_stick: (0.0, 0.0),
+            gamepad_right_stick: (0.0, 0.0),
+            gamepad_triggers: (0.0, 0.0),
+            gamepad_buttons_held: HashSet::new(),
+            gamepad_buttons_pressed: HashSet::new(),
         }
     }
 
@@ -535,9 +569,71 @@ impl InputState {
         }
     }
 
+    /// Poll gamepad events and update state
+    fn poll_gamepad(&mut self, gilrs: &mut Gilrs) {
+        // Process all pending events
+        while let Some(event) = gilrs.next_event() {
+            match event.event {
+                gilrs::EventType::Connected => {
+                    log::info!("Gamepad connected: {:?}", gilrs.gamepad(event.id).name());
+                    self.gamepad_connected = true;
+                }
+                gilrs::EventType::Disconnected => {
+                    log::info!("Gamepad disconnected");
+                    self.gamepad_connected = false;
+                    self.gamepad_left_stick = (0.0, 0.0);
+                    self.gamepad_right_stick = (0.0, 0.0);
+                    self.gamepad_triggers = (0.0, 0.0);
+                    self.gamepad_buttons_held.clear();
+                }
+                gilrs::EventType::ButtonPressed(button, _) => {
+                    if !self.gamepad_buttons_held.contains(&button) {
+                        self.gamepad_buttons_pressed.insert(button);
+                    }
+                    self.gamepad_buttons_held.insert(button);
+                }
+                gilrs::EventType::ButtonReleased(button, _) => {
+                    self.gamepad_buttons_held.remove(&button);
+                }
+                gilrs::EventType::AxisChanged(axis, value, _) => {
+                    // Apply deadzone
+                    let value = if value.abs() < 0.15 { 0.0 } else { value };
+                    match axis {
+                        Axis::LeftStickX => self.gamepad_left_stick.0 = value,
+                        Axis::LeftStickY => self.gamepad_left_stick.1 = value,
+                        Axis::RightStickX => self.gamepad_right_stick.0 = value,
+                        Axis::RightStickY => self.gamepad_right_stick.1 = value,
+                        _ => {}
+                    }
+                }
+                gilrs::EventType::ButtonChanged(button, value, _) => {
+                    // Handle triggers as analog
+                    match button {
+                        Button::LeftTrigger2 => self.gamepad_triggers.0 = value,
+                        Button::RightTrigger2 => self.gamepad_triggers.1 = value,
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Check if any gamepad is connected
+        if !self.gamepad_connected {
+            for (_id, gamepad) in gilrs.gamepads() {
+                if gamepad.is_connected() {
+                    log::info!("Found gamepad: {}", gamepad.name());
+                    self.gamepad_connected = true;
+                    break;
+                }
+            }
+        }
+    }
+
     fn end_frame(&mut self) {
         self.keys_pressed.clear();
         self.keys_released.clear();
+        self.gamepad_buttons_pressed.clear();
     }
 
     fn build_input(&self) -> Input {
@@ -559,8 +655,48 @@ impl InputState {
                 .collect(),
             mouse_position: (self.mouse_x, self.mouse_y),
             mouse_buttons: self.mouse_buttons,
+            gamepad: GamepadState {
+                connected: self.gamepad_connected,
+                left_stick_x: self.gamepad_left_stick.0,
+                left_stick_y: self.gamepad_left_stick.1,
+                right_stick_x: self.gamepad_right_stick.0,
+                right_stick_y: self.gamepad_right_stick.1,
+                left_trigger: self.gamepad_triggers.0,
+                right_trigger: self.gamepad_triggers.1,
+                buttons_held: self
+                    .gamepad_buttons_held
+                    .iter()
+                    .filter_map(|b| convert_gamepad_button(*b))
+                    .collect(),
+                buttons_pressed: self
+                    .gamepad_buttons_pressed
+                    .iter()
+                    .filter_map(|b| convert_gamepad_button(*b))
+                    .collect(),
+            },
         }
     }
+}
+
+/// Convert gilrs button to our platform-agnostic button
+fn convert_gamepad_button(button: Button) -> Option<GamepadButton> {
+    Some(match button {
+        Button::South => GamepadButton::South,
+        Button::East => GamepadButton::East,
+        Button::West => GamepadButton::West,
+        Button::North => GamepadButton::North,
+        Button::LeftTrigger => GamepadButton::LeftBumper,
+        Button::RightTrigger => GamepadButton::RightBumper,
+        Button::LeftThumb => GamepadButton::LeftStick,
+        Button::RightThumb => GamepadButton::RightStick,
+        Button::Start => GamepadButton::Start,
+        Button::Select => GamepadButton::Select,
+        Button::DPadUp => GamepadButton::DPadUp,
+        Button::DPadDown => GamepadButton::DPadDown,
+        Button::DPadLeft => GamepadButton::DPadLeft,
+        Button::DPadRight => GamepadButton::DPadRight,
+        _ => return None,
+    })
 }
 
 /// Convert winit key code to our platform-agnostic key code

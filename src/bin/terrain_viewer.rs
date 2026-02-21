@@ -22,164 +22,55 @@
 //! - [ ] Dynamic shadows
 
 use anyhow::Result;
-use core::app::{Application, FrameContext, Input, KeyCode, WindowConfig};
+use core::app::{Application, FrameContext, GamepadButton, Input, KeyCode, WindowConfig};
 use core::prelude::*;
 use data::ddx::DdxTexture;
 use data::era::EraArchive;
 use data::xtd::{TerrainVertices, TessellatedMesh, TessellationData, XtdReader};
 use data::xtt::{ActiveTextureInfo, XttReader};
-use glam::{Mat4, Vec3};
+use glam::Vec3;
+use render::terrain::{
+    Camera, GPU_TESS_SHADER, GpuTessParams, TERRAIN_SHADER, TerrainParams, TessellationMode,
+    generate_mipmaps, mip_level_count,
+};
 use render::{Application3D, RenderContext, wgpu};
 use std::path::PathBuf;
 
-/// Generate mipmaps for an RGBA image on CPU.
-/// Returns a vector of mip levels, each containing RGBA pixel data.
-/// Level 0 is the original image, level 1 is half size, etc.
-fn generate_mipmaps(pixels: &[u8], width: u32, height: u32) -> Vec<Vec<u8>> {
-    let mut mips = Vec::new();
-
-    // Level 0 is the original
-    mips.push(pixels.to_vec());
-
-    let mut current_width = width;
-    let mut current_height = height;
-    let mut current_pixels = pixels.to_vec();
-
-    // Generate mip levels until we reach 1x1
-    while current_width > 1 || current_height > 1 {
-        let new_width = (current_width / 2).max(1);
-        let new_height = (current_height / 2).max(1);
-        let mut new_pixels = vec![0u8; (new_width * new_height * 4) as usize];
-
-        // Box filter: average 2x2 blocks
-        for y in 0..new_height {
-            for x in 0..new_width {
-                let src_x = (x * 2).min(current_width - 1);
-                let src_y = (y * 2).min(current_height - 1);
-
-                // Sample up to 4 pixels (handle edge cases)
-                let mut r: u32 = 0;
-                let mut g: u32 = 0;
-                let mut b: u32 = 0;
-                let mut a: u32 = 0;
-                let mut count: u32 = 0;
-
-                for dy in 0..2 {
-                    for dx in 0..2 {
-                        let sx = (src_x + dx).min(current_width - 1);
-                        let sy = (src_y + dy).min(current_height - 1);
-                        let idx = ((sy * current_width + sx) * 4) as usize;
-                        if idx + 3 < current_pixels.len() {
-                            r += current_pixels[idx] as u32;
-                            g += current_pixels[idx + 1] as u32;
-                            b += current_pixels[idx + 2] as u32;
-                            a += current_pixels[idx + 3] as u32;
-                            count += 1;
-                        }
-                    }
-                }
-
-                if count > 0 {
-                    let dst_idx = ((y * new_width + x) * 4) as usize;
-                    new_pixels[dst_idx] = (r / count) as u8;
-                    new_pixels[dst_idx + 1] = (g / count) as u8;
-                    new_pixels[dst_idx + 2] = (b / count) as u8;
-                    new_pixels[dst_idx + 3] = (a / count) as u8;
-                }
-            }
-        }
-
-        mips.push(new_pixels.clone());
-        current_width = new_width;
-        current_height = new_height;
-        current_pixels = new_pixels;
-    }
-
-    mips
+/// Extension trait for Camera to add input handling.
+trait CameraInput {
+    fn update(&mut self, input: &Input, dt: f32);
 }
 
-/// Calculate the number of mip levels for a given texture size.
-fn mip_level_count(width: u32, height: u32) -> u32 {
-    ((width.max(height) as f32).log2().floor() as u32) + 1
-}
-
-/// Camera for flying around the terrain.
-struct Camera {
-    position: Vec3,
-    yaw: f32,   // Horizontal rotation (radians)
-    pitch: f32, // Vertical rotation (radians)
-    fov: f32,
-    near: f32,
-    far: f32,
-    speed: f32,
-    sensitivity: f32,
-}
-
-impl Default for Camera {
-    fn default() -> Self {
-        Self {
-            position: Vec3::new(500.0, 200.0, 500.0),
-            yaw: -std::f32::consts::FRAC_PI_4,
-            pitch: -0.3,
-            fov: 60.0_f32.to_radians(),
-            near: 1.0,
-            far: 10000.0,
-            speed: 100.0,
-            sensitivity: 0.002,
-        }
-    }
-}
-
-impl Camera {
-    fn forward(&self) -> Vec3 {
-        Vec3::new(
-            self.yaw.cos() * self.pitch.cos(),
-            self.pitch.sin(),
-            self.yaw.sin() * self.pitch.cos(),
-        )
-        .normalize()
-    }
-
-    fn right(&self) -> Vec3 {
-        self.forward().cross(Vec3::Y).normalize()
-    }
-
-    fn view_matrix(&self) -> Mat4 {
-        Mat4::look_at_rh(self.position, self.position + self.forward(), Vec3::Y)
-    }
-
-    fn projection_matrix(&self, aspect: f32) -> Mat4 {
-        Mat4::perspective_rh(self.fov, aspect, self.near, self.far)
-    }
-
+impl CameraInput for Camera {
     fn update(&mut self, input: &Input, dt: f32) {
-        let speed = if input.is_key_held(KeyCode::LShift) {
+        // Speed modifier: LShift on keyboard, or left trigger on gamepad
+        let speed = if input.is_key_held(KeyCode::LShift) || input.gamepad.left_trigger > 0.5 {
             self.speed * 3.0
         } else {
             self.speed
         };
 
-        // Movement
+        // Keyboard movement
         if input.is_key_held(KeyCode::W) {
-            self.position += self.forward() * speed * dt;
+            self.move_forward(speed * dt);
         }
         if input.is_key_held(KeyCode::S) {
-            self.position -= self.forward() * speed * dt;
+            self.move_forward(-speed * dt);
         }
         if input.is_key_held(KeyCode::A) {
-            self.position -= self.right() * speed * dt;
+            self.move_right(-speed * dt);
         }
         if input.is_key_held(KeyCode::D) {
-            self.position += self.right() * speed * dt;
+            self.move_right(speed * dt);
         }
         if input.is_key_held(KeyCode::Space) {
-            self.position.y += speed * dt;
+            self.move_up(speed * dt);
         }
         if input.is_key_held(KeyCode::LCtrl) {
-            self.position.y -= speed * dt;
+            self.move_up(-speed * dt);
         }
 
-        // Arrow keys for looking
+        // Keyboard look (arrow keys)
         if input.is_key_held(KeyCode::Left) {
             self.yaw -= 1.5 * dt;
         }
@@ -187,14 +78,46 @@ impl Camera {
             self.yaw += 1.5 * dt;
         }
         if input.is_key_held(KeyCode::Up) {
-            self.pitch += 1.0 * dt;
+            self.pitch = (self.pitch + 1.0 * dt).clamp(-1.5, 1.5);
         }
         if input.is_key_held(KeyCode::Down) {
-            self.pitch -= 1.0 * dt;
+            self.pitch = (self.pitch - 1.0 * dt).clamp(-1.5, 1.5);
         }
 
-        // Clamp pitch
-        self.pitch = self.pitch.clamp(-1.5, 1.5);
+        // Gamepad controls (Xbox controller)
+        if input.gamepad.connected {
+            // Left stick: movement (forward/back, strafe left/right)
+            let move_x = input.gamepad.left_stick_x;
+            let move_y = input.gamepad.left_stick_y; // Up on stick = forward
+
+            if move_y.abs() > 0.0 {
+                self.move_forward(move_y * speed * dt);
+            }
+            if move_x.abs() > 0.0 {
+                self.move_right(move_x * speed * dt);
+            }
+
+            // Right stick: look (yaw/pitch)
+            let look_x = input.gamepad.right_stick_x;
+            let look_y = input.gamepad.right_stick_y;
+            let look_sensitivity = 2.0;
+
+            if look_x.abs() > 0.0 {
+                self.yaw += look_x * look_sensitivity * dt;
+            }
+            if look_y.abs() > 0.0 {
+                // Up on stick = look up (increase pitch)
+                self.pitch = (self.pitch + look_y * look_sensitivity * dt).clamp(-1.5, 1.5);
+            }
+
+            // Bumpers: up/down movement
+            if input.gamepad.is_button_held(GamepadButton::RightBumper) {
+                self.move_up(speed * dt);
+            }
+            if input.gamepad.is_button_held(GamepadButton::LeftBumper) {
+                self.move_up(-speed * dt);
+            }
+        }
     }
 }
 
@@ -289,46 +212,6 @@ struct AlbedoData {
     pixels: Vec<u8>,
 }
 
-/// Terrain shader parameters (must match WGSL struct).
-/// WGSL alignment rules: vec2=8, vec3=16, f32=4
-/// Total struct size must be multiple of largest alignment (16 for vec3).
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct TerrainParams {
-    terrain_size: [f32; 2],  // offset 0, size 8
-    chunk_count: [f32; 2],   // offset 8, size 8
-    texture_tile_scale: f32, // offset 16, size 4
-    debug_mode: f32, // offset 20, size 4 (0=normal, 1=alpha, 2=in-chunk UV, 3=raw atlas, 4=terrain UV)
-    bump_power: f32, // offset 24, size 4 - scales normal map XY (game default = 1.0)
-    _padding3: f32,  // offset 28, size 4
-                     // Total: 32 bytes
-}
-
-// SAFETY: TerrainParams is repr(C) with all f32 fields, safe to cast as bytes
-unsafe impl bytemuck::Pod for TerrainParams {}
-unsafe impl bytemuck::Zeroable for TerrainParams {}
-
-/// GPU tessellation shader parameters.
-/// Contains data needed to decode packed positions/normals in the shader.
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct GpuTessParams {
-    /// Atlas mid point for position decoding [x, y, z, pad]
-    mid: [f32; 4],
-    /// Atlas range for position decoding [x, y, z, pad]
-    range: [f32; 4],
-    /// Terrain size [num_verts_per_axis, tile_scale, num_patches_x, num_patches_z]
-    terrain_info: [f32; 4],
-    /// World bounds min [x, y, z, pad]
-    world_min: [f32; 4],
-    /// World bounds max [x, y, z, pad]
-    world_max: [f32; 4],
-}
-
-// SAFETY: GpuTessParams is repr(C) with all f32 fields
-unsafe impl bytemuck::Pod for GpuTessParams {}
-unsafe impl bytemuck::Zeroable for GpuTessParams {}
-
 /// A single terrain texture loaded from ERA.
 #[allow(dead_code)]
 struct TerrainTexture {
@@ -372,35 +255,6 @@ struct ChunkSplatData {
     /// Alpha maps for layers 1..n (layer 0 has no alpha, it's the base).
     /// Each is 64x64 = 4096 bytes.
     alpha_maps: Vec<Vec<u8>>,
-}
-
-/// Tessellation mode for terrain rendering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TessellationMode {
-    /// No tessellation - use raw XTD mesh.
-    None,
-    /// CPU tessellation - subdivide mesh on CPU (slow but accurate).
-    Cpu,
-    /// GPU tessellation - use instanced patches with vertex shader displacement (fast).
-    Gpu,
-}
-
-impl TessellationMode {
-    fn next(self) -> Self {
-        match self {
-            TessellationMode::None => TessellationMode::Gpu,
-            TessellationMode::Gpu => TessellationMode::Cpu,
-            TessellationMode::Cpu => TessellationMode::None,
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            TessellationMode::None => "None",
-            TessellationMode::Gpu => "GPU",
-            TessellationMode::Cpu => "CPU",
-        }
-    }
 }
 
 /// Raw XTD vertex data for GPU tessellation (before decoding to world positions).
@@ -1411,736 +1265,6 @@ impl Application for TerrainViewer {
     }
 }
 
-// Terrain shader with texture splatting support
-const TERRAIN_SHADER: &str = r#"
-struct CameraUniform {
-    view_proj: mat4x4<f32>,
-};
-@group(0) @binding(0)
-var<uniform> camera: CameraUniform;
-
-// Terrain texture array (up to 8 textures)
-@group(1) @binding(0)
-var t_terrain_array: texture_2d_array<f32>;
-@group(1) @binding(1)
-var s_terrain: sampler;
-
-// Alpha atlas for all chunks (16x16 chunks, 64x64 per chunk = 1024x1024)
-// Stores up to 4 alpha channels per texture (RGBA)
-@group(1) @binding(2)
-var t_alpha_atlas: texture_2d<f32>;
-
-// Per-chunk layer data (256 chunks * 8 layer IDs = 2048 u32s)
-@group(1) @binding(3)
-var<storage, read> chunk_layers: array<u32>;
-
-// Terrain dimensions (32 bytes total to match Rust struct)
-struct TerrainParams {
-    terrain_size: vec2<f32>,      // offset 0: World size of terrain (width, depth)
-    chunk_count: vec2<f32>,       // offset 8: Number of chunks (16, 16)
-    texture_tile_scale: f32,      // offset 16: How many times textures tile
-    debug_mode: f32,              // offset 20: Debug visualization mode
-    bump_power: f32,              // offset 24: Normal map XY scale (gBumpPower)
-    _pad3: f32,                   // offset 28: padding
-};
-@group(1) @binding(4)
-var<uniform> params: TerrainParams;
-
-// Pre-composited albedo atlas (all layers blended on CPU)
-@group(1) @binding(5)
-var t_composited: texture_2d<f32>;
-
-// Separate sampler for alpha atlas (Nearest filtering to avoid chunk boundary bleeding)
-@group(1) @binding(6)
-var s_alpha: sampler;
-
-// XTT albedo (original pre-composited from game export)
-@group(1) @binding(7)
-var t_xtt_albedo: texture_2d<f32>;
-
-// Per-texture UV scales (8 textures * vec2<f32> = 16 floats)
-// These control how many times each texture tiles across the terrain
-@group(1) @binding(8)
-var<storage, read> texture_scales: array<vec2<f32>>;
-
-struct VertexInput {
-    @location(0) position: vec3<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) uv: vec2<f32>,
-};
-
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) normal: vec3<f32>,
-    @location(1) world_pos: vec3<f32>,
-    @location(2) uv: vec2<f32>,
-};
-
-@vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
-    var out: VertexOutput;
-    out.clip_position = camera.view_proj * vec4<f32>(in.position, 1.0);
-    out.normal = in.normal;
-    out.world_pos = in.position;
-    out.uv = in.uv;
-    return out;
-}
-
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let light_dir = normalize(vec3<f32>(0.5, 1.0, 0.3));
-    let normal = normalize(in.normal);
-    let diff = max(dot(normal, light_dir), 0.0);
-    let ambient = 0.4;
-    let lighting = ambient + diff * 0.6;
-
-    // Determine which chunk this pixel belongs to (0-15 in each axis)
-    let chunk_uv = in.uv * params.chunk_count;
-    let chunk_x = u32(clamp(floor(chunk_uv.x), 0.0, params.chunk_count.x - 1.0));
-    let chunk_y = u32(clamp(floor(chunk_uv.y), 0.0, params.chunk_count.y - 1.0));
-    // The alpha atlas has mirror+rotate transform applied, which transposes chunk positions.
-    // Alpha at (chunk_x, chunk_y) is from original chunk (chunk_y, chunk_x).
-    // So layer IDs should use: original_grid_x = chunk_y, original_grid_z = chunk_x
-    // X-major index: grid_x * 16 + grid_z = chunk_y * 16 + chunk_x
-    let chunk_idx = chunk_y * u32(params.chunk_count.x) + chunk_x;
-
-    // UV within the chunk (0-1) for alpha sampling
-    let in_chunk_uv = fract(chunk_uv);
-
-    // Calculate alpha atlas UV - each chunk is 64x64 in a 1024x1024 atlas
-    let alpha_atlas_uv = (vec2<f32>(f32(chunk_x), f32(chunk_y)) + in_chunk_uv) / params.chunk_count;
-
-    // Sample alpha values for this chunk (RGBA = 4 alpha channels for layers 1-4)
-    // Use s_alpha (Nearest filtering) to avoid bleeding at chunk boundaries
-    let alphas = textureSample(t_alpha_atlas, s_alpha, alpha_atlas_uv);
-
-    // Get layer indices for this chunk (8 layers max per chunk, stored as u32s)
-    let layer_base = chunk_idx * 8u;
-    let layer0 = chunk_layers[layer_base];
-    let layer1 = chunk_layers[layer_base + 1u];
-    let layer2 = chunk_layers[layer_base + 2u];
-    let layer3 = chunk_layers[layer_base + 3u];
-
-    // Calculate per-layer tiled UVs using each texture's scale factors
-    // The game multiplies UVs by u_scale/v_scale to control tiling density
-    // Base UV: in.uv * chunk_count gives 0-16 range (one tile per chunk at scale=1)
-    let base_uv = in.uv * params.chunk_count;
-    let uv0 = base_uv * texture_scales[layer0];
-    let uv1 = base_uv * texture_scales[layer1];
-    let uv2 = base_uv * texture_scales[layer2];
-    let uv3 = base_uv * texture_scales[layer3];
-
-    // DEBUG MODE: 0=splatting, 1=alpha values, 2=in-chunk UVs, 3=raw atlas, 4=terrain UVs, 5=composited
-    // Press 0-5 keys to switch modes
-    let debug_mode = i32(params.debug_mode);
-
-    if (debug_mode == 1) {
-        // Visualize alpha values as color (RED shows layer 1 alpha)
-        return vec4<f32>(alphas.r, alphas.g, alphas.b, 1.0);
-    } else if (debug_mode == 2) {
-        // Visualize in-chunk UVs (should show smooth gradient within each chunk)
-        return vec4<f32>(in_chunk_uv.x, in_chunk_uv.y, 0.0, 1.0);
-    } else if (debug_mode == 3) {
-        // Sample raw atlas using terrain UV directly (shows atlas as-is)
-        let raw_alpha = textureSample(t_alpha_atlas, s_alpha, in.uv);
-        return vec4<f32>(raw_alpha.r, raw_alpha.g, raw_alpha.b, 1.0);
-    } else if (debug_mode == 4) {
-        // Show raw terrain mesh UVs (should be smooth 0-1 gradient across entire terrain)
-        return vec4<f32>(in.uv.x, in.uv.y, 0.0, 1.0);
-    } else if (debug_mode == 5) {
-        // Show pre-composited albedo (correct blending, no boundary issues)
-        let comp_color = textureSample(t_composited, s_terrain, in.uv);
-        return vec4<f32>(comp_color.rgb * lighting, 1.0);
-    } else if (debug_mode == 6) {
-        // Debug: Show layer IDs as colors to identify which chunks have which textures
-        // Color-code by layer0 texture ID (base layer)
-        var id_color = vec3<f32>(0.5, 0.5, 0.5);
-        if (layer0 == 0u) { id_color = vec3<f32>(0.0, 0.5, 0.0); }      // grass_01 = dark green
-        else if (layer0 == 1u) { id_color = vec3<f32>(0.4, 0.3, 0.2); } // floodmud_01 = brown
-        else if (layer0 == 2u) { id_color = vec3<f32>(0.0, 0.8, 0.0); } // grass_05 = bright green
-        else if (layer0 == 3u) { id_color = vec3<f32>(0.5, 0.5, 0.5); } // cliffwall_04 = gray
-        else if (layer0 == 4u) { id_color = vec3<f32>(0.3, 0.6, 0.3); } // grass_04 = medium green
-        else if (layer0 == 5u) { id_color = vec3<f32>(0.2, 0.5, 0.2); } // grass_03 = darker green
-        else if (layer0 == 6u) { id_color = vec3<f32>(0.4, 0.7, 0.4); } // grass_06 = light green
-        // Overlay layer1 color if it's non-zero
-        if (layer1 > 0u) {
-            var l1_color = vec3<f32>(0.0, 0.0, 0.0);
-            if (layer1 == 1u) { l1_color = vec3<f32>(0.4, 0.3, 0.2); }
-            else if (layer1 == 2u) { l1_color = vec3<f32>(0.0, 0.8, 0.0); }
-            else if (layer1 == 3u) { l1_color = vec3<f32>(0.5, 0.5, 0.5); }
-            else if (layer1 == 4u) { l1_color = vec3<f32>(0.3, 0.6, 0.3); }
-            else if (layer1 == 5u) { l1_color = vec3<f32>(0.2, 0.5, 0.2); }
-            else if (layer1 == 6u) { l1_color = vec3<f32>(0.4, 0.7, 0.4); }
-            id_color = mix(id_color, l1_color, alphas.r);
-        }
-        return vec4<f32>(id_color * lighting, 1.0);
-    } else if (debug_mode == 7) {
-        // Debug: Show chunk grid position as colors
-        // R = chunk_x / 16, G = chunk_z / 16, B = 0
-        // This shows where each chunk is positioned on the terrain
-        let chunk_x_f = floor(in.uv.x * params.chunk_count.x);
-        let chunk_z_f = floor(in.uv.y * params.chunk_count.y);
-        return vec4<f32>(chunk_x_f / 16.0, chunk_z_f / 16.0, 0.0, 1.0);
-    } else if (debug_mode == 8) {
-        // Debug: Show layer1 (blend layer) info
-        // R = layer1 ID / 7 (should show cliffs as ~0.43 = gray)
-        // G = alpha for layer1 (shows where blending should happen)
-        // B = 1.0 if layer1 > 0 (marks chunks that have a blend layer)
-        let has_layer1 = select(0.0, 1.0, layer1 > 0u);
-        return vec4<f32>(f32(layer1) / 7.0, alphas.r, has_layer1, 1.0);
-    } else if (debug_mode == 9) {
-        // XTT albedo (original pre-composited from game export)
-        let xtt_color = textureSample(t_xtt_albedo, s_terrain, in.uv);
-        return vec4<f32>(xtt_color.rgb * lighting, 1.0);
-    } else if (debug_mode == 10) {
-        // Debug: Direct texture array test - sample layer 0 explicitly
-        // Left half shows layer 0 (should be grass_01), right half shows layer 1 (should be floodmud_01)
-        if (in.uv.x < 0.5) {
-            let tex0 = textureSample(t_terrain_array, s_terrain, uv0, 0u).rgb;
-            return vec4<f32>(tex0 * lighting, 1.0);
-        } else {
-            let tex1 = textureSample(t_terrain_array, s_terrain, uv1, 1u).rgb;
-            return vec4<f32>(tex1 * lighting, 1.0);
-        }
-    } else if (debug_mode == 11) {
-        // Debug: Solid magenta to verify debug_mode is reaching shader
-        return vec4<f32>(1.0, 0.0, 1.0, 1.0);
-    } else if (debug_mode >= 12) {
-        // Debug: Show debug_mode value as grayscale (mode 12 = 0.12, mode 20 = 0.20, etc)
-        let mode_color = f32(debug_mode) / 100.0;
-        return vec4<f32>(mode_color, mode_color, mode_color, 1.0);
-    }
-
-    // Mode 0: Runtime texture splatting
-    var color = textureSample(t_terrain_array, s_terrain, uv0, layer0).rgb;
-
-    // Blend layers 1-3 using alpha values
-    // IMPORTANT: Only blend if layer ID is non-zero (ID=0 for layers 1+ means padding/unused)
-    // The original game code checks: if(layerIdsSplat[i]) before processing
-    if (layer1 > 0u && alphas.r > 0.0) {
-        let layer1_color = textureSample(t_terrain_array, s_terrain, uv1, layer1).rgb;
-        color = mix(color, layer1_color, alphas.r);
-    }
-    if (layer2 > 0u && alphas.g > 0.0) {
-        let layer2_color = textureSample(t_terrain_array, s_terrain, uv2, layer2).rgb;
-        color = mix(color, layer2_color, alphas.g);
-    }
-    if (layer3 > 0u && alphas.b > 0.0) {
-        let layer3_color = textureSample(t_terrain_array, s_terrain, uv3, layer3).rgb;
-        color = mix(color, layer3_color, alphas.b);
-    }
-
-    return vec4<f32>(color * lighting, 1.0);
-}
-"#;
-
-/// GPU tessellation shader using instanced patches with vertex displacement.
-/// Each instance is a terrain patch, and vertices sample position/normal textures.
-const GPU_TESS_SHADER: &str = r#"
-struct CameraUniform {
-    view_proj: mat4x4<f32>,
-};
-@group(0) @binding(0)
-var<uniform> camera: CameraUniform;
-
-// Tessellation parameters for decoding packed positions
-struct TessParams {
-    mid: vec4<f32>,           // x, y, z, pad
-    range: vec4<f32>,         // x, y, z, pad
-    terrain_info: vec4<f32>,  // num_verts, tile_scale, num_patches_x, num_patches_z
-    world_min: vec4<f32>,     // x, y, z, pad
-    world_max: vec4<f32>,     // x, y, z, pad
-};
-@group(1) @binding(0)
-var<uniform> tess_params: TessParams;
-
-// Position texture (R32Uint - packed R10G10B10A2)
-@group(1) @binding(1)
-var t_positions: texture_2d<u32>;
-
-// Normal texture (R32Uint - packed)
-@group(1) @binding(2)
-var t_normals: texture_2d<u32>;
-
-// XTT albedo texture for coloring
-@group(1) @binding(3)
-var t_xtt_albedo: texture_2d<f32>;
-@group(1) @binding(4)
-var s_terrain: sampler;
-
-// Terrain params (reuse from main shader for debug mode)
-struct TerrainParams {
-    terrain_size: vec2<f32>,
-    chunk_count: vec2<f32>,
-    texture_tile_scale: f32,
-    debug_mode: f32,
-    bump_power: f32,
-    _pad3: f32,
-};
-@group(1) @binding(5)
-var<uniform> params: TerrainParams;
-
-// AO texture (R8Unorm - 0=occluded, 1=fully lit)
-@group(1) @binding(6)
-var t_ao: texture_2d<f32>;
-
-// Alpha texture (R8Unorm - 255=opaque, 0=transparent/hole)
-// Same compression as AO, used for terrain holes (water edges, cliffs)
-@group(1) @binding(7)
-var t_alpha: texture_2d<f32>;
-
-// Normal map texture array (tangent-space normals)
-@group(1) @binding(8)
-var t_normal_array: texture_2d_array<f32>;
-
-// Terrain texture array (diffuse textures for splatting)
-@group(1) @binding(9)
-var t_terrain_array: texture_2d_array<f32>;
-
-// Alpha atlas for all chunks (16x16 chunks, 64x64 per chunk = 1024x1024)
-@group(1) @binding(10)
-var t_alpha_atlas: texture_2d<f32>;
-
-// Per-chunk layer data (256 chunks * 8 layer IDs = 2048 u32s)
-@group(1) @binding(11)
-var<storage, read> chunk_layers: array<u32>;
-
-// Alpha sampler (nearest filtering to avoid chunk boundary bleeding)
-@group(1) @binding(12)
-var s_alpha: sampler;
-
-// Pre-composited albedo atlas (all layers blended on CPU)
-@group(1) @binding(13)
-var t_composited: texture_2d<f32>;
-
-// Per-texture UV scales (8 textures * vec2<f32> = 16 floats)
-// These control how many times each texture tiles across the terrain
-@group(1) @binding(14)
-var<storage, read> texture_scales: array<vec2<f32>>;
-
-struct VertexInput {
-    // Per-vertex: local UV within patch [0, 1]
-    @location(0) local_uv: vec2<f32>,
-    // Per-instance: patch index (x + z * num_patches_x)
-    @location(1) patch_index: u32,
-};
-
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) normal: vec3<f32>,
-    @location(1) world_pos: vec3<f32>,
-    @location(2) uv: vec2<f32>,
-};
-
-// Decode packed R10G10B10A2 position
-// Must match Rust decode.rs: (bits / 1023.0) * range - mid
-fn unpack_position(packed: u32, mid: vec3<f32>, range: vec3<f32>) -> vec3<f32> {
-    let x_bits = packed & 0x3FFu;
-    let y_bits = (packed >> 10u) & 0x3FFu;
-    let z_bits = (packed >> 20u) & 0x3FFu;
-
-    // Normalize to [0, 1]
-    let norm = vec3<f32>(
-        f32(x_bits) / 1023.0,
-        f32(y_bits) / 1023.0,
-        f32(z_bits) / 1023.0
-    );
-
-    // Apply range and offset to get displacement
-    // Formula: (bits / 1023) * range - mid
-    return norm * range - mid;
-}
-
-// Decode packed normal
-// IMPORTANT: Normal packing uses different bit layout than position!
-// Must match Rust decode.rs: x = bits 22-31, y = bits 11-20, z = bits 0-9
-fn unpack_normal(packed: u32) -> vec3<f32> {
-    let x_bits = (packed >> 22u) & 0x3FFu;  // bits 22-31
-    let y_bits = (packed >> 11u) & 0x3FFu;  // bits 11-20
-    let z_bits = packed & 0x3FFu;           // bits 0-9
-
-    // Convert to [-1, 1] range: (bits / 1023) * 2 - 1
-    let norm = vec3<f32>(
-        (f32(x_bits) / 1023.0) * 2.0 - 1.0,
-        (f32(y_bits) / 1023.0) * 2.0 - 1.0,
-        (f32(z_bits) / 1023.0) * 2.0 - 1.0
-    );
-
-    return normalize(norm);
-}
-
-@vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
-    var out: VertexOutput;
-
-    let num_verts = u32(tess_params.terrain_info.x);
-    let tile_scale = tess_params.terrain_info.y;
-    let num_patches_x = u32(tess_params.terrain_info.z);
-    let num_patches_z = u32(tess_params.terrain_info.w);
-
-    // Calculate patch position from index
-    let patch_x = in.patch_index % num_patches_x;
-    let patch_z = in.patch_index / num_patches_x;
-
-    // Calculate vertices per patch (terrain has num_verts vertices, num_verts-1 quads)
-    // For 64 patches across 1024 vertices: ~16 vertices per patch
-    let verts_per_patch_f = f32(num_verts - 1u) / f32(num_patches_x);
-
-    // Global UV across entire terrain [0, 1]
-    // Use round() to snap UVs to exact grid values and avoid floating point precision issues at patch boundaries
-    // This ensures vertices at patch edges get identical UV values from both adjacent patches
-    let raw_u = (f32(patch_x) + in.local_uv.x) / f32(num_patches_x);
-    let raw_v = (f32(patch_z) + in.local_uv.y) / f32(num_patches_z);
-    // Snap to nearest 1/1023 (for 1024 vertices = 1023 intervals)
-    let uv_steps = f32(num_verts - 1u);
-    let global_u = round(raw_u * uv_steps) / uv_steps;
-    let global_v = round(raw_v * uv_steps) / uv_steps;
-
-    // Convert UV to texture coordinate (pixel coordinate)
-    let tex_x = u32(global_u * f32(num_verts - 1u));
-    let tex_z = u32(global_v * f32(num_verts - 1u));
-
-    // Clamp to valid range
-    let clamped_x = min(tex_x, num_verts - 1u);
-    let clamped_z = min(tex_z, num_verts - 1u);
-
-    // Sample position texture (using textureLoad for integer texture)
-    let packed_pos = textureLoad(t_positions, vec2<i32>(i32(clamped_x), i32(clamped_z)), 0).r;
-    let packed_norm = textureLoad(t_normals, vec2<i32>(i32(clamped_x), i32(clamped_z)), 0).r;
-
-    // Decode position
-    let local_pos = unpack_position(packed_pos, tess_params.mid.xyz, tess_params.range.xyz);
-
-    // Calculate world position using grid and displacement
-    // This must match decode.rs: position = [grid_x * tile_scale + unpacked[0], unpacked[1], grid_z * tile_scale + unpacked[2]]
-    let grid_x = global_u * f32(num_verts - 1u);
-    let grid_z = global_v * f32(num_verts - 1u);
-
-    let world_pos = vec3<f32>(
-        grid_x * tile_scale + local_pos.x,  // X = grid*scale + displacement
-        local_pos.y,                         // Y = height from texture
-        grid_z * tile_scale + local_pos.z   // Z = grid*scale + displacement
-    );
-
-    // Decode normal
-    let normal = unpack_normal(packed_norm);
-
-    out.clip_position = camera.view_proj * vec4<f32>(world_pos, 1.0);
-    out.normal = normal;
-    out.world_pos = world_pos;
-    out.uv = vec2<f32>(global_u, global_v);
-
-    return out;
-}
-
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Compute UV from world position to ensure continuity across patch boundaries
-    // world_pos is interpolated smoothly, so UV derived from it will be continuous
-    let num_verts = u32(tess_params.terrain_info.x);
-    let tile_scale = tess_params.terrain_info.y;
-    let terrain_extent = f32(num_verts - 1u) * tile_scale;
-    let uv_from_world = vec2<f32>(
-        in.world_pos.x / terrain_extent,
-        in.world_pos.z / terrain_extent
-    );
-    // Use world-derived UV instead of interpolated vertex UV
-    let sample_uv = uv_from_world;
-
-    // Sample alpha texture for terrain holes/transparency
-    let alpha = textureSample(t_alpha, s_terrain, sample_uv).r;
-    if (alpha < 0.5) {
-        discard;
-    }
-
-    let light_dir = normalize(vec3<f32>(0.5, 1.0, 0.3));
-
-    // Base vertex normal for TBN matrix - terrain is roughly horizontal
-    // Actual surface detail comes from normal maps sampled below
-    let vertex_normal = normalize(vec3<f32>(0.0, 1.0, 0.0));
-
-    // Determine which chunk this pixel belongs to (0-15 in each axis)
-    let chunk_count = vec2<f32>(params.chunk_count.x, params.chunk_count.y);
-    let chunk_uv = sample_uv * chunk_count;
-    let chunk_x = u32(clamp(floor(chunk_uv.x), 0.0, chunk_count.x - 1.0));
-    let chunk_y = u32(clamp(floor(chunk_uv.y), 0.0, chunk_count.y - 1.0));
-    // The alpha atlas has mirror+rotate transform applied, which transposes chunk positions.
-    // Alpha at (chunk_x, chunk_y) is from original chunk (chunk_y, chunk_x).
-    // So layer IDs should use: original_grid_x = chunk_y, original_grid_z = chunk_x
-    // X-major index: grid_x * 16 + grid_z = chunk_y * 16 + chunk_x
-    let chunk_idx = chunk_y * u32(chunk_count.x) + chunk_x;
-
-    // UV within the chunk (0-1) for alpha sampling
-    let in_chunk_uv = fract(chunk_uv);
-
-    // Calculate alpha atlas UV - each chunk is 64x64 in a 1024x1024 atlas
-    let alpha_atlas_uv = (vec2<f32>(f32(chunk_x), f32(chunk_y)) + in_chunk_uv) / chunk_count;
-
-    // Sample alpha values for this chunk (RGBA = 4 alpha channels for layers 1-4)
-    let alphas = textureSample(t_alpha_atlas, s_alpha, alpha_atlas_uv);
-
-    // Get layer indices for this chunk (8 layers max per chunk)
-    let layer_base = chunk_idx * 8u;
-    let layer0 = chunk_layers[layer_base];
-    let layer1 = chunk_layers[layer_base + 1u];
-    let layer2 = chunk_layers[layer_base + 2u];
-    let layer3 = chunk_layers[layer_base + 3u];
-
-    // Calculate per-layer tiled UVs using each texture's scale factors
-    // The game multiplies UVs by u_scale/v_scale to control tiling density
-    // Base UV: sample_uv * chunk_count gives 0-16 range (one tile per chunk at scale=1)
-    let base_uv = sample_uv * chunk_count;
-    let uv0 = base_uv * texture_scales[layer0];
-    let uv1 = base_uv * texture_scales[layer1];
-    let uv2 = base_uv * texture_scales[layer2];
-    let uv3 = base_uv * texture_scales[layer3];
-
-    // Runtime texture splatting (same as CPU tessellation)
-    // NOTE: The game uses a GPU compute shader (gpuTerrainComposite.bin) to composite
-    // textures at runtime into "unique" per-chunk textures. Our approach is similar but
-    // done per-pixel in the fragment shader.
-    //
-    // Restored: normal splatting path (not early return)
-    var color = textureSampleLevel(t_terrain_array, s_terrain, uv0, layer0, 0.0).rgb;
-
-    // Blend layers 1-3 using alpha values
-    // IMPORTANT: Only blend if layer ID is non-zero (ID=0 for layers 1+ means padding/unused)
-    if (layer1 > 0u && alphas.r > 0.0) {
-        let layer1_color = textureSampleLevel(t_terrain_array, s_terrain, uv1, layer1, 0.0).rgb;
-        color = mix(color, layer1_color, alphas.r);
-    }
-    if (layer2 > 0u && alphas.g > 0.0) {
-        let layer2_color = textureSampleLevel(t_terrain_array, s_terrain, uv2, layer2, 0.0).rgb;
-        color = mix(color, layer2_color, alphas.g);
-    }
-    if (layer3 > 0u && alphas.b > 0.0) {
-        let layer3_color = textureSampleLevel(t_terrain_array, s_terrain, uv3, layer3, 0.0).rgb;
-        color = mix(color, layer3_color, alphas.b);
-    }
-
-    // Blend normal maps from individual textures for surface detail
-    // BC5/DXN format only stores X and Y components - Z must be reconstructed!
-    // Sample .rg only (B channel is 0/uninitialized from BC5 decode)
-    // Use explicit mip 0 to avoid seams at patch boundaries
-
-    // Helper: unpack BC5 normal - sample RG, convert to -1..+1, reconstruct Z
-    let nm0 = textureSampleLevel(t_normal_array, s_terrain, uv0, layer0, 0.0).rg * 2.0 - 1.0;
-    var tangent_normal = vec3<f32>(nm0.x, nm0.y, sqrt(max(0.0, 1.0 - nm0.x * nm0.x - nm0.y * nm0.y)));
-
-    if (layer1 > 0u && alphas.r > 0.0) {
-        let nm1 = textureSampleLevel(t_normal_array, s_terrain, uv1, layer1, 0.0).rg * 2.0 - 1.0;
-        let layer1_normal = vec3<f32>(nm1.x, nm1.y, sqrt(max(0.0, 1.0 - nm1.x * nm1.x - nm1.y * nm1.y)));
-        tangent_normal = mix(tangent_normal, layer1_normal, alphas.r);
-    }
-    if (layer2 > 0u && alphas.g > 0.0) {
-        let nm2 = textureSampleLevel(t_normal_array, s_terrain, uv2, layer2, 0.0).rg * 2.0 - 1.0;
-        let layer2_normal = vec3<f32>(nm2.x, nm2.y, sqrt(max(0.0, 1.0 - nm2.x * nm2.x - nm2.y * nm2.y)));
-        tangent_normal = mix(tangent_normal, layer2_normal, alphas.g);
-    }
-    if (layer3 > 0u && alphas.b > 0.0) {
-        let nm3 = textureSampleLevel(t_normal_array, s_terrain, uv3, layer3, 0.0).rg * 2.0 - 1.0;
-        let layer3_normal = vec3<f32>(nm3.x, nm3.y, sqrt(max(0.0, 1.0 - nm3.x * nm3.x - nm3.y * nm3.y)));
-        tangent_normal = mix(tangent_normal, layer3_normal, alphas.b);
-    }
-
-    // Apply bump power scaling (matches game's unpackDXNNormalScaled)
-    // Scale XY components, then recalculate Z from scaled XY
-    tangent_normal.x = tangent_normal.x * params.bump_power;
-    tangent_normal.y = tangent_normal.y * params.bump_power;
-    tangent_normal.z = sqrt(max(0.0, 1.0 - tangent_normal.x * tangent_normal.x - tangent_normal.y * tangent_normal.y));
-    tangent_normal = normalize(tangent_normal);
-
-    // Build TBN matrix (Tangent, Bitangent, Normal)
-    let up = vec3<f32>(0.0, 1.0, 0.0);
-    var tangent = normalize(cross(up, vertex_normal));
-    if (length(tangent) < 0.001) {
-        tangent = vec3<f32>(1.0, 0.0, 0.0);
-    }
-    let bitangent = normalize(cross(vertex_normal, tangent));
-
-    // Transform tangent-space normal to world space
-    let tbn = mat3x3<f32>(tangent, bitangent, vertex_normal);
-    let perturbed_normal = normalize(tbn * tangent_normal);
-
-    let diff = max(dot(perturbed_normal, light_dir), 0.0);
-
-    let ao = textureSample(t_ao, s_terrain, sample_uv).r;
-    let ao_intensity = 0.8;
-    let ao_factor = mix(1.0, ao, ao_intensity);
-
-    let ambient = 0.4 * ao_factor;
-    let diffuse = diff * 0.6 * mix(1.0, ao_factor, 0.3);
-    let lighting = ambient + diffuse;
-
-    // Debug modes
-    // Mode 11: Show sample UV as color gradient
-    if (params.debug_mode > 10.5 && params.debug_mode < 11.5) {
-        return vec4<f32>(sample_uv.x, sample_uv.y, 0.0, 1.0);
-    }
-    // Mode 10: SOLID COLOR - no texture sampling at all
-    // If lines appear here, they are GEOMETRIC GAPS between patches
-    if (params.debug_mode > 9.5 && params.debug_mode < 10.5) {
-        return vec4<f32>(0.5, 0.7, 0.3, 1.0);  // Solid green - no sampling
-    }
-    // Mode 8: Show AO texture directly (to test if AO itself has seams)
-    if (params.debug_mode > 7.5 && params.debug_mode < 8.5) {
-        // Return AO as grayscale - if seams appear here, the AO sampling is the culprit
-        return vec4<f32>(ao, ao, ao, 1.0);
-    }
-    // Debug mode 9: XTT albedo (original pre-composited from game export)
-    // DEBUG: Use constant lighting to test if seams are from normal maps or positions
-    if (params.debug_mode > 8.5 && params.debug_mode < 9.5) {
-        let xtt_color = textureSample(t_xtt_albedo, s_terrain, sample_uv);
-        let constant_lighting = 0.7;  // Constant brightness - no normals used at all
-        return vec4<f32>(xtt_color.rgb * constant_lighting, 1.0);
-    }
-    // Debug mode 7: XTT albedo with FLAT lighting (no normals)
-    // Use this to check if lines are caused by normal discontinuities
-    if (params.debug_mode > 6.5 && params.debug_mode < 7.5) {
-        let xtt_color = textureSample(t_xtt_albedo, s_terrain, sample_uv);
-        return vec4<f32>(xtt_color.rgb, 1.0);  // No lighting applied
-    }
-
-    // Debug mode 1: Show chunk boundaries (red lines at edges)
-    if (params.debug_mode > 0.5 && params.debug_mode < 1.5) {
-        let edge_threshold = 0.02;
-        let is_edge = in_chunk_uv.x < edge_threshold || in_chunk_uv.x > (1.0 - edge_threshold) ||
-                      in_chunk_uv.y < edge_threshold || in_chunk_uv.y > (1.0 - edge_threshold);
-        if (is_edge) {
-            return vec4<f32>(1.0, 0.0, 0.0, 1.0);
-        }
-        return vec4<f32>(color * lighting, 1.0);
-    }
-
-    // Debug mode 2: Show chunk indices as colors (each chunk a unique color)
-    if (params.debug_mode > 1.5 && params.debug_mode < 2.5) {
-        let chunk_color = vec3<f32>(
-            f32(chunk_x % 4u) / 3.0,
-            f32(chunk_y % 4u) / 3.0,
-            f32((chunk_x + chunk_y) % 4u) / 3.0
-        );
-        return vec4<f32>(chunk_color, 1.0);
-    }
-
-    // Debug mode 3: Show layer0 IDs as colors
-    if (params.debug_mode > 2.5 && params.debug_mode < 3.5) {
-        let layer_color = vec3<f32>(
-            f32(layer0 % 8u) / 7.0,
-            f32((layer0 / 8u) % 8u) / 7.0,
-            f32((layer0 / 64u) % 8u) / 7.0
-        );
-        return vec4<f32>(layer_color, 1.0);
-    }
-
-    // Debug mode 4: Show alpha values (RGBA = layers 1-4 blend weights)
-    if (params.debug_mode > 3.5 && params.debug_mode < 4.5) {
-        return vec4<f32>(alphas.rgb, 1.0);
-    }
-
-    // Debug mode 5: Show in_chunk_uv (should be smooth gradient within each chunk)
-    if (params.debug_mode > 4.5 && params.debug_mode < 5.5) {
-        return vec4<f32>(in_chunk_uv.x, in_chunk_uv.y, 0.0, 1.0);
-    }
-
-    // Debug mode 6: Show base_uv (texture coordinates before per-texture scaling)
-    if (params.debug_mode > 5.5 && params.debug_mode < 6.5) {
-        return vec4<f32>(fract(base_uv.x), fract(base_uv.y), 0.0, 1.0);
-    }
-
-    // Debug mode 10: Direct texture array test
-    // UV.x < 0.5 = texture[0] (should be grass_01) - GREEN corner marker
-    // UV.x >= 0.5 = texture[1] (should be floodmud_01) - BLUE corner marker
-    if (params.debug_mode > 9.5 && params.debug_mode < 10.5) {
-        // Draw thick red boundary line at UV.x = 0.5
-        if (abs(in.uv.x - 0.5) < 0.01) {
-            return vec4<f32>(1.0, 0.0, 0.0, 1.0);
-        }
-        // Solid GREEN corner marker for left side (UV.x < 0.1 && UV.y < 0.1)
-        if (in.uv.x < 0.1 && in.uv.y < 0.1) {
-            return vec4<f32>(0.0, 1.0, 0.0, 1.0);
-        }
-        // Solid BLUE corner marker for right side (UV.x > 0.9 && UV.y < 0.1)
-        if (in.uv.x > 0.9 && in.uv.y < 0.1) {
-            return vec4<f32>(0.0, 0.0, 1.0, 1.0);
-        }
-        if (in.uv.x < 0.5) {
-            // LEFT of red line = texture array index 0
-            let tex0 = textureSample(t_terrain_array, s_terrain, uv0, 0u).rgb;
-            return vec4<f32>(tex0 * lighting, 1.0);
-        } else {
-            // RIGHT of red line = texture array index 1
-            let tex1 = textureSample(t_terrain_array, s_terrain, uv1, 1u).rgb;
-            return vec4<f32>(tex1 * lighting, 1.0);
-        }
-    }
-
-    // Debug mode 11: Solid magenta to verify debug_mode is reaching shader
-    if (params.debug_mode > 10.5 && params.debug_mode < 11.5) {
-        return vec4<f32>(1.0, 0.0, 1.0, 1.0);
-    }
-
-    // Debug mode 12: Show layer0 value as color
-    // layer0=0 -> red, layer0=1 -> green, layer0=2 -> blue, layer0=3+ -> yellow shades
-    if (params.debug_mode > 11.5 && params.debug_mode < 12.5) {
-        var layer_color = vec3<f32>(1.0, 1.0, 1.0); // white = unknown
-        if (layer0 == 0u) { layer_color = vec3<f32>(1.0, 0.0, 0.0); }      // RED = 0
-        else if (layer0 == 1u) { layer_color = vec3<f32>(0.0, 1.0, 0.0); } // GREEN = 1
-        else if (layer0 == 2u) { layer_color = vec3<f32>(0.0, 0.0, 1.0); } // BLUE = 2
-        else if (layer0 == 3u) { layer_color = vec3<f32>(1.0, 1.0, 0.0); } // YELLOW = 3
-        else if (layer0 == 4u) { layer_color = vec3<f32>(1.0, 0.0, 1.0); } // MAGENTA = 4
-        else if (layer0 == 5u) { layer_color = vec3<f32>(0.0, 1.0, 1.0); } // CYAN = 5
-        else if (layer0 == 6u) { layer_color = vec3<f32>(1.0, 0.5, 0.0); } // ORANGE = 6
-        else { layer_color = vec3<f32>(0.5, 0.5, 0.5); } // GRAY = 7+
-        return vec4<f32>(layer_color, 1.0);
-    }
-
-    // Debug mode 13: Show ONLY base layer texture (layer0) - NO blending
-    if (params.debug_mode > 12.5 && params.debug_mode < 13.5) {
-        let base_tex = textureSample(t_terrain_array, s_terrain, uv0, layer0).rgb;
-        return vec4<f32>(base_tex * lighting, 1.0);
-    }
-
-    // Debug mode 14: Show layer1 value as color (overlay layer)
-    if (params.debug_mode > 13.5 && params.debug_mode < 14.5) {
-        var layer_color = vec3<f32>(0.0, 0.0, 0.0); // BLACK = 0 (no overlay)
-        if (layer1 == 0u) { layer_color = vec3<f32>(0.0, 0.0, 0.0); }      // BLACK = 0 (unused)
-        else if (layer1 == 1u) { layer_color = vec3<f32>(0.0, 1.0, 0.0); } // GREEN = 1
-        else if (layer1 == 2u) { layer_color = vec3<f32>(0.0, 0.0, 1.0); } // BLUE = 2
-        else if (layer1 == 3u) { layer_color = vec3<f32>(1.0, 1.0, 0.0); } // YELLOW = 3 (cliffwall)
-        else if (layer1 == 4u) { layer_color = vec3<f32>(1.0, 0.0, 1.0); } // MAGENTA = 4
-        else if (layer1 == 5u) { layer_color = vec3<f32>(0.0, 1.0, 1.0); } // CYAN = 5
-        else if (layer1 == 6u) { layer_color = vec3<f32>(1.0, 0.5, 0.0); } // ORANGE = 6
-        else { layer_color = vec3<f32>(1.0, 1.0, 1.0); } // WHITE = 7+
-        return vec4<f32>(layer_color, 1.0);
-    }
-
-    // Debug mode 15: Show ONLY layer1 texture (overlay without blending)
-    if (params.debug_mode > 14.5 && params.debug_mode < 15.5) {
-        if (layer1 > 0u) {
-            let layer1_tex = textureSample(t_terrain_array, s_terrain, uv1, layer1).rgb;
-            return vec4<f32>(layer1_tex * lighting, 1.0);
-        } else {
-            // No layer1, show magenta
-            return vec4<f32>(1.0, 0.0, 1.0, 1.0);
-        }
-    }
-
-    // Debug mode 16: Show texture[3] directly (cliffwall_04 - should be rock)
-    if (params.debug_mode > 15.5 && params.debug_mode < 16.5) {
-        let rock_tex = textureSample(t_terrain_array, s_terrain, base_uv * texture_scales[3u], 3u).rgb;
-        return vec4<f32>(rock_tex * lighting, 1.0);
-    }
-
-    // Debug mode 17: Show CPU-composited albedo (pre-blended on CPU, should be correct)
-    if (params.debug_mode > 16.5 && params.debug_mode < 17.5) {
-        let comp_color = textureSample(t_composited, s_terrain, in.uv).rgb;
-        return vec4<f32>(comp_color * lighting, 1.0);
-    }
-
-    return vec4<f32>(color * lighting, 1.0);
-}
-"#;
-
 fn create_depth_texture(
     device: &wgpu::Device,
     width: u32,
@@ -2267,7 +1391,7 @@ impl Application3D for TerrainViewer {
             texture_tile_scale: gpu.tile_scale,
             debug_mode: self.debug_mode as f32,
             bump_power: self.bump_power,
-            _padding3: 0.0,
+            _padding: 0.0,
         };
         ctx.queue
             .write_buffer(&gpu.params_buffer, 0, bytemuck::bytes_of(&params));
@@ -2415,7 +1539,7 @@ impl TerrainViewer {
             texture_tile_scale: tile_scale,
             debug_mode: self.debug_mode as f32,
             bump_power: self.bump_power,
-            _padding3: 0.0,
+            _padding: 0.0,
         };
 
         let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -3035,7 +2159,7 @@ impl TerrainViewer {
             texture_tile_scale: 32.0,
             debug_mode: self.debug_mode as f32,
             bump_power: self.bump_power,
-            _padding3: 0.0,
+            _padding: 0.0,
         };
 
         let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

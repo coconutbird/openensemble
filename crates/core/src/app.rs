@@ -15,6 +15,8 @@ pub struct Input {
     pub mouse_position: (f64, f64),
     /// Mouse buttons held (left, middle, right)
     pub mouse_buttons: [bool; 3],
+    /// Gamepad state (if connected)
+    pub gamepad: GamepadState,
 }
 
 impl Input {
@@ -32,6 +34,75 @@ impl Input {
     pub fn is_key_released(&self, key: KeyCode) -> bool {
         self.keys_released.contains(&key)
     }
+}
+
+/// Gamepad/controller input state
+#[derive(Debug, Clone, Default)]
+pub struct GamepadState {
+    /// Whether a gamepad is connected
+    pub connected: bool,
+    /// Left stick X axis (-1.0 to 1.0)
+    pub left_stick_x: f32,
+    /// Left stick Y axis (-1.0 to 1.0)
+    pub left_stick_y: f32,
+    /// Right stick X axis (-1.0 to 1.0)
+    pub right_stick_x: f32,
+    /// Right stick Y axis (-1.0 to 1.0)
+    pub right_stick_y: f32,
+    /// Left trigger (0.0 to 1.0)
+    pub left_trigger: f32,
+    /// Right trigger (0.0 to 1.0)
+    pub right_trigger: f32,
+    /// Buttons currently held
+    pub buttons_held: std::collections::HashSet<GamepadButton>,
+    /// Buttons pressed this frame
+    pub buttons_pressed: std::collections::HashSet<GamepadButton>,
+}
+
+impl GamepadState {
+    /// Check if a button is currently held
+    pub fn is_button_held(&self, button: GamepadButton) -> bool {
+        self.buttons_held.contains(&button)
+    }
+
+    /// Check if a button was just pressed this frame
+    pub fn is_button_pressed(&self, button: GamepadButton) -> bool {
+        self.buttons_pressed.contains(&button)
+    }
+}
+
+/// Platform-agnostic gamepad buttons (Xbox-style naming)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum GamepadButton {
+    /// A button (Xbox) / Cross (PlayStation)
+    South,
+    /// B button (Xbox) / Circle (PlayStation)
+    East,
+    /// X button (Xbox) / Square (PlayStation)
+    West,
+    /// Y button (Xbox) / Triangle (PlayStation)
+    North,
+    /// Left bumper (LB)
+    LeftBumper,
+    /// Right bumper (RB)
+    RightBumper,
+    /// Left stick click (L3)
+    LeftStick,
+    /// Right stick click (R3)
+    RightStick,
+    /// Start / Menu button
+    Start,
+    /// Select / View button
+    Select,
+    /// D-pad up
+    DPadUp,
+    /// D-pad down
+    DPadDown,
+    /// D-pad left
+    DPadLeft,
+    /// D-pad right
+    DPadRight,
 }
 
 /// Platform-agnostic key codes

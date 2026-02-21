@@ -12,7 +12,9 @@ pub use glam;
 
 /// Re-export common types
 pub mod prelude {
-    pub use crate::app::{Application, FrameContext, Input, KeyCode, WindowConfig};
+    pub use crate::app::{
+        Application, FrameContext, GamepadButton, GamepadState, Input, KeyCode, WindowConfig,
+    };
     pub use crate::error::{Error, Result};
     pub use crate::math::*;
     pub use egui;
