@@ -3624,7 +3624,7 @@ impl TerrainViewer {
                 let chunk_x = chunk.grid_x as u32;
                 let chunk_y = chunk.grid_z as u32;
 
-                // Copy alpha maps to atlas
+                // Copy alpha maps to atlas (build normally first)
                 for y in 0..CHUNK_SIZE {
                     for x in 0..CHUNK_SIZE {
                         let atlas_x = chunk_x * CHUNK_SIZE + x;
@@ -3651,6 +3651,34 @@ impl TerrainViewer {
                     }
                 }
             }
+
+            // Step 1: Mirror horizontally (flip X)
+            let mut mirrored_atlas = vec![0u8; (ATLAS_SIZE * ATLAS_SIZE * 4) as usize];
+            for y in 0..ATLAS_SIZE {
+                for x in 0..ATLAS_SIZE {
+                    let src_idx = ((y * ATLAS_SIZE + x) * 4) as usize;
+                    let dst_x = (ATLAS_SIZE - 1) - x;
+                    let dst_idx = ((y * ATLAS_SIZE + dst_x) * 4) as usize;
+                    mirrored_atlas[dst_idx..dst_idx + 4]
+                        .copy_from_slice(&atlas_data[src_idx..src_idx + 4]);
+                }
+            }
+
+            // Step 2: Rotate 90 degrees counter-clockwise
+            // Original (x, y) -> New (y, SIZE - 1 - x)
+            let mut rotated_atlas = vec![0u8; (ATLAS_SIZE * ATLAS_SIZE * 4) as usize];
+            for y in 0..ATLAS_SIZE {
+                for x in 0..ATLAS_SIZE {
+                    let src_idx = ((y * ATLAS_SIZE + x) * 4) as usize;
+                    let dst_x = y;
+                    let dst_y = (ATLAS_SIZE - 1) - x;
+                    let dst_idx = ((dst_y * ATLAS_SIZE + dst_x) * 4) as usize;
+                    rotated_atlas[dst_idx..dst_idx + 4]
+                        .copy_from_slice(&mirrored_atlas[src_idx..src_idx + 4]);
+                }
+            }
+            atlas_data = rotated_atlas;
+
             // Debug: Save alpha atlas to disk for inspection
             if let Err(e) =
                 Self::save_debug_atlas(&atlas_data, ATLAS_SIZE, "/tmp/alpha_atlas_debug.png")
