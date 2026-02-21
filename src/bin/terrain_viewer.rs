@@ -1896,18 +1896,26 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Blend normal maps from individual textures for surface detail
-    // Use game's unpackDXNNormalScaled approach: scale XY by bump_power, recalc Z
-    var tangent_normal = textureSample(t_normal_array, s_terrain, uv0, layer0).rgb * 2.0 - 1.0;
+    // BC5/DXN format only stores X and Y components - Z must be reconstructed!
+    // Sample .rg only (B channel is 0/uninitialized from BC5 decode)
+
+    // Helper: unpack BC5 normal - sample RG, convert to -1..+1, reconstruct Z
+    let nm0 = textureSample(t_normal_array, s_terrain, uv0, layer0).rg * 2.0 - 1.0;
+    var tangent_normal = vec3<f32>(nm0.x, nm0.y, sqrt(max(0.0, 1.0 - nm0.x * nm0.x - nm0.y * nm0.y)));
+
     if (layer1 > 0u && alphas.r > 0.0) {
-        let layer1_normal = textureSample(t_normal_array, s_terrain, uv1, layer1).rgb * 2.0 - 1.0;
+        let nm1 = textureSample(t_normal_array, s_terrain, uv1, layer1).rg * 2.0 - 1.0;
+        let layer1_normal = vec3<f32>(nm1.x, nm1.y, sqrt(max(0.0, 1.0 - nm1.x * nm1.x - nm1.y * nm1.y)));
         tangent_normal = mix(tangent_normal, layer1_normal, alphas.r);
     }
     if (layer2 > 0u && alphas.g > 0.0) {
-        let layer2_normal = textureSample(t_normal_array, s_terrain, uv2, layer2).rgb * 2.0 - 1.0;
+        let nm2 = textureSample(t_normal_array, s_terrain, uv2, layer2).rg * 2.0 - 1.0;
+        let layer2_normal = vec3<f32>(nm2.x, nm2.y, sqrt(max(0.0, 1.0 - nm2.x * nm2.x - nm2.y * nm2.y)));
         tangent_normal = mix(tangent_normal, layer2_normal, alphas.g);
     }
     if (layer3 > 0u && alphas.b > 0.0) {
-        let layer3_normal = textureSample(t_normal_array, s_terrain, uv3, layer3).rgb * 2.0 - 1.0;
+        let nm3 = textureSample(t_normal_array, s_terrain, uv3, layer3).rg * 2.0 - 1.0;
+        let layer3_normal = vec3<f32>(nm3.x, nm3.y, sqrt(max(0.0, 1.0 - nm3.x * nm3.x - nm3.y * nm3.y)));
         tangent_normal = mix(tangent_normal, layer3_normal, alphas.b);
     }
 
