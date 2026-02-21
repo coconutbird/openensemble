@@ -75,10 +75,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Calculate chunk position in grid
     let chunk_x = chunk_idx % 16u;
     let chunk_z = chunk_idx / 16u;
-    
+
     // Sample alpha values from atlas
-    // Each chunk has a 64x64 region in the 1024x1024 alpha atlas
-    let alpha_uv = (vec2<f32>(f32(chunk_x), f32(chunk_z)) + in_chunk_uv) / 16.0;
+    // The alpha atlas has mirror+rotate transform applied which transposes positions.
+    // Combined effect: (x, y) -> (y, x) - a simple transpose.
+    // A chunk at (grid_x, grid_z) ends up at atlas position (grid_z, grid_x).
+    // In-chunk UV (u, v) becomes (v, u).
+    let alpha_uv = (vec2<f32>(f32(chunk_z), f32(chunk_x)) + vec2<f32>(in_chunk_uv.y, in_chunk_uv.x)) / 16.0;
     let alphas = textureSample(t_alpha_atlas, s_terrain, alpha_uv);
     
     // Calculate world UV for tiled texture sampling

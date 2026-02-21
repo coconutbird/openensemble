@@ -203,9 +203,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let chunk_uv = sample_uv * chunk_count;
     let chunk_x = u32(clamp(floor(chunk_uv.x), 0.0, chunk_count.x - 1.0));
     let chunk_y = u32(clamp(floor(chunk_uv.y), 0.0, chunk_count.y - 1.0));
+    // The alpha atlas has mirror+rotate transform applied which transposes positions.
+    // Alpha at (chunk_x, chunk_y) corresponds to original chunk (chunk_y, chunk_x).
+    // Layer buffer uses Z-major order: grid_z * 16 + grid_x = chunk_y * 16 + chunk_x.
     let chunk_idx = chunk_y * u32(chunk_count.x) + chunk_x;
 
     let in_chunk_uv = fract(chunk_uv);
+    // Sample alpha atlas directly - it's already transformed to match screen coordinates
     let alpha_atlas_uv = (vec2<f32>(f32(chunk_x), f32(chunk_y)) + in_chunk_uv) / chunk_count;
     let alphas = textureSample(t_alpha_atlas, s_alpha, alpha_atlas_uv);
 
