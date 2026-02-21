@@ -9,8 +9,8 @@ use data::xtd::{TessellationData, XtdReader};
 use data::xtt::{ActiveTextureInfo, XttReader};
 use glam::Vec3;
 use render::terrain::{
-    Camera, CompositingConfig, CompositorResources, GPU_TESS_SHADER, GpuTessParams, TERRAIN_SHADER,
-    TerrainParams, TessellationMode, generate_mipmaps, mip_level_count,
+    Camera, CompositingConfig, CompositorResources, GPU_TESS_SHADER, GpuTessParams, LodConfig,
+    TERRAIN_SHADER, TerrainParams, TessellationMode, generate_mipmaps, mip_level_count,
 };
 use render::{Application3D, RenderContext, wgpu};
 use xcore::app::{Application, FrameContext, Input, KeyCode};
@@ -53,6 +53,10 @@ pub struct TerrainViewer {
     pub compositor_bind_group: Option<wgpu::BindGroup>,
     /// Whether to use GPU compositing (vs runtime splatting).
     pub use_gpu_compositing: bool,
+    /// LOD configuration for distance-based compositing quality.
+    pub lod_config: LodConfig,
+    /// Pre-calculated chunk center positions [x, y, z] for LOD calculations.
+    pub chunk_centers: Vec<[f32; 3]>,
 }
 
 impl TerrainViewer {
@@ -78,6 +82,8 @@ impl TerrainViewer {
             compositor: None,
             compositor_bind_group: None,
             use_gpu_compositing: false, // Disabled by default for now
+            lod_config: LodConfig::default(),
+            chunk_centers: Vec::new(),
         }
     }
 
@@ -892,6 +898,26 @@ impl Application for TerrainViewer {
 
         self.camera.update(input, ctx.delta_time);
 
+        // Update LOD levels based on camera position (only when GPU compositing is enabled)
+        if self.use_gpu_compositing && !self.chunk_centers.is_empty() {
+            if let Some(compositor) = &mut self.compositor {
+                let camera_pos = [
+                    self.camera.position.x,
+                    self.camera.position.y,
+                    self.camera.position.z,
+                ];
+                let lod_changed =
+                    compositor.update_lod(camera_pos, &self.chunk_centers, &self.lod_config);
+                if lod_changed {
+                    // LOD changed - compositor will mark dirty chunks automatically
+                    log::debug!(
+                        "LOD updated: {} dirty chunks",
+                        compositor.dirty_chunk_count()
+                    );
+                }
+            }
+        }
+
         true
     }
 
@@ -1439,6 +1465,9 @@ impl TerrainViewer {
             &texture_scales_buffer,
             &sampler,
         );
+
+        // Calculate chunk centers for LOD calculations
+        self.calculate_chunk_centers();
 
         let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Texture Bind Group"),
@@ -2166,6 +2195,9 @@ impl TerrainViewer {
             &texture_scales_buffer,
             &sampler,
         );
+
+        // Calculate chunk centers for LOD calculations
+        self.calculate_chunk_centers();
 
         let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("GPU Tess Texture Bind Group"),
@@ -3195,5 +3227,39 @@ impl TerrainViewer {
         self.compositor_bind_group = Some(bind_group);
 
         log::info!("GPU compositor initialized successfully");
+    }
+
+    /// Calculate chunk center positions based on terrain bounds.
+    /// Chunks are arranged in a 16×16 grid covering the terrain.
+    fn calculate_chunk_centers(&mut self) {
+        let Some(terrain) = &self.terrain else {
+            return;
+        };
+
+        let world_min = terrain.world_min;
+        let world_max = terrain.world_max;
+        let chunks_x = 16u32;
+        let chunks_z = 16u32;
+
+        let chunk_width = (world_max[0] - world_min[0]) / chunks_x as f32;
+        let chunk_depth = (world_max[2] - world_min[2]) / chunks_z as f32;
+        let chunk_height = (world_max[1] - world_min[1]) / 2.0; // Average Y for center
+
+        self.chunk_centers.clear();
+        for cz in 0..chunks_z {
+            for cx in 0..chunks_x {
+                let center_x = world_min[0] + (cx as f32 + 0.5) * chunk_width;
+                let center_y = world_min[1] + chunk_height; // Approximate center Y
+                let center_z = world_min[2] + (cz as f32 + 0.5) * chunk_depth;
+                self.chunk_centers.push([center_x, center_y, center_z]);
+            }
+        }
+
+        log::info!(
+            "Calculated {} chunk centers for LOD (chunk size: {:.1} x {:.1})",
+            self.chunk_centers.len(),
+            chunk_width,
+            chunk_depth
+        );
     }
 }

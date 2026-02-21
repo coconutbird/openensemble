@@ -23,6 +23,50 @@
 
 use wgpu;
 
+/// LOD level configuration for distance-based compositing quality.
+#[derive(Debug, Clone)]
+pub struct LodConfig {
+    /// Distance thresholds for each LOD level (in world units).
+    /// LOD 0 = closest (highest detail), LOD 3 = farthest (lowest detail).
+    /// If camera distance < threshold[i], use LOD level i.
+    pub distance_thresholds: [f32; 4],
+
+    /// Texture size multiplier for each LOD level.
+    /// LOD 0 = 1.0 (512), LOD 1 = 0.5 (256), LOD 2 = 0.25 (128), LOD 3 = 0.125 (64).
+    /// Note: Currently we use fixed resolution atlas, so this is for future use.
+    pub size_multipliers: [f32; 4],
+}
+
+impl Default for LodConfig {
+    fn default() -> Self {
+        Self {
+            // Reasonable defaults for terrain viewing
+            distance_thresholds: [200.0, 500.0, 1000.0, f32::MAX],
+            size_multipliers: [1.0, 0.5, 0.25, 0.125],
+        }
+    }
+}
+
+impl LodConfig {
+    /// Create LOD config with custom distance thresholds.
+    pub fn with_distances(d0: f32, d1: f32, d2: f32) -> Self {
+        Self {
+            distance_thresholds: [d0, d1, d2, f32::MAX],
+            ..Default::default()
+        }
+    }
+
+    /// Calculate LOD level based on distance.
+    pub fn lod_for_distance(&self, distance: f32) -> u8 {
+        for (i, &threshold) in self.distance_thresholds.iter().enumerate() {
+            if distance < threshold {
+                return i as u8;
+            }
+        }
+        3 // Fallback to lowest LOD
+    }
+}
+
 /// Configuration for terrain texture compositing.
 #[derive(Debug, Clone)]
 pub struct CompositingConfig {
@@ -450,5 +494,51 @@ impl CompositorResources {
     /// Get the composited normal atlas view for sampling in terrain shader.
     pub fn normal_atlas_view(&self) -> &wgpu::TextureView {
         &self.normal_atlas_view
+    }
+
+    /// Update LOD levels for all chunks based on camera distance.
+    ///
+    /// Returns `true` if any chunk's LOD changed (needs re-composite).
+    ///
+    /// # Arguments
+    /// * `camera_pos` - Camera position in world coordinates [x, y, z]
+    /// * `chunk_centers` - Pre-calculated center position of each chunk [x, y, z]
+    /// * `lod_config` - LOD distance configuration
+    pub fn update_lod(
+        &mut self,
+        camera_pos: [f32; 3],
+        chunk_centers: &[[f32; 3]],
+        lod_config: &LodConfig,
+    ) -> bool {
+        let mut any_changed = false;
+        let num_chunks = self.config.total_chunks().min(chunk_centers.len() as u32);
+
+        for chunk_idx in 0..num_chunks as usize {
+            let center = chunk_centers[chunk_idx];
+            let dx = camera_pos[0] - center[0];
+            let dy = camera_pos[1] - center[1];
+            let dz = camera_pos[2] - center[2];
+            let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+
+            let new_lod = lod_config.lod_for_distance(distance);
+
+            if self.chunk_lod[chunk_idx] != new_lod {
+                self.chunk_lod[chunk_idx] = new_lod;
+                self.dirty_chunks[chunk_idx] = true;
+                any_changed = true;
+            }
+        }
+
+        any_changed
+    }
+
+    /// Get the current LOD level for a chunk.
+    pub fn get_chunk_lod(&self, chunk_index: usize) -> u8 {
+        self.chunk_lod.get(chunk_index).copied().unwrap_or(0)
+    }
+
+    /// Get count of dirty chunks (needing re-composite).
+    pub fn dirty_chunk_count(&self) -> usize {
+        self.dirty_chunks.iter().filter(|&&d| d).count()
     }
 }

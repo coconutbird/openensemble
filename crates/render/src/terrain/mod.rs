@@ -16,7 +16,7 @@ mod texture;
 mod uniforms;
 
 pub use camera::Camera;
-pub use compositing::{CompositeParams, CompositingConfig, CompositorResources};
+pub use compositing::{CompositeParams, CompositingConfig, CompositorResources, LodConfig};
 pub use mesh::{TerrainMesh, TessellationMode};
 pub use shaders::{COMPOSITE_SHADER, GPU_TESS_SHADER, TERRAIN_SHADER};
 pub use texture::{generate_mipmaps, mip_dimensions, mip_level_count};
