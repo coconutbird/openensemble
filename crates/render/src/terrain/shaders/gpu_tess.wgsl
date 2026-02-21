@@ -204,8 +204,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let chunk_x = u32(clamp(floor(chunk_uv.x), 0.0, chunk_count.x - 1.0));
     let chunk_y = u32(clamp(floor(chunk_uv.y), 0.0, chunk_count.y - 1.0));
     // The alpha atlas has mirror+rotate transform applied which transposes positions.
-    // Alpha at (chunk_x, chunk_y) corresponds to original chunk (chunk_y, chunk_x).
-    // Layer buffer uses Z-major order: grid_z * 16 + grid_x = chunk_y * 16 + chunk_x.
+    // When we sample alpha at screen (chunk_x, chunk_y), we get alpha for original chunk (chunk_y, chunk_x).
+    // Layer buffer uses X-major order: grid_x * 16 + grid_z.
+    // Since original chunk is (chunk_y, chunk_x), we compute: chunk_y * 16 + chunk_x = grid_x * 16 + grid_z.
     let chunk_idx = chunk_y * u32(chunk_count.x) + chunk_x;
 
     let in_chunk_uv = fract(chunk_uv);

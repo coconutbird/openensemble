@@ -72,21 +72,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let layer2 = chunk_layers[layer_base + 2u];
     let layer3 = chunk_layers[layer_base + 3u];
     
-    // Calculate chunk position in grid
-    let chunk_x = chunk_idx % 16u;
-    let chunk_z = chunk_idx / 16u;
+    // Calculate original grid position from chunk_idx
+    // Buffer uses X-major order: chunk_idx = grid_x * 16 + grid_z
+    let grid_z = chunk_idx % 16u;  // Remainder gives grid_z
+    let grid_x = chunk_idx / 16u;  // Division gives grid_x
 
     // Sample alpha values from atlas
     // The alpha atlas has mirror+rotate transform applied which transposes positions.
-    // Combined effect: (x, y) -> (y, x) - a simple transpose.
-    // A chunk at (grid_x, grid_z) ends up at atlas position (grid_z, grid_x).
-    // In-chunk UV (u, v) becomes (v, u).
-    let alpha_uv = (vec2<f32>(f32(chunk_z), f32(chunk_x)) + vec2<f32>(in_chunk_uv.y, in_chunk_uv.x)) / 16.0;
+    // A chunk at original (grid_x, grid_z) ends up at atlas position (grid_z, grid_x).
+    // In-chunk UV (u, v) becomes (v, u) due to the transpose.
+    let alpha_uv = (vec2<f32>(f32(grid_z), f32(grid_x)) + vec2<f32>(in_chunk_uv.y, in_chunk_uv.x)) / 16.0;
     let alphas = textureSample(t_alpha_atlas, s_terrain, alpha_uv);
-    
+
     // Calculate world UV for tiled texture sampling
-    // This maps the chunk UV to terrain-space coordinates
-    let base_uv = vec2<f32>(f32(chunk_x), f32(chunk_z)) + in_chunk_uv;
+    // World coordinates: X = grid_x direction, Z = grid_z direction
+    let base_uv = vec2<f32>(f32(grid_x), f32(grid_z)) + in_chunk_uv;
     
     // Apply per-texture UV scaling
     let scale0 = texture_scales[layer0];

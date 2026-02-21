@@ -3126,8 +3126,14 @@ impl TerrainViewer {
         let mut layer_data = vec![0u32; 256 * 8];
 
         for chunk in &self.chunk_splat_data {
-            // Z-major order: index = gridZ * 16 + gridX (matches shader's chunk_x = idx % 16, chunk_z = idx / 16)
-            let chunk_idx = (chunk.grid_z * 16 + chunk.grid_x) as usize;
+            // X-major order: index = gridX * 16 + gridZ
+            // The alpha atlas has mirror+rotate transform applied.
+            // When shader samples at screen (chunk_x, chunk_y), it gets alpha for original chunk (chunk_y, chunk_x).
+            // Shader computes: chunk_idx = chunk_y * 16 + chunk_x
+            // For this to match original chunk (chunk_y, chunk_x), we need:
+            //   buffer[chunk_y * 16 + chunk_x] = layers for original (grid_x=chunk_y, grid_z=chunk_x)
+            // Since chunk_y=grid_x and chunk_x=grid_z after transform, buffer index = grid_x * 16 + grid_z
+            let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
             let base = chunk_idx * 8;
 
             for (i, &layer_id) in chunk.layer_texture_ids.iter().enumerate().take(8) {
