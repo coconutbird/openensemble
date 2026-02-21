@@ -1445,6 +1445,11 @@ var s_alpha: sampler;
 @group(1) @binding(7)
 var t_xtt_albedo: texture_2d<f32>;
 
+// Per-texture UV scales (8 textures * vec2<f32> = 16 floats)
+// These control how many times each texture tiles across the terrain
+@group(1) @binding(8)
+var<storage, read> texture_scales: array<vec2<f32>>;
+
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -1480,8 +1485,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let chunk_uv = in.uv * params.chunk_count;
     let chunk_x = u32(clamp(floor(chunk_uv.x), 0.0, params.chunk_count.x - 1.0));
     let chunk_y = u32(clamp(floor(chunk_uv.y), 0.0, params.chunk_count.y - 1.0));
-    // X-major order: index = gridX * numXChunks + gridZ (game's indexing formula)
-    let chunk_idx = chunk_x * u32(params.chunk_count.y) + chunk_y;
+    // The alpha atlas has mirror+rotate transform applied, which transposes chunk positions.
+    // Alpha at (chunk_x, chunk_y) is from original chunk (chunk_y, chunk_x).
+    // So layer IDs should use: original_grid_x = chunk_y, original_grid_z = chunk_x
+    // X-major index: grid_x * 16 + grid_z = chunk_y * 16 + chunk_x
+    let chunk_idx = chunk_y * u32(params.chunk_count.x) + chunk_x;
 
     // UV within the chunk (0-1) for alpha sampling
     let in_chunk_uv = fract(chunk_uv);
@@ -1493,18 +1501,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Use s_alpha (Nearest filtering) to avoid bleeding at chunk boundaries
     let alphas = textureSample(t_alpha_atlas, s_alpha, alpha_atlas_uv);
 
-    // Calculate tiled UV for detail textures
-    // Original shader: uvCoord0 = gPos / 64 (ranges 0 to numXChunks)
-    // With u_scale/v_scale=1, textures tile once per chunk
-    // Our in.uv is 0-1 across terrain, so multiply by chunk_count to get 0-16
-    let tiled_uv = in.uv * params.chunk_count;
-
     // Get layer indices for this chunk (8 layers max per chunk, stored as u32s)
     let layer_base = chunk_idx * 8u;
     let layer0 = chunk_layers[layer_base];
     let layer1 = chunk_layers[layer_base + 1u];
     let layer2 = chunk_layers[layer_base + 2u];
     let layer3 = chunk_layers[layer_base + 3u];
+
+    // Calculate per-layer tiled UVs using each texture's scale factors
+    // The game multiplies UVs by u_scale/v_scale to control tiling density
+    // Base UV: in.uv * chunk_count gives 0-16 range (one tile per chunk at scale=1)
+    let base_uv = in.uv * params.chunk_count;
+    let uv0 = base_uv * texture_scales[layer0];
+    let uv1 = base_uv * texture_scales[layer1];
+    let uv2 = base_uv * texture_scales[layer2];
+    let uv3 = base_uv * texture_scales[layer3];
 
     // DEBUG MODE: 0=splatting, 1=alpha values, 2=in-chunk UVs, 3=raw atlas, 4=terrain UVs, 5=composited
     // Press 0-5 keys to switch modes
@@ -1572,10 +1583,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Debug: Direct texture array test - sample layer 0 explicitly
         // Left half shows layer 0 (should be grass_01), right half shows layer 1 (should be floodmud_01)
         if (in.uv.x < 0.5) {
-            let tex0 = textureSample(t_terrain_array, s_terrain, tiled_uv, 0u).rgb;
+            let tex0 = textureSample(t_terrain_array, s_terrain, uv0, 0u).rgb;
             return vec4<f32>(tex0 * lighting, 1.0);
         } else {
-            let tex1 = textureSample(t_terrain_array, s_terrain, tiled_uv, 1u).rgb;
+            let tex1 = textureSample(t_terrain_array, s_terrain, uv1, 1u).rgb;
             return vec4<f32>(tex1 * lighting, 1.0);
         }
     } else if (debug_mode == 11) {
@@ -1588,21 +1599,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Mode 0: Runtime texture splatting
-    var color = textureSample(t_terrain_array, s_terrain, tiled_uv, layer0).rgb;
+    var color = textureSample(t_terrain_array, s_terrain, uv0, layer0).rgb;
 
     // Blend layers 1-3 using alpha values
     // IMPORTANT: Only blend if layer ID is non-zero (ID=0 for layers 1+ means padding/unused)
     // The original game code checks: if(layerIdsSplat[i]) before processing
     if (layer1 > 0u && alphas.r > 0.0) {
-        let layer1_color = textureSample(t_terrain_array, s_terrain, tiled_uv, layer1).rgb;
+        let layer1_color = textureSample(t_terrain_array, s_terrain, uv1, layer1).rgb;
         color = mix(color, layer1_color, alphas.r);
     }
     if (layer2 > 0u && alphas.g > 0.0) {
-        let layer2_color = textureSample(t_terrain_array, s_terrain, tiled_uv, layer2).rgb;
+        let layer2_color = textureSample(t_terrain_array, s_terrain, uv2, layer2).rgb;
         color = mix(color, layer2_color, alphas.g);
     }
     if (layer3 > 0u && alphas.b > 0.0) {
-        let layer3_color = textureSample(t_terrain_array, s_terrain, tiled_uv, layer3).rgb;
+        let layer3_color = textureSample(t_terrain_array, s_terrain, uv3, layer3).rgb;
         color = mix(color, layer3_color, alphas.b);
     }
 
@@ -1688,6 +1699,11 @@ var s_alpha: sampler;
 // Pre-composited albedo atlas (all layers blended on CPU)
 @group(1) @binding(13)
 var t_composited: texture_2d<f32>;
+
+// Per-texture UV scales (8 textures * vec2<f32> = 16 floats)
+// These control how many times each texture tiles across the terrain
+@group(1) @binding(14)
+var<storage, read> texture_scales: array<vec2<f32>>;
 
 struct VertexInput {
     // Per-vertex: local UV within patch [0, 1]
@@ -1814,8 +1830,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let chunk_uv = in.uv * chunk_count;
     let chunk_x = u32(clamp(floor(chunk_uv.x), 0.0, chunk_count.x - 1.0));
     let chunk_y = u32(clamp(floor(chunk_uv.y), 0.0, chunk_count.y - 1.0));
-    // X-major order: index = gridX * numXChunks + gridZ (game's indexing formula)
-    let chunk_idx = chunk_x * u32(chunk_count.y) + chunk_y;
+    // The alpha atlas has mirror+rotate transform applied, which transposes chunk positions.
+    // Alpha at (chunk_x, chunk_y) is from original chunk (chunk_y, chunk_x).
+    // So layer IDs should use: original_grid_x = chunk_y, original_grid_z = chunk_x
+    // X-major index: grid_x * 16 + grid_z = chunk_y * 16 + chunk_x
+    let chunk_idx = chunk_y * u32(chunk_count.x) + chunk_x;
 
     // UV within the chunk (0-1) for alpha sampling
     let in_chunk_uv = fract(chunk_uv);
@@ -1826,9 +1845,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Sample alpha values for this chunk (RGBA = 4 alpha channels for layers 1-4)
     let alphas = textureSample(t_alpha_atlas, s_alpha, alpha_atlas_uv);
 
-    // Calculate tiled UV for detail textures (textures tile once per chunk by default)
-    let tiled_uv = in.uv * chunk_count;
-
     // Get layer indices for this chunk (8 layers max per chunk)
     let layer_base = chunk_idx * 8u;
     let layer0 = chunk_layers[layer_base];
@@ -1836,39 +1852,48 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let layer2 = chunk_layers[layer_base + 2u];
     let layer3 = chunk_layers[layer_base + 3u];
 
+    // Calculate per-layer tiled UVs using each texture's scale factors
+    // The game multiplies UVs by u_scale/v_scale to control tiling density
+    // Base UV: in.uv * chunk_count gives 0-16 range (one tile per chunk at scale=1)
+    let base_uv = in.uv * chunk_count;
+    let uv0 = base_uv * texture_scales[layer0];
+    let uv1 = base_uv * texture_scales[layer1];
+    let uv2 = base_uv * texture_scales[layer2];
+    let uv3 = base_uv * texture_scales[layer3];
+
     // Runtime texture splatting (same as CPU tessellation)
     // NOTE: The game uses a GPU compute shader (gpuTerrainComposite.bin) to composite
     // textures at runtime into "unique" per-chunk textures. Our approach is similar but
     // done per-pixel in the fragment shader.
-    var color = textureSample(t_terrain_array, s_terrain, tiled_uv, layer0).rgb;
+    var color = textureSample(t_terrain_array, s_terrain, uv0, layer0).rgb;
 
     // Blend layers 1-3 using alpha values
     // IMPORTANT: Only blend if layer ID is non-zero (ID=0 for layers 1+ means padding/unused)
     if (layer1 > 0u && alphas.r > 0.0) {
-        let layer1_color = textureSample(t_terrain_array, s_terrain, tiled_uv, layer1).rgb;
+        let layer1_color = textureSample(t_terrain_array, s_terrain, uv1, layer1).rgb;
         color = mix(color, layer1_color, alphas.r);
     }
     if (layer2 > 0u && alphas.g > 0.0) {
-        let layer2_color = textureSample(t_terrain_array, s_terrain, tiled_uv, layer2).rgb;
+        let layer2_color = textureSample(t_terrain_array, s_terrain, uv2, layer2).rgb;
         color = mix(color, layer2_color, alphas.g);
     }
     if (layer3 > 0u && alphas.b > 0.0) {
-        let layer3_color = textureSample(t_terrain_array, s_terrain, tiled_uv, layer3).rgb;
+        let layer3_color = textureSample(t_terrain_array, s_terrain, uv3, layer3).rgb;
         color = mix(color, layer3_color, alphas.b);
     }
 
     // Blend normal maps from individual textures for surface detail
-    var tangent_normal = textureSample(t_normal_array, s_terrain, tiled_uv, layer0).rgb * 2.0 - 1.0;
+    var tangent_normal = textureSample(t_normal_array, s_terrain, uv0, layer0).rgb * 2.0 - 1.0;
     if (layer1 > 0u && alphas.r > 0.0) {
-        let layer1_normal = textureSample(t_normal_array, s_terrain, tiled_uv, layer1).rgb * 2.0 - 1.0;
+        let layer1_normal = textureSample(t_normal_array, s_terrain, uv1, layer1).rgb * 2.0 - 1.0;
         tangent_normal = mix(tangent_normal, layer1_normal, alphas.r);
     }
     if (layer2 > 0u && alphas.g > 0.0) {
-        let layer2_normal = textureSample(t_normal_array, s_terrain, tiled_uv, layer2).rgb * 2.0 - 1.0;
+        let layer2_normal = textureSample(t_normal_array, s_terrain, uv2, layer2).rgb * 2.0 - 1.0;
         tangent_normal = mix(tangent_normal, layer2_normal, alphas.g);
     }
     if (layer3 > 0u && alphas.b > 0.0) {
-        let layer3_normal = textureSample(t_normal_array, s_terrain, tiled_uv, layer3).rgb * 2.0 - 1.0;
+        let layer3_normal = textureSample(t_normal_array, s_terrain, uv3, layer3).rgb * 2.0 - 1.0;
         tangent_normal = mix(tangent_normal, layer3_normal, alphas.b);
     }
 
@@ -1948,9 +1973,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(in_chunk_uv.x, in_chunk_uv.y, 0.0, 1.0);
     }
 
-    // Debug mode 6: Show tiled_uv (texture coordinates)
+    // Debug mode 6: Show base_uv (texture coordinates before per-texture scaling)
     if (params.debug_mode > 5.5 && params.debug_mode < 6.5) {
-        return vec4<f32>(fract(tiled_uv.x), fract(tiled_uv.y), 0.0, 1.0);
+        return vec4<f32>(fract(base_uv.x), fract(base_uv.y), 0.0, 1.0);
     }
 
     // Debug mode 10: Direct texture array test
@@ -1971,11 +1996,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
         if (in.uv.x < 0.5) {
             // LEFT of red line = texture array index 0
-            let tex0 = textureSample(t_terrain_array, s_terrain, tiled_uv, 0u).rgb;
+            let tex0 = textureSample(t_terrain_array, s_terrain, uv0, 0u).rgb;
             return vec4<f32>(tex0 * lighting, 1.0);
         } else {
             // RIGHT of red line = texture array index 1
-            let tex1 = textureSample(t_terrain_array, s_terrain, tiled_uv, 1u).rgb;
+            let tex1 = textureSample(t_terrain_array, s_terrain, uv1, 1u).rgb;
             return vec4<f32>(tex1 * lighting, 1.0);
         }
     }
@@ -2002,7 +2027,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Debug mode 13: Show ONLY base layer texture (layer0) - NO blending
     if (params.debug_mode > 12.5 && params.debug_mode < 13.5) {
-        let base_tex = textureSample(t_terrain_array, s_terrain, tiled_uv, layer0).rgb;
+        let base_tex = textureSample(t_terrain_array, s_terrain, uv0, layer0).rgb;
         return vec4<f32>(base_tex * lighting, 1.0);
     }
 
@@ -2023,7 +2048,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Debug mode 15: Show ONLY layer1 texture (overlay without blending)
     if (params.debug_mode > 14.5 && params.debug_mode < 15.5) {
         if (layer1 > 0u) {
-            let layer1_tex = textureSample(t_terrain_array, s_terrain, tiled_uv, layer1).rgb;
+            let layer1_tex = textureSample(t_terrain_array, s_terrain, uv1, layer1).rgb;
             return vec4<f32>(layer1_tex * lighting, 1.0);
         } else {
             // No layer1, show magenta
@@ -2033,7 +2058,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Debug mode 16: Show texture[3] directly (cliffwall_04 - should be rock)
     if (params.debug_mode > 15.5 && params.debug_mode < 16.5) {
-        let rock_tex = textureSample(t_terrain_array, s_terrain, tiled_uv, 3u).rgb;
+        let rock_tex = textureSample(t_terrain_array, s_terrain, base_uv * texture_scales[3u], 3u).rgb;
         return vec4<f32>(rock_tex * lighting, 1.0);
     }
 
@@ -2342,15 +2367,17 @@ impl TerrainViewer {
             ..Default::default()
         });
 
-        // Separate sampler for alpha atlas - use Nearest to avoid bleeding at chunk boundaries
+        // Separate sampler for alpha atlas - use Linear filtering like the game does
+        // The game uses: MinFilter = LINEAR; MagFilter = LINEAR;
+        // This gives smooth blending between textures within each chunk
         let alpha_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Alpha Atlas Sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest, // No mipmaps on alpha atlas
             ..Default::default()
         });
 
@@ -2376,14 +2403,14 @@ impl TerrainViewer {
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
-                    // binding 2: alpha atlas (non-filterable to use with Nearest sampler)
+                    // binding 2: alpha atlas (filterable for linear sampling like the game)
                     wgpu::BindGroupLayoutEntry {
                         binding: 2,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
                             multisampled: false,
                             view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         },
                         count: None,
                     },
@@ -2420,11 +2447,11 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
-                    // binding 6: alpha atlas sampler (nearest filtering to avoid chunk boundary bleeding)
+                    // binding 6: alpha atlas sampler (linear filtering like the game)
                     wgpu::BindGroupLayoutEntry {
                         binding: 6,
                         visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
                     // binding 7: XTT albedo (original pre-composited from game export)
@@ -2438,8 +2465,22 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
+                    // binding 8: Texture scales buffer (per-texture u_scale/v_scale)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 8,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
+
+        // Create texture scales buffer
+        let texture_scales_buffer = self.create_texture_scales_buffer(device);
 
         let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Texture Bind Group"),
@@ -2476,6 +2517,10 @@ impl TerrainViewer {
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: wgpu::BindingResource::TextureView(&xtt_albedo_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: texture_scales_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -2876,14 +2921,14 @@ impl TerrainViewer {
         let (_composited_texture, composited_view) =
             self.create_composited_albedo_atlas(device, queue);
 
-        // Create alpha sampler (nearest filtering to avoid chunk boundary bleeding)
+        // Create alpha sampler (linear filtering like the game for smooth blending)
         let alpha_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Alpha Atlas Sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
@@ -3093,7 +3138,7 @@ impl TerrainViewer {
                         ty: wgpu::BindingType::Texture {
                             multisampled: false,
                             view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         },
                         count: None,
                     },
@@ -3108,11 +3153,11 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
-                    // binding 12: Alpha sampler (nearest filtering)
+                    // binding 12: Alpha sampler (linear filtering like the game)
                     wgpu::BindGroupLayoutEntry {
                         binding: 12,
                         visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
                     // binding 13: CPU-composited albedo atlas
@@ -3126,8 +3171,22 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
+                    // binding 14: Texture scales buffer (per-texture u_scale/v_scale)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 14,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
+
+        // Create texture scales buffer
+        let texture_scales_buffer = self.create_texture_scales_buffer(device);
 
         let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("GPU Tess Texture Bind Group"),
@@ -3188,6 +3247,10 @@ impl TerrainViewer {
                 wgpu::BindGroupEntry {
                     binding: 13,
                     resource: wgpu::BindingResource::TextureView(&composited_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: texture_scales_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -4076,6 +4139,36 @@ impl TerrainViewer {
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Chunk Layers Buffer"),
             contents: bytemuck::cast_slice(&layer_data),
+            usage: wgpu::BufferUsages::STORAGE,
+        })
+    }
+
+    /// Creates the texture scales storage buffer (per-texture u_scale/v_scale values).
+    /// The game uses these to control how many times each texture tiles across the terrain.
+    fn create_texture_scales_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
+        use wgpu::util::DeviceExt;
+
+        // Each texture has a vec2<f32> with (u_scale, v_scale)
+        // Max 8 textures to match the texture array
+        let mut scale_data = vec![1.0f32; 8 * 2]; // Default scale of 1.0
+
+        for (i, tex) in self.terrain_textures.iter().enumerate().take(8) {
+            // Game stores scale as i32, but shader needs f32
+            // Scale values are typically 1, 2, 4, etc.
+            scale_data[i * 2] = tex.u_scale as f32;
+            scale_data[i * 2 + 1] = tex.v_scale as f32;
+            log::info!(
+                "Texture[{}] {} scale: ({}, {})",
+                i,
+                tex.name,
+                tex.u_scale,
+                tex.v_scale
+            );
+        }
+
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Texture Scales Buffer"),
+            contents: bytemuck::cast_slice(&scale_data),
             usage: wgpu::BufferUsages::STORAGE,
         })
     }
