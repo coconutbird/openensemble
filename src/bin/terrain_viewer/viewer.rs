@@ -74,7 +74,7 @@ impl TerrainViewer {
             load_error: None,
             gpu: None,
             surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
-            debug_mode: 0, // Default to normal rendering (XTT albedo with lighting)
+            debug_mode: 12, // Default to GPU composited rendering
             tessellation_mode: TessellationMode::Gpu, // Default to GPU tessellation (fast)
             tessellation_data: None,
             raw_xtd_data: None,
@@ -816,8 +816,8 @@ impl Application for TerrainViewer {
             log::info!("Debug mode: 8 (chunk_idx + layer0)");
         }
         if input.is_key_pressed(KeyCode::Key0) {
-            self.debug_mode = 0;
-            log::info!("Debug mode: 0 (runtime splatting - has boundary issues)");
+            self.debug_mode = 12;
+            log::info!("Debug mode: 12 (GPU composited - default)");
         }
         if input.is_key_pressed(KeyCode::Key9) {
             self.debug_mode = 9;
@@ -960,8 +960,8 @@ impl Application for TerrainViewer {
                     ui.separator();
                     ui.label(format!("Debug Mode: {}", self.debug_mode));
                     ui.horizontal(|ui| {
-                        if ui.button("0: Splat").clicked() {
-                            self.debug_mode = 0;
+                        if ui.button("0: GPUComp").clicked() {
+                            self.debug_mode = 12;
                         }
                         if ui.button("1: Alpha").clicked() {
                             self.debug_mode = 1;
@@ -1173,6 +1173,7 @@ impl Application3D for TerrainViewer {
                     bind_group,
                     ctx.queue,
                     &chunk_layer_counts,
+                    ctx.device,
                 );
             }
         }

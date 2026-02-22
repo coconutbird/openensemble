@@ -291,6 +291,33 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let lighting = ambient + diffuse;
 
     // Debug modes
+    if (params.debug_mode > 13.5 && params.debug_mode < 14.5) {
+        // Debug mode 14: Show layer0 texture ID per chunk (visualize layer buffer lookup)
+        // This helps verify if the layer buffer indexing matches screen position
+        return vec4<f32>(f32(layer0) / 8.0, 0.0, 0.0, 1.0);
+    }
+    if (params.debug_mode > 12.5 && params.debug_mode < 13.5) {
+        // Debug mode 13: Chunk grid visualization with corner markers
+        // Corner markers (2x2 chunk areas):
+        // - (0,0) corner: BRIGHT RED (world origin)
+        // - (15,0) corner: BRIGHT BLUE (+X direction)
+        // - (0,15) corner: BRIGHT GREEN (+Z direction)
+        // - (15,15) corner: BRIGHT YELLOW (diagonal)
+        // Rest: gradient R=chunk_x/16, G=chunk_y/16
+        if (chunk_x < 2u && chunk_y < 2u) {
+            return vec4<f32>(1.0, 0.0, 0.0, 1.0); // RED = origin (0,0)
+        }
+        if (chunk_x > 13u && chunk_y < 2u) {
+            return vec4<f32>(0.0, 0.0, 1.0, 1.0); // BLUE = +X direction (15,0)
+        }
+        if (chunk_x < 2u && chunk_y > 13u) {
+            return vec4<f32>(0.0, 1.0, 0.0, 1.0); // GREEN = +Z direction (0,15)
+        }
+        if (chunk_x > 13u && chunk_y > 13u) {
+            return vec4<f32>(1.0, 1.0, 0.0, 1.0); // YELLOW = diagonal (15,15)
+        }
+        return vec4<f32>(f32(chunk_x) / 16.0, f32(chunk_y) / 16.0, 0.0, 1.0);
+    }
     if (params.debug_mode > 11.5 && params.debug_mode < 12.5) {
         // Debug mode 12: GPU-composited atlas output
         // Sample from the 8K×8K GPU-composited atlas

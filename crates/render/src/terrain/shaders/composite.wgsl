@@ -51,11 +51,16 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
         vec2<f32>(3.0, -1.0),
         vec2<f32>(-1.0, 3.0)
     );
-    
+
     var out: VertexOutput;
     out.position = vec4<f32>(positions[vertex_index], 0.0, 1.0);
     // Map from clip space to 0-1 UV
-    out.uv = (positions[vertex_index] + 1.0) * 0.5;
+    // Note: wgpu clip space has Y=-1 at bottom, +1 at top
+    // Texture coordinates have V=0 at top, V=1 at bottom
+    // So we flip V: (clip_y + 1) * 0.5 gives 0 at bottom, 1 at top
+    // We want 0 at top, 1 at bottom, so: 1.0 - (clip_y + 1) * 0.5 = 0.5 - clip_y * 0.5
+    let raw_uv = (positions[vertex_index] + 1.0) * 0.5;
+    out.uv = vec2<f32>(raw_uv.x, 1.0 - raw_uv.y);
     return out;
 }
 
@@ -64,45 +69,55 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let chunk_idx = params.chunk_index;
     let in_chunk_uv = in.uv;
-    
-    // Get layer indices (8 layers per chunk)
-    let layer_base = chunk_idx * 8u;
+
+    // Calculate grid position from chunk_idx
+    // Compositor iterates chunk_idx 0-255 in X-major order: chunk_idx = grid_x * 16 + grid_z
+    let grid_z = chunk_idx % 16u;  // Remainder gives grid_z
+    let grid_x = chunk_idx / 16u;  // Division gives grid_x
+
+    // CRITICAL: Layer buffer indexing must match what main shader uses!
+    //
+    // Main shader at world position (grid_x, *, grid_z):
+    //   - chunk_x = grid_x, chunk_y = grid_z
+    //   - Due to alpha atlas transpose, gets alpha for chunk (grid_z, grid_x)
+    //   - Uses chunk_idx = chunk_y * 16 + chunk_x = grid_z * 16 + grid_x
+    //   - Looks up layers at buffer[grid_z * 16 + grid_x]
+    //
+    // Compositor places chunk at viewport (grid_x, grid_z) in atlas.
+    // When main shader samples this position, it expects content for chunk (grid_z, grid_x).
+    // So we must look up layers using: grid_z * 16 + grid_x (NOT chunk_idx!)
+    let layer_lookup_idx = grid_z * 16u + grid_x;
+    let layer_base = layer_lookup_idx * 8u;
     let layer0 = chunk_layers[layer_base];
     let layer1 = chunk_layers[layer_base + 1u];
     let layer2 = chunk_layers[layer_base + 2u];
     let layer3 = chunk_layers[layer_base + 3u];
-    
-    // Calculate original grid position from chunk_idx
-    // Buffer uses X-major order: chunk_idx = grid_x * 16 + grid_z
-    let grid_z = chunk_idx % 16u;  // Remainder gives grid_z
-    let grid_x = chunk_idx / 16u;  // Division gives grid_x
 
     // Sample alpha values from atlas
-    // The alpha atlas has mirror+rotate transform applied which transposes positions.
-    // A chunk at original (grid_x, grid_z) ends up at atlas position (grid_z, grid_x).
-    // In-chunk UV (u, v) becomes (v, u) due to the transpose.
-    let alpha_uv = (vec2<f32>(f32(grid_z), f32(grid_x)) + vec2<f32>(in_chunk_uv.y, in_chunk_uv.x)) / 16.0;
+    // Main shader samples at (chunk_x, chunk_y) = (grid_x, grid_z).
+    // We do the same to get consistent alpha values.
+    let alpha_uv = (vec2<f32>(f32(grid_x), f32(grid_z)) + in_chunk_uv) / 16.0;
     let alphas = textureSample(t_alpha_atlas, s_terrain, alpha_uv);
 
     // Calculate world UV for tiled texture sampling
     // World coordinates: X = grid_x direction, Z = grid_z direction
     let base_uv = vec2<f32>(f32(grid_x), f32(grid_z)) + in_chunk_uv;
-    
+
     // Apply per-texture UV scaling
     let scale0 = texture_scales[layer0];
     let scale1 = texture_scales[layer1];
     let scale2 = texture_scales[layer2];
     let scale3 = texture_scales[layer3];
-    
+
     let uv0 = base_uv * scale0;
     let uv1 = base_uv * scale1;
     let uv2 = base_uv * scale2;
     let uv3 = base_uv * scale3;
-    
+
     // Sample and blend layers
     // Layer 0 is always the base (100% coverage)
     var color = textureSample(t_terrain_array, s_terrain, uv0, layer0).rgb;
-    
+
     // Blend layers 1-3 using alpha values
     // Alpha atlas stores: R = layer1 alpha, G = layer2 alpha, B = layer3 alpha
     if (layer1 > 0u && alphas.r > 0.0) {
@@ -117,7 +132,25 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let c3 = textureSample(t_terrain_array, s_terrain, uv3, layer3).rgb;
         color = mix(color, c3, alphas.b);
     }
-    
+
+    // DEBUG: Blend in grid visualization (corner markers)
+    // Red at origin (0,0), blue at (15,0), green at (0,15), yellow at (15,15)
+    var debug_color = vec3<f32>(f32(grid_x) / 16.0, f32(grid_z) / 16.0, 0.0);
+    if (grid_x < 2u && grid_z < 2u) {
+        debug_color = vec3<f32>(1.0, 0.0, 0.0); // RED = origin
+    } else if (grid_x > 13u && grid_z < 2u) {
+        debug_color = vec3<f32>(0.0, 0.0, 1.0); // BLUE = +X
+    } else if (grid_x < 2u && grid_z > 13u) {
+        debug_color = vec3<f32>(0.0, 1.0, 0.0); // GREEN = +Z
+    } else if (grid_x > 13u && grid_z > 13u) {
+        debug_color = vec3<f32>(1.0, 1.0, 0.0); // YELLOW = diagonal
+    }
+
+    // Mix debug color with actual color (10% debug for subtle overlay)
+    // Set to 1.0 for full debug, 0.0 for no debug
+    let debug_mix = 0.0;
+    color = mix(color, debug_color, debug_mix);
+
     return vec4<f32>(color, 1.0);
 }
 

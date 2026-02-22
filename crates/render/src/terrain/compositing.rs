@@ -398,20 +398,23 @@ impl CompositorResources {
         chunk_index: u32,
         num_layers: u32,
     ) {
-        let chunk_x = chunk_index % self.config.chunks_x;
-        let chunk_z = chunk_index / self.config.chunks_x;
+        // Layer buffer uses X-major order: chunk_index = grid_x * 16 + grid_z
+        // So: grid_z = chunk_index % 16, grid_x = chunk_index / 16
+        let grid_z = chunk_index % self.config.chunks_x;
+        let grid_x = chunk_index / self.config.chunks_x;
 
-        // Calculate viewport for this chunk in the atlas
-        let viewport_x = chunk_x * self.config.chunk_texture_size;
-        let viewport_y = chunk_z * self.config.chunk_texture_size;
+        // Atlas layout: grid_x maps to X axis, grid_z maps to Y axis
+        // This matches the world coordinate system where X and Z are the horizontal axes
+        let viewport_x = grid_x * self.config.chunk_texture_size;
+        let viewport_y = grid_z * self.config.chunk_texture_size;
 
         // Update params buffer
         let params = CompositeParams {
             chunk_index,
             num_layers,
             chunk_offset: [
-                chunk_x as f32 / self.config.chunks_x as f32,
-                chunk_z as f32 / self.config.chunks_z as f32,
+                grid_x as f32 / self.config.chunks_x as f32,
+                grid_z as f32 / self.config.chunks_z as f32,
             ],
             chunk_size: [
                 1.0 / self.config.chunks_x as f32,
@@ -456,22 +459,29 @@ impl CompositorResources {
     }
 
     /// Composite all dirty chunks.
+    ///
+    /// Note: This submits each chunk individually because wgpu's queue.write_buffer
+    /// schedules writes that only take effect when the queue is submitted. If we
+    /// loop and write multiple times before submitting, only the last value is used.
     pub fn composite_all_dirty(
         &mut self,
-        encoder: &mut wgpu::CommandEncoder,
+        _encoder: &mut wgpu::CommandEncoder, // Not used - we create our own per chunk
         bind_group: &wgpu::BindGroup,
         queue: &wgpu::Queue,
         chunk_layer_counts: &[u32], // Number of layers per chunk
+        device: &wgpu::Device,
     ) {
         let dirty_count = self.dirty_chunks.iter().filter(|&&d| d).count();
-        if dirty_count > 0 {
-            log::debug!(
-                "Compositing {} dirty chunks to {}×{} atlas",
-                dirty_count,
-                self.config.atlas_width,
-                self.config.atlas_height
-            );
+        if dirty_count == 0 {
+            return;
         }
+
+        log::debug!(
+            "Compositing {} dirty chunks to {}×{} atlas",
+            dirty_count,
+            self.config.atlas_width,
+            self.config.atlas_height
+        );
 
         let mut composited_count = 0u32;
         for chunk_idx in 0..self.config.total_chunks() {
@@ -480,7 +490,19 @@ impl CompositorResources {
                     .get(chunk_idx as usize)
                     .copied()
                     .unwrap_or(1);
-                self.composite_chunk(encoder, bind_group, queue, chunk_idx, num_layers);
+
+                // Create a new encoder for this chunk and submit immediately
+                // This ensures the params buffer write takes effect before the draw
+                let mut chunk_encoder =
+                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Composite Chunk Encoder"),
+                    });
+
+                self.composite_chunk(&mut chunk_encoder, bind_group, queue, chunk_idx, num_layers);
+
+                // Submit this chunk's commands so the buffer write takes effect
+                queue.submit(std::iter::once(chunk_encoder.finish()));
+
                 composited_count += 1;
             }
         }
