@@ -272,9 +272,16 @@ impl CompositorResources {
                     },
                     count: None,
                 },
-                // Sampler
+                // Terrain sampler (linear filtering)
                 wgpu::BindGroupLayoutEntry {
                     binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // Alpha sampler (nearest filtering to avoid chunk boundary bleeding)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
@@ -345,6 +352,7 @@ impl CompositorResources {
     }
 
     /// Create a bind group for compositing with the given resources.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_bind_group(
         &self,
         device: &wgpu::Device,
@@ -353,6 +361,7 @@ impl CompositorResources {
         chunk_layers_buffer: &wgpu::Buffer,
         texture_scales_buffer: &wgpu::Buffer,
         sampler: &wgpu::Sampler,
+        alpha_sampler: &wgpu::Sampler,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Composite Bind Group"),
@@ -382,6 +391,10 @@ impl CompositorResources {
                     binding: 5,
                     resource: wgpu::BindingResource::Sampler(sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::Sampler(alpha_sampler),
+                },
             ],
         })
     }
@@ -398,23 +411,32 @@ impl CompositorResources {
         chunk_index: u32,
         num_layers: u32,
     ) {
-        // Layer buffer uses X-major order: chunk_index = grid_x * 16 + grid_z
-        // So: grid_z = chunk_index % 16, grid_x = chunk_index / 16
-        let grid_z = chunk_index % self.config.chunks_x;
-        let grid_x = chunk_index / self.config.chunks_x;
+        // Main shader computes: chunk_idx = chunk_y * 16 + chunk_x
+        // Where chunk_x = floor(sample_uv.x * 16), chunk_y = floor(sample_uv.y * 16)
+        // And sample_uv = (world_x / extent, world_z / extent)
+        //
+        // So: chunk_x = chunk_index % 16, chunk_y = chunk_index / 16
+        //
+        // Main shader samples t_gpu_composited at sample_uv, which maps to:
+        //   atlas_x = sample_uv.x * atlas_width = (chunk_x + fract) * chunk_size
+        //   atlas_y = sample_uv.y * atlas_height = (chunk_y + fract) * chunk_size
+        //
+        // Therefore we must place each chunk at viewport:
+        //   viewport_x = chunk_x * chunk_size
+        //   viewport_y = chunk_y * chunk_size
+        let chunk_x = chunk_index % self.config.chunks_x;
+        let chunk_y = chunk_index / self.config.chunks_x;
 
-        // Atlas layout: grid_x maps to X axis, grid_z maps to Y axis
-        // This matches the world coordinate system where X and Z are the horizontal axes
-        let viewport_x = grid_x * self.config.chunk_texture_size;
-        let viewport_y = grid_z * self.config.chunk_texture_size;
+        let viewport_x = chunk_x * self.config.chunk_texture_size;
+        let viewport_y = chunk_y * self.config.chunk_texture_size;
 
         // Update params buffer
         let params = CompositeParams {
             chunk_index,
             num_layers,
             chunk_offset: [
-                grid_x as f32 / self.config.chunks_x as f32,
-                grid_z as f32 / self.config.chunks_z as f32,
+                chunk_x as f32 / self.config.chunks_x as f32,
+                chunk_y as f32 / self.config.chunks_z as f32,
             ],
             chunk_size: [
                 1.0 / self.config.chunks_x as f32,
@@ -551,8 +573,7 @@ impl CompositorResources {
         let mut any_changed = false;
         let num_chunks = self.config.total_chunks().min(chunk_centers.len() as u32);
 
-        for chunk_idx in 0..num_chunks as usize {
-            let center = chunk_centers[chunk_idx];
+        for (chunk_idx, center) in chunk_centers.iter().enumerate().take(num_chunks as usize) {
             let dx = camera_pos[0] - center[0];
             let dy = camera_pos[1] - center[1];
             let dz = camera_pos[2] - center[2];

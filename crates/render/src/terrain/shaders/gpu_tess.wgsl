@@ -1,5 +1,19 @@
-// GPU tessellation shader using instanced patches with vertex displacement
-// Each instance is a terrain patch, vertices sample position/normal from textures
+// GPU tessellation shader - aligned with original Halo Wars gpuTerrainXbox.fx
+//
+// This shader implements the terrain rendering pipeline:
+// - Instanced patch rendering with vertex displacement from textures
+// - Runtime texture splatting (mode 9) or GPU-composited atlas (mode 12)
+// - Normal map blending across splat layers
+// - Ambient occlusion and terrain holes (alpha)
+//
+// Original Halo Wars approach:
+// - Uses pre-composited "unique" textures from gpuTerrainComposite.fx
+// - Samples UniqueAlbedoSampler for composited color
+// - Applies lighting, AO, and fog
+//
+// Our implementation supports both:
+// - Mode 9: Runtime splatting (blend textures per-pixel like compositor)
+// - Mode 12: GPU-composited atlas (sample pre-blended texture like original)
 
 struct CameraUniform {
     view_proj: mat4x4<f32>,
@@ -198,47 +212,64 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let light_dir = normalize(vec3<f32>(0.5, 1.0, 0.3));
     let vertex_normal = normalize(vec3<f32>(0.0, 1.0, 0.0));
 
+    // ==========================================================================
+    // TEXTURE SPLATTING - Runtime compositing aligned with gpuTerrainComposite.fx
+    // ==========================================================================
     // Determine which chunk this pixel belongs to (0-15 in each axis)
     let chunk_count = vec2<f32>(params.chunk_count.x, params.chunk_count.y);
     let chunk_uv = sample_uv * chunk_count;
     let chunk_x = u32(clamp(floor(chunk_uv.x), 0.0, chunk_count.x - 1.0));
     let chunk_y = u32(clamp(floor(chunk_uv.y), 0.0, chunk_count.y - 1.0));
-    // The alpha atlas has mirror+rotate transform applied which transposes positions.
-    // When we sample alpha at screen (chunk_x, chunk_y), we get alpha for original chunk (chunk_y, chunk_x).
-    // Layer buffer uses X-major order: grid_x * 16 + grid_z.
-    // Since original chunk is (chunk_y, chunk_x), we compute: chunk_y * 16 + chunk_x = grid_x * 16 + grid_z.
+
+    // Chunk index uses Y-major ordering: chunk_idx = chunk_y * 16 + chunk_x
+    // This matches the compositor's chunk_index and layer buffer layout
     let chunk_idx = chunk_y * u32(chunk_count.x) + chunk_x;
 
+    // UV within the chunk (0-1), equivalent to original's TexCoord0
     let in_chunk_uv = fract(chunk_uv);
-    // Sample alpha atlas directly - it's already transformed to match screen coordinates
+
+    // Sample alpha atlas
+    // Original: tex3D(alphasSampler, float3(uv0, layer_group_z))[channel]
+    // Ours: 2D atlas where (chunk_x, chunk_y) region stores RGBA alpha values
     let alpha_atlas_uv = (vec2<f32>(f32(chunk_x), f32(chunk_y)) + in_chunk_uv) / chunk_count;
     let alphas = textureSample(t_alpha_atlas, s_alpha, alpha_atlas_uv);
 
-    // Get layer indices for this chunk (8 layers max per chunk)
+    // Get layer texture indices for this chunk
+    // Equivalent to original's g_LayerData[].x (layer index)
     let layer_base = chunk_idx * 8u;
     let layer0 = chunk_layers[layer_base];
     let layer1 = chunk_layers[layer_base + 1u];
     let layer2 = chunk_layers[layer_base + 2u];
     let layer3 = chunk_layers[layer_base + 3u];
 
-    // Calculate per-layer tiled UVs
+    // Calculate tiled UVs with per-texture scaling
+    // Original: Output.targetUVs = TexCoord0 * g_LayerData[indx].yz
+    // We use continuous UVs (base_uv) to ensure seamless chunk boundaries
     let base_uv = sample_uv * chunk_count;
     let uv0 = base_uv * texture_scales[layer0];
     let uv1 = base_uv * texture_scales[layer1];
     let uv2 = base_uv * texture_scales[layer2];
     let uv3 = base_uv * texture_scales[layer3];
 
-    // Runtime texture splatting
+    // Runtime texture splatting - same blending as compositor
+    // Original uses hardware alpha blending (SrcAlpha/OneMinusSrcAlpha)
+    // We use mix() which is mathematically equivalent:
+    //   mix(a, b, t) = a * (1-t) + b * t
+
+    // Layer 0: base layer (always 100% coverage)
     var color = textureSampleLevel(t_terrain_array, s_terrain, uv0, layer0, 0.0).rgb;
 
+    // Layer 1: blend using alphas.r
     if (layer1 > 0u && alphas.r > 0.0) {
         let layer1_color = textureSampleLevel(t_terrain_array, s_terrain, uv1, layer1, 0.0).rgb;
         color = mix(color, layer1_color, alphas.r);
     }
+    // Layer 2: blend using alphas.g
     if (layer2 > 0u && alphas.g > 0.0) {
         let layer2_color = textureSampleLevel(t_terrain_array, s_terrain, uv2, layer2, 0.0).rgb;
         color = mix(color, layer2_color, alphas.g);
     }
+    // Layer 3: blend using alphas.b
     if (layer3 > 0u && alphas.b > 0.0) {
         let layer3_color = textureSampleLevel(t_terrain_array, s_terrain, uv3, layer3, 0.0).rgb;
         color = mix(color, layer3_color, alphas.b);

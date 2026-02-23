@@ -1,51 +1,62 @@
-// Terrain texture compositing shader.
+// Terrain texture compositing shader - aligned with original Halo Wars gpuTerrainComposite.fx
 //
-// Renders splat layers to a render target for one chunk.
-// Uses a fullscreen triangle to fill the chunk's region in the atlas.
+// Original approach:
+// - Draws each layer separately with hardware alpha blending (SrcAlpha/OneMinusSrcAlpha)
+// - Uses tex3D for texture array, tex3D for alpha array
+// - UV scaling: Output.targetUVs = TexCoord0 * g_LayerData[indx].yz
+// - Alpha lookup: tex3D(alphasSampler, float3(uv0, layer_group_z))[channel]
 //
-// Input: chunk index, layer IDs, alpha maps, tiled terrain textures
-// Output: composited RGBA to render target
+// Our approach (equivalent math, single pass):
+// - Single fullscreen triangle per chunk
+// - Manual mix() blending (mathematically identical to alpha blend)
+// - 2D texture array instead of 3D
+// - 2D alpha atlas with RGBA channels
 
 struct CompositeParams {
     chunk_index: u32,      // Which chunk we're compositing (0-255)
     num_layers: u32,       // Number of active layers (1-8)
-    chunk_offset: vec2<f32>, // UV offset in output atlas
-    chunk_size: vec2<f32>,   // UV size in output atlas
+    chunk_offset: vec2<f32>, // UV offset in output atlas (unused, kept for compatibility)
+    chunk_size: vec2<f32>,   // UV size in output atlas (unused, kept for compatibility)
     _padding: vec2<f32>,
 };
 
 @group(0) @binding(0)
 var<uniform> params: CompositeParams;
 
-// Terrain texture array (same as main shader)
+// Terrain texture array (equivalent to original's tex3D targetSampler)
 @group(0) @binding(1)
 var t_terrain_array: texture_2d_array<f32>;
 
-// Alpha atlas (packed alpha values for blending)
+// Alpha atlas (equivalent to original's tex3D alphasSampler, but 2D with RGBA channels)
 @group(0) @binding(2)
 var t_alpha_atlas: texture_2d<f32>;
 
 // Per-chunk layer data (8 layer indices per chunk)
+// Equivalent to g_LayerData[].x (layer index)
 @group(0) @binding(3)
 var<storage, read> chunk_layers: array<u32>;
 
 // Texture UV scales (one vec2 per texture)
+// Equivalent to g_LayerData[].yz (u_scale, v_scale)
 @group(0) @binding(4)
 var<storage, read> texture_scales: array<vec2<f32>>;
 
+// Terrain sampler (LINEAR filtering, WRAP addressing - matches original)
 @group(0) @binding(5)
 var s_terrain: sampler;
 
-// Vertex shader output
+// Alpha sampler (LINEAR filtering like original alphasSampler)
+@group(0) @binding(6)
+var s_alpha: sampler;
+
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,  // 0-1 within chunk
+    @location(0) uv: vec2<f32>,  // 0-1 within chunk (equivalent to original's TexCoord0)
 };
 
 // Fullscreen triangle vertex shader
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    // Fullscreen triangle vertices (covers -1 to 1 clip space)
     var positions = array<vec2<f32>, 3>(
         vec2<f32>(-1.0, -1.0),
         vec2<f32>(3.0, -1.0),
@@ -54,56 +65,47 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 
     var out: VertexOutput;
     out.position = vec4<f32>(positions[vertex_index], 0.0, 1.0);
-    // Map from clip space to 0-1 UV
-    // Note: wgpu clip space has Y=-1 at bottom, +1 at top
-    // Texture coordinates have V=0 at top, V=1 at bottom
-    // So we flip V: (clip_y + 1) * 0.5 gives 0 at bottom, 1 at top
-    // We want 0 at top, 1 at bottom, so: 1.0 - (clip_y + 1) * 0.5 = 0.5 - clip_y * 0.5
+
+    // Convert clip space to UV [0,1]
     let raw_uv = (positions[vertex_index] + 1.0) * 0.5;
+    // Flip Y to match texture coordinates (clip Y=+1 is top, texture V=0 is top)
     out.uv = vec2<f32>(raw_uv.x, 1.0 - raw_uv.y);
     return out;
 }
 
 // Fragment shader - composites terrain layers
+// Equivalent to original's CompsPixel_albedo_ARGB8 but does all layers in one pass
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let chunk_idx = params.chunk_index;
+
+    // in.uv is equivalent to original's TexCoord0 (0-1 within chunk)
     let in_chunk_uv = in.uv;
 
-    // Calculate grid position from chunk_idx
-    // Compositor iterates chunk_idx 0-255 in X-major order: chunk_idx = grid_x * 16 + grid_z
-    let grid_z = chunk_idx % 16u;  // Remainder gives grid_z
-    let grid_x = chunk_idx / 16u;  // Division gives grid_x
+    // Derive chunk grid position from index
+    // chunk_idx = chunk_y * 16 + chunk_x (Y-major, matching main shader)
+    let chunk_x = chunk_idx % 16u;
+    let chunk_y = chunk_idx / 16u;
 
-    // CRITICAL: Layer buffer indexing must match what main shader uses!
-    //
-    // Main shader at world position (grid_x, *, grid_z):
-    //   - chunk_x = grid_x, chunk_y = grid_z
-    //   - Due to alpha atlas transpose, gets alpha for chunk (grid_z, grid_x)
-    //   - Uses chunk_idx = chunk_y * 16 + chunk_x = grid_z * 16 + grid_x
-    //   - Looks up layers at buffer[grid_z * 16 + grid_x]
-    //
-    // Compositor places chunk at viewport (grid_x, grid_z) in atlas.
-    // When main shader samples this position, it expects content for chunk (grid_z, grid_x).
-    // So we must look up layers using: grid_z * 16 + grid_x (NOT chunk_idx!)
-    let layer_lookup_idx = grid_z * 16u + grid_x;
-    let layer_base = layer_lookup_idx * 8u;
+    // Get layer texture indices for this chunk
+    let layer_base = chunk_idx * 8u;
     let layer0 = chunk_layers[layer_base];
     let layer1 = chunk_layers[layer_base + 1u];
     let layer2 = chunk_layers[layer_base + 2u];
     let layer3 = chunk_layers[layer_base + 3u];
 
     // Sample alpha values from atlas
-    // Main shader samples at (chunk_x, chunk_y) = (grid_x, grid_z).
-    // We do the same to get consistent alpha values.
-    let alpha_uv = (vec2<f32>(f32(grid_x), f32(grid_z)) + in_chunk_uv) / 16.0;
-    let alphas = textureSample(t_alpha_atlas, s_terrain, alpha_uv);
+    // Original: tex3D(alphasSampler, float3(uv0, layer_group_z))[channel]
+    // Ours: 2D atlas where each chunk's region stores RGBA alpha values
+    let alpha_uv = (vec2<f32>(f32(chunk_x), f32(chunk_y)) + in_chunk_uv) / 16.0;
+    let alphas = textureSample(t_alpha_atlas, s_alpha, alpha_uv);
 
-    // Calculate world UV for tiled texture sampling
-    // World coordinates: X = grid_x direction, Z = grid_z direction
-    let base_uv = vec2<f32>(f32(grid_x), f32(grid_z)) + in_chunk_uv;
+    // Calculate texture UVs with per-texture scaling
+    // Original: Output.targetUVs = TexCoord0 * g_LayerData[indx].yz
+    // We use continuous UVs across terrain for seamless chunk boundaries
+    let base_uv = vec2<f32>(f32(chunk_x), f32(chunk_y)) + in_chunk_uv;
 
-    // Apply per-texture UV scaling
+    // Get UV scales and compute tiled UVs
     let scale0 = texture_scales[layer0];
     let scale1 = texture_scales[layer1];
     let scale2 = texture_scales[layer2];
@@ -115,41 +117,32 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let uv3 = base_uv * scale3;
 
     // Sample and blend layers
-    // Layer 0 is always the base (100% coverage)
-    var color = textureSample(t_terrain_array, s_terrain, uv0, layer0).rgb;
+    // Original uses hardware alpha blending with multiple draw calls
+    // We use mix() which is mathematically equivalent:
+    //   mix(a, b, t) = a * (1-t) + b * t
+    //   alpha_blend: dst = src * src.a + dst * (1-src.a)
+    // These produce identical results when applied sequentially
 
-    // Blend layers 1-3 using alpha values
-    // Alpha atlas stores: R = layer1 alpha, G = layer2 alpha, B = layer3 alpha
+    // Layer 0: base layer (always 100% coverage, no alpha)
+    var color = textureSampleLevel(t_terrain_array, s_terrain, uv0, layer0, 0.0).rgb;
+
+    // Layer 1: blend using alphas.r (original indexes.y=0 -> channel R)
     if (layer1 > 0u && alphas.r > 0.0) {
-        let c1 = textureSample(t_terrain_array, s_terrain, uv1, layer1).rgb;
+        let c1 = textureSampleLevel(t_terrain_array, s_terrain, uv1, layer1, 0.0).rgb;
         color = mix(color, c1, alphas.r);
     }
+
+    // Layer 2: blend using alphas.g (original indexes.y=1 -> channel G)
     if (layer2 > 0u && alphas.g > 0.0) {
-        let c2 = textureSample(t_terrain_array, s_terrain, uv2, layer2).rgb;
+        let c2 = textureSampleLevel(t_terrain_array, s_terrain, uv2, layer2, 0.0).rgb;
         color = mix(color, c2, alphas.g);
     }
+
+    // Layer 3: blend using alphas.b (original indexes.y=2 -> channel B)
     if (layer3 > 0u && alphas.b > 0.0) {
-        let c3 = textureSample(t_terrain_array, s_terrain, uv3, layer3).rgb;
+        let c3 = textureSampleLevel(t_terrain_array, s_terrain, uv3, layer3, 0.0).rgb;
         color = mix(color, c3, alphas.b);
     }
-
-    // DEBUG: Blend in grid visualization (corner markers)
-    // Red at origin (0,0), blue at (15,0), green at (0,15), yellow at (15,15)
-    var debug_color = vec3<f32>(f32(grid_x) / 16.0, f32(grid_z) / 16.0, 0.0);
-    if (grid_x < 2u && grid_z < 2u) {
-        debug_color = vec3<f32>(1.0, 0.0, 0.0); // RED = origin
-    } else if (grid_x > 13u && grid_z < 2u) {
-        debug_color = vec3<f32>(0.0, 0.0, 1.0); // BLUE = +X
-    } else if (grid_x < 2u && grid_z > 13u) {
-        debug_color = vec3<f32>(0.0, 1.0, 0.0); // GREEN = +Z
-    } else if (grid_x > 13u && grid_z > 13u) {
-        debug_color = vec3<f32>(1.0, 1.0, 0.0); // YELLOW = diagonal
-    }
-
-    // Mix debug color with actual color (10% debug for subtle overlay)
-    // Set to 1.0 for full debug, 0.0 for no debug
-    let debug_mix = 0.0;
-    color = mix(color, debug_color, debug_mix);
 
     return vec4<f32>(color, 1.0);
 }

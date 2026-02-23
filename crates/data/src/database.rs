@@ -8,12 +8,12 @@
 //! ```ignore
 //! use data::GameDatabase;
 //!
-//! let db = GameDatabase::load_from_era("root.era")?;
+//! let db = GameDatabase::load()?;
 //! println!("Loaded {} objects", db.proto.objects.len());
 //! println!("Loaded {} XMB files total", db.raw_xmb.len());
 //! ```
 
-use crate::era::{EraArchive, Error as EraError};
+use crate::assets::{AssetError, AssetSource};
 use crate::proto::{
     ObjectType, ProtoDatabase, ProtoFlags, ProtoId, ProtoObject, ProtoSquad, ProtoTech,
     ResourceCost, SquadUnit, TechEffect,
@@ -21,19 +21,18 @@ use crate::proto::{
 use crate::xmb::{Error as XmbError, Node, XmbData, XmbReader};
 use std::collections::HashMap;
 use std::io::Cursor;
-use std::path::Path;
 use thiserror::Error;
 
 /// Errors that can occur when loading the game database.
 #[derive(Debug, Error)]
 pub enum DatabaseError {
-    #[error("ERA archive error: {0}")]
-    Era(#[from] EraError),
+    #[error("Asset loading error: {0}")]
+    Asset(#[from] AssetError),
     #[error("XMB parse error: {0}")]
     Xmb(#[from] XmbError),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("File not found in archive: {0}")]
+    #[error("File not found: {0}")]
     FileNotFound(String),
     #[error("Parse error in {file}: {message}")]
     ParseError { file: String, message: String },
@@ -168,37 +167,24 @@ impl GameDatabase {
         Self::default()
     }
 
-    /// Load the game database from root.era.
+    /// Load the game database using AssetSource.
     ///
-    /// This loads ALL .xmb files from the archive, parsing known types
-    /// into their structured forms while keeping raw XMB data for everything.
-    pub fn load_from_era<P: AsRef<Path>>(era_path: P) -> Result<Self, DatabaseError> {
-        let era_path = era_path.as_ref();
-        log::info!("Loading game database from: {}", era_path.display());
+    /// This loads ALL .xmb files from root.era (via AssetSource), parsing known
+    /// types into their structured forms while keeping raw XMB data for everything.
+    pub fn load() -> Result<Self, DatabaseError> {
+        log::info!("Loading game database via AssetSource");
 
-        let mut archive = EraArchive::open(era_path)?;
+        let mut source = AssetSource::root_only()?;
         let mut db = GameDatabase::new();
 
-        // Collect all XMB file indices
-        let xmb_entries: Vec<(usize, String)> = archive
-            .iter()
-            .enumerate()
-            .filter_map(|(i, entry)| {
-                entry.filename.as_ref().and_then(|name| {
-                    if name.to_lowercase().ends_with(".xmb") {
-                        Some((i, name.clone()))
-                    } else {
-                        None
-                    }
-                })
-            })
-            .collect();
+        // List all XMB files
+        let xmb_files = source.list(|path| path.ends_with(".xmb"));
 
-        log::info!("Found {} XMB files in archive", xmb_entries.len());
+        log::info!("Found {} XMB files in root.era", xmb_files.len());
 
         // Load all XMB files
-        for (index, filename) in xmb_entries {
-            match archive.read_entry(index) {
+        for filename in xmb_files {
+            match source.read(&filename) {
                 Ok(data) => {
                     if let Err(e) = db.load_xmb_data(&filename, &data) {
                         log::warn!("Failed to parse {}: {}", filename, e);
@@ -226,9 +212,9 @@ impl GameDatabase {
     ///
     /// Uses `OPENENSEMBLE_GAME_DIR` environment variable or falls back to
     /// the current working directory. Loads `root.era` from that location.
+    #[deprecated(note = "Use GameDatabase::load() instead")]
     pub fn load_from_game_dir() -> Result<Self, DatabaseError> {
-        let root_era = crate::paths::era_path("root");
-        Self::load_from_era(root_era)
+        Self::load()
     }
 
     /// Load XMB data from bytes and parse it.

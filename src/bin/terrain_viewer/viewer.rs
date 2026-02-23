@@ -3,10 +3,10 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use data::ddx::DdxTexture;
-use data::era::EraArchive;
-use data::xtd::{TessellationData, XtdReader};
-use data::xtt::{ActiveTextureInfo, XttReader};
+use data::assets::AssetSource;
+use data::terrain::ScenarioTerrain;
+use data::xtd::{TessellationData, XtdFile, XtdReader};
+use data::xtt::{ActiveTextureInfo, XttFile, XttReader};
 use glam::Vec3;
 use render::terrain::{
     Camera, CompositingConfig, CompositorResources, GPU_TESS_SHADER, GpuTessParams, LodConfig,
@@ -19,13 +19,26 @@ use xcore::prelude::*;
 use crate::camera::CameraInput;
 use crate::gpu::create_depth_texture;
 use crate::types::{
-    AlbedoData, AlphaTextureData, AoTextureData, ChunkSplatData, GpuResources, NormalMapTexture,
-    RawXtdData, TerrainMesh, TerrainTexture,
+    AlbedoData, AlphaTextureData, AoTextureData, ChunkDecalData, ChunkSplatData, DecalInstance,
+    DecalTexture, FoliageQNChunk, FoliageSet, GpuResources, NormalMapTexture, RawXtdData,
+    TerrainMesh, TerrainTexture,
 };
+
+/// Source for terrain loading.
+pub enum TerrainSource {
+    /// Load from a local XTD file path.
+    File(PathBuf),
+    /// Load from a scenario name using ScenarioTerrain (requires OPENENSEMBLE_GAME_DIR).
+    Scenario(String),
+}
 
 /// The terrain viewer application.
 pub struct TerrainViewer {
     pub xtd_path: Option<PathBuf>,
+    /// Scenario name (for ERA loading).
+    pub scenario_name: Option<String>,
+    /// Asset source for loading textures (set after loading from ERA or scenario).
+    pub asset_source: Option<AssetSource>,
     pub terrain: Option<TerrainMesh>,
     pub albedo: Option<AlbedoData>,
     pub terrain_textures: Vec<TerrainTexture>,
@@ -57,12 +70,27 @@ pub struct TerrainViewer {
     pub lod_config: LodConfig,
     /// Pre-calculated chunk center positions [x, y, z] for LOD calculations.
     pub chunk_centers: Vec<[f32; 3]>,
+    /// Decal textures loaded from ERA (_df and _op files).
+    pub decal_textures: Vec<DecalTexture>,
+    /// Decal instances from XTT (position, rotation, scale).
+    pub decal_instances: Vec<DecalInstance>,
+    /// Per-chunk decal data (layer IDs and alpha maps).
+    pub chunk_decal_data: Vec<ChunkDecalData>,
+    /// Foliage sets loaded from ERA (textures + blade geometry).
+    pub foliage_sets: Vec<FoliageSet>,
+    /// Per quad-node foliage chunk data from XTT.
+    pub foliage_qn_chunks: Vec<FoliageQNChunk>,
+    /// Foliage GPU resources (pipeline, textures, bind groups).
+    pub foliage_resources: Option<crate::foliage::FoliageResources>,
 }
 
 impl TerrainViewer {
+    /// Create a terrain viewer from a file path (legacy mode).
     pub fn new(xtd_path: Option<PathBuf>) -> Self {
         Self {
             xtd_path,
+            scenario_name: None,
+            asset_source: None,
             terrain: None,
             albedo: None,
             terrain_textures: Vec::new(),
@@ -84,380 +112,428 @@ impl TerrainViewer {
             use_gpu_compositing: true, // Enabled by default to test GPU compositing
             lod_config: LodConfig::default(),
             chunk_centers: Vec::new(),
+            decal_textures: Vec::new(),
+            decal_instances: Vec::new(),
+            chunk_decal_data: Vec::new(),
+            foliage_sets: Vec::new(),
+            foliage_qn_chunks: Vec::new(),
+            foliage_resources: None,
+        }
+    }
+
+    /// Create a terrain viewer from a scenario name (loads from game directory/ERA).
+    pub fn from_scenario(scenario_name: String) -> Self {
+        Self {
+            xtd_path: None,
+            scenario_name: Some(scenario_name),
+            asset_source: None,
+            terrain: None,
+            albedo: None,
+            terrain_textures: Vec::new(),
+            normal_textures: Vec::new(),
+            chunk_splat_data: Vec::new(),
+            camera: Camera::default(),
+            show_info: true,
+            wireframe: false,
+            load_error: None,
+            gpu: None,
+            surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            debug_mode: 12, // Default to GPU composited rendering
+            tessellation_mode: TessellationMode::Gpu, // Default to GPU tessellation (fast)
+            tessellation_data: None,
+            raw_xtd_data: None,
+            bump_power: 1.0, // Default normal map strength (game default)
+            compositor: None,
+            compositor_bind_group: None,
+            use_gpu_compositing: true, // Enabled by default to test GPU compositing
+            lod_config: LodConfig::default(),
+            chunk_centers: Vec::new(),
+            decal_textures: Vec::new(),
+            decal_instances: Vec::new(),
+            chunk_decal_data: Vec::new(),
+            foliage_sets: Vec::new(),
+            foliage_qn_chunks: Vec::new(),
+            foliage_resources: None,
         }
     }
 
     fn load_terrain(&mut self) {
-        let Some(path) = self.xtd_path.clone() else {
-            self.load_error = Some("No XTD file specified".to_string());
+        // Determine which loading path to use
+        let (xtd, xtt, asset_source_opt) = if let Some(scenario_name) = &self.scenario_name {
+            // Load from scenario (game directory / ERA)
+            log::info!("Loading terrain for scenario: {}", scenario_name);
+            match ScenarioTerrain::load(scenario_name) {
+                Ok(terrain) => {
+                    // Create asset source for texture loading
+                    let asset_source = match AssetSource::for_scenario(scenario_name) {
+                        Ok(source) => Some(source),
+                        Err(e) => {
+                            log::warn!("Failed to create asset source: {}", e);
+                            None
+                        }
+                    };
+                    (terrain.xtd, terrain.xtt, asset_source)
+                }
+                Err(e) => {
+                    self.load_error = Some(format!("Failed to load scenario: {}", e));
+                    log::error!("{}", self.load_error.as_ref().unwrap());
+                    return;
+                }
+            }
+        } else if let Some(path) = &self.xtd_path {
+            // Load from file path (legacy mode)
+            log::info!("Loading XTD from file: {}", path.display());
+            match std::fs::read(path) {
+                Ok(data) => match XtdReader::read(&data) {
+                    Ok(xtd) => {
+                        // Try to load XTT from same location
+                        let xtt_path = path.with_extension("xtt");
+                        let xtt = if xtt_path.exists() {
+                            match std::fs::read(&xtt_path) {
+                                Ok(xtt_data) => match XttReader::read(&xtt_data) {
+                                    Ok(xtt) => Some(xtt),
+                                    Err(e) => {
+                                        log::warn!("Failed to parse XTT: {}", e);
+                                        None
+                                    }
+                                },
+                                Err(e) => {
+                                    log::warn!("Failed to read XTT file: {}", e);
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        };
+                        (xtd, xtt, None)
+                    }
+                    Err(e) => {
+                        self.load_error = Some(format!("Failed to parse XTD: {}", e));
+                        log::error!("{}", self.load_error.as_ref().unwrap());
+                        return;
+                    }
+                },
+                Err(e) => {
+                    self.load_error = Some(format!("Failed to read file: {}", e));
+                    log::error!("{}", self.load_error.as_ref().unwrap());
+                    return;
+                }
+            }
+        } else {
+            self.load_error = Some("No terrain source specified".to_string());
             return;
         };
 
-        log::info!("Loading XTD from: {}", path.display());
+        // Store asset source for texture loading
+        self.asset_source = asset_source_opt;
 
-        match std::fs::read(&path) {
-            Ok(data) => match XtdReader::read(&data) {
-                Ok(xtd) => {
-                    log::info!(
-                        "XTD loaded: {}x{} verts, tile_scale={}",
-                        xtd.header.num_x_verts,
-                        xtd.header.num_x_verts,
-                        xtd.header.tile_scale
-                    );
-                    log::info!(
-                        "XTD world_min: [{:.2}, {:.2}, {:.2}]",
-                        xtd.header.world_min[0],
-                        xtd.header.world_min[1],
-                        xtd.header.world_min[2]
-                    );
-                    log::info!(
-                        "XTD world_max: [{:.2}, {:.2}, {:.2}]",
-                        xtd.header.world_max[0],
-                        xtd.header.world_max[1],
-                        xtd.header.world_max[2]
-                    );
-                    log::info!(
-                        "XTD world_size: [{:.2}, {:.2}, {:.2}]",
-                        xtd.header.world_max[0] - xtd.header.world_min[0],
-                        xtd.header.world_max[1] - xtd.header.world_min[1],
-                        xtd.header.world_max[2] - xtd.header.world_min[2]
-                    );
+        // Process the loaded XTD
+        self.process_xtd(&xtd);
 
-                    // Decode tessellation data
-                    if let Some(tess) = xtd.decode_tessellation() {
+        // Process XTT if available
+        if let Some(xtt) = xtt {
+            self.process_xtt(&xtt);
+        }
+    }
+
+    /// Process loaded XTD data.
+    fn process_xtd(&mut self, xtd: &XtdFile) {
+        log::info!(
+            "XTD loaded: {}x{} verts, tile_scale={}",
+            xtd.header.num_x_verts,
+            xtd.header.num_x_verts,
+            xtd.header.tile_scale
+        );
+        log::info!(
+            "XTD world_min: [{:.2}, {:.2}, {:.2}]",
+            xtd.header.world_min[0],
+            xtd.header.world_min[1],
+            xtd.header.world_min[2]
+        );
+        log::info!(
+            "XTD world_max: [{:.2}, {:.2}, {:.2}]",
+            xtd.header.world_max[0],
+            xtd.header.world_max[1],
+            xtd.header.world_max[2]
+        );
+        log::info!(
+            "XTD world_size: [{:.2}, {:.2}, {:.2}]",
+            xtd.header.world_max[0] - xtd.header.world_min[0],
+            xtd.header.world_max[1] - xtd.header.world_min[1],
+            xtd.header.world_max[2] - xtd.header.world_min[2]
+        );
+
+        // Decode tessellation data
+        if let Some(tess) = xtd.decode_tessellation() {
+            log::info!(
+                "Tessellation: {}x{} patches, max_level={}",
+                tess.num_x_patches,
+                tess.num_z_patches,
+                tess.max_tess_level
+            );
+            self.tessellation_data = Some(tess);
+        } else {
+            log::warn!("No tessellation data available in XTD");
+            self.tessellation_data = None;
+        }
+
+        // Extract raw data for GPU tessellation
+        match xtd.extract_raw_data() {
+            Ok(raw) => {
+                log::info!(
+                    "Extracted raw terrain data: {}x{} vertices",
+                    raw.num_verts_per_axis,
+                    raw.num_verts_per_axis
+                );
+
+                // Decode AO data if available
+                // Based on IDA RE: AO is half-resolution (512×1024 for 1024×1024 terrain)
+                let ao_data = match xtd.decode_ao() {
+                    Ok(ao) => {
                         log::info!(
-                            "Tessellation: {}x{} patches, max_level={}",
-                            tess.num_x_patches,
-                            tess.num_z_patches,
-                            tess.max_tess_level
+                            "Decoded AO data: {}x{} texture ({} total bytes, half-resolution)",
+                            ao.width,
+                            ao.height,
+                            ao.values.len()
                         );
-                        self.tessellation_data = Some(tess);
-                    } else {
-                        log::warn!("No tessellation data available in XTD");
-                        self.tessellation_data = None;
+                        Some(AoTextureData {
+                            values: ao.values,
+                            width: ao.width as u32,
+                            height: ao.height as u32,
+                        })
                     }
-
-                    // Extract raw data for GPU tessellation
-                    match xtd.extract_raw_data() {
-                        Ok(raw) => {
-                            log::info!(
-                                "Extracted raw terrain data: {}x{} vertices",
-                                raw.num_verts_per_axis,
-                                raw.num_verts_per_axis
-                            );
-
-                            // Decode AO data if available
-                            // Based on IDA RE: AO is half-resolution (512×1024 for 1024×1024 terrain)
-                            let ao_data = match xtd.decode_ao() {
-                                Ok(ao) => {
-                                    log::info!(
-                                        "Decoded AO data: {}x{} texture ({} total bytes, half-resolution)",
-                                        ao.width,
-                                        ao.height,
-                                        ao.values.len()
-                                    );
-                                    Some(AoTextureData {
-                                        values: ao.values,
-                                        width: ao.width as u32,
-                                        height: ao.height as u32,
-                                    })
-                                }
-                                Err(e) => {
-                                    log::warn!("Failed to decode AO data: {}", e);
-                                    None
-                                }
-                            };
-
-                            // Decode Alpha data if available (same compression as AO)
-                            // Used for terrain holes/transparency
-                            let alpha_data = match xtd.decode_alpha() {
-                                Ok(alpha) => {
-                                    log::info!(
-                                        "Decoded Alpha data: {}x{} texture ({} total bytes, half-resolution)",
-                                        alpha.width,
-                                        alpha.height,
-                                        alpha.values.len()
-                                    );
-                                    Some(AlphaTextureData {
-                                        values: alpha.values,
-                                        width: alpha.width as u32,
-                                        height: alpha.height as u32,
-                                    })
-                                }
-                                Err(e) => {
-                                    log::warn!("Failed to decode Alpha data: {}", e);
-                                    None
-                                }
-                            };
-
-                            self.raw_xtd_data = Some(RawXtdData {
-                                packed_positions: raw.packed_positions,
-                                packed_normals: raw.packed_normals,
-                                num_verts_per_axis: raw.num_verts_per_axis,
-                                mid: raw.mid,
-                                range: raw.range,
-                                tile_scale: raw.tile_scale,
-                                ao_data,
-                                alpha_data,
-                            });
-                        }
-                        Err(e) => {
-                            log::warn!(
-                                "Failed to extract raw XTD data for GPU tessellation: {}",
-                                e
-                            );
-                            self.raw_xtd_data = None;
-                        }
+                    Err(e) => {
+                        log::warn!("Failed to decode AO data: {}", e);
+                        None
                     }
+                };
 
-                    match xtd.decode_vertices() {
-                        Ok(vertices) => {
-                            log::info!(
-                                "Decoded {} vertices, {} triangles",
-                                vertices.positions.len(),
-                                vertices.generate_indices().len() / 3
-                            );
-
-                            let mesh = match self.tessellation_mode {
-                                TessellationMode::Cpu => {
-                                    if let Some(ref tess_data) = self.tessellation_data {
-                                        log::info!(
-                                            "Applying CPU tessellation (this may take a while)..."
-                                        );
-                                        let start = std::time::Instant::now();
-                                        let tessellated = vertices.tessellate(tess_data);
-                                        log::info!(
-                                            "Tessellation complete: {} vertices, {} triangles ({:.1}s)",
-                                            tessellated.positions.len(),
-                                            tessellated.indices.len() / 3,
-                                            start.elapsed().as_secs_f32()
-                                        );
-                                        TerrainMesh::from_tessellated(
-                                            tessellated,
-                                            xtd.header.world_min,
-                                            xtd.header.world_max,
-                                            xtd.header.tile_scale,
-                                        )
-                                    } else {
-                                        log::warn!(
-                                            "CPU tessellation enabled but no tessellation data available"
-                                        );
-                                        TerrainMesh::from_xtd(
-                                            &vertices,
-                                            xtd.header.world_min,
-                                            xtd.header.world_max,
-                                            xtd.header.tile_scale,
-                                        )
-                                    }
-                                }
-                                TessellationMode::Gpu => {
-                                    // For GPU tessellation, we still need a basic mesh for fallback
-                                    // The actual tessellation happens in the GPU resources creation
-                                    log::info!(
-                                        "GPU tessellation mode - will use instanced patches"
-                                    );
-                                    TerrainMesh::from_xtd(
-                                        &vertices,
-                                        xtd.header.world_min,
-                                        xtd.header.world_max,
-                                        xtd.header.tile_scale,
-                                    )
-                                }
-                                TessellationMode::None => TerrainMesh::from_xtd(
-                                    &vertices,
-                                    xtd.header.world_min,
-                                    xtd.header.world_max,
-                                    xtd.header.tile_scale,
-                                ),
-                            };
-
-                            // Position camera at terrain center (only on first load)
-                            if self.terrain.is_none() {
-                                self.camera.position =
-                                    mesh.center() + Vec3::new(0.0, 200.0, -300.0);
-                            }
-                            self.terrain = Some(mesh);
-                            self.load_error = None;
-
-                            // Try to load corresponding XTT file
-                            self.load_xtt(&path);
-                        }
-                        Err(e) => {
-                            self.load_error = Some(format!("Failed to decode vertices: {}", e));
-                            log::error!("{}", self.load_error.as_ref().unwrap());
-                        }
+                // Decode Alpha data if available (same compression as AO)
+                // Used for terrain holes/transparency
+                let alpha_data = match xtd.decode_alpha() {
+                    Ok(alpha) => {
+                        log::info!(
+                            "Decoded Alpha data: {}x{} texture ({} total bytes, half-resolution)",
+                            alpha.width,
+                            alpha.height,
+                            alpha.values.len()
+                        );
+                        Some(AlphaTextureData {
+                            values: alpha.values,
+                            width: alpha.width as u32,
+                            height: alpha.height as u32,
+                        })
                     }
-                }
-                Err(e) => {
-                    self.load_error = Some(format!("Failed to parse XTD: {}", e));
-                    log::error!("{}", self.load_error.as_ref().unwrap());
-                }
-            },
+                    Err(e) => {
+                        log::warn!("Failed to decode Alpha data: {}", e);
+                        None
+                    }
+                };
+
+                self.raw_xtd_data = Some(RawXtdData {
+                    packed_positions: raw.packed_positions,
+                    packed_normals: raw.packed_normals,
+                    num_verts_per_axis: raw.num_verts_per_axis,
+                    mid: raw.mid,
+                    range: raw.range,
+                    tile_scale: raw.tile_scale,
+                    ao_data,
+                    alpha_data,
+                });
+            }
             Err(e) => {
-                self.load_error = Some(format!("Failed to read file: {}", e));
+                log::warn!("Failed to extract raw XTD data for GPU tessellation: {}", e);
+                self.raw_xtd_data = None;
+            }
+        }
+
+        match xtd.decode_vertices() {
+            Ok(vertices) => {
+                log::info!(
+                    "Decoded {} vertices, {} triangles",
+                    vertices.positions.len(),
+                    vertices.generate_indices().len() / 3
+                );
+
+                let mesh = match self.tessellation_mode {
+                    TessellationMode::Cpu => {
+                        if let Some(ref tess_data) = self.tessellation_data {
+                            log::info!("Applying CPU tessellation (this may take a while)...");
+                            let start = std::time::Instant::now();
+                            let tessellated = vertices.tessellate(tess_data);
+                            log::info!(
+                                "Tessellation complete: {} vertices, {} triangles ({:.1}s)",
+                                tessellated.positions.len(),
+                                tessellated.indices.len() / 3,
+                                start.elapsed().as_secs_f32()
+                            );
+                            TerrainMesh::from_tessellated(
+                                tessellated,
+                                xtd.header.world_min,
+                                xtd.header.world_max,
+                                xtd.header.tile_scale,
+                            )
+                        } else {
+                            log::warn!(
+                                "CPU tessellation enabled but no tessellation data available"
+                            );
+                            TerrainMesh::from_xtd(
+                                &vertices,
+                                xtd.header.world_min,
+                                xtd.header.world_max,
+                                xtd.header.tile_scale,
+                            )
+                        }
+                    }
+                    TessellationMode::Gpu => {
+                        // For GPU tessellation, we still need a basic mesh for fallback
+                        // The actual tessellation happens in the GPU resources creation
+                        log::info!("GPU tessellation mode - will use instanced patches");
+                        TerrainMesh::from_xtd(
+                            &vertices,
+                            xtd.header.world_min,
+                            xtd.header.world_max,
+                            xtd.header.tile_scale,
+                        )
+                    }
+                    TessellationMode::None => TerrainMesh::from_xtd(
+                        &vertices,
+                        xtd.header.world_min,
+                        xtd.header.world_max,
+                        xtd.header.tile_scale,
+                    ),
+                };
+
+                // Position camera at terrain center (only on first load)
+                if self.terrain.is_none() {
+                    self.camera.position = mesh.center() + Vec3::new(0.0, 200.0, -300.0);
+                }
+                self.terrain = Some(mesh);
+                self.load_error = None;
+            }
+            Err(e) => {
+                self.load_error = Some(format!("Failed to decode vertices: {}", e));
                 log::error!("{}", self.load_error.as_ref().unwrap());
             }
         }
     }
 
-    fn load_xtt(&mut self, xtd_path: &PathBuf) {
-        // XTT file has same path but .xtt extension
-        let xtt_path = xtd_path.with_extension("xtt");
+    /// Process loaded XTT data.
+    fn process_xtt(&mut self, xtt: &XttFile) {
+        log::info!(
+            "XTT loaded: {} textures, {} linker chunks, {} bytes albedo",
+            xtt.header.num_active_textures,
+            xtt.linkers.len(),
+            xtt.albedo_data.len()
+        );
 
-        if !xtt_path.exists() {
-            log::info!("No XTT file found at: {}", xtt_path.display());
-            return;
+        // Debug: Print active texture filenames
+        log::info!("Active textures:");
+        for (i, tex) in xtt.active_textures.iter().enumerate() {
+            log::info!(
+                "  [{}] {} (u_scale={}, v_scale={}, blend_op={})",
+                i,
+                tex.filename,
+                tex.u_scale,
+                tex.v_scale,
+                tex.blend_op
+            );
         }
 
-        log::info!("Loading XTT from: {}", xtt_path.display());
+        // Debug: Print first few linkers' splat info
+        if !xtt.linkers.is_empty() {
+            // Print first 5 and last linker grid positions
+            for (i, linker) in xtt.linkers.iter().enumerate() {
+                if i < 5 || i == xtt.linkers.len() - 1 {
+                    log::info!("Linker [{}]: grid=({},{})", i, linker.grid_x, linker.grid_z);
+                }
+            }
+            let linker = &xtt.linkers[0];
+            log::info!(
+                "First linker: grid=({},{}), {} splat layers, {} decal layers",
+                linker.grid_x,
+                linker.grid_z,
+                linker.num_splat_layers,
+                linker.num_decal_layers
+            );
+            log::info!("  splat_layer_ids: {:?}", linker.splat_layer_ids);
+            log::info!(
+                "  splat_alpha_data: {} bytes",
+                linker.splat_alpha_data.len()
+            );
 
-        match std::fs::read(&xtt_path) {
-            Ok(data) => match XttReader::read(&data) {
-                Ok(xtt) => {
+            // Test alpha decoding
+            match linker.decode_splat_alpha() {
+                Ok(alpha_data) => {
                     log::info!(
-                        "XTT loaded: {} textures, {} linker chunks, {} bytes albedo",
-                        xtt.header.num_active_textures,
-                        xtt.linkers.len(),
-                        xtt.albedo_data.len()
+                        "  Alpha decoded: {} layers, {} alpha maps",
+                        alpha_data.num_layers,
+                        alpha_data.alpha_maps.len()
                     );
-
-                    // Debug: Print active texture filenames
-                    log::info!("Active textures:");
-                    for (i, tex) in xtt.active_textures.iter().enumerate() {
+                    // Print alpha map statistics
+                    if let Some(first_map) = alpha_data.alpha_maps.first() {
+                        let non_zero: usize = first_map.iter().filter(|&&v| v > 0).count();
+                        let min_val = first_map.iter().copied().min().unwrap_or(0);
+                        let max_val = first_map.iter().copied().max().unwrap_or(0);
+                        let sum: u32 = first_map.iter().map(|&v| v as u32).sum();
+                        let avg = sum / first_map.len() as u32;
                         log::info!(
-                            "  [{}] {} (u_scale={}, v_scale={}, blend_op={})",
-                            i,
-                            tex.filename,
-                            tex.u_scale,
-                            tex.v_scale,
-                            tex.blend_op
+                            "  Alpha layer 1: {} non-zero of {}, min={}, max={}, avg={}",
+                            non_zero,
+                            first_map.len(),
+                            min_val,
+                            max_val,
+                            avg
                         );
                     }
-
-                    // Debug: Print first few linkers' splat info
-                    if !xtt.linkers.is_empty() {
-                        // Print first 5 and last linker grid positions
-                        for (i, linker) in xtt.linkers.iter().enumerate() {
-                            if i < 5 || i == xtt.linkers.len() - 1 {
-                                log::info!(
-                                    "Linker [{}]: grid=({},{})",
-                                    i,
-                                    linker.grid_x,
-                                    linker.grid_z
-                                );
-                            }
-                        }
-                        let linker = &xtt.linkers[0];
-                        log::info!(
-                            "First linker: grid=({},{}), {} splat layers, {} decal layers",
-                            linker.grid_x,
-                            linker.grid_z,
-                            linker.num_splat_layers,
-                            linker.num_decal_layers
-                        );
-                        log::info!("  splat_layer_ids: {:?}", linker.splat_layer_ids);
-                        log::info!(
-                            "  splat_alpha_data: {} bytes",
-                            linker.splat_alpha_data.len()
-                        );
-
-                        // Test alpha decoding
-                        match linker.decode_splat_alpha() {
-                            Ok(alpha_data) => {
-                                log::info!(
-                                    "  Alpha decoded: {} layers, {} alpha maps",
-                                    alpha_data.num_layers,
-                                    alpha_data.alpha_maps.len()
-                                );
-                                // Print alpha map statistics
-                                if let Some(first_map) = alpha_data.alpha_maps.first() {
-                                    let non_zero: usize =
-                                        first_map.iter().filter(|&&v| v > 0).count();
-                                    let min_val = first_map.iter().copied().min().unwrap_or(0);
-                                    let max_val = first_map.iter().copied().max().unwrap_or(0);
-                                    let sum: u32 = first_map.iter().map(|&v| v as u32).sum();
-                                    let avg = sum / first_map.len() as u32;
-                                    log::info!(
-                                        "  Alpha layer 1: {} non-zero of {}, min={}, max={}, avg={}",
-                                        non_zero,
-                                        first_map.len(),
-                                        min_val,
-                                        max_val,
-                                        avg
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                log::warn!("  Failed to decode alpha: {}", e);
-                            }
-                        }
-                    }
-
-                    match xtt.decode_albedo() {
-                        Ok(atlas) => {
-                            log::info!(
-                                "Albedo atlas decoded: {}x{} pixels",
-                                atlas.width,
-                                atlas.height
-                            );
-                            self.albedo = Some(AlbedoData {
-                                width: atlas.width,
-                                height: atlas.height,
-                                pixels: atlas.pixels,
-                            });
-                        }
-                        Err(e) => {
-                            log::warn!("Failed to decode XTT albedo: {}", e);
-                        }
-                    }
-
-                    // Extract chunk splat data for texture splatting
-                    self.extract_chunk_splat_data(&xtt.linkers);
-
-                    // Try to load terrain textures from ERA
-                    self.try_load_terrain_textures(xtd_path, &xtt.active_textures);
                 }
                 Err(e) => {
-                    log::warn!("Failed to parse XTT: {}", e);
+                    log::warn!("  Failed to decode alpha: {}", e);
                 }
-            },
-            Err(e) => {
-                log::warn!("Failed to read XTT file: {}", e);
             }
         }
+
+        match xtt.decode_albedo() {
+            Ok(atlas) => {
+                log::info!(
+                    "Albedo atlas decoded: {}x{} pixels",
+                    atlas.width,
+                    atlas.height
+                );
+                self.albedo = Some(AlbedoData {
+                    width: atlas.width,
+                    height: atlas.height,
+                    pixels: atlas.pixels,
+                });
+            }
+            Err(e) => {
+                log::warn!("Failed to decode XTT albedo: {}", e);
+            }
+        }
+
+        // Extract chunk splat data for texture splatting
+        self.extract_chunk_splat_data(xtt);
+
+        // Extract decal data
+        self.extract_decal_data(xtt);
+
+        // Try to load terrain textures from ERA
+        self.try_load_terrain_textures(&xtt.active_textures);
+
+        // Try to load decal textures from ERA
+        self.try_load_decal_textures(&xtt.active_decals);
+
+        // Extract foliage data from XTT
+        self.extract_foliage_data(xtt);
+
+        // Try to load foliage textures and geometry from ERA
+        self.try_load_foliage_sets(&xtt.foliage.sets);
     }
 
     /// Extract chunk splat data from XTT linkers for texture splatting.
-    fn extract_chunk_splat_data(&mut self, linkers: &[data::xtt::XttLinker]) {
-        self.chunk_splat_data.clear();
-
-        for linker in linkers {
-            // Decode alpha maps for this chunk
-            let alpha_maps = match linker.decode_splat_alpha() {
-                Ok(alpha_data) => alpha_data.alpha_maps,
-                Err(e) => {
-                    log::warn!(
-                        "Failed to decode splat alpha for chunk ({}, {}): {}",
-                        linker.grid_x,
-                        linker.grid_z,
-                        e
-                    );
-                    Vec::new()
-                }
-            };
-
-            self.chunk_splat_data.push(ChunkSplatData {
-                grid_x: linker.grid_x,
-                grid_z: linker.grid_z,
-                layer_texture_ids: linker.splat_layer_ids.clone(),
-                alpha_maps,
-            });
-        }
-
-        log::info!(
-            "Extracted splat data for {} chunks",
-            self.chunk_splat_data.len()
-        );
+    fn extract_chunk_splat_data(&mut self, xtt: &data::xtt::XttFile) {
+        // Use the data crate's extraction function
+        self.chunk_splat_data = data::terrain::extract_chunk_splat_data(xtt);
 
         // Debug: Verify chunks are stored in expected order and print any mismatches
         log::info!("Checking chunk storage order vs expected grid positions:");
@@ -563,13 +639,10 @@ impl TerrainViewer {
     }
 
     /// Try to load terrain textures from root.era if available.
-    fn try_load_terrain_textures(
-        &mut self,
-        xtd_path: &PathBuf,
-        active_textures: &[ActiveTextureInfo],
-    ) {
+    fn try_load_terrain_textures(&mut self, active_textures: &[ActiveTextureInfo]) {
         // Clear existing textures to avoid duplication on reload
         self.terrain_textures.clear();
+        self.normal_textures.clear();
 
         // Log active textures so we can see the index-to-name mapping
         log::info!("Active textures in XTT ({} total):", active_textures.len());
@@ -577,190 +650,176 @@ impl TerrainViewer {
             log::info!("  [{}] {}", i, tex.filename);
         }
 
-        // Get game directory from environment variable
-        let game_dir = match std::env::var("OPENENSEMBLE_GAME_DIR") {
-            Ok(dir) => PathBuf::from(dir),
-            Err(_) => {
-                log::info!("OPENENSEMBLE_GAME_DIR not set, skipping terrain texture loading");
-                log::info!(
-                    "To load high-res terrain textures, set OPENENSEMBLE_GAME_DIR to your Halo Wars DE install"
-                );
-                return;
-            }
-        };
-
-        // Derive ERA path from XTD path - same name but .era extension
-        // e.g., blood_gulch.xtd -> blood_gulch.era
-        let era_name = xtd_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .map(|s| format!("{}.era", s));
-
-        let era_path = match era_name {
-            Some(name) => game_dir.join(&name),
+        // Use the asset source set during terrain loading
+        let source = match &mut self.asset_source {
+            Some(s) => s,
             None => {
-                log::warn!("Could not derive ERA name from XTD path");
+                log::info!("No asset source available, skipping terrain texture loading");
                 return;
             }
         };
 
-        if !era_path.exists() {
-            log::warn!("Scenario ERA not found at: {}", era_path.display());
-            return;
-        }
+        log::info!("Loading terrain textures from asset source");
 
-        log::info!("Loading terrain textures from: {}", era_path.display());
+        // Use the data crate's loading function
+        let (textures, normals) = data::terrain::load_terrain_textures(source, active_textures);
 
-        let mut archive = match EraArchive::open(&era_path) {
-            Ok(a) => a,
-            Err(e) => {
-                log::warn!("Failed to open {}: {}", era_path.display(), e);
-                return;
-            }
-        };
-
-        // Debug: print ERA entries containing terrain or _nm
-        log::debug!("ERA entries with 'terrain' or '_nm':");
-        for (i, entry) in archive.iter().enumerate() {
-            if let Some(name) = &entry.filename {
-                let lower = name.to_lowercase();
-                if lower.contains("terrain") || lower.contains("_nm") {
-                    log::debug!("  [{}] {}", i, name);
-                }
-            }
-        }
-
-        // Load each texture (diffuse and normal map)
-        for tex_info in active_textures {
-            // Convert texture name to ERA path
-            // XTT stores "sw interior\grass_01", we need "art/terrain/sw interior/grass_01_df.ddx"
-            let tex_name = tex_info.filename.replace('\\', "/");
-
-            // Load diffuse texture (_df.ddx)
-            let ddx_path = format!("art/terrain/{}_df.ddx", tex_name);
-            log::debug!("Looking for diffuse texture: {}", ddx_path);
-
-            let ddx_path_normalized = ddx_path.replace('/', "\\").to_lowercase();
-            let file_index = archive.iter().enumerate().find(|(_, e)| {
-                e.filename
-                    .as_ref()
-                    .map(|n| n.replace('/', "\\").to_lowercase() == ddx_path_normalized)
-                    .unwrap_or(false)
-            });
-
-            // Track if we successfully loaded this texture
-            let mut loaded = false;
-
-            if let Some((idx, _)) = file_index {
-                if let Ok(data) = archive.read_entry(idx) {
-                    if let Ok(ddx) = DdxTexture::from_bytes(&data) {
-                        if let Ok(decoded) = ddx.decode_to_rgba() {
-                            log::info!(
-                                "Loaded terrain texture [{}]: {} ({}x{})",
-                                self.terrain_textures.len(),
-                                tex_info.filename,
-                                decoded.width,
-                                decoded.height
-                            );
-                            self.terrain_textures.push(TerrainTexture {
-                                name: tex_info.filename.clone(),
-                                width: decoded.width,
-                                height: decoded.height,
-                                pixels: decoded.pixels,
-                                u_scale: tex_info.u_scale,
-                                v_scale: tex_info.v_scale,
-                            });
-                            loaded = true;
-                        }
-                    }
-                }
-            }
-
-            // IMPORTANT: Always maintain index alignment with active_textures
-            // If loading failed, add a placeholder texture
-            if !loaded {
-                log::warn!(
-                    "Failed to load texture [{}]: {} - using placeholder",
-                    self.terrain_textures.len(),
-                    tex_info.filename
-                );
-                // Create a small placeholder texture (magenta for visibility)
-                let placeholder_size = 64u32;
-                let mut pixels = vec![0u8; (placeholder_size * placeholder_size * 4) as usize];
-                for i in 0..(placeholder_size * placeholder_size) as usize {
-                    pixels[i * 4] = 255; // R
-                    pixels[i * 4 + 1] = 0; // G
-                    pixels[i * 4 + 2] = 255; // B (magenta)
-                    pixels[i * 4 + 3] = 255; // A
-                }
-                self.terrain_textures.push(TerrainTexture {
-                    name: format!("placeholder_{}", tex_info.filename),
-                    width: placeholder_size,
-                    height: placeholder_size,
-                    pixels,
-                    u_scale: 1,
-                    v_scale: 1,
-                });
-            }
-
-            // Load normal map texture (_nm.ddx)
-            let nm_path = format!("art/terrain/{}_nm.ddx", tex_name);
-            log::debug!("Looking for normal map: {}", nm_path);
-
-            let nm_path_normalized = nm_path.replace('/', "\\").to_lowercase();
-            let nm_index = archive.iter().enumerate().find(|(_, e)| {
-                e.filename
-                    .as_ref()
-                    .map(|n| n.replace('/', "\\").to_lowercase() == nm_path_normalized)
-                    .unwrap_or(false)
-            });
-
-            match nm_index {
-                Some((idx, _)) => match archive.read_entry(idx) {
-                    Ok(data) => match DdxTexture::from_bytes(&data) {
-                        Ok(ddx) => match ddx.decode_to_rgba() {
-                            Ok(decoded) => {
-                                log::info!(
-                                    "Loaded normal map: {} ({}x{})",
-                                    tex_info.filename,
-                                    decoded.width,
-                                    decoded.height
-                                );
-                                self.normal_textures.push(NormalMapTexture {
-                                    name: tex_info.filename.clone(),
-                                    width: decoded.width,
-                                    height: decoded.height,
-                                    pixels: decoded.pixels,
-                                });
-                            }
-                            Err(e) => {
-                                log::warn!("Failed to decode normal map {}: {}", nm_path, e);
-                            }
-                        },
-                        Err(e) => {
-                            log::warn!("Failed to parse normal map DDX {}: {}", nm_path, e);
-                        }
-                    },
-                    Err(e) => {
-                        log::warn!("Failed to read normal map {} from ERA: {}", nm_path, e);
-                    }
-                },
-                None => {
-                    log::debug!("Normal map not found in ERA: {}", nm_path);
-                }
-            }
-        }
+        self.terrain_textures = textures;
+        self.normal_textures = normals;
 
         if self.terrain_textures.is_empty() {
-            log::info!("No terrain textures loaded from ERA");
+            log::info!("No terrain textures loaded");
         } else {
             log::info!("Loaded {} terrain textures", self.terrain_textures.len());
         }
         if self.normal_textures.is_empty() {
-            log::info!("No normal maps loaded from ERA");
+            log::info!("No normal maps loaded");
         } else {
             log::info!("Loaded {} normal maps", self.normal_textures.len());
         }
+    }
+
+    /// Extract decal data from XTT file.
+    fn extract_decal_data(&mut self, xtt: &data::xtt::XttFile) {
+        // Log decal statistics
+        log::info!(
+            "Decal data: {} active decals, {} decal instances",
+            xtt.header.num_active_decals,
+            xtt.header.num_active_decal_instances
+        );
+
+        // Log active decal names
+        if !xtt.active_decals.is_empty() {
+            log::info!("Active decals:");
+            for (i, decal) in xtt.active_decals.iter().enumerate() {
+                log::info!("  [{}] {}", i, decal.filename);
+            }
+        }
+
+        // Use the data crate's extraction function
+        let (instances, chunk_data) = data::terrain::extract_decal_data(xtt);
+        self.decal_instances = instances;
+        self.chunk_decal_data = chunk_data;
+
+        if !self.decal_instances.is_empty() {
+            log::info!("Extracted {} decal instances:", self.decal_instances.len());
+            for (i, inst) in self.decal_instances.iter().take(5).enumerate() {
+                log::info!(
+                    "  [{}] decal={}, rot={:.2}, pos=({:.2},{:.2}), scale=({:.2},{:.2})",
+                    i,
+                    inst.decal_index,
+                    inst.rotation,
+                    inst.tile_center_x,
+                    inst.tile_center_y,
+                    inst.u_scale,
+                    inst.v_scale
+                );
+            }
+        }
+
+        if !self.chunk_decal_data.is_empty() {
+            log::info!(
+                "Extracted decal data for {} chunks (out of {} total)",
+                self.chunk_decal_data.len(),
+                xtt.linkers.len()
+            );
+        } else {
+            log::info!("No chunks have decal layers");
+        }
+    }
+
+    /// Try to load decal textures from asset source.
+    fn try_load_decal_textures(&mut self, active_decals: &[data::xtt::ActiveDecalInfo]) {
+        if active_decals.is_empty() {
+            log::info!("No active decals to load");
+            return;
+        }
+
+        self.decal_textures.clear();
+
+        // Use the asset source set during terrain loading
+        let source = match &mut self.asset_source {
+            Some(s) => s,
+            None => {
+                log::info!("No asset source available, skipping decal texture loading");
+                return;
+            }
+        };
+
+        log::info!("Loading decal textures from asset source");
+
+        // Use the data crate's loading function
+        self.decal_textures = data::terrain::load_decal_textures(source, active_decals);
+
+        log::info!("Loaded {} decal textures", self.decal_textures.len());
+    }
+
+    /// Extract foliage data from XTT file.
+    fn extract_foliage_data(&mut self, xtt: &data::xtt::XttFile) {
+        // Log foliage statistics
+        log::info!(
+            "Foliage data: {} sets, {} QN chunks",
+            xtt.foliage.sets.len(),
+            xtt.foliage.qn_chunks.len()
+        );
+
+        // Log foliage set names
+        for (i, set) in xtt.foliage.sets.iter().enumerate() {
+            log::info!("  Foliage set [{}]: {}", i, set.filename);
+        }
+
+        // Use the data crate's extraction function
+        self.foliage_qn_chunks = data::terrain::extract_foliage_chunks(xtt);
+
+        if !self.foliage_qn_chunks.is_empty() {
+            // Log first few QN chunks for debugging
+            log::info!(
+                "Extracted {} foliage QN chunks:",
+                self.foliage_qn_chunks.len()
+            );
+            for (i, qn) in self.foliage_qn_chunks.iter().take(3).enumerate() {
+                log::info!(
+                    "  [{}] parent={}, sets={}, polys={:?}",
+                    i,
+                    qn.qn_parent_index,
+                    qn.num_sets,
+                    qn.set_poly_counts
+                );
+            }
+        }
+    }
+
+    /// Try to load foliage textures and geometry from asset source.
+    fn try_load_foliage_sets(&mut self, foliage_sets: &[data::xtt::FoliageSetInfo]) {
+        if foliage_sets.is_empty() {
+            log::info!("No foliage sets to load");
+            return;
+        }
+
+        self.foliage_sets.clear();
+
+        // Use the asset source set during terrain loading
+        let source = match &mut self.asset_source {
+            Some(s) => s,
+            None => {
+                log::info!("No asset source available, skipping foliage texture loading");
+                return;
+            }
+        };
+
+        log::info!("Loading foliage textures from asset source");
+
+        // Use the data crate's loading function
+        self.foliage_sets = data::terrain::load_foliage_sets(source, foliage_sets);
+
+        log::info!(
+            "Loaded {} foliage sets ({} with albedo textures)",
+            self.foliage_sets.len(),
+            self.foliage_sets
+                .iter()
+                .filter(|s| !s.albedo_pixels.is_empty())
+                .count()
+        );
     }
 }
 impl Application for TerrainViewer {
@@ -1051,7 +1110,7 @@ impl Application for TerrainViewer {
 impl Application3D for TerrainViewer {
     fn init_gpu(
         &mut self,
-        device: &wgpu::Device,
+        _device: &wgpu::Device,
         _queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
     ) {
@@ -1156,6 +1215,19 @@ impl Application3D for TerrainViewer {
         ctx.queue
             .write_buffer(&gpu.params_buffer, 0, bytemuck::bytes_of(&params));
 
+        // Update foliage camera position
+        if let Some(foliage) = &self.foliage_resources {
+            foliage.update_camera(
+                ctx.queue,
+                [
+                    self.camera.position.x,
+                    self.camera.position.y,
+                    self.camera.position.z,
+                ],
+                0.0, // time (unused for now)
+            );
+        }
+
         // Run GPU compositing pass for dirty chunks (if enabled)
         if self.use_gpu_compositing {
             if let (Some(compositor), Some(bind_group)) =
@@ -1217,6 +1289,16 @@ impl Application3D for TerrainViewer {
                 // Regular indexed draw
                 render_pass.set_index_buffer(gpu.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..gpu.index_count, 0, 0..1);
+            }
+
+            // Render foliage on top of terrain
+            if let Some(foliage) = &self.foliage_resources {
+                crate::foliage::render_foliage(
+                    &mut render_pass,
+                    foliage,
+                    &gpu.camera_bind_group,
+                    &self.foliage_qn_chunks,
+                );
             }
         }
     }
@@ -1291,7 +1373,7 @@ impl TerrainViewer {
         });
 
         // Create terrain texture array from loaded textures
-        let (terrain_array, terrain_array_view) =
+        let (_terrain_array, terrain_array_view) =
             self.create_terrain_texture_array(device, queue, &albedo);
 
         // Create alpha atlas from chunk splat data
@@ -1465,6 +1547,7 @@ impl TerrainViewer {
             &chunk_layers_buffer,
             &texture_scales_buffer,
             &sampler,
+            &alpha_sampler,
         );
 
         // Calculate chunk centers for LOD calculations
@@ -1592,6 +1675,7 @@ impl TerrainViewer {
             index_buffer,
             index_count: indices.len() as u32,
             camera_buffer,
+            camera_bind_group_layout,
             camera_bind_group,
             texture_bind_group,
             depth_texture,
@@ -1609,6 +1693,9 @@ impl TerrainViewer {
             indices.len(),
             self.terrain_textures.len()
         );
+
+        // Initialize foliage resources if we have foliage data
+        self.init_foliage_resources(device, queue);
     }
 
     /// Create GPU resources for GPU tessellation mode.
@@ -2195,6 +2282,7 @@ impl TerrainViewer {
             &chunk_layers_buffer,
             &texture_scales_buffer,
             &sampler,
+            &alpha_sampler,
         );
 
         // Calculate chunk centers for LOD calculations
@@ -2371,6 +2459,7 @@ impl TerrainViewer {
             index_buffer: instance_buffer,
             index_count: expanded_vertices.len() as u32, // vertex count for draw()
             camera_buffer,
+            camera_bind_group_layout,
             camera_bind_group,
             texture_bind_group,
             depth_texture,
@@ -2393,6 +2482,67 @@ impl TerrainViewer {
         let _ = _xtt_albedo_texture;
         let _ = index_buffer;
         let _ = vertex_buffer;
+
+        // Initialize foliage resources if we have foliage data
+        self.init_foliage_resources(device, queue);
+    }
+
+    /// Initialize foliage GPU resources for rendering grass/vegetation.
+    fn init_foliage_resources(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        // Check if we have foliage data
+        if self.foliage_sets.is_empty() {
+            log::info!("No foliage sets to render");
+            return;
+        }
+
+        // Check if we have GPU resources with camera bind group layout
+        let Some(gpu) = &self.gpu else {
+            log::warn!("Cannot initialize foliage: GPU resources not available");
+            return;
+        };
+
+        log::info!(
+            "Initializing foliage resources: {} sets, {} QN chunks",
+            self.foliage_sets.len(),
+            self.foliage_qn_chunks.len()
+        );
+
+        // Create foliage resources
+        let mut foliage_resources = crate::foliage::FoliageResources::new(
+            device,
+            self.surface_format,
+            &gpu.camera_bind_group_layout,
+        );
+
+        // Create GPU resources for each foliage set
+        for (i, set) in self.foliage_sets.iter().enumerate() {
+            if let Some(set_resources) = foliage_resources.create_set_resources(device, queue, set)
+            {
+                log::info!(
+                    "  Created foliage set {} resources: {} blade types, {} verts per blade",
+                    i,
+                    set_resources.num_blade_types,
+                    set_resources.num_verts_per_blade
+                );
+                foliage_resources.set_resources.push(set_resources);
+            }
+        }
+
+        log::info!(
+            "Foliage resources initialized: {} sets with GPU resources",
+            foliage_resources.set_resources.len()
+        );
+
+        // Create params bind group if we have terrain data and foliage sets
+        if !foliage_resources.set_resources.is_empty() {
+            if let Some(raw_data) = &self.raw_xtd_data {
+                foliage_resources.create_params_bind_group(device, queue, raw_data);
+            } else {
+                log::warn!("Cannot create foliage params bind group: no terrain data");
+            }
+        }
+
+        self.foliage_resources = Some(foliage_resources);
     }
 
     /// Creates a 2D texture array from loaded terrain textures.
@@ -2901,7 +3051,7 @@ impl TerrainViewer {
                         let alpha_idx = (alpha_y * ALPHA_CHUNK_SIZE + alpha_x) as usize;
 
                         // Get alpha values for each layer
-                        let alpha0: f32 = 1.0; // Base layer always 100%
+                        let _alpha0: f32 = 1.0; // Base layer always 100%
                         let alpha1 = if chunk.alpha_maps.len() > 0
                             && alpha_idx < chunk.alpha_maps[0].len()
                         {
@@ -3208,6 +3358,7 @@ impl TerrainViewer {
         chunk_layers_buffer: &wgpu::Buffer,
         texture_scales_buffer: &wgpu::Buffer,
         sampler: &wgpu::Sampler,
+        alpha_sampler: &wgpu::Sampler,
     ) {
         let config = CompositingConfig::default();
         log::info!(
@@ -3228,6 +3379,7 @@ impl TerrainViewer {
             chunk_layers_buffer,
             texture_scales_buffer,
             sampler,
+            alpha_sampler,
         );
 
         self.compositor = Some(compositor);

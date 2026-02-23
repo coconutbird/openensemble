@@ -2,9 +2,10 @@
 
 /// Variable types supported by the trigger system.
 /// Values match vanilla `BTriggerVar::cVarType*` for file format compatibility.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum VarType {
+    #[default]
     Invalid = 0,
     Tech = 1,
     TechStatus = 2,
@@ -115,12 +116,6 @@ pub enum VarType {
     SquadFlag = 107,
     TalkingHead = 108,
     FlashableUIItem = 109,
-}
-
-impl Default for VarType {
-    fn default() -> Self {
-        Self::Invalid
-    }
 }
 
 impl VarType {

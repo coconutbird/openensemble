@@ -1,8 +1,17 @@
 //! Data types for the terrain viewer.
+//!
+//! This module contains GPU-specific types that remain in the viewer,
+//! and re-exports data types from the `data` crate for backwards compatibility.
 
 use data::xtd::{TerrainVertices, TessellatedMesh};
 use glam::Vec3;
 use render::wgpu;
+
+// Re-export types from data crate for backwards compatibility
+pub use data::terrain::{
+    AlbedoData, ChunkDecalData, ChunkSplatData, DecalInstance, DecalTexture, FoliageQNChunk,
+    FoliageSet, NormalMapTexture, TerrainTexture,
+};
 
 /// Terrain mesh data.
 pub struct TerrainMesh {
@@ -75,6 +84,7 @@ pub struct GpuResources {
     pub index_buffer: wgpu::Buffer,
     pub index_count: u32,
     pub camera_buffer: wgpu::Buffer,
+    pub camera_bind_group_layout: wgpu::BindGroupLayout,
     pub camera_bind_group: wgpu::BindGroup,
     pub texture_bind_group: wgpu::BindGroup,
     pub depth_texture: wgpu::Texture,
@@ -86,58 +96,6 @@ pub struct GpuResources {
     pub use_gpu_tessellation: bool,
     /// Number of patch instances to draw (64x64 = 4096).
     pub num_patch_instances: u32,
-}
-
-/// Albedo atlas data from XTT file.
-pub struct AlbedoData {
-    pub width: u32,
-    pub height: u32,
-    pub pixels: Vec<u8>,
-}
-
-/// A single terrain texture loaded from ERA.
-#[allow(dead_code)]
-pub struct TerrainTexture {
-    /// Texture name (e.g., "grass_01").
-    pub name: String,
-    /// Width in pixels.
-    pub width: u32,
-    /// Height in pixels.
-    pub height: u32,
-    /// RGBA pixel data.
-    pub pixels: Vec<u8>,
-    /// U scale from XTT.
-    pub u_scale: i32,
-    /// V scale from XTT.
-    pub v_scale: i32,
-}
-
-/// A normal map texture loaded from ERA (_nm.ddx files).
-#[allow(dead_code)]
-pub struct NormalMapTexture {
-    /// Texture name (e.g., "grass_01").
-    pub name: String,
-    /// Width in pixels.
-    pub width: u32,
-    /// Height in pixels.
-    pub height: u32,
-    /// RGBA pixel data (normal map encoded as RGB, A may be height/unused).
-    pub pixels: Vec<u8>,
-}
-
-/// Splat data for a single terrain chunk.
-#[derive(Clone)]
-#[allow(dead_code)]
-pub struct ChunkSplatData {
-    /// Grid X position (0-15 for 16x16 grid).
-    pub grid_x: i32,
-    /// Grid Z position (0-15 for 16x16 grid).
-    pub grid_z: i32,
-    /// Indices into terrain_textures for this chunk's layers.
-    pub layer_texture_ids: Vec<i32>,
-    /// Alpha maps for layers 1..n (layer 0 has no alpha, it's the base).
-    /// Each is 64x64 = 4096 bytes.
-    pub alpha_maps: Vec<Vec<u8>>,
 }
 
 /// Raw XTD vertex data for GPU tessellation (before decoding to world positions).

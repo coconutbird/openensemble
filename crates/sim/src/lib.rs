@@ -4,7 +4,6 @@
 //! Halo Wars exactly for network compatibility. The wire format for commands
 //! must be byte-for-byte identical.
 
-pub mod archive;
 pub mod command;
 pub mod command_queue;
 pub mod commands;
@@ -26,7 +25,6 @@ pub mod time_sync;
 pub mod trigger;
 pub mod world;
 
-pub use archive::{ArchiveError, ArchiveManager};
 pub use command::{Command, CommandType, EntityType};
 pub use command_queue::{CommandEntry, CommandQueue, QueuedCommand};
 pub use commands::{GameCommand, PowerCommand, WorkCommand};
@@ -43,7 +41,8 @@ pub use player::{
 };
 pub use random::Random;
 pub use scenario::{
-    Scenario, ScenarioError, ScenarioLoader, ScenarioObject, ScenarioPlayer, ScenarioPosition,
+    LoadedScenario, Scenario, ScenarioError, ScenarioLoader, ScenarioObject, ScenarioPlayer,
+    ScenarioPosition, load_scenario_into_world,
 };
 pub use serialize::{SerializeError, deserialize_command, serialize_command};
 pub use session::{ClientState, PlayerInfo, Session, SessionState};

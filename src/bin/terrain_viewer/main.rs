@@ -22,6 +22,7 @@
 //! - [ ] Dynamic shadows
 
 mod camera;
+mod foliage;
 mod gpu;
 mod types;
 mod viewer;
@@ -34,35 +35,32 @@ use xcore::app::WindowConfig;
 
 fn main() -> Result<()> {
     // Load .env file if present (ignore errors if not found)
-    let _ = dotenvy::dotenv();
+    dotenvy::dotenv_override()?;
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     log::info!("Terrain Viewer starting...");
 
-    // Parse args for XTD path
     let args: Vec<String> = std::env::args().collect();
-    let xtd_path = if args.len() > 1 {
-        Some(PathBuf::from(&args[1]))
-    } else {
-        // Default to test file
-        let default_path = PathBuf::from(
-            "../ensemble-rs/test_extract/scenario/skirmish/design/blood_gulch/blood_gulch.xtd",
-        );
-        if default_path.exists() {
-            Some(default_path)
+
+    let viewer = if args.len() > 1 {
+        let arg = &args[1];
+        if arg.ends_with(".xtd") {
+            // File path mode: load from local XTD file
+            log::info!("Loading terrain from file: {}", arg);
+            TerrainViewer::new(Some(PathBuf::from(arg)))
         } else {
-            None
+            // Scenario name mode: load from ERA archive
+            log::info!("Loading scenario: {}", arg);
+            TerrainViewer::from_scenario(arg.to_string())
         }
+    } else {
+        // Default to blood_gulch scenario
+        log::info!("Loading default scenario: blood_gulch");
+        TerrainViewer::from_scenario("blood_gulch".to_string())
     };
 
-    if let Some(path) = &xtd_path {
-        log::info!("XTD file: {}", path.display());
-    } else {
-        log::warn!("No XTD file specified. Usage: terrain_viewer <path/to/file.xtd>");
-    }
-
     let config = WindowConfig::new("Terrain Viewer - Halo Wars XTD", 1280, 720);
-    render::run_3d(config, TerrainViewer::new(xtd_path))?;
+    render::run_3d(config, viewer)?;
 
     Ok(())
 }

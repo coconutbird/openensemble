@@ -261,7 +261,7 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scenario::ScenarioLoader;
+    use crate::scenario::{ScenarioLoader, load_scenario_into_world};
     use crate::simulation::Simulation;
 
     /// Sample scenario for testing
@@ -279,18 +279,18 @@ mod tests {
 
     /// Run a simulation for a given number of ticks and return the final checksum.
     fn run_simulation(seed: u64, ticks: u32) -> (u32, u32) {
-        let mut scenario = ScenarioLoader::load_from_xml_str(TEST_SCENARIO).unwrap();
-        let mut world = scenario.load_into_world();
-        world.rng.set_seed64(seed);
+        let scenario = ScenarioLoader::load_from_xml_str(TEST_SCENARIO).unwrap();
+        let mut loaded = load_scenario_into_world(&scenario);
+        loaded.world.rng.set_seed64(seed);
 
         let mut sim = Simulation::with_seed(seed);
         sim.start();
 
         for _ in 0..ticks {
-            sim.tick_with_world(&mut world);
+            sim.tick_with_world(&mut loaded.world);
         }
 
-        (world.checksum(), world.checksum_with_rng())
+        (loaded.world.checksum(), loaded.world.checksum_with_rng())
     }
 
     #[test]
@@ -382,9 +382,9 @@ mod tests {
 
     /// Run simulation with movement commands for determinism testing.
     fn run_simulation_with_movement(seed: u64, ticks: u32) -> (u32, u32) {
-        let mut scenario = ScenarioLoader::load_from_xml_str(TEST_SCENARIO).unwrap();
-        let mut world = scenario.load_into_world();
-        world.rng.set_seed64(seed);
+        let scenario = ScenarioLoader::load_from_xml_str(TEST_SCENARIO).unwrap();
+        let mut loaded = load_scenario_into_world(&scenario);
+        loaded.world.rng.set_seed64(seed);
 
         let mut sim = Simulation::with_seed(seed);
         sim.start();
@@ -393,15 +393,15 @@ mod tests {
         for tick in 0..ticks {
             if tick == 10 {
                 // Issue move orders to all squads
-                for (_id, squad) in world.squads.iter_mut() {
+                for (_id, squad) in loaded.world.squads.iter_mut() {
                     let target = glam::Vec3::new(100.0, 0.0, 100.0);
                     squad.move_to(target);
                 }
             }
-            sim.tick_with_world(&mut world);
+            sim.tick_with_world(&mut loaded.world);
         }
 
-        (world.checksum(), world.checksum_with_rng())
+        (loaded.world.checksum(), loaded.world.checksum_with_rng())
     }
 
     #[test]

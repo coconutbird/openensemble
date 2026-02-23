@@ -8,7 +8,7 @@
 
 use anyhow::{Context, Result};
 use data::GameDatabase;
-use sim::{ScenarioLoader, Session, SessionState, Simulation, World};
+use sim::{ScenarioLoader, Session, SessionState, Simulation, World, load_scenario_into_world};
 use std::time::{Duration, Instant};
 
 /// Headless server configuration.
@@ -66,8 +66,8 @@ impl HeadlessServer {
             None
         } else {
             log::info!("Loading game database...");
-            let db = GameDatabase::load_from_game_dir()
-                .context("Failed to load game database from game directory")?;
+            let db =
+                GameDatabase::load().context("Failed to load game database from game directory")?;
 
             log::info!(
                 "Loaded {} proto objects, {} civs, {} leaders",
@@ -105,10 +105,11 @@ impl HeadlessServer {
     pub fn load_scenario(&mut self, scenario_data: &[u8]) -> Result<()> {
         log::info!("Loading scenario...");
 
-        let mut scenario = ScenarioLoader::load_xmb_bytes(scenario_data)
+        let scenario = ScenarioLoader::load_xmb_bytes(scenario_data)
             .context("Failed to parse scenario XMB")?;
 
-        self.world = scenario.load_into_world();
+        let loaded = load_scenario_into_world(&scenario);
+        self.world = loaded.world;
 
         log::info!(
             "Scenario loaded: {} players, {} squads, {} objects",
@@ -122,10 +123,11 @@ impl HeadlessServer {
 
     /// Load a scenario from XML string (for testing).
     pub fn load_scenario_xml(&mut self, xml: &str) -> Result<()> {
-        let mut scenario =
+        let scenario =
             ScenarioLoader::load_from_xml_str(xml).context("Failed to parse scenario XML")?;
 
-        self.world = scenario.load_into_world();
+        let loaded = load_scenario_into_world(&scenario);
+        self.world = loaded.world;
 
         log::info!(
             "Scenario loaded: {} players, {} squads",
@@ -189,7 +191,7 @@ impl HeadlessServer {
         self.tick_count += 1;
 
         // Log periodic status
-        if self.tick_count % 100 == 0 {
+        if self.tick_count.is_multiple_of(100) {
             log::debug!(
                 "Tick {}: game_time={}ms, commands={}",
                 self.tick_count,
