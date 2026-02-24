@@ -9,10 +9,11 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+rayon = "1.10"
 
-# File format parsers from ensemble-rs
-xmb = { git = "https://github.com/coconutbird/ensemble-rs.git" }
-era = { git = "https://github.com/coconutbird/ensemble-rs.git" }
+# File format parsers from ensemble-rs (local paths for debugging)
+xmb = { path = "../../../ensemble-rs/crates/xmb" }
+era = { path = "../../../ensemble-rs/crates/era" }
 xtd = { path = "../../../ensemble-rs/crates/xtd" }
 xtt = { path = "../../../ensemble-rs/crates/xtt" }
 ddx = { path = "../../../ensemble-rs/crates/ddx" }

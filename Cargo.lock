@@ -206,7 +206,6 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 [[package]]
 name = "bdt"
 version = "0.1.0"
-source = "git+https://github.com/coconutbird/ensemble-rs.git#41f85c4bedfab058d38d68e2472f69bb0110ac9f"
 dependencies = [
  "byteorder",
  "thiserror 2.0.18",
@@ -588,6 +587,7 @@ dependencies = [
  "era",
  "glam",
  "log",
+ "rayon",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -601,7 +601,7 @@ name = "ddx"
 version = "0.1.0"
 dependencies = [
  "byteorder",
- "ecf 0.1.0",
+ "ecf",
  "flate2",
  "texture2ddecoder",
  "thiserror 2.0.18",
@@ -683,16 +683,6 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 [[package]]
 name = "ecf"
 version = "0.1.0"
-dependencies = [
- "byteorder",
- "flate2",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "ecf"
-version = "0.1.0"
-source = "git+https://github.com/coconutbird/ensemble-rs.git#41f85c4bedfab058d38d68e2472f69bb0110ac9f"
 dependencies = [
  "byteorder",
  "flate2",
@@ -833,10 +823,9 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 [[package]]
 name = "era"
 version = "0.1.0"
-source = "git+https://github.com/coconutbird/ensemble-rs.git#41f85c4bedfab058d38d68e2472f69bb0110ac9f"
 dependencies = [
  "byteorder",
- "ecf 0.1.0 (git+https://github.com/coconutbird/ensemble-rs.git)",
+ "ecf",
  "flate2",
  "memmap2",
  "rayon",
@@ -2359,6 +2348,7 @@ dependencies = [
  "glam",
  "log",
  "pollster",
+ "rayon",
  "thiserror 2.0.18",
  "wgpu",
  "winit",
@@ -3853,11 +3843,10 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 [[package]]
 name = "xmb"
 version = "0.1.0"
-source = "git+https://github.com/coconutbird/ensemble-rs.git#41f85c4bedfab058d38d68e2472f69bb0110ac9f"
 dependencies = [
  "bdt",
  "byteorder",
- "ecf 0.1.0 (git+https://github.com/coconutbird/ensemble-rs.git)",
+ "ecf",
  "quick-xml 0.37.5",
  "thiserror 2.0.18",
 ]
@@ -3873,7 +3862,7 @@ name = "xtd"
 version = "0.1.0"
 dependencies = [
  "byteorder",
- "ecf 0.1.0",
+ "ecf",
  "thiserror 2.0.18",
 ]
 
@@ -3882,7 +3871,7 @@ name = "xtt"
 version = "0.1.0"
 dependencies = [
  "byteorder",
- "ecf 0.1.0",
+ "ecf",
  "texture2ddecoder",
  "thiserror 2.0.18",
 ]

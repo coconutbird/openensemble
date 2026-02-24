@@ -662,7 +662,7 @@ impl TerrainViewer {
         }
 
         // Use the asset source set during terrain loading
-        let source = match &mut self.asset_source {
+        let source = match &self.asset_source {
             Some(s) => s,
             None => {
                 log::info!("No asset source available, skipping terrain texture loading");
@@ -670,9 +670,9 @@ impl TerrainViewer {
             }
         };
 
-        log::info!("Loading terrain textures from asset source");
+        log::info!("Loading terrain textures from asset source (parallel)");
 
-        // Use the render crate's loading function
+        // Use the render crate's parallel loading function
         let (textures, normals) = render::terrain::load_terrain_textures(source, active_textures);
 
         self.terrain_textures = textures;
@@ -749,7 +749,7 @@ impl TerrainViewer {
         self.decal_textures.clear();
 
         // Use the asset source set during terrain loading
-        let source = match &mut self.asset_source {
+        let source = match &self.asset_source {
             Some(s) => s,
             None => {
                 log::info!("No asset source available, skipping decal texture loading");
@@ -757,9 +757,9 @@ impl TerrainViewer {
             }
         };
 
-        log::info!("Loading decal textures from asset source");
+        log::info!("Loading decal textures from asset source (parallel)");
 
-        // Use the render crate's loading function
+        // Use the render crate's parallel loading function
         self.decal_textures = render::terrain::load_decal_textures(source, active_decals);
 
         log::info!("Loaded {} decal textures", self.decal_textures.len());
@@ -810,7 +810,7 @@ impl TerrainViewer {
         self.foliage_sets.clear();
 
         // Use the asset source set during terrain loading
-        let source = match &mut self.asset_source {
+        let source = match &self.asset_source {
             Some(s) => s,
             None => {
                 log::info!("No asset source available, skipping foliage texture loading");
@@ -818,9 +818,9 @@ impl TerrainViewer {
             }
         };
 
-        log::info!("Loading foliage textures from asset source");
+        log::info!("Loading foliage textures from asset source (parallel)");
 
-        // Use the render crate's loading function
+        // Use the render crate's parallel loading function
         self.foliage_sets = render::terrain::load_foliage_sets(source, foliage_sets);
 
         log::info!(

@@ -18,4 +18,5 @@ egui-wgpu = { workspace = true }
 egui-winit = { workspace = true }
 bytemuck = { workspace = true, features = ["derive"] }
 gilrs = "0.11.1"
+rayon = "1.10"
 

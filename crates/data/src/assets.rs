@@ -13,26 +13,27 @@
 //! use data::assets::AssetSource;
 //!
 //! // Create asset source for a scenario
-//! let mut source = AssetSource::for_scenario("blood_gulch")?;
+//! let source = AssetSource::for_scenario("blood_gulch")?;
 //!
 //! // Read raw bytes
 //! let bytes = source.read("art/terrain/stone_df.ddx")?;
 //!
+//! // Parallel reading for multiple files
+//! let paths = vec!["art/terrain/grass_df.ddx", "art/terrain/rock_df.ddx"];
+//! let data = source.read_parallel(&paths);
+//!
 //! // With override directory for modding
-//! let mut source = AssetSource::for_scenario("blood_gulch")?
+//! let source = AssetSource::for_scenario("blood_gulch")?
 //!     .with_override_dir("mods/my_mod");
 //! ```
 
-use crate::era::{DecryptReader, EraArchive};
+use crate::era::MmapEraArchive;
 use crate::paths::{GAME_DIR_ENV_VAR, era_path, game_dir, is_valid_game_dir};
+use rayon::prelude::*;
 use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::BufReader;
+use std::fs;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
-
-/// Type alias for ERA archive opened from a file path.
-pub type FileEraArchive = EraArchive<DecryptReader<BufReader<File>>>;
 
 /// Errors that can occur during asset loading.
 #[derive(Debug, Error)]
@@ -53,16 +54,16 @@ pub enum AssetError {
     Io(#[from] std::io::Error),
 }
 
-/// Pre-indexed ERA archive for fast lookups.
-struct IndexedEra {
-    archive: FileEraArchive,
+/// Pre-indexed memory-mapped ERA archive for fast parallel lookups.
+struct IndexedMmapEra {
+    archive: MmapEraArchive,
     /// Maps normalized path (lowercase, backslashes) to entry index.
     index: HashMap<String, usize>,
 }
 
-impl IndexedEra {
+impl IndexedMmapEra {
     fn open(path: &Path) -> Result<Self, AssetError> {
-        let archive = EraArchive::open(path)?;
+        let archive = MmapEraArchive::open(path)?;
         let index = archive
             .iter()
             .enumerate()
@@ -75,33 +76,53 @@ impl IndexedEra {
         Ok(Self { archive, index })
     }
 
-    fn read(&mut self, normalized_path: &str) -> Option<Vec<u8>> {
+    /// Read a single entry (thread-safe).
+    fn read(&self, normalized_path: &str) -> Option<Vec<u8>> {
         let idx = self.index.get(normalized_path)?;
         self.archive.read_entry(*idx).ok()
+    }
+
+    /// Read multiple entries in parallel.
+    fn read_parallel(&self, normalized_paths: &[&str]) -> Vec<Option<Vec<u8>>> {
+        // Collect indices
+        let indices: Vec<Option<usize>> = normalized_paths
+            .iter()
+            .map(|p| self.index.get(*p).copied())
+            .collect();
+
+        // Read in parallel
+        indices
+            .par_iter()
+            .map(|idx| idx.and_then(|i| self.archive.read_entry(i).ok()))
+            .collect()
     }
 
     fn contains(&self, normalized_path: &str) -> bool {
         self.index.contains_key(normalized_path)
     }
+
+    fn get_index(&self, normalized_path: &str) -> Option<usize> {
+        self.index.get(normalized_path).copied()
+    }
 }
 
 /// Unified asset source for loading from overrides or ERA archives.
 ///
-/// Holds ERA archives open for efficient repeated lookups.
+/// Uses memory-mapped ERA archives for efficient parallel loading.
 /// Searches sources in order: override dir → scenario ERA → root ERA.
 pub struct AssetSource {
     /// Local directory to check first (for development/modding).
     override_dir: Option<PathBuf>,
     /// Scenario ERA (e.g., blood_gulch.era).
-    scenario_era: Option<IndexedEra>,
+    scenario_era: Option<IndexedMmapEra>,
     /// Root ERA (root.era).
-    root_era: Option<IndexedEra>,
+    root_era: Option<IndexedMmapEra>,
 }
 
 impl AssetSource {
     /// Create an asset source for a scenario.
     ///
-    /// Opens the scenario ERA and root ERA, building indexes for fast lookups.
+    /// Opens the scenario ERA and root ERA with memory mapping for parallel access.
     pub fn for_scenario(scenario_name: &str) -> Result<Self, AssetError> {
         if !is_valid_game_dir() {
             if std::env::var(GAME_DIR_ENV_VAR).is_err() {
@@ -114,16 +135,19 @@ impl AssetSource {
         let root_era_path = era_path("root");
 
         let scenario_era = if scenario_era_path.exists() {
-            log::info!("Opening scenario ERA: {}", scenario_era_path.display());
-            Some(IndexedEra::open(&scenario_era_path)?)
+            log::info!(
+                "Opening scenario ERA (mmap): {}",
+                scenario_era_path.display()
+            );
+            Some(IndexedMmapEra::open(&scenario_era_path)?)
         } else {
             log::warn!("Scenario ERA not found: {}", scenario_era_path.display());
             None
         };
 
         let root_era = if root_era_path.exists() {
-            log::info!("Opening root ERA: {}", root_era_path.display());
-            Some(IndexedEra::open(&root_era_path)?)
+            log::info!("Opening root ERA (mmap): {}", root_era_path.display());
+            Some(IndexedMmapEra::open(&root_era_path)?)
         } else {
             None
         };
@@ -150,8 +174,8 @@ impl AssetSource {
         let root_era_path = era_path("root");
 
         let root_era = if root_era_path.exists() {
-            log::info!("Opening root ERA: {}", root_era_path.display());
-            Some(IndexedEra::open(&root_era_path)?)
+            log::info!("Opening root ERA (mmap): {}", root_era_path.display());
+            Some(IndexedMmapEra::open(&root_era_path)?)
         } else {
             return Err(AssetError::NotFound("root.era not found".to_string()));
         };
@@ -174,9 +198,10 @@ impl AssetSource {
     /// Read raw bytes for an asset path.
     ///
     /// Searches in order: override directory → scenario ERA → root ERA.
+    /// Thread-safe due to memory-mapped ERA archives.
     ///
     /// Path format: `"art/terrain/stone_df.ddx"` (forward or back slashes accepted).
-    pub fn read(&mut self, path: &str) -> Result<Vec<u8>, AssetError> {
+    pub fn read(&self, path: &str) -> Result<Vec<u8>, AssetError> {
         // Normalize path for comparison (lowercase, backslashes)
         let normalized = path.replace('/', "\\").to_lowercase();
 
@@ -191,7 +216,7 @@ impl AssetSource {
         }
 
         // 2. Try scenario ERA
-        if let Some(era) = &mut self.scenario_era
+        if let Some(era) = &self.scenario_era
             && let Some(data) = era.read(&normalized)
         {
             log::debug!("Loading from scenario ERA: {}", path);
@@ -199,7 +224,7 @@ impl AssetSource {
         }
 
         // 3. Try root ERA
-        if let Some(era) = &mut self.root_era
+        if let Some(era) = &self.root_era
             && let Some(data) = era.read(&normalized)
         {
             log::debug!("Loading from root ERA: {}", path);
@@ -207,6 +232,92 @@ impl AssetSource {
         }
 
         Err(AssetError::NotFound(path.to_string()))
+    }
+
+    /// Read multiple assets in parallel.
+    ///
+    /// Returns a Vec with the same length as `paths`, where each element is
+    /// `Some(data)` if the asset was found, or `None` if not found.
+    ///
+    /// Uses rayon for parallel decompression across all CPU cores.
+    pub fn read_parallel(&self, paths: &[&str]) -> Vec<Option<Vec<u8>>> {
+        // Normalize all paths
+        let normalized: Vec<String> = paths
+            .iter()
+            .map(|p| p.replace('/', "\\").to_lowercase())
+            .collect();
+        let normalized_refs: Vec<&str> = normalized.iter().map(|s| s.as_str()).collect();
+
+        // Check override directory first (still sequential for filesystem)
+        let mut results: Vec<Option<Vec<u8>>> = vec![None; paths.len()];
+        let mut remaining_indices: Vec<usize> = Vec::new();
+
+        if let Some(override_dir) = &self.override_dir {
+            for (i, path) in paths.iter().enumerate() {
+                let local_path = override_dir.join(path.replace('\\', "/"));
+                if local_path.exists() {
+                    if let Ok(data) = fs::read(&local_path) {
+                        log::debug!("Loading from override: {}", local_path.display());
+                        results[i] = Some(data);
+                        continue;
+                    }
+                }
+                remaining_indices.push(i);
+            }
+        } else {
+            remaining_indices = (0..paths.len()).collect();
+        }
+
+        if remaining_indices.is_empty() {
+            return results;
+        }
+
+        // Build list of paths still needed from ERA
+        let era_paths: Vec<&str> = remaining_indices
+            .iter()
+            .map(|&i| normalized_refs[i])
+            .collect();
+
+        // Try scenario ERA first (parallel)
+        if let Some(era) = &self.scenario_era {
+            let era_results = era.read_parallel(&era_paths);
+            let mut still_needed: Vec<usize> = Vec::new();
+
+            for (j, &orig_idx) in remaining_indices.iter().enumerate() {
+                if let Some(data) = era_results[j].clone() {
+                    results[orig_idx] = Some(data);
+                } else {
+                    still_needed.push(orig_idx);
+                }
+            }
+
+            // Try root ERA for remaining (parallel)
+            if !still_needed.is_empty() {
+                if let Some(root_era) = &self.root_era {
+                    let root_paths: Vec<&str> = still_needed
+                        .iter()
+                        .map(|&i| normalized_refs[i])
+                        .collect();
+                    let root_results = root_era.read_parallel(&root_paths);
+
+                    for (j, &orig_idx) in still_needed.iter().enumerate() {
+                        if let Some(data) = root_results[j].clone() {
+                            results[orig_idx] = Some(data);
+                        }
+                    }
+                }
+            }
+        } else if let Some(root_era) = &self.root_era {
+            // No scenario ERA, try root directly
+            let root_results = root_era.read_parallel(&era_paths);
+            for (j, &orig_idx) in remaining_indices.iter().enumerate() {
+                if let Some(data) = root_results[j].clone() {
+                    results[orig_idx] = Some(data);
+                }
+            }
+        }
+
+        results
     }
 
     /// Check if an asset exists without loading it.
