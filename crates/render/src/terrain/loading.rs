@@ -8,9 +8,9 @@ use super::types::{
     ChunkDecalData, ChunkSplatData, DecalInstance, DecalTexture, FoliageQNChunk, FoliageSet,
     NormalMapTexture, TerrainTexture,
 };
-use crate::assets::AssetSource;
-use crate::ddx::DdxTexture;
-use crate::xtt::{ActiveDecalInfo, ActiveTextureInfo, FoliageSetInfo, XttFile};
+use data::assets::AssetSource;
+use data::ddx::DdxTexture;
+use data::xtt::{ActiveDecalInfo, ActiveTextureInfo, FoliageSetInfo, XttFile};
 
 /// Load terrain textures (diffuse and normal maps) from an asset source.
 ///
@@ -377,3 +377,4 @@ pub fn extract_foliage_chunks(xtt: &XttFile) -> Vec<FoliageQNChunk> {
     log::info!("Extracted {} foliage QN chunks", foliage_chunks.len());
     foliage_chunks
 }
+

@@ -1,14 +1,14 @@
 //! Data types for the terrain viewer.
 //!
 //! This module contains GPU-specific types that remain in the viewer,
-//! and re-exports data types from the `data` crate for backwards compatibility.
+//! and re-exports terrain types from the `render` crate.
 
 use data::xtd::{TerrainVertices, TessellatedMesh};
 use glam::Vec3;
 use render::wgpu;
 
-// Re-export types from data crate for backwards compatibility
-pub use data::terrain::{
+// Re-export terrain types from render crate
+pub use render::terrain::{
     AlbedoData, ChunkDecalData, ChunkSplatData, DecalInstance, DecalTexture, FoliageQNChunk,
     FoliageSet, NormalMapTexture, TerrainTexture,
 };

@@ -261,7 +261,7 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scenario::{ScenarioLoader, load_scenario_into_world};
+    use crate::scenario::{Scenario, load_scenario_into_world};
     use crate::simulation::Simulation;
 
     /// Sample scenario for testing
@@ -279,7 +279,7 @@ mod tests {
 
     /// Run a simulation for a given number of ticks and return the final checksum.
     fn run_simulation(seed: u64, ticks: u32) -> (u32, u32) {
-        let scenario = ScenarioLoader::load_from_xml_str(TEST_SCENARIO).unwrap();
+        let scenario = Scenario::from_xml_str(TEST_SCENARIO).unwrap();
         let mut loaded = load_scenario_into_world(&scenario);
         loaded.world.rng.set_seed64(seed);
 
@@ -382,7 +382,7 @@ mod tests {
 
     /// Run simulation with movement commands for determinism testing.
     fn run_simulation_with_movement(seed: u64, ticks: u32) -> (u32, u32) {
-        let scenario = ScenarioLoader::load_from_xml_str(TEST_SCENARIO).unwrap();
+        let scenario = Scenario::from_xml_str(TEST_SCENARIO).unwrap();
         let mut loaded = load_scenario_into_world(&scenario);
         loaded.world.rng.set_seed64(seed);
 

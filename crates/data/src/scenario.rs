@@ -17,9 +17,10 @@
 //! ```
 
 use crate::assets::{AssetError, AssetSource};
+use crate::terrain::{Terrain, TerrainError};
 use crate::xmb::{Node, XmbData, XmbReader};
 use glam::Vec3;
-use std::io::{Cursor, Read, Seek};
+use std::io::Cursor;
 use thiserror::Error;
 
 /// Scenario loading errors.
@@ -140,7 +141,7 @@ impl Scenario {
             .ok_or_else(|| ScenarioError::NotFound(format!("{}.scn.xmb", scenario_name)))?;
 
         let scn_data = source.read(scn_path)?;
-        let mut scenario = ScenarioLoader::load_xmb_bytes(&scn_data)?;
+        let mut scenario = Self::parse_xmb_bytes(&scn_data)?;
         scenario.name = scenario_name.to_string();
 
         log::info!(
@@ -163,41 +164,44 @@ impl Scenario {
     pub fn object_count(&self) -> usize {
         self.objects.iter().filter(|o| !o.is_squad).count()
     }
-}
 
-/// Scenario loader.
-pub struct ScenarioLoader;
+    /// Load terrain data for this scenario.
+    ///
+    /// Loads the XTD (geometry) and XTT (textures) files for the scenario.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let scenario = Scenario::load("blood_gulch")?;
+    /// let terrain = scenario.load_terrain()?;
+    /// ```
+    pub fn load_terrain(&self) -> Result<Terrain, TerrainError> {
+        Terrain::load(&self.name)
+    }
 
-impl ScenarioLoader {
-    /// Load a scenario from an XMB file reader.
-    pub fn load_xmb<R: Read + Seek>(reader: R) -> Result<Scenario, ScenarioError> {
-        let xmb_data = XmbReader::read(reader)?;
+    // --- Private parsing methods ---
+
+    fn parse_xmb_bytes(bytes: &[u8]) -> Result<Self, ScenarioError> {
+        let cursor = Cursor::new(bytes);
+        let xmb_data = XmbReader::read(cursor)?;
         Self::parse_xmb_data(&xmb_data)
     }
 
-    /// Load a scenario from XMB bytes.
-    pub fn load_xmb_bytes(bytes: &[u8]) -> Result<Scenario, ScenarioError> {
-        let cursor = Cursor::new(bytes);
-        Self::load_xmb(cursor)
-    }
-
-    /// Load a scenario from XML string (for testing/debugging).
-    pub fn load_from_xml_str(xml: &str) -> Result<Scenario, ScenarioError> {
+    /// Parse a scenario from XML string (for testing only).
+    #[doc(hidden)]
+    pub fn from_xml_str(xml: &str) -> Result<Self, ScenarioError> {
         let xmb_data = XmbData::from_xml(xml)?;
         Self::parse_xmb_data(&xmb_data)
     }
 
-    /// Parse XMB data into a Scenario.
-    fn parse_xmb_data(xmb: &XmbData) -> Result<Scenario, ScenarioError> {
-        let mut scenario = Scenario::default();
+    fn parse_xmb_data(xmb: &XmbData) -> Result<Self, ScenarioError> {
+        let mut scenario = Self::default();
         if let Some(root) = xmb.root() {
             Self::parse_node(root, &mut scenario)?;
         }
         Ok(scenario)
     }
 
-    /// Recursively parse nodes from the XMB tree.
-    fn parse_node(node: &Node, scenario: &mut Scenario) -> Result<(), ScenarioError> {
+    fn parse_node(node: &Node, scenario: &mut Self) -> Result<(), ScenarioError> {
         match node.name.as_str() {
             "Scenario" => {
                 for child in &node.children {
@@ -322,8 +326,7 @@ impl ScenarioLoader {
         Ok(obj)
     }
 
-    /// Parse a "x,y,z" string into Vec3.
-    pub fn parse_vec3(s: &str) -> Result<Vec3, ScenarioError> {
+    fn parse_vec3(s: &str) -> Result<Vec3, ScenarioError> {
         let parts: Vec<&str> = s.split(',').collect();
         if parts.len() != 3 {
             return Err(ScenarioError::InvalidPosition(s.to_string()));
@@ -345,7 +348,6 @@ impl ScenarioLoader {
         Ok(Vec3::new(x, y, z))
     }
 
-    /// Convert civilization name to ID.
     fn civ_name_to_id(name: &str) -> i32 {
         match name.to_lowercase().as_str() {
             "unsc" => 1,
@@ -354,8 +356,6 @@ impl ScenarioLoader {
         }
     }
 
-    /// Convert leader name to ID.
-    /// TODO: Load from database
     fn leader_name_to_id(name: &str) -> i32 {
         match name.to_lowercase().as_str() {
             "cutter" => 1,
@@ -398,7 +398,7 @@ mod tests {
 
     #[test]
     fn test_parse_scenario() {
-        let scenario = ScenarioLoader::load_from_xml_str(SAMPLE_SCENARIO).unwrap();
+        let scenario = Scenario::from_xml_str(SAMPLE_SCENARIO).unwrap();
 
         // Check positions
         assert_eq!(scenario.positions.len(), 2);
@@ -421,16 +421,18 @@ mod tests {
 
     #[test]
     fn test_parse_vec3() {
-        let v = ScenarioLoader::parse_vec3("1.5,2.5,3.5").unwrap();
-        assert!((v.x - 1.5).abs() < 0.01);
-        assert!((v.y - 2.5).abs() < 0.01);
-        assert!((v.z - 3.5).abs() < 0.01);
+        // parse_vec3 is private, test it indirectly through scenario parsing
+        let xml = r#"<?xml version="1.0"?><Scenario><Positions><Position Number="1" Position="1.5,2.5,3.5" /></Positions></Scenario>"#;
+        let scenario = Scenario::from_xml_str(xml).unwrap();
+        assert!((scenario.positions[0].position.x - 1.5).abs() < 0.01);
+        assert!((scenario.positions[0].position.y - 2.5).abs() < 0.01);
+        assert!((scenario.positions[0].position.z - 3.5).abs() < 0.01);
     }
 
     #[test]
     fn test_empty_scenario() {
         let xml = r#"<?xml version="1.0"?><Scenario></Scenario>"#;
-        let scenario = ScenarioLoader::load_from_xml_str(xml).unwrap();
+        let scenario = Scenario::from_xml_str(xml).unwrap();
         assert!(scenario.players.is_empty());
         assert!(scenario.objects.is_empty());
     }

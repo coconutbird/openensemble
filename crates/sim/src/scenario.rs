@@ -24,9 +24,7 @@ use crate::world::World;
 use std::collections::HashMap;
 
 // Re-export scenario types from data crate for convenience
-pub use data::{
-    Scenario, ScenarioError, ScenarioLoader, ScenarioObject, ScenarioPlayer, ScenarioPosition,
-};
+pub use data::{Scenario, ScenarioError, ScenarioObject, ScenarioPlayer, ScenarioPosition};
 
 /// Result of loading a scenario into a world.
 ///
@@ -148,7 +146,7 @@ mod tests {
 
     #[test]
     fn test_load_into_world() {
-        let scenario = ScenarioLoader::load_from_xml_str(SAMPLE_SCENARIO).unwrap();
+        let scenario = Scenario::from_xml_str(SAMPLE_SCENARIO).unwrap();
         let loaded = load_scenario_into_world(&scenario);
 
         // Check players (Gaia + 2 players)

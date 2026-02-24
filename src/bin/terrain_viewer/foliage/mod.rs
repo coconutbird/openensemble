@@ -39,7 +39,7 @@ pub struct FoliageConfig {
     /// Distance at which foliage starts fading out.
     pub fade_start_distance: f32,
     /// Global foliage density multiplier (0.0-1.0).
-    pub density: f32,
+    pub _density: f32,
     /// Whether foliage rendering is enabled.
     pub enabled: bool,
 }
@@ -49,7 +49,7 @@ impl Default for FoliageConfig {
         Self {
             max_render_distance: 500.0,
             fade_start_distance: 400.0,
-            density: 1.0,
+            _density: 1.0,
             enabled: true,
         }
     }

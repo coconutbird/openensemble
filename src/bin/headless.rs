@@ -7,7 +7,7 @@
 //! - Replay validation
 
 use anyhow::{Context, Result};
-use data::{GameDatabase, Scenario, ScenarioLoader};
+use data::{GameDatabase, Scenario};
 use sim::{Session, SessionState, Simulation, World, load_scenario_into_world};
 use std::time::{Duration, Instant};
 
@@ -118,28 +118,10 @@ impl HeadlessServer {
         Ok(())
     }
 
-    /// Load a scenario from XMB bytes.
-    pub fn load_scenario_bytes(&mut self, scenario_data: &[u8]) -> Result<()> {
-        let scenario = ScenarioLoader::load_xmb_bytes(scenario_data)
-            .context("Failed to parse scenario XMB")?;
-
-        let loaded = load_scenario_into_world(&scenario);
-        self.world = loaded.world;
-
-        log::info!(
-            "Scenario loaded: {} players, {} squads, {} objects",
-            scenario.players.len(),
-            scenario.squad_count(),
-            scenario.object_count()
-        );
-
-        Ok(())
-    }
-
     /// Load a scenario from XML string (for testing).
+    #[doc(hidden)]
     pub fn load_scenario_xml(&mut self, xml: &str) -> Result<()> {
-        let scenario =
-            ScenarioLoader::load_from_xml_str(xml).context("Failed to parse scenario XML")?;
+        let scenario = Scenario::from_xml_str(xml).context("Failed to parse scenario XML")?;
 
         let loaded = load_scenario_into_world(&scenario);
         self.world = loaded.world;

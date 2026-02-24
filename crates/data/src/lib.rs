@@ -8,7 +8,7 @@ pub mod database;
 pub mod paths;
 pub mod proto;
 pub mod scenario;
-pub mod terrain;
+mod terrain;
 
 // Re-export file format parsers from ensemble-rs
 pub use ddx;
@@ -24,28 +24,5 @@ pub use database::{
 };
 pub use paths::{GAME_DIR_ENV_VAR, era_path, game_dir, game_file, is_valid_game_dir};
 pub use proto::{ProtoDatabase, ProtoObject, ProtoSquad, ProtoTech, TechEffect};
-pub use scenario::{
-    Scenario, ScenarioError, ScenarioLoader, ScenarioObject, ScenarioPlayer, ScenarioPosition,
-};
-pub use terrain::{
-    // Types
-    AlbedoData,
-    ChunkDecalData,
-    ChunkSplatData,
-    DecalInstance,
-    DecalTexture,
-    FoliageBladeVertex,
-    FoliageQNChunk,
-    FoliageSet,
-    NormalMapTexture,
-    ScenarioTerrain,
-    TerrainError,
-    TerrainTexture,
-    // Loading functions
-    extract_chunk_splat_data,
-    extract_decal_data,
-    extract_foliage_chunks,
-    load_decal_textures,
-    load_foliage_sets,
-    load_terrain_textures,
-};
+pub use scenario::{Scenario, ScenarioError, ScenarioObject, ScenarioPlayer, ScenarioPosition};
+pub use terrain::{Terrain, TerrainError};

@@ -26,16 +26,16 @@ pub struct FoliageResources {
 /// Per-foliage-set GPU resources.
 pub struct FoliageSetResources {
     /// Albedo texture.
-    pub albedo_texture: wgpu::Texture,
-    pub albedo_view: wgpu::TextureView,
+    pub _albedo_texture: wgpu::Texture,
+    pub _albedo_view: wgpu::TextureView,
     /// Opacity texture.
-    pub opacity_texture: wgpu::Texture,
-    pub opacity_view: wgpu::TextureView,
+    pub _opacity_texture: wgpu::Texture,
+    pub _opacity_view: wgpu::TextureView,
     /// Blade positions texture (xyz = pos, w = u).
-    pub blade_positions_texture: wgpu::Texture,
+    pub _blade_positions_texture: wgpu::Texture,
     pub blade_positions_view: wgpu::TextureView,
     /// Blade normals texture (xyz = normal, w = v).
-    pub blade_normals_texture: wgpu::Texture,
+    pub _blade_normals_texture: wgpu::Texture,
     pub blade_normals_view: wgpu::TextureView,
     /// Material bind group.
     pub material_bind_group: wgpu::BindGroup,
@@ -437,13 +437,13 @@ impl FoliageResources {
         });
 
         Some(FoliageSetResources {
-            albedo_texture,
-            albedo_view,
-            opacity_texture,
-            opacity_view,
-            blade_positions_texture,
+            _albedo_texture: albedo_texture,
+            _albedo_view: albedo_view,
+            _opacity_texture: opacity_texture,
+            _opacity_view: opacity_view,
+            _blade_positions_texture: blade_positions_texture,
             blade_positions_view,
-            blade_normals_texture,
+            _blade_normals_texture: blade_normals_texture,
             blade_normals_view,
             material_bind_group,
             num_blade_types,

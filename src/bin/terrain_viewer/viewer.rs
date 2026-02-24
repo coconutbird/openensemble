@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+use data::Scenario;
 use data::assets::AssetSource;
-use data::terrain::ScenarioTerrain;
 use data::xtd::{TessellationData, XtdFile, XtdReader};
 use data::xtt::{ActiveTextureInfo, XttFile, XttReader};
 use glam::Vec3;
@@ -25,10 +25,11 @@ use crate::types::{
 };
 
 /// Source for terrain loading.
+#[allow(dead_code)]
 pub enum TerrainSource {
     /// Load from a local XTD file path.
     File(PathBuf),
-    /// Load from a scenario name using ScenarioTerrain (requires OPENENSEMBLE_GAME_DIR).
+    /// Load from a scenario name using Scenario::load_terrain (requires OPENENSEMBLE_GAME_DIR).
     Scenario(String),
 }
 
@@ -160,9 +161,19 @@ impl TerrainViewer {
     fn load_terrain(&mut self) {
         // Determine which loading path to use
         let (xtd, xtt, asset_source_opt) = if let Some(scenario_name) = &self.scenario_name {
-            // Load from scenario (game directory / ERA)
+            // Load scenario first, then load terrain from it
+            log::info!("Loading scenario: {}", scenario_name);
+            let scenario = match Scenario::load(scenario_name) {
+                Ok(s) => s,
+                Err(e) => {
+                    self.load_error = Some(format!("Failed to load scenario: {}", e));
+                    log::error!("{}", self.load_error.as_ref().unwrap());
+                    return;
+                }
+            };
+
             log::info!("Loading terrain for scenario: {}", scenario_name);
-            match ScenarioTerrain::load(scenario_name) {
+            match scenario.load_terrain() {
                 Ok(terrain) => {
                     // Create asset source for texture loading
                     let asset_source = match AssetSource::for_scenario(scenario_name) {
@@ -175,7 +186,7 @@ impl TerrainViewer {
                     (terrain.xtd, terrain.xtt, asset_source)
                 }
                 Err(e) => {
-                    self.load_error = Some(format!("Failed to load scenario: {}", e));
+                    self.load_error = Some(format!("Failed to load terrain: {}", e));
                     log::error!("{}", self.load_error.as_ref().unwrap());
                     return;
                 }
@@ -532,8 +543,8 @@ impl TerrainViewer {
 
     /// Extract chunk splat data from XTT linkers for texture splatting.
     fn extract_chunk_splat_data(&mut self, xtt: &data::xtt::XttFile) {
-        // Use the data crate's extraction function
-        self.chunk_splat_data = data::terrain::extract_chunk_splat_data(xtt);
+        // Use the render crate's extraction function
+        self.chunk_splat_data = render::terrain::extract_chunk_splat_data(xtt);
 
         // Debug: Verify chunks are stored in expected order and print any mismatches
         log::info!("Checking chunk storage order vs expected grid positions:");
@@ -661,8 +672,8 @@ impl TerrainViewer {
 
         log::info!("Loading terrain textures from asset source");
 
-        // Use the data crate's loading function
-        let (textures, normals) = data::terrain::load_terrain_textures(source, active_textures);
+        // Use the render crate's loading function
+        let (textures, normals) = render::terrain::load_terrain_textures(source, active_textures);
 
         self.terrain_textures = textures;
         self.normal_textures = normals;
@@ -696,8 +707,8 @@ impl TerrainViewer {
             }
         }
 
-        // Use the data crate's extraction function
-        let (instances, chunk_data) = data::terrain::extract_decal_data(xtt);
+        // Use the render crate's extraction function
+        let (instances, chunk_data) = render::terrain::extract_decal_data(xtt);
         self.decal_instances = instances;
         self.chunk_decal_data = chunk_data;
 
@@ -748,8 +759,8 @@ impl TerrainViewer {
 
         log::info!("Loading decal textures from asset source");
 
-        // Use the data crate's loading function
-        self.decal_textures = data::terrain::load_decal_textures(source, active_decals);
+        // Use the render crate's loading function
+        self.decal_textures = render::terrain::load_decal_textures(source, active_decals);
 
         log::info!("Loaded {} decal textures", self.decal_textures.len());
     }
@@ -768,8 +779,8 @@ impl TerrainViewer {
             log::info!("  Foliage set [{}]: {}", i, set.filename);
         }
 
-        // Use the data crate's extraction function
-        self.foliage_qn_chunks = data::terrain::extract_foliage_chunks(xtt);
+        // Use the render crate's extraction function
+        self.foliage_qn_chunks = render::terrain::extract_foliage_chunks(xtt);
 
         if !self.foliage_qn_chunks.is_empty() {
             // Log first few QN chunks for debugging
@@ -809,8 +820,8 @@ impl TerrainViewer {
 
         log::info!("Loading foliage textures from asset source");
 
-        // Use the data crate's loading function
-        self.foliage_sets = data::terrain::load_foliage_sets(source, foliage_sets);
+        // Use the render crate's loading function
+        self.foliage_sets = render::terrain::load_foliage_sets(source, foliage_sets);
 
         log::info!(
             "Loaded {} foliage sets ({} with albedo textures)",
@@ -958,22 +969,23 @@ impl Application for TerrainViewer {
         self.camera.update(input, ctx.delta_time);
 
         // Update LOD levels based on camera position (only when GPU compositing is enabled)
-        if self.use_gpu_compositing && !self.chunk_centers.is_empty() {
-            if let Some(compositor) = &mut self.compositor {
-                let camera_pos = [
-                    self.camera.position.x,
-                    self.camera.position.y,
-                    self.camera.position.z,
-                ];
-                let lod_changed =
-                    compositor.update_lod(camera_pos, &self.chunk_centers, &self.lod_config);
-                if lod_changed {
-                    // LOD changed - compositor will mark dirty chunks automatically
-                    log::debug!(
-                        "LOD updated: {} dirty chunks",
-                        compositor.dirty_chunk_count()
-                    );
-                }
+        if self.use_gpu_compositing
+            && !self.chunk_centers.is_empty()
+            && let Some(compositor) = &mut self.compositor
+        {
+            let camera_pos = [
+                self.camera.position.x,
+                self.camera.position.y,
+                self.camera.position.z,
+            ];
+            let lod_changed =
+                compositor.update_lod(camera_pos, &self.chunk_centers, &self.lod_config);
+            if lod_changed {
+                // LOD changed - compositor will mark dirty chunks automatically
+                log::debug!(
+                    "LOD updated: {} dirty chunks",
+                    compositor.dirty_chunk_count()
+                );
             }
         }
 
@@ -1229,25 +1241,24 @@ impl Application3D for TerrainViewer {
         }
 
         // Run GPU compositing pass for dirty chunks (if enabled)
-        if self.use_gpu_compositing {
-            if let (Some(compositor), Some(bind_group)) =
+        if self.use_gpu_compositing
+            && let (Some(compositor), Some(bind_group)) =
                 (&mut self.compositor, &self.compositor_bind_group)
-            {
-                // Get layer counts per chunk
-                let chunk_layer_counts: Vec<u32> = self
-                    .chunk_splat_data
-                    .iter()
-                    .map(|c| c.layer_texture_ids.len() as u32)
-                    .collect();
+        {
+            // Get layer counts per chunk
+            let chunk_layer_counts: Vec<u32> = self
+                .chunk_splat_data
+                .iter()
+                .map(|c| c.layer_texture_ids.len() as u32)
+                .collect();
 
-                compositor.composite_all_dirty(
-                    ctx.encoder,
-                    bind_group,
-                    ctx.queue,
-                    &chunk_layer_counts,
-                    ctx.device,
-                );
-            }
+            compositor.composite_all_dirty(
+                ctx.encoder,
+                bind_group,
+                ctx.queue,
+                &chunk_layer_counts,
+                ctx.device,
+            );
         }
 
         // Render terrain
@@ -1377,7 +1388,7 @@ impl TerrainViewer {
             self.create_terrain_texture_array(device, queue, &albedo);
 
         // Create alpha atlas from chunk splat data
-        let (alpha_atlas, alpha_atlas_view) = self.create_alpha_atlas(device, queue);
+        let (_alpha_atlas, alpha_atlas_view) = self.create_alpha_atlas(device, queue);
 
         // Create pre-composited albedo atlas (correct blending, no boundary issues)
         let (_composited_texture, composited_view) =
@@ -2864,7 +2875,7 @@ impl TerrainViewer {
                         let chunk_idx = (y * CHUNK_SIZE + x) as usize;
 
                         // R = alpha for layer 1, G = layer 2, B = layer 3, A = layer 4
-                        if chunk.alpha_maps.len() > 0 && chunk_idx < chunk.alpha_maps[0].len() {
+                        if !chunk.alpha_maps.is_empty() && chunk_idx < chunk.alpha_maps[0].len() {
                             atlas_data[atlas_idx] = chunk.alpha_maps[0][chunk_idx];
                         }
                         if chunk.alpha_maps.len() > 1 && chunk_idx < chunk.alpha_maps[1].len() {
@@ -3052,7 +3063,7 @@ impl TerrainViewer {
 
                         // Get alpha values for each layer
                         let _alpha0: f32 = 1.0; // Base layer always 100%
-                        let alpha1 = if chunk.alpha_maps.len() > 0
+                        let alpha1 = if !chunk.alpha_maps.is_empty()
                             && alpha_idx < chunk.alpha_maps[0].len()
                         {
                             chunk.alpha_maps[0][alpha_idx] as f32 / 255.0
@@ -3087,7 +3098,7 @@ impl TerrainViewer {
 
                         // Get layer texture IDs for this chunk
                         // Layer IDs are direct indices into active_textures/terrain_textures
-                        let layer0_id = chunk.layer_texture_ids.get(0).copied().unwrap_or(0);
+                        let layer0_id = chunk.layer_texture_ids.first().copied().unwrap_or(0);
                         let layer1_id = chunk.layer_texture_ids.get(1).copied().unwrap_or(0);
                         let layer2_id = chunk.layer_texture_ids.get(2).copied().unwrap_or(0);
                         let layer3_id = chunk.layer_texture_ids.get(3).copied().unwrap_or(0);
@@ -3350,6 +3361,7 @@ impl TerrainViewer {
     /// Initialize the GPU compositor for pre-baking terrain textures.
     /// This creates an 8K×8K atlas (16×16 chunks, 512×512 each) where terrain
     /// layers are composited once and then sampled efficiently during rendering.
+    #[allow(clippy::too_many_arguments)]
     fn init_compositor(
         &mut self,
         device: &wgpu::Device,

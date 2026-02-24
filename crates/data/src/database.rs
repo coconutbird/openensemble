@@ -208,15 +208,6 @@ impl GameDatabase {
         Ok(db)
     }
 
-    /// Load the game database from the game directory.
-    ///
-    /// Uses `OPENENSEMBLE_GAME_DIR` environment variable or falls back to
-    /// the current working directory. Loads `root.era` from that location.
-    #[deprecated(note = "Use GameDatabase::load() instead")]
-    pub fn load_from_game_dir() -> Result<Self, DatabaseError> {
-        Self::load()
-    }
-
     /// Load XMB data from bytes and parse it.
     fn load_xmb_data(&mut self, filename: &str, data: &[u8]) -> Result<(), DatabaseError> {
         let cursor = Cursor::new(data);

@@ -1,7 +1,7 @@
-//! Pure data types for terrain loading.
+//! Data types for terrain rendering.
 //!
-//! These types represent loaded terrain data without any GPU dependencies.
-//! They can be used by both the viewer and the engine.
+//! These types represent processed terrain data ready for rendering.
+//! They bridge the gap between raw file data (XTD/XTT) and GPU resources.
 
 /// Albedo atlas data decoded from XTT file.
 #[derive(Clone)]
@@ -195,3 +195,4 @@ pub struct FoliageQNChunk {
     /// These are 32-bit indices used with triangle strips.
     pub index_buffers: Vec<Vec<u8>>,
 }
+
