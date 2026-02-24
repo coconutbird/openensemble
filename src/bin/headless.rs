@@ -7,8 +7,8 @@
 //! - Replay validation
 
 use anyhow::{Context, Result};
-use data::GameDatabase;
-use sim::{ScenarioLoader, Session, SessionState, Simulation, World, load_scenario_into_world};
+use data::{GameDatabase, Scenario, ScenarioLoader};
+use sim::{Session, SessionState, Simulation, World, load_scenario_into_world};
 use std::time::{Duration, Instant};
 
 /// Headless server configuration.
@@ -101,10 +101,25 @@ impl HeadlessServer {
         })
     }
 
-    /// Load a scenario into the world.
-    pub fn load_scenario(&mut self, scenario_data: &[u8]) -> Result<()> {
-        log::info!("Loading scenario...");
+    /// Load a scenario by name from ERA archives.
+    pub fn load_scenario(&mut self, scenario_name: &str) -> Result<()> {
+        let scenario = Scenario::load(scenario_name).context("Failed to load scenario from ERA")?;
 
+        let loaded = load_scenario_into_world(&scenario);
+        self.world = loaded.world;
+
+        log::info!(
+            "Scenario loaded: {} players, {} squads, {} objects",
+            scenario.players.len(),
+            scenario.squad_count(),
+            scenario.object_count()
+        );
+
+        Ok(())
+    }
+
+    /// Load a scenario from XMB bytes.
+    pub fn load_scenario_bytes(&mut self, scenario_data: &[u8]) -> Result<()> {
         let scenario = ScenarioLoader::load_xmb_bytes(scenario_data)
             .context("Failed to parse scenario XMB")?;
 

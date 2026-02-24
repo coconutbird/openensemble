@@ -7,14 +7,15 @@
 //! # Example
 //!
 //! ```ignore
-//! use data::{Scenario, ScenarioLoader};
-//! use sim::scenario::ScenarioWorld;
+//! use data::Scenario;
+//! use sim::load_scenario_into_world;
 //!
-//! // Parse scenario from data crate
-//! let scenario = ScenarioLoader::load_xmb_bytes(&scenario_data)?;
+//! // Load scenario from ERA archives
+//! let scenario = Scenario::load("blood_gulch")?;
 //!
 //! // Load into simulation world
-//! let (world, entity_map) = ScenarioWorld::load_into_world(&scenario);
+//! let loaded = load_scenario_into_world(&scenario);
+//! println!("Created {} players", loaded.world.player_count());
 //! ```
 
 use crate::entity_id::EntityId;
@@ -52,10 +53,10 @@ impl LoadedScenario {
 /// # Example
 ///
 /// ```ignore
-/// use data::ScenarioLoader;
-/// use sim::scenario::load_scenario_into_world;
+/// use data::Scenario;
+/// use sim::load_scenario_into_world;
 ///
-/// let scenario = ScenarioLoader::load_xmb_bytes(&data)?;
+/// let scenario = Scenario::load("blood_gulch")?;
 /// let loaded = load_scenario_into_world(&scenario);
 /// println!("Created {} players", loaded.world.player_count());
 /// ```

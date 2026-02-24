@@ -9,19 +9,14 @@
 //! # Example
 //!
 //! ```ignore
-//! use data::scenario::{Scenario, ScenarioLoader};
-//! use data::assets::AssetSource;
+//! use data::Scenario;
 //!
-//! // Load scenario from assets
-//! let mut source = AssetSource::for_scenario("blood_gulch")?;
-//! let scn_files = source.list(|p| p.ends_with(".scn.xmb"));
-//! let scn_data = source.read(&scn_files[0])?;
-//! let scenario = ScenarioLoader::load_xmb_bytes(&scn_data)?;
-//!
+//! let scenario = Scenario::load("blood_gulch")?;
 //! println!("Players: {}", scenario.players.len());
 //! println!("Objects: {}", scenario.objects.len());
 //! ```
 
+use crate::assets::{AssetError, AssetSource};
 use crate::xmb::{Node, XmbData, XmbReader};
 use glam::Vec3;
 use std::io::{Cursor, Read, Seek};
@@ -30,6 +25,8 @@ use thiserror::Error;
 /// Scenario loading errors.
 #[derive(Debug, Error)]
 pub enum ScenarioError {
+    #[error("Asset loading error: {0}")]
+    Asset(#[from] AssetError),
     #[error("XMB parsing error: {0}")]
     Xmb(#[from] crate::xmb::Error),
     #[error("Invalid attribute: {0}")]
@@ -38,6 +35,8 @@ pub enum ScenarioError {
     MissingAttribute(String),
     #[error("Invalid position format: {0}")]
     InvalidPosition(String),
+    #[error("Scenario file not found: {0}")]
+    NotFound(String),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -120,6 +119,41 @@ pub struct Scenario {
 }
 
 impl Scenario {
+    /// Load a scenario by name from ERA archives.
+    ///
+    /// Uses `AssetSource` to find and load the `.scn.xmb` file for the given scenario.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let scenario = Scenario::load("blood_gulch")?;
+    /// println!("Players: {}", scenario.players.len());
+    /// ```
+    pub fn load(scenario_name: &str) -> Result<Self, ScenarioError> {
+        log::info!("Loading scenario: {}", scenario_name);
+
+        let mut source = AssetSource::for_scenario(scenario_name)?;
+
+        // Find the .scn.xmb file
+        let scn_files = source.list(|p| p.ends_with(".scn.xmb"));
+        let scn_path = scn_files
+            .first()
+            .ok_or_else(|| ScenarioError::NotFound(format!("{}.scn.xmb", scenario_name)))?;
+
+        let scn_data = source.read(scn_path)?;
+        let mut scenario = ScenarioLoader::load_xmb_bytes(&scn_data)?;
+        scenario.name = scenario_name.to_string();
+
+        log::info!(
+            "Loaded scenario '{}': {} players, {} positions, {} objects",
+            scenario_name,
+            scenario.players.len(),
+            scenario.positions.len(),
+            scenario.objects.len()
+        );
+
+        Ok(scenario)
+    }
+
     /// Get the number of squads in the scenario.
     pub fn squad_count(&self) -> usize {
         self.objects.iter().filter(|o| o.is_squad).count()
