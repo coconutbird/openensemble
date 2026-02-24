@@ -101,6 +101,7 @@ impl IndexedMmapEra {
         self.index.contains_key(normalized_path)
     }
 
+    #[allow(dead_code)]
     fn get_index(&self, normalized_path: &str) -> Option<usize> {
         self.index.get(normalized_path).copied()
     }
@@ -255,12 +256,12 @@ impl AssetSource {
         if let Some(override_dir) = &self.override_dir {
             for (i, path) in paths.iter().enumerate() {
                 let local_path = override_dir.join(path.replace('\\', "/"));
-                if local_path.exists() {
-                    if let Ok(data) = fs::read(&local_path) {
-                        log::debug!("Loading from override: {}", local_path.display());
-                        results[i] = Some(data);
-                        continue;
-                    }
+                if local_path.exists()
+                    && let Ok(data) = fs::read(&local_path)
+                {
+                    log::debug!("Loading from override: {}", local_path.display());
+                    results[i] = Some(data);
+                    continue;
                 }
                 remaining_indices.push(i);
             }
@@ -292,18 +293,16 @@ impl AssetSource {
             }
 
             // Try root ERA for remaining (parallel)
-            if !still_needed.is_empty() {
-                if let Some(root_era) = &self.root_era {
-                    let root_paths: Vec<&str> = still_needed
-                        .iter()
-                        .map(|&i| normalized_refs[i])
-                        .collect();
-                    let root_results = root_era.read_parallel(&root_paths);
+            if !still_needed.is_empty()
+                && let Some(root_era) = &self.root_era
+            {
+                let root_paths: Vec<&str> =
+                    still_needed.iter().map(|&i| normalized_refs[i]).collect();
+                let root_results = root_era.read_parallel(&root_paths);
 
-                    for (j, &orig_idx) in still_needed.iter().enumerate() {
-                        if let Some(data) = root_results[j].clone() {
-                            results[orig_idx] = Some(data);
-                        }
+                for (j, &orig_idx) in still_needed.iter().enumerate() {
+                    if let Some(data) = root_results[j].clone() {
+                        results[orig_idx] = Some(data);
                     }
                 }
             }

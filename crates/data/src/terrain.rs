@@ -63,7 +63,7 @@ impl Terrain {
     pub(crate) fn load(scenario_name: &str) -> Result<Self, TerrainError> {
         log::info!("Loading terrain for scenario: {}", scenario_name);
 
-        let mut source = AssetSource::for_scenario(scenario_name)?;
+        let source = AssetSource::for_scenario(scenario_name)?;
 
         // Find and load XTD file
         let xtd_files = source.list(|path| path.ends_with(".xtd"));
@@ -109,4 +109,3 @@ impl Terrain {
         Ok(Self { xtd, xtt })
     }
 }
-

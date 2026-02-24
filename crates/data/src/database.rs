@@ -174,7 +174,7 @@ impl GameDatabase {
     pub fn load() -> Result<Self, DatabaseError> {
         log::info!("Loading game database via AssetSource");
 
-        let mut source = AssetSource::root_only()?;
+        let source = AssetSource::root_only()?;
         let mut db = GameDatabase::new();
 
         // List all XMB files

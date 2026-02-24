@@ -56,7 +56,9 @@ impl Default for FoliageConfig {
 }
 
 /// Number of blades per foliage node (64x64 grid = 4096 positions).
+#[allow(dead_code)]
 pub const NUM_BLADES_PER_NODE: u32 = 64;
 
 /// Number of vertices per foliage blade (from original shader).
+#[allow(dead_code)]
 pub const NUM_VERTS_PER_BLADE: u32 = 10;

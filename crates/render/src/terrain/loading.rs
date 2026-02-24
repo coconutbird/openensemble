@@ -64,26 +64,25 @@ pub fn load_terrain_textures(
         .zip(active_textures.par_iter())
         .enumerate()
         .map(|(idx, (data_opt, tex_info))| {
-            if let Some(data) = data_opt {
-                if let Ok(ddx) = DdxTexture::from_bytes(data) {
-                    if let Ok(decoded) = ddx.decode_to_rgba() {
-                        log::info!(
-                            "Loaded terrain texture [{}]: {} ({}x{})",
-                            idx,
-                            tex_info.filename,
-                            decoded.width,
-                            decoded.height
-                        );
-                        return TerrainTexture {
-                            name: tex_info.filename.clone(),
-                            width: decoded.width,
-                            height: decoded.height,
-                            pixels: decoded.pixels,
-                            u_scale: tex_info.u_scale,
-                            v_scale: tex_info.v_scale,
-                        };
-                    }
-                }
+            if let Some(data) = data_opt
+                && let Ok(ddx) = DdxTexture::from_bytes(data)
+                && let Ok(decoded) = ddx.decode_to_rgba()
+            {
+                log::info!(
+                    "Loaded terrain texture [{}]: {} ({}x{})",
+                    idx,
+                    tex_info.filename,
+                    decoded.width,
+                    decoded.height
+                );
+                return TerrainTexture {
+                    name: tex_info.filename.clone(),
+                    width: decoded.width,
+                    height: decoded.height,
+                    pixels: decoded.pixels,
+                    u_scale: tex_info.u_scale,
+                    v_scale: tex_info.v_scale,
+                };
             }
 
             // Placeholder for failed loads
@@ -198,27 +197,26 @@ pub fn load_decal_textures(
             let decal_info = &active_decals[i];
 
             // Decode diffuse
-            let (width, height, diffuse_pixels) =
-                if let Some(data) = &diffuse_data[i] {
-                    if let Ok(ddx) = DdxTexture::from_bytes(data) {
-                        if let Ok(decoded) = ddx.decode_to_rgba() {
-                            log::info!(
-                                "Loaded decal diffuse: {} ({}x{})",
-                                decal_info.filename,
-                                decoded.width,
-                                decoded.height
-                            );
-                            (decoded.width, decoded.height, decoded.pixels)
-                        } else {
-                            (64, 64, vec![128u8; 64 * 64 * 4])
-                        }
+            let (width, height, diffuse_pixels) = if let Some(data) = &diffuse_data[i] {
+                if let Ok(ddx) = DdxTexture::from_bytes(data) {
+                    if let Ok(decoded) = ddx.decode_to_rgba() {
+                        log::info!(
+                            "Loaded decal diffuse: {} ({}x{})",
+                            decal_info.filename,
+                            decoded.width,
+                            decoded.height
+                        );
+                        (decoded.width, decoded.height, decoded.pixels)
                     } else {
                         (64, 64, vec![128u8; 64 * 64 * 4])
                     }
                 } else {
-                    log::warn!("Failed to load decal diffuse: {}", decal_info.filename);
                     (64, 64, vec![128u8; 64 * 64 * 4])
-                };
+                }
+            } else {
+                log::warn!("Failed to load decal diffuse: {}", decal_info.filename);
+                (64, 64, vec![128u8; 64 * 64 * 4])
+            };
 
             // Decode opacity
             let opacity_pixels = if let Some(data) = &opacity_data[i] {
@@ -260,10 +258,7 @@ pub fn load_decal_textures(
 ///
 /// Uses parallel loading for both ERA decompression and DDX decoding.
 /// Each foliage set has 4 textures: albedo (_df), opacity (_op), normal (_nm), specular (_sp).
-pub fn load_foliage_sets(
-    source: &AssetSource,
-    foliage_sets: &[FoliageSetInfo],
-) -> Vec<FoliageSet> {
+pub fn load_foliage_sets(source: &AssetSource, foliage_sets: &[FoliageSetInfo]) -> Vec<FoliageSet> {
     if foliage_sets.is_empty() {
         log::info!("No foliage sets to load");
         return Vec::new();
@@ -301,53 +296,49 @@ pub fn load_foliage_sets(
             };
 
             // Decode albedo (_df)
-            if let Some(data) = &all_data[base_idx] {
-                if let Ok(ddx) = DdxTexture::from_bytes(data) {
-                    if let Ok(decoded) = ddx.decode_to_rgba() {
-                        log::info!(
-                            "  Loaded foliage albedo: {} ({}x{})",
-                            set_info.filename,
-                            decoded.width,
-                            decoded.height
-                        );
-                        foliage_set.albedo_width = decoded.width;
-                        foliage_set.albedo_height = decoded.height;
-                        foliage_set.albedo_pixels = decoded.pixels;
-                    }
-                }
+            if let Some(data) = &all_data[base_idx]
+                && let Ok(ddx) = DdxTexture::from_bytes(data)
+                && let Ok(decoded) = ddx.decode_to_rgba()
+            {
+                log::info!(
+                    "  Loaded foliage albedo: {} ({}x{})",
+                    set_info.filename,
+                    decoded.width,
+                    decoded.height
+                );
+                foliage_set.albedo_width = decoded.width;
+                foliage_set.albedo_height = decoded.height;
+                foliage_set.albedo_pixels = decoded.pixels;
             }
 
             // Decode opacity (_op)
-            if let Some(data) = &all_data[base_idx + 1] {
-                if let Ok(ddx) = DdxTexture::from_bytes(data) {
-                    if let Ok(decoded) = ddx.decode_to_rgba() {
-                        foliage_set.opacity_width = decoded.width;
-                        foliage_set.opacity_height = decoded.height;
-                        foliage_set.opacity_pixels = decoded.pixels;
-                    }
-                }
+            if let Some(data) = &all_data[base_idx + 1]
+                && let Ok(ddx) = DdxTexture::from_bytes(data)
+                && let Ok(decoded) = ddx.decode_to_rgba()
+            {
+                foliage_set.opacity_width = decoded.width;
+                foliage_set.opacity_height = decoded.height;
+                foliage_set.opacity_pixels = decoded.pixels;
             }
 
             // Decode normal (_nm)
-            if let Some(data) = &all_data[base_idx + 2] {
-                if let Ok(ddx) = DdxTexture::from_bytes(data) {
-                    if let Ok(decoded) = ddx.decode_to_rgba() {
-                        foliage_set.normal_width = decoded.width;
-                        foliage_set.normal_height = decoded.height;
-                        foliage_set.normal_pixels = decoded.pixels;
-                    }
-                }
+            if let Some(data) = &all_data[base_idx + 2]
+                && let Ok(ddx) = DdxTexture::from_bytes(data)
+                && let Ok(decoded) = ddx.decode_to_rgba()
+            {
+                foliage_set.normal_width = decoded.width;
+                foliage_set.normal_height = decoded.height;
+                foliage_set.normal_pixels = decoded.pixels;
             }
 
             // Decode specular (_sp)
-            if let Some(data) = &all_data[base_idx + 3] {
-                if let Ok(ddx) = DdxTexture::from_bytes(data) {
-                    if let Ok(decoded) = ddx.decode_to_rgba() {
-                        foliage_set.specular_width = decoded.width;
-                        foliage_set.specular_height = decoded.height;
-                        foliage_set.specular_pixels = decoded.pixels;
-                    }
-                }
+            if let Some(data) = &all_data[base_idx + 3]
+                && let Ok(ddx) = DdxTexture::from_bytes(data)
+                && let Ok(decoded) = ddx.decode_to_rgba()
+            {
+                foliage_set.specular_width = decoded.width;
+                foliage_set.specular_height = decoded.height;
+                foliage_set.specular_pixels = decoded.pixels;
             }
 
             foliage_set
@@ -465,4 +456,3 @@ pub fn extract_foliage_chunks(xtt: &XttFile) -> Vec<FoliageQNChunk> {
     log::info!("Extracted {} foliage QN chunks", foliage_chunks.len());
     foliage_chunks
 }
-

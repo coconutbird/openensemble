@@ -195,4 +195,3 @@ pub struct FoliageQNChunk {
     /// These are 32-bit indices used with triangle strips.
     pub index_buffers: Vec<Vec<u8>>,
 }
-

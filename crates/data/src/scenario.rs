@@ -132,7 +132,7 @@ impl Scenario {
     pub fn load(scenario_name: &str) -> Result<Self, ScenarioError> {
         log::info!("Loading scenario: {}", scenario_name);
 
-        let mut source = AssetSource::for_scenario(scenario_name)?;
+        let source = AssetSource::for_scenario(scenario_name)?;
 
         // Find the .scn.xmb file
         let scn_files = source.list(|p| p.ends_with(".scn.xmb"));
