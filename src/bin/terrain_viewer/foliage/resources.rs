@@ -60,6 +60,26 @@ pub struct FoliageParamsUniform {
     pub foliage_info: [f32; 4],
     /// camera_pos: x, y, z, time
     pub camera_pos_time: [f32; 4],
+    /// dir_light_vec: x, y, z, backside_shadow_scalar
+    pub dir_light_vec: [f32; 4],
+    /// dir_light_color: r, g, b, padding
+    pub dir_light_color: [f32; 4],
+    /// fog_params: density^2, start^2, unused, unused
+    pub fog_params: [f32; 4],
+    /// fog_color: r, g, b, a
+    pub fog_color: [f32; 4],
+    /// planar_fog_params: enabled, start_y, density^2, unused
+    pub planar_fog_params: [f32; 4],
+    /// planar_fog_color: r, g, b, a
+    pub planar_fog_color: [f32; 4],
+    /// SH fill lighting coefficients (7 vec4s)
+    pub sh_fill_ar: [f32; 4],
+    pub sh_fill_ag: [f32; 4],
+    pub sh_fill_ab: [f32; 4],
+    pub sh_fill_br: [f32; 4],
+    pub sh_fill_bg: [f32; 4],
+    pub sh_fill_bb: [f32; 4],
+    pub sh_fill_c: [f32; 4],
 }
 
 impl FoliageResources {
@@ -602,6 +622,22 @@ impl FoliageResources {
                 self.config.max_render_distance,
             ],
             camera_pos_time: [0.0, 100.0, 0.0, 0.0], // Initial camera pos, time
+            // Default directional light (sun-like, from upper-right)
+            dir_light_vec: [0.4472, 0.8944, 0.0, 1.0], // xyz = normalized light dir, w = backside_shadow_scalar
+            dir_light_color: [1.0, 1.0, 1.0, 0.0],
+            // Fog defaults (disabled)
+            fog_params: [0.0, 0.0, 0.0, 0.0],
+            fog_color: [0.7, 0.8, 0.9, 1.0],
+            planar_fog_params: [0.0, 0.0, 0.0, 0.0], // x=0 means disabled
+            planar_fog_color: [0.7, 0.8, 0.9, 1.0],
+            // SH fill lighting defaults (uniform ambient ~0.3)
+            sh_fill_ar: [0.0, 0.0, 0.0, 0.3],
+            sh_fill_ag: [0.0, 0.0, 0.0, 0.3],
+            sh_fill_ab: [0.0, 0.0, 0.0, 0.3],
+            sh_fill_br: [0.0; 4],
+            sh_fill_bg: [0.0; 4],
+            sh_fill_bb: [0.0; 4],
+            sh_fill_c: [0.0; 4],
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
 
@@ -647,8 +683,8 @@ impl FoliageResources {
 
     /// Update camera position in foliage params (call each frame).
     pub fn update_camera(&self, queue: &wgpu::Queue, camera_pos: [f32; 3], time: f32) {
-        // Update only the camera_pos_time field (last vec4 in struct)
-        // FoliageParamsUniform is 5 vec4s = 80 bytes, camera_pos_time is at offset 64
+        // Update only the camera_pos_time field (5th vec4 in struct)
+        // camera_pos_time is at offset 64 (4 × vec4 before it)
         let camera_pos_time = [camera_pos[0], camera_pos[1], camera_pos[2], time];
         queue.write_buffer(
             &self.params_buffer,

@@ -35,7 +35,7 @@ pub const TERRAIN_SHADER: &str = include_str!("shaders/terrain.wgsl");
 /// - Shared lighting/fog/TBN via WESL imports
 pub const GPU_TESS_SHADER: &str = include_wesl!("gpu_tess");
 
-/// GPU compositing shader for pre-baking terrain textures.
+/// GPU compositing shader for pre-baking terrain textures (compiled from WESL).
 ///
 /// This shader renders terrain splat layers to a render target, creating
 /// a unique composited texture per chunk. This is the approach used by
@@ -46,9 +46,9 @@ pub const GPU_TESS_SHADER: &str = include_wesl!("gpu_tess");
 /// - Texture array sampling with per-texture UV scaling
 /// - Alpha-blended layer compositing
 /// - Outputs to 8K atlas (16x16 chunks, 512x512 each)
-pub const COMPOSITE_SHADER: &str = include_str!("shaders/composite.wgsl");
+pub const COMPOSITE_SHADER: &str = include_wesl!("composite");
 
-/// Foliage rendering shader based on terrainFoliage.fx.
+/// Foliage rendering shader based on terrainFoliage.fx (compiled from WESL).
 ///
 /// Features:
 /// - Blade geometry fetched from position/normal textures
@@ -56,7 +56,10 @@ pub const COMPOSITE_SHADER: &str = include_str!("shaders/composite.wgsl");
 /// - Terrain height sampling for blade base positioning
 /// - Distance-based alpha fade
 /// - Two-sided lighting (normal flipped toward camera)
-pub const FOLIAGE_SHADER: &str = include_str!("shaders/foliage.wgsl");
+/// - SH ambient fill lighting
+/// - Fog (radial + planar)
+/// - Shared lighting/fog via WESL imports
+pub const FOLIAGE_SHADER: &str = include_wesl!("foliage");
 
 /// Heightfield/decal patch shader based on terrainHeightField.fx (compiled from WESL).
 ///

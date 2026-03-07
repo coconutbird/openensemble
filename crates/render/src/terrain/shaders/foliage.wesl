@@ -1,14 +1,21 @@
+import package::shared::lighting::compute_sh_fill_lighting;
+import package::shared::fog::compute_radial_fog_density;
+import package::shared::fog::compute_fog;
+import package::shared::fog::compute_planar_fog_density;
+
 // Foliage shader - WGSL implementation of terrainFoliage.fx
 //
-// Key features from original:
-// - Blade geometry fetched from position/normal textures
-// - Random rotation per blade using deterministic hash
-// - Random height scaling (0.25-1.0)
-// - Terrain height sampling for blade base position
-// - Distance-based alpha fade (400-500 units)
+// Renders grass/foliage blades as instanced geometry that conforms to terrain.
+// Each blade is fetched from a geometry texture, randomly rotated and scaled,
+// then positioned on the terrain surface.
+//
+// Lighting pipeline (matching original):
+// - Directional diffuse (clamped by backside shadow scalar)
+// - SH ambient fill lighting (2nd-order spherical harmonics)
 // - Two-sided lighting (normal flipped toward camera)
+// - Fog (radial + planar)
+// - Distance-based alpha fade
 
-// Camera uniform (shared with terrain shader - just view_proj matrix)
 struct CameraUniform {
     view_proj: mat4x4<f32>,
 };
@@ -26,6 +33,24 @@ struct FoliageParams {
     // Camera position for distance fade and two-sided lighting
     camera_pos: vec3<f32>,
     time: f32,
+    // Directional light
+    dir_light_vec: vec3<f32>,
+    backside_shadow_scalar: f32,
+    dir_light_color: vec3<f32>,
+    _pad2: f32,
+    // Fog
+    fog_params: vec4<f32>,       // x = density^2, y = start^2, z/w unused
+    fog_color: vec4<f32>,
+    planar_fog_params: vec4<f32>, // x = enabled, y = start_y, z = density^2
+    planar_fog_color: vec4<f32>,
+    // SH fill lighting coefficients
+    sh_fill_ar: vec4<f32>,
+    sh_fill_ag: vec4<f32>,
+    sh_fill_ab: vec4<f32>,
+    sh_fill_br: vec4<f32>,
+    sh_fill_bg: vec4<f32>,
+    sh_fill_bb: vec4<f32>,
+    sh_fill_c: vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -69,8 +94,8 @@ struct VertexInput {
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) uv: vec2<f32>,
-    @location(1) world_pos: vec3<f32>,
-    @location(2) normal: vec3<f32>,
+    @location(1) diffuse_sum: vec3<f32>,
+    @location(2) fog_densities: vec2<f32>,  // x = radial, y = planar
     @location(3) alpha_fade: f32,
 };
 
@@ -180,69 +205,68 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     pos.y += terrain_height;
     pos.z += world_z;
 
-    // Transform to clip space
-    out.clip_position = camera.view_proj * vec4<f32>(pos, 1.0);
-    out.world_pos = pos;
-    out.uv = blade_uv;
-
     // Flip normal toward camera for two-sided lighting
     let to_camera = normalize(params.camera_pos - pos);
     if (dot(to_camera, normal) < 0.0) {
         normal = -normal;
     }
-    out.normal = normal;
+
+    // Directional diffuse lighting (diffuse only, no specular for foliage)
+    let n_dot_l = max(dot(normal, params.dir_light_vec), 0.0);
+    var diffuse_sum = params.dir_light_color * n_dot_l;
+
+    // Clamp by backside shadow scalar (prevents fully black backfaces)
+    diffuse_sum = clamp(diffuse_sum, vec3<f32>(1.0 - params.backside_shadow_scalar), vec3<f32>(1.0));
+
+    // SH ambient fill lighting
+    let ambient_sum = compute_sh_fill_lighting(
+        normal,
+        params.sh_fill_ar, params.sh_fill_ag, params.sh_fill_ab,
+        params.sh_fill_br, params.sh_fill_bg, params.sh_fill_bb,
+        params.sh_fill_c,
+    );
+    diffuse_sum += ambient_sum;
+
+    // Fog densities
+    let z_fog = compute_radial_fog_density(pos, params.camera_pos, params.fog_params.x, params.fog_params.y);
+    var p_fog = 1.0;
+    if (params.planar_fog_params.x > 0.5) {
+        p_fog = compute_planar_fog_density(pos.y, params.planar_fog_params.y, params.planar_fog_params.z);
+    }
 
     // Distance-based alpha fade
     let dist_to_camera = length(params.camera_pos - pos);
     let fade_start = params.foliage_info.z;
     let fade_end = params.foliage_info.w;
-    out.alpha_fade = 1.0 - clamp((dist_to_camera - fade_start) / (fade_end - fade_start), 0.0, 1.0);
+    let alpha_fade = 1.0 - clamp((dist_to_camera - fade_start) / (fade_end - fade_start), 0.0, 1.0);
+
+    // Output
+    out.clip_position = camera.view_proj * vec4<f32>(pos, 1.0);
+    out.uv = blade_uv;
+    out.diffuse_sum = diffuse_sum;
+    out.fog_densities = vec2<f32>(z_fog, p_fog);
+    out.alpha_fade = alpha_fade;
 
     return out;
 }
 
-// Debug mode: 0 = normal, 1 = bright green, 2 = UV colors, 3 = height as color
-const DEBUG_MODE: i32 = 3;
-
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // DEBUG: Return bright green to verify rendering
-    if (DEBUG_MODE == 1) {
-        return vec4<f32>(0.0, 1.0, 0.0, 1.0);
-    }
-
-    // Debug: show UV coordinates as color
-    if (DEBUG_MODE == 2) {
-        return vec4<f32>(in.uv.x, in.uv.y, 0.0, 1.0);
-    }
-
-    // Debug: show world Y position as color (normalized to 0-500 range)
-    if (DEBUG_MODE == 3) {
-        let h = clamp(in.world_pos.y / 500.0, 0.0, 1.0);
-        return vec4<f32>(h, 1.0 - h, 0.0, 1.0);
-    }
-
     // Sample textures
     let albedo = textureSample(t_albedo, s_foliage, in.uv);
     let opacity = textureSample(t_opacity, s_foliage, in.uv).r;
 
-    // Discard fully transparent pixels
+    // Alpha test
     let final_alpha = opacity * in.alpha_fade;
     if (final_alpha < 0.1) {
         discard;
     }
 
-    // Simple diffuse lighting
-    let light_dir = normalize(vec3<f32>(0.5, 1.0, 0.3));
-    let normal = normalize(in.normal);
-    let n_dot_l = max(dot(normal, light_dir), 0.0);
+    // Apply lighting
+    var result = in.diffuse_sum * albedo.rgb;
 
-    // Ambient + diffuse
-    let ambient = 0.4;
-    let diffuse = n_dot_l * 0.6;
-    let lighting = ambient + diffuse;
-
-    let result = albedo.rgb * lighting;
+    // Apply fog
+    result = compute_fog(result, in.fog_densities.x, in.fog_densities.y, params.fog_color.xyz, params.planar_fog_color.xyz);
 
     return vec4<f32>(result, final_alpha);
 }
