@@ -2017,12 +2017,56 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
-                    // binding 16: Lighting params uniform (SH, directional, fog)
+                    // binding 16: Lighting params uniform (SH, directional, fog, shadow, blackmap, local lights)
                     wgpu::BindGroupLayoutEntry {
                         binding: 16,
                         visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 17: Shadow map texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 17,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // binding 18: Blackmap visibility texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 18,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // binding 19: Blackmap unexplored mask texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 19,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // binding 20: Local lights storage buffer
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 20,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
                             min_binding_size: None,
                         },
@@ -2131,6 +2175,44 @@ impl TerrainViewer {
     ) {
         use wgpu::util::DeviceExt;
 
+        // Create placeholder textures for shadow/blackmap (1x1, disabled by default)
+        let placeholder_texture = |label: &str, data: &[u8; 4]| -> wgpu::TextureView {
+            let tex = device.create_texture_with_data(
+                queue,
+                &wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                },
+                wgpu::util::TextureDataOrder::LayerMajor,
+                data,
+            );
+            tex.create_view(&wgpu::TextureViewDescriptor::default())
+        };
+
+        // Shadow map: white (depth=1.0 = no shadow, fully lit)
+        let shadow_map_view = placeholder_texture("Placeholder Shadow Map", &[255, 255, 255, 255]);
+        // Blackmap: alpha=0 means fully visible (no fog-of-war)
+        let blackmap_view = placeholder_texture("Placeholder Blackmap", &[0, 0, 0, 0]);
+        // Unexplored: black with alpha=0 (no unexplored overlay)
+        let unexplored_view = placeholder_texture("Placeholder Unexplored", &[0, 0, 0, 0]);
+
+        // Empty local lights buffer (minimum 16 bytes for storage buffer)
+        let local_lights_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Local Lights Buffer"),
+            contents: &[0u8; 64], // 4 vec4s minimum (1 dummy light slot)
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+
         let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("GPU Tess Texture Bind Group"),
             layout: &texture_bind_group_layout,
@@ -2204,6 +2286,22 @@ impl TerrainViewer {
                 wgpu::BindGroupEntry {
                     binding: 16,
                     resource: lighting_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 17,
+                    resource: wgpu::BindingResource::TextureView(&shadow_map_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 18,
+                    resource: wgpu::BindingResource::TextureView(&blackmap_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 19,
+                    resource: wgpu::BindingResource::TextureView(&unexplored_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 20,
+                    resource: local_lights_buffer.as_entire_binding(),
                 },
             ],
         });

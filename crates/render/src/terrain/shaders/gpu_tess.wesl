@@ -4,6 +4,9 @@ import package::shared::fog::compute_fog;
 import package::shared::fog::compute_planar_fog_density;
 import package::shared::normal::compute_tbn;
 import package::shared::specular::compute_blinn_phong_specular;
+import package::shared::shadows::vsm_shadow;
+import package::shared::blackmap::apply_blackmap;
+import package::shared::local_lights::evaluate_omni_specular;
 
 // GPU tessellation shader - aligned with original Halo Wars gpuTerrainXbox.fx
 //
@@ -122,9 +125,37 @@ struct LightingParams {
     planar_fog_color: vec4<f32>,    // rgb = planar fog color
     planar_fog_params: vec4<f32>,   // x = enabled, y = start, z = density2
     ao_params: vec4<f32>,           // x = ao_diffuse_intensity
+    // Shadow params
+    shadow_vp_col0: vec4<f32>,      // Shadow view-proj matrix column 0
+    shadow_vp_col1: vec4<f32>,      // column 1
+    shadow_vp_col2: vec4<f32>,      // column 2
+    shadow_vp_col3: vec4<f32>,      // column 3
+    shadow_params: vec4<f32>,       // x = csm_scale, y = num_passes, z = enabled
+    // Blackmap params
+    blackmap_params0: vec4<f32>,    // rgb = bg_color, w = fog_scalar
+    blackmap_params1: vec4<f32>,    // x = unexplored_scalar, yz = bounds_lo_xz, w = enabled
+    blackmap_params2: vec4<f32>,    // x = pad, yz = bounds_hi_xz, w = bounds_falloff
+    // Local light params
+    local_light_params: vec4<f32>,  // x = num_lights, y = spec_power
 };
 @group(1) @binding(16)
 var<uniform> lighting: LightingParams;
+
+// Shadow map texture (depth values from light's perspective)
+@group(1) @binding(17)
+var t_shadow_map: texture_2d<f32>;
+
+// Blackmap visibility texture (alpha = visibility factor)
+@group(1) @binding(18)
+var t_blackmap: texture_2d<f32>;
+
+// Blackmap unexplored mask texture
+@group(1) @binding(19)
+var t_unexplored: texture_2d<f32>;
+
+// Local lights storage buffer (8 vec4s per light, up to 20 lights)
+@group(1) @binding(20)
+var<storage, read> local_lights: array<vec4<f32>>;
 
 struct VertexInput {
     // Per-vertex: local UV within patch [0, 1]
@@ -366,20 +397,78 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Directional light
     let light_dir = normalize(lighting.dir_light_vec.xyz);
     let n_dot_l = max(dot(world_normal, light_dir), 0.0);
-    let dir_diffuse = lighting.dir_light_color.rgb * n_dot_l;
+    var dir_diffuse = lighting.dir_light_color.rgb * n_dot_l;
+
+    // === Directional shadow (VSM) ===
+    var shadow_factor = 1.0;
+    if (lighting.shadow_params.z > 0.5) {
+        // Transform world position to shadow space
+        let shadow_vp = mat4x4<f32>(
+            lighting.shadow_vp_col0,
+            lighting.shadow_vp_col1,
+            lighting.shadow_vp_col2,
+            lighting.shadow_vp_col3,
+        );
+        let shadow_pos = shadow_vp * vec4<f32>(in.world_pos, 1.0);
+        let shadow_ndc = shadow_pos.xyz / shadow_pos.w;
+        let shadow_uv = vec2<f32>(shadow_ndc.x * 0.5 + 0.5, shadow_ndc.y * -0.5 + 0.5);
+        let shadow_z = clamp(shadow_ndc.z, 0.0, 1.0);
+
+        shadow_factor = vsm_shadow(shadow_uv, shadow_z, lighting.dir_light_color.a, t_shadow_map, s_terrain);
+    }
+    dir_diffuse *= shadow_factor;
 
     // Specular (Blinn-Phong, matching heightfield/roads shaders)
     let view_dir = normalize(lighting.world_camera_pos.xyz - in.world_pos);
     let spec_power = 16.0; // Default terrain specular power
     let spec_intensity = compute_blinn_phong_specular(world_normal, light_dir, view_dir, spec_power);
-    let spec_sum = lighting.dir_light_color.rgb * spec_intensity;
+    let dir_spec = lighting.dir_light_color.rgb * spec_intensity * shadow_factor;
 
-    // Combine: (ambient * ao + directional) * albedo + specular
-    // Original: result = (diffuseSum + ambientSum * ao) * albedo + specSum * specMap * PI
+    // === Local/point lights ===
+    var local_diffuse = vec3<f32>(0.0);
+    var local_spec = 0.0;
+    let num_lights = u32(lighting.local_light_params.x);
+    let local_spec_power = lighting.local_light_params.y;
+    let world_reflect = reflect(-view_dir, world_normal);
+
+    for (var i = 0u; i < num_lights && i < 20u; i++) {
+        let base = i * 8u;
+        let light_pos = local_lights[base].xyz;
+        let omni_mul = local_lights[base].w;
+        let light_color = local_lights[base + 1u].xyz;
+        let omni_add = local_lights[base + 1u].w;
+        let decay_dist = local_lights[base + 2u].x;
+        let spec_int = local_lights[base + 3u].w;
+
+        let result = evaluate_omni_specular(
+            light_pos, light_color, omni_mul, omni_add, decay_dist, spec_int,
+            in.world_pos, world_normal, world_reflect, local_spec_power,
+        );
+        local_diffuse += result.xyz;
+        local_spec += result.w;
+    }
+
+    // Combine: (ambient * ao + directional + local) * albedo + specular
     let ambient_sum = sh_ambient * ao_factor;
-    var lit_color = (ambient_sum + dir_diffuse) * color;
-    // Terrain uses AO as a specular mask (no separate spec map)
-    lit_color += spec_sum * ao_factor * 0.15; // Subtle terrain specular
+    var lit_color = (ambient_sum + dir_diffuse + local_diffuse) * color;
+    // Specular: directional + local (terrain uses AO as specular mask)
+    lit_color += (dir_spec * 0.15 + local_spec) * ao_factor;
+
+    // === Blackmap (fog-of-war) ===
+    if (lighting.blackmap_params1.w > 0.5) {
+        let blackmap_uv = sample_uv; // Use terrain UV for blackmap lookup
+        let vis_factor = textureSample(t_blackmap, s_terrain, blackmap_uv).a;
+        let unexplored_sample = textureSample(t_unexplored, s_terrain, blackmap_uv);
+        lit_color = apply_blackmap(
+            lit_color, in.world_pos, vis_factor, unexplored_sample,
+            lighting.blackmap_params0.xyz,  // bg_color
+            lighting.blackmap_params0.w,    // fog_scalar
+            lighting.blackmap_params1.x,    // unexplored_scalar
+            lighting.blackmap_params1.yz,   // bounds_lo
+            lighting.blackmap_params2.yz,   // bounds_hi
+            lighting.blackmap_params2.w,    // bounds_falloff
+        );
+    }
 
     // Apply fog (interpolated from vertex shader)
     let final_color = compute_fog(lit_color, in.fog_densities.x, in.fog_densities.y, lighting.fog_color.xyz, lighting.planar_fog_color.xyz);

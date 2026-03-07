@@ -109,7 +109,8 @@ unsafe impl bytemuck::Zeroable for CameraUniform {}
 
 /// Lighting parameters for terrain shaders.
 ///
-/// Contains directional light, SH fill lighting, fog, and AO parameters.
+/// Contains directional light, SH fill lighting, fog, AO, shadow,
+/// blackmap, and local light parameters.
 /// Matches the original Halo Wars cbShared lighting fields.
 /// Must match the LightingParams struct in WGSL shaders.
 #[repr(C)]
@@ -145,6 +146,30 @@ pub struct LightingParams {
     pub planar_fog_params: [f32; 4],
     /// AO params [ao_diffuse_intensity, pad, pad, pad].
     pub ao_params: [f32; 4],
+
+    // --- Shadow params ---
+    /// Shadow view-projection matrix column 0.
+    pub shadow_vp_col0: [f32; 4],
+    /// Shadow view-projection matrix column 1.
+    pub shadow_vp_col1: [f32; 4],
+    /// Shadow view-projection matrix column 2.
+    pub shadow_vp_col2: [f32; 4],
+    /// Shadow view-projection matrix column 3.
+    pub shadow_vp_col3: [f32; 4],
+    /// Shadow params [csm_scale, num_passes, enabled, pad].
+    pub shadow_params: [f32; 4],
+
+    // --- Blackmap params ---
+    /// Blackmap params0 [bg_r, bg_g, bg_b, fog_scalar].
+    pub blackmap_params0: [f32; 4],
+    /// Blackmap params1 [unexplored_scalar, bounds_lo_x, bounds_lo_z, enabled].
+    pub blackmap_params1: [f32; 4],
+    /// Blackmap params2 [pad, bounds_hi_x, bounds_hi_z, bounds_falloff].
+    pub blackmap_params2: [f32; 4],
+
+    // --- Local light params ---
+    /// Local light params [num_lights, spec_power, pad, pad].
+    pub local_light_params: [f32; 4],
 }
 
 impl Default for LightingParams {
@@ -168,6 +193,21 @@ impl Default for LightingParams {
             planar_fog_color: [0.7, 0.8, 0.9, 0.0],
             planar_fog_params: [0.0, 0.0, 0.0, 0.0], // disabled
             ao_params: [0.8, 0.0, 0.0, 0.0],         // ao_diffuse_intensity = 0.8
+
+            // Shadow: identity VP matrix, disabled by default
+            shadow_vp_col0: [1.0, 0.0, 0.0, 0.0],
+            shadow_vp_col1: [0.0, 1.0, 0.0, 0.0],
+            shadow_vp_col2: [0.0, 0.0, 1.0, 0.0],
+            shadow_vp_col3: [0.0, 0.0, 0.0, 1.0],
+            shadow_params: [1.0, 1.0, 0.0, 0.0], // csm_scale=1, num_passes=1, enabled=0
+
+            // Blackmap: disabled by default
+            blackmap_params0: [0.0, 0.0, 0.0, 0.5], // bg=black, fog_scalar=0.5
+            blackmap_params1: [0.2, 0.0, 0.0, 0.0], // unexplored=0.2, bounds_lo=(0,0), disabled
+            blackmap_params2: [0.0, 1024.0, 1024.0, 0.01], // bounds_hi=(1024,1024), falloff=0.01
+
+            // Local lights: none by default
+            local_light_params: [0.0, 16.0, 0.0, 0.0], // 0 lights, spec_power=16
         }
     }
 }
