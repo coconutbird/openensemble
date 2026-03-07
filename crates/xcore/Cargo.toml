@@ -9,4 +9,3 @@ thiserror = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
 egui = { workspace = true }
-

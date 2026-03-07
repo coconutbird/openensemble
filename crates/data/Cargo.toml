@@ -20,4 +20,3 @@ ddx = { path = "../../../ensemble-rs/crates/ddx" }
 glam.workspace = true
 
 [dev-dependencies]
-

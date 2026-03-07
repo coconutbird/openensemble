@@ -7,7 +7,9 @@ use data::assets::AssetSource;
 use data::xtd::{TessellationData, XtdFile, XtdReader};
 use data::xtt::{ActiveTextureInfo, XttFile, XttReader};
 use glam::Vec3;
-use render::terrain::{Camera, CompositorResources, LodConfig, TerrainParams, TessellationMode};
+use render::terrain::{
+    Camera, CompositorResources, LightingParams, LodConfig, TerrainParams, TessellationMode,
+};
 use render::{Application3D, RenderContext, wgpu};
 use xcore::app::{Application, FrameContext, Input, KeyCode};
 use xcore::prelude::*;
@@ -1222,6 +1224,21 @@ impl Application3D for TerrainViewer {
         };
         ctx.queue
             .write_buffer(&gpu.params_buffer, 0, bytemuck::bytes_of(&params));
+
+        // Update lighting params (camera position for fog calculations)
+        if let Some(ref lighting_buffer) = gpu.lighting_buffer {
+            let lighting_params = LightingParams {
+                world_camera_pos: [
+                    self.camera.position.x,
+                    self.camera.position.y,
+                    self.camera.position.z,
+                    0.0,
+                ],
+                ..Default::default()
+            };
+            ctx.queue
+                .write_buffer(lighting_buffer, 0, bytemuck::bytes_of(&lighting_params));
+        }
 
         // Update foliage camera position
         if let Some(foliage) = &self.foliage_resources {

@@ -98,7 +98,7 @@ pub struct Command {
     pub sender_type: EntityType,
     /// Entity IDs of senders (player IDs for EntityType::Player).
     pub senders: Vec<i32>,
-    /// Type of entities receiving this command.  
+    /// Type of entities receiving this command.
     pub recipient_type: EntityType,
     /// Entity IDs of recipients.
     pub recipients: Vec<EntityId>,

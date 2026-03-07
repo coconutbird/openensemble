@@ -10,7 +10,7 @@ use glam::Vec3;
 ///
 /// Based on BEntity fields from entity.h:
 /// - mPosition (BVector) - 16 bytes
-/// - mForward (BVector) - 16 bytes  
+/// - mForward (BVector) - 16 bytes
 /// - mVelocity (BVector) - 16 bytes
 /// - mID (BEntityID) - 4 bytes
 /// - mPlayerID (BPlayerID) - 4 bytes

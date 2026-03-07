@@ -13,4 +13,3 @@ quick-xml = { workspace = true }
 data = { path = "../data" }
 
 [dev-dependencies]
-

@@ -105,14 +105,16 @@ mod tests {
         let squad_id = world.create_squad(1);
 
         // Create a move command
-        let mut work_cmd = WorkCommand::default();
-        work_cmd.base = Command {
-            id: OrderType::Move as i32,
-            player_id: 1,
-            recipients: vec![squad_id],
+        let work_cmd = WorkCommand {
+            base: Command {
+                id: OrderType::Move as i32,
+                player_id: 1,
+                recipients: vec![squad_id],
+                ..Default::default()
+            },
+            terrain_point: Some(Vec3::new(100.0, 0.0, 50.0)),
             ..Default::default()
         };
-        work_cmd.terrain_point = Some(Vec3::new(100.0, 0.0, 50.0));
 
         let entry = CommandEntry {
             command: QueuedCommand::Work(work_cmd),

@@ -90,6 +90,7 @@ pub struct GpuResources {
     pub depth_texture: wgpu::Texture,
     pub depth_view: wgpu::TextureView,
     pub params_buffer: wgpu::Buffer,
+    pub lighting_buffer: Option<wgpu::Buffer>,
     pub terrain_size: [f32; 2],
     pub tile_scale: f32,
     /// GPU tessellation mode - use instanced patch rendering.

@@ -6,8 +6,8 @@
 use anyhow::Result;
 use glam::Vec3;
 use render::terrain::{
-    CompositingConfig, CompositorResources, GPU_TESS_SHADER, GpuTessParams, TERRAIN_SHADER,
-    TerrainParams, generate_mipmaps, mip_level_count,
+    CompositingConfig, CompositorResources, GPU_TESS_SHADER, GpuTessParams, LightingParams,
+    TERRAIN_SHADER, TerrainParams, generate_mipmaps, mip_level_count,
 };
 use render::wgpu;
 
@@ -1370,6 +1370,7 @@ impl TerrainViewer {
             depth_texture,
             depth_view,
             params_buffer,
+            lighting_buffer: None,
             terrain_size: [terrain_size.x, terrain_size.z],
             tile_scale,
             use_gpu_tessellation: false,
@@ -2016,6 +2017,17 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
+                    // binding 16: Lighting params uniform (SH, directional, fog)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 16,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -2035,6 +2047,14 @@ impl TerrainViewer {
 
         // Calculate chunk centers for LOD calculations
         self.calculate_chunk_centers();
+
+        // Create lighting params buffer
+        let lighting_params = LightingParams::default();
+        let lighting_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Lighting Params Buffer"),
+            contents: bytemuck::bytes_of(&lighting_params),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
 
         // Continue with bind group and pipeline creation
         self.create_gpu_tessellation_resources_part3(
@@ -2069,6 +2089,7 @@ impl TerrainViewer {
             terrain_size,
             texture_bind_group_layout,
             texture_scales_buffer,
+            lighting_buffer,
         );
     }
 
@@ -2106,6 +2127,7 @@ impl TerrainViewer {
         terrain_size: Vec3,
         texture_bind_group_layout: wgpu::BindGroupLayout,
         texture_scales_buffer: wgpu::Buffer,
+        lighting_buffer: wgpu::Buffer,
     ) {
         use wgpu::util::DeviceExt;
 
@@ -2178,6 +2200,10 @@ impl TerrainViewer {
                     resource: wgpu::BindingResource::TextureView(
                         self.compositor.as_ref().unwrap().albedo_atlas_view(),
                     ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 16,
+                    resource: lighting_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -2286,6 +2312,7 @@ impl TerrainViewer {
             depth_texture,
             depth_view,
             params_buffer,
+            lighting_buffer: Some(lighting_buffer),
             terrain_size: [terrain_size.x, terrain_size.z],
             tile_scale: raw_data.tile_scale,
             use_gpu_tessellation: true,

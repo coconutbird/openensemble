@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn test_generate_mipmaps() {
         // 4x4 solid red image
-        let pixels = vec![255u8, 0, 0, 255].repeat(16);
+        let pixels = [255u8, 0, 0, 255].repeat(16);
         let mips = generate_mipmaps(&pixels, 4, 4);
 
         assert_eq!(mips.len(), 3); // 4x4, 2x2, 1x1

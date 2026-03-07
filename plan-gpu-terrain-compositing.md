@@ -62,7 +62,7 @@ Replace the current per-pixel texture splatting (done every frame in the fragmen
 1. **Load Time**: Parse XTT, extract chunk layer IDs + alpha maps
 2. **GPU Init**: Create composited texture atlas as render target
 3. **First Frame**: Composite all 256 chunks (or visible chunks)
-4. **Runtime**: 
+4. **Runtime**:
    - Check camera distance → determine LOD per chunk
    - If LOD changed → re-composite chunk at new resolution
    - Terrain render pass samples composited atlas
@@ -83,7 +83,7 @@ pub struct CompositingConfig {
     pub chunk_texture_size: u32,
     /// Number of chunks in X direction (typically 16)
     pub chunks_x: u32,
-    /// Number of chunks in Z direction (typically 16)  
+    /// Number of chunks in Z direction (typically 16)
     pub chunks_z: u32,
     /// Atlas width (chunks_x * chunk_texture_size)
     pub atlas_width: u32,
@@ -135,7 +135,7 @@ var<uniform> params: CompositeParams;
 var t_terrain_array: texture_2d_array<f32>;
 
 // Alpha atlas
-@group(0) @binding(2)  
+@group(0) @binding(2)
 var t_alpha_atlas: texture_2d<f32>;
 
 // Per-chunk layer data
@@ -163,7 +163,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
         vec2<f32>(3.0, -1.0),
         vec2<f32>(-1.0, 3.0)
     );
-    
+
     var out: VertexOutput;
     out.position = vec4<f32>(positions[vertex_index], 0.0, 1.0);
     out.uv = (positions[vertex_index] + 1.0) * 0.5;
@@ -174,30 +174,30 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let chunk_idx = params.chunk_index;
     let in_chunk_uv = in.uv;
-    
+
     // Get layer indices
     let layer_base = chunk_idx * 8u;
     let layer0 = chunk_layers[layer_base];
     let layer1 = chunk_layers[layer_base + 1u];
     let layer2 = chunk_layers[layer_base + 2u];
     let layer3 = chunk_layers[layer_base + 3u];
-    
+
     // Sample alpha (UV within chunk maps to alpha atlas region)
     let chunk_x = chunk_idx % 16u;
     let chunk_y = chunk_idx / 16u;
     let alpha_uv = (vec2<f32>(f32(chunk_x), f32(chunk_y)) + in_chunk_uv) / 16.0;
     let alphas = textureSample(t_alpha_atlas, s_terrain, alpha_uv);
-    
+
     // Calculate tiled UVs for each layer
     let base_uv = (vec2<f32>(f32(chunk_x), f32(chunk_y)) + in_chunk_uv);
     let uv0 = base_uv * texture_scales[layer0];
     let uv1 = base_uv * texture_scales[layer1];
     let uv2 = base_uv * texture_scales[layer2];
     let uv3 = base_uv * texture_scales[layer3];
-    
+
     // Blend layers
     var color = textureSample(t_terrain_array, s_terrain, uv0, layer0).rgb;
-    
+
     if (layer1 > 0u && alphas.r > 0.0) {
         let c1 = textureSample(t_terrain_array, s_terrain, uv1, layer1).rgb;
         color = mix(color, c1, alphas.r);
@@ -210,7 +210,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let c3 = textureSample(t_terrain_array, s_terrain, uv3, layer3).rgb;
         color = mix(color, c3, alphas.b);
     }
-    
+
     return vec4<f32>(color, 1.0);
 }
 ```
@@ -232,26 +232,26 @@ pub struct CompositorResources {
     /// Composited albedo atlas (render target)
     pub albedo_atlas: wgpu::Texture,
     pub albedo_atlas_view: wgpu::TextureView,
-    
+
     /// Composited normal atlas (render target)
     pub normal_atlas: wgpu::Texture,
     pub normal_atlas_view: wgpu::TextureView,
-    
+
     /// Compositing render pipeline
     pub pipeline: wgpu::RenderPipeline,
-    
+
     /// Bind group for compositing shader
     pub bind_group: wgpu::BindGroup,
-    
+
     /// Per-chunk params buffer (updated for each chunk composite)
     pub params_buffer: wgpu::Buffer,
-    
+
     /// Configuration
     pub config: CompositingConfig,
-    
+
     /// Dirty flags per chunk (needs re-composite)
     pub dirty_chunks: Vec<bool>,
-    
+
     /// Current LOD level per chunk (0 = highest detail)
     pub chunk_lod: Vec<u8>,
 }
@@ -282,23 +282,23 @@ impl CompositorResources {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT 
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                  | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        
+
         // ... similar for normal_atlas with Rgba8Unorm (linear data)
-        
+
         // Create compositing pipeline
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Composite Shader"),
             source: wgpu::ShaderSource::Wgsl(COMPOSITE_SHADER.into()),
         });
-        
+
         // ... bind group layout, pipeline creation
-        
+
         let total_chunks = (config.chunks_x * config.chunks_z) as usize;
-        
+
         Self {
             albedo_atlas,
             albedo_atlas_view: albedo_atlas.create_view(&Default::default()),
@@ -331,21 +331,21 @@ impl CompositorResources {
     ) {
         let chunk_x = chunk_index % self.config.chunks_x;
         let chunk_z = chunk_index / self.config.chunks_x;
-        
+
         // Calculate viewport for this chunk within the atlas
         let chunk_size = self.config.chunk_texture_size;
         let viewport_x = chunk_x * chunk_size;
         let viewport_z = chunk_z * chunk_size;
-        
+
         // Update params buffer with chunk index
         // encoder.copy_buffer_to_buffer(...) or queue.write_buffer()
-        
+
         // Create render pass targeting the chunk region
         let chunk_view = self.albedo_atlas.create_view(&wgpu::TextureViewDescriptor {
             // Use base_mip_level and mip_level_count for single slice
             ..Default::default()
         });
-        
+
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Composite Chunk Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -359,7 +359,7 @@ impl CompositorResources {
             depth_stencil_attachment: None,
             ..Default::default()
         });
-        
+
         render_pass.set_viewport(
             viewport_x as f32, viewport_z as f32,
             chunk_size as f32, chunk_size as f32,
@@ -369,7 +369,7 @@ impl CompositorResources {
         render_pass.set_bind_group(0, &self.bind_group, &[]);
         render_pass.draw(0..3, 0..1); // Fullscreen triangle
     }
-    
+
     /// Composite all dirty chunks.
     pub fn composite_dirty_chunks(&mut self, encoder: &mut wgpu::CommandEncoder) {
         for chunk_idx in 0..(self.config.chunks_x * self.config.chunks_z) {
@@ -395,12 +395,12 @@ Modify `src/bin/terrain_viewer.rs`:
 // In Application3D::render_3d():
 fn render_3d(&mut self, ctx: &mut RenderContext) {
     // ... existing setup ...
-    
+
     // Composite dirty chunks (typically only on first frame or LOD change)
     if let Some(compositor) = &mut self.compositor {
         compositor.composite_dirty_chunks(ctx.encoder);
     }
-    
+
     // Render terrain using composited atlas
     // ... existing terrain render pass ...
 }
@@ -418,7 +418,7 @@ pub struct LodConfig {
     /// Distance thresholds for each LOD level (in world units)
     /// LOD 0 = closest (highest detail), LOD 3 = farthest (lowest detail)
     pub distance_thresholds: [f32; 4],
-    
+
     /// Texture size multiplier for each LOD level
     /// LOD 0 = 1.0 (512), LOD 1 = 0.5 (256), LOD 2 = 0.25 (128), LOD 3 = 0.125 (64)
     pub size_multipliers: [f32; 4],
@@ -441,29 +441,29 @@ impl CompositorResources {
     /// Calculate LOD level for each chunk based on camera distance.
     /// Returns true if any chunk's LOD changed (needs re-composite).
     pub fn update_lod(
-        &mut self, 
+        &mut self,
         camera_pos: Vec3,
         chunk_centers: &[[f32; 3]; 256], // Pre-calculated chunk centers
         lod_config: &LodConfig,
     ) -> bool {
         let mut any_changed = false;
-        
+
         for chunk_idx in 0..256 {
             let chunk_center = Vec3::from(chunk_centers[chunk_idx]);
             let distance = (camera_pos - chunk_center).length();
-            
+
             let new_lod = lod_config.distance_thresholds
                 .iter()
                 .position(|&threshold| distance < threshold)
                 .unwrap_or(3) as u8;
-            
+
             if self.chunk_lod[chunk_idx] != new_lod {
                 self.chunk_lod[chunk_idx] = new_lod;
                 self.dirty_chunks[chunk_idx] = true;
                 any_changed = true;
             }
         }
-        
+
         any_changed
     }
 }
@@ -514,16 +514,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Simple UV-based sampling - no per-pixel splatting!
     let albedo = textureSample(t_composited_albedo, s_terrain, in.uv).rgb;
     let normal_sample = textureSample(t_composited_normal, s_terrain, in.uv).rg;
-    
+
     // Reconstruct normal from RG
     let tangent_normal = vec3<f32>(
         normal_sample.r * 2.0 - 1.0,
         normal_sample.g * 2.0 - 1.0,
         sqrt(max(0.0, 1.0 - dot(normal_sample, normal_sample)))
     );
-    
+
     // ... TBN, lighting ...
-    
+
     return vec4<f32>(albedo * lighting, 1.0);
 }
 ```

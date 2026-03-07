@@ -3,7 +3,7 @@
 //! These structures must match the WGSL shader definitions exactly.
 //! Be careful with alignment - WGSL has strict rules:
 //! - vec2<f32> = 8 byte alignment
-//! - vec3<f32> = 16 byte alignment  
+//! - vec3<f32> = 16 byte alignment
 //! - vec4<f32> = 16 byte alignment
 //! - Struct total size must be multiple of largest member alignment
 
@@ -106,3 +106,72 @@ impl Default for CameraUniform {
 // SAFETY: CameraUniform is repr(C) with all f32 fields
 unsafe impl bytemuck::Pod for CameraUniform {}
 unsafe impl bytemuck::Zeroable for CameraUniform {}
+
+/// Lighting parameters for terrain shaders.
+///
+/// Contains directional light, SH fill lighting, fog, and AO parameters.
+/// Matches the original Halo Wars cbShared lighting fields.
+/// Must match the LightingParams struct in WGSL shaders.
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct LightingParams {
+    /// Direction TO light in world space [x, y, z, enabled].
+    pub dir_light_vec: [f32; 4],
+    /// Directional light color [r, g, b, shadow_darkness].
+    pub dir_light_color: [f32; 4],
+    /// Camera world position [x, y, z, pad].
+    pub world_camera_pos: [f32; 4],
+    /// SH fill lighting coefficients (linear R).
+    pub sh_fill_ar: [f32; 4],
+    /// SH fill lighting coefficients (linear G).
+    pub sh_fill_ag: [f32; 4],
+    /// SH fill lighting coefficients (linear B).
+    pub sh_fill_ab: [f32; 4],
+    /// SH fill lighting coefficients (quadratic R).
+    pub sh_fill_br: [f32; 4],
+    /// SH fill lighting coefficients (quadratic G).
+    pub sh_fill_bg: [f32; 4],
+    /// SH fill lighting coefficients (quadratic B).
+    pub sh_fill_bb: [f32; 4],
+    /// SH fill lighting coefficients (final quadratic).
+    pub sh_fill_c: [f32; 4],
+    /// Fog color [r, g, b, pad].
+    pub fog_color: [f32; 4],
+    /// Fog params [density2, start2, pad, pad].
+    pub fog_params: [f32; 4],
+    /// Planar fog color [r, g, b, pad].
+    pub planar_fog_color: [f32; 4],
+    /// Planar fog params [enabled, start, density2, pad].
+    pub planar_fog_params: [f32; 4],
+    /// AO params [ao_diffuse_intensity, pad, pad, pad].
+    pub ao_params: [f32; 4],
+}
+
+impl Default for LightingParams {
+    fn default() -> Self {
+        // Default: warm directional light from above-right, gentle SH ambient
+        let light_dir = [0.4, 0.8, 0.3, 1.0]; // normalized later in shader
+        Self {
+            dir_light_vec: light_dir,
+            dir_light_color: [1.0, 0.95, 0.85, 0.3], // warm white, shadow_darkness=0.3
+            world_camera_pos: [512.0, 200.0, 512.0, 0.0],
+            // Default SH: simple hemisphere (sky blue above, ground brown below)
+            sh_fill_ar: [0.15, 0.0, 0.0, 0.3],
+            sh_fill_ag: [0.15, 0.0, 0.0, 0.35],
+            sh_fill_ab: [0.15, 0.0, 0.0, 0.45],
+            sh_fill_br: [0.0; 4],
+            sh_fill_bg: [0.0; 4],
+            sh_fill_bb: [0.0; 4],
+            sh_fill_c: [0.0; 4],
+            fog_color: [0.7, 0.8, 0.9, 0.0],
+            fog_params: [0.0, 10000.0, 0.0, 0.0], // very distant fog (effectively disabled)
+            planar_fog_color: [0.7, 0.8, 0.9, 0.0],
+            planar_fog_params: [0.0, 0.0, 0.0, 0.0], // disabled
+            ao_params: [0.8, 0.0, 0.0, 0.0],         // ao_diffuse_intensity = 0.8
+        }
+    }
+}
+
+// SAFETY: LightingParams is repr(C) with all f32 fields
+unsafe impl bytemuck::Pod for LightingParams {}
+unsafe impl bytemuck::Zeroable for LightingParams {}

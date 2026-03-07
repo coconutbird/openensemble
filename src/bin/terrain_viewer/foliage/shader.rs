@@ -114,16 +114,16 @@ fn get_terrain_height(world_xz: vec2<f32>) -> f32 {
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    
+
     let num_verts_per_blade = u32(params.foliage_info.x);
     let num_blades_per_node: u32 = 64u;
-    
+
     // Decode blade and vertex index from instance/vertex
     // instance_index encodes: blade_type (high 16 bits) + blade_index (low 16 bits)
     let blade_type = in.instance_index >> 16u;
     let blade_index = in.instance_index & 0xFFFFu;
     let vertex_in_blade = in.vertex_index % num_verts_per_blade;
-    
+
     // Fetch blade vertex from geometry texture
     let pixel_coord = vec2<f32>(
         f32(vertex_in_blade) + f32(blade_type * num_verts_per_blade),
@@ -131,7 +131,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     );
     let tex_size = vec2<f32>(textureDimensions(t_blade_positions, 0));
     let tex_uv = pixel_coord / tex_size;
-    
+
     let pos_sample = textureSampleLevel(t_blade_positions, s_blade, tex_uv, 0.0);
     let norm_sample = textureSampleLevel(t_blade_normals, s_blade, tex_uv, 0.0);
 

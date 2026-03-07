@@ -1,6 +1,6 @@
 #!/usr/bin/env rust-script
 //! Extract terrain shaders from ERA archives
-//! 
+//!
 //! Usage: cargo run --example extract_shader
 
 use era::EraArchive;
@@ -11,14 +11,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let era_path = std::env::args().nth(1).unwrap_or_else(|| {
         "/Users/dev/Documents/steamcmd/halo_wars/root.era".to_string()
     });
-    
+
     println!("Opening ERA: {}", era_path);
     let mut archive = EraArchive::open(&era_path)?;
-    
+
     // List all files containing "terrain" or "shader" or ".bin"
     println!("\nSearching for terrain/shader/bin files...\n");
     let mut found = Vec::new();
-    
+
     for (i, entry) in archive.iter().enumerate() {
         if let Some(name) = &entry.filename {
             let lower = name.to_lowercase();
@@ -28,13 +28,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    
+
     if found.is_empty() {
         println!("No matching files found.");
     } else {
         println!("\nFound {} matching files", found.len());
     }
-    
+
     // Extract specific files
     for (idx, name) in &found {
         if name.to_lowercase().contains("gputerrain") || name.to_lowercase().contains("terrain") && name.ends_with(".bin") {
@@ -46,7 +46,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Written {} bytes to {}", data.len(), output_name);
         }
     }
-    
+
     Ok(())
 }
-

@@ -32,4 +32,4 @@ pub use types::{
     AlbedoData, ChunkDecalData, ChunkSplatData, DecalInstance, DecalTexture, FoliageBladeVertex,
     FoliageQNChunk, FoliageSet, NormalMapTexture, TerrainTexture,
 };
-pub use uniforms::{CameraUniform, GpuTessParams, TerrainParams};
+pub use uniforms::{CameraUniform, GpuTessParams, LightingParams, TerrainParams};

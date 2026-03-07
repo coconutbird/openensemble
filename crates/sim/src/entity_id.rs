@@ -2,7 +2,7 @@
 //!
 //! Entity IDs are 4 bytes with the high 4 bits encoding the entity class:
 //! - 0 = Object
-//! - 1 = Unit  
+//! - 1 = Unit
 //! - 2 = Squad
 //! - 3 = Dopple
 //! - 4 = Projectile

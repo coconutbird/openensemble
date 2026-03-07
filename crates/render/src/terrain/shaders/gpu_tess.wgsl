@@ -98,6 +98,27 @@ var<storage, read> texture_scales: array<vec2<f32>>;
 @group(1) @binding(15)
 var t_gpu_composited: texture_2d<f32>;
 
+// Lighting parameters - matches original Halo Wars cbShared lighting fields
+struct LightingParams {
+    dir_light_vec: vec4<f32>,       // xyz = direction to light, w = enabled
+    dir_light_color: vec4<f32>,     // rgb = color, a = shadow_darkness
+    world_camera_pos: vec4<f32>,    // xyz = camera pos
+    sh_fill_ar: vec4<f32>,          // SH linear R
+    sh_fill_ag: vec4<f32>,          // SH linear G
+    sh_fill_ab: vec4<f32>,          // SH linear B
+    sh_fill_br: vec4<f32>,          // SH quadratic R
+    sh_fill_bg: vec4<f32>,          // SH quadratic G
+    sh_fill_bb: vec4<f32>,          // SH quadratic B
+    sh_fill_c: vec4<f32>,           // SH final quadratic
+    fog_color: vec4<f32>,           // rgb = fog color
+    fog_params: vec4<f32>,          // x = fog_density2, y = fog_start2
+    planar_fog_color: vec4<f32>,    // rgb = planar fog color
+    planar_fog_params: vec4<f32>,   // x = enabled, y = start, z = density2
+    ao_params: vec4<f32>,           // x = ao_diffuse_intensity
+};
+@group(1) @binding(16)
+var<uniform> lighting: LightingParams;
+
 struct VertexInput {
     // Per-vertex: local UV within patch [0, 1]
     @location(0) local_uv: vec2<f32>,
@@ -110,6 +131,9 @@ struct VertexOutput {
     @location(0) normal: vec3<f32>,
     @location(1) world_pos: vec3<f32>,
     @location(2) uv: vec2<f32>,
+    @location(3) tangent: vec3<f32>,
+    @location(4) binormal: vec3<f32>,
+    @location(5) fog_densities: vec2<f32>,  // x = radial, y = planar
 };
 
 // Decode packed R10G10B10A2 position
@@ -140,6 +164,54 @@ fn unpack_normal(packed: u32) -> vec3<f32> {
     );
 
     return normalize(norm);
+}
+
+// Compute TBN from normal - matches original GiveTBNFromNormal in gpuTerrainVS.inc
+fn compute_tbn(normal: vec3<f32>) -> mat3x3<f32> {
+    // binormal = normalize(normal.xzy * vec3(0, 1, -1))
+    let binormal = normalize(vec3<f32>(0.0, normal.z, -normal.y));
+    let tangent = cross(binormal, normal);
+    return mat3x3<f32>(tangent, binormal, normal);
+}
+
+// SH fill lighting - matches computeSHFillLighting in shFillLighting.inc
+fn compute_sh_fill_lighting(n: vec3<f32>) -> vec3<f32> {
+    let normal4 = vec4<f32>(n, 1.0);
+
+    // Linear terms
+    var linear_color: vec3<f32>;
+    linear_color.x = dot(normal4, lighting.sh_fill_ar);
+    linear_color.y = dot(normal4, lighting.sh_fill_ag);
+    linear_color.z = dot(normal4, lighting.sh_fill_ab);
+
+    // First quadratic terms: r2 = normal.xyzz * normal.yzzx
+    let r2 = vec4<f32>(n.x * n.y, n.y * n.z, n.z * n.z, n.z * n.x);
+
+    var first_quad: vec3<f32>;
+    first_quad.x = dot(r2, lighting.sh_fill_br);
+    first_quad.y = dot(r2, lighting.sh_fill_bg);
+    first_quad.z = dot(r2, lighting.sh_fill_bb);
+
+    // Final quadratic: C * (nx*nx - ny*ny)
+    let nx2_ny2 = n.x * n.x - n.y * n.y;
+    let final_quad = lighting.sh_fill_c.xyz * nx2_ny2;
+
+    return linear_color + first_quad + final_quad;
+}
+
+// Radial fog density - matches computeRadialFogDensity in fogHelpers.inc
+fn compute_radial_fog_density(world_pos: vec3<f32>) -> f32 {
+    let camera_vec = lighting.world_camera_pos.xyz - world_pos;
+    let dist2 = dot(camera_vec, camera_vec);
+    let fog_dist2 = lighting.fog_params.x * max(0.0, dist2 - lighting.fog_params.y);
+    return clamp(exp2(-fog_dist2), 0.0, 1.0);
+}
+
+// Apply fog - matches computeFog in fogHelpers.inc
+fn compute_fog(result: vec3<f32>, z_fog_density: f32, planar_fog_density: f32) -> vec3<f32> {
+    var color = mix(lighting.planar_fog_color.xyz, result, planar_fog_density);
+    color = mix(lighting.fog_color.xyz, color, z_fog_density);
+    return color;
 }
 
 @vertex
@@ -183,10 +255,25 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
     let normal = unpack_normal(packed_norm);
 
+    // Compute TBN from vertex normal (matches original GiveTBNFromNormal)
+    let tbn = compute_tbn(normal);
+
+    // Compute per-vertex fog densities (matches original fogHelpers.inc)
+    let z_fog_density = compute_radial_fog_density(world_pos);
+    var planar_fog_density = 1.0;
+    if (lighting.planar_fog_params.x > 0.5) {
+        let planar_dist = max(0.0, lighting.planar_fog_params.y - world_pos.y);
+        let planar_fog_dist2 = lighting.planar_fog_params.z * planar_dist * planar_dist;
+        planar_fog_density = clamp(exp2(-planar_fog_dist2), 0.0, 1.0);
+    }
+
     out.clip_position = camera.view_proj * vec4<f32>(world_pos, 1.0);
     out.normal = normal;
     out.world_pos = world_pos;
     out.uv = vec2<f32>(global_u, global_v);
+    out.tangent = tbn[0];
+    out.binormal = tbn[1];
+    out.fog_densities = vec2<f32>(z_fog_density, planar_fog_density);
 
     return out;
 }
@@ -209,8 +296,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    let light_dir = normalize(vec3<f32>(0.5, 1.0, 0.3));
-    let vertex_normal = normalize(vec3<f32>(0.0, 1.0, 0.0));
+    let vertex_normal = normalize(in.normal);
 
     // ==========================================================================
     // TEXTURE SPLATTING - Runtime compositing aligned with gpuTerrainComposite.fx
@@ -301,25 +387,35 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     tangent_normal.z = sqrt(max(0.0, 1.0 - tangent_normal.x * tangent_normal.x - tangent_normal.y * tangent_normal.y));
     tangent_normal = normalize(tangent_normal);
 
-    // Build TBN matrix
-    let up = vec3<f32>(0.0, 1.0, 0.0);
-    var tangent = normalize(cross(up, vertex_normal));
-    if (length(tangent) < 0.001) {
-        tangent = vec3<f32>(1.0, 0.0, 0.0);
-    }
-    let bitangent = normalize(cross(vertex_normal, tangent));
-    let tbn = mat3x3<f32>(tangent, bitangent, vertex_normal);
-    let perturbed_normal = normalize(tbn * tangent_normal);
+    // Build TBN matrix from interpolated vertex tangent/binormal/normal
+    // (matches original GiveTBNFromNormal computed per-vertex)
+    let tangent = normalize(in.tangent);
+    let binormal = normalize(in.binormal);
+    let tbn = mat3x3<f32>(tangent, binormal, vertex_normal);
+    let world_normal = normalize(tbn * tangent_normal);
 
-    let diff = max(dot(perturbed_normal, light_dir), 0.0);
-
+    // Sample AO texture
     let ao = textureSample(t_ao, s_terrain, sample_uv).r;
-    let ao_intensity = 0.8;
+    let ao_intensity = lighting.ao_params.x;
     let ao_factor = mix(1.0, ao, ao_intensity);
 
-    let ambient = 0.4 * ao_factor;
-    let diffuse = diff * 0.6 * mix(1.0, ao_factor, 0.3);
-    let lighting = ambient + diffuse;
+    // === Lighting pipeline (matches original shFillLighting.inc + dirLighting.inc) ===
+
+    // SH fill lighting (ambient)
+    let sh_ambient = compute_sh_fill_lighting(world_normal);
+
+    // Directional light
+    let light_dir = normalize(lighting.dir_light_vec.xyz);
+    let n_dot_l = max(dot(world_normal, light_dir), 0.0);
+    let dir_diffuse = lighting.dir_light_color.rgb * n_dot_l;
+
+    // Combine: (ambient * ao + directional) * albedo
+    // Original: result = (diffuseSum + ambientSum * ao) * albedo
+    let ambient_sum = sh_ambient * ao_factor;
+    let lit_color = (ambient_sum + dir_diffuse) * color;
+
+    // Apply fog (interpolated from vertex shader)
+    let final_color = compute_fog(lit_color, in.fog_densities.x, in.fog_densities.y);
 
     // Debug modes
     if (params.debug_mode > 13.5 && params.debug_mode < 14.5) {
@@ -382,6 +478,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    return vec4<f32>(color * lighting, 1.0);
+    return vec4<f32>(final_color, 1.0);
 }
-
