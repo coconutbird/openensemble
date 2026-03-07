@@ -83,3 +83,12 @@ pub const HEIGHTFIELD_SHADER: &str = include_wesl!("terrain_heightfield");
 /// - Fog (radial + planar)
 /// - Shared lighting/fog/TBN via WESL imports
 pub const ROADS_SHADER: &str = include_wesl!("terrain_roads");
+
+/// Shadow depth shader for rendering terrain from the light's perspective.
+///
+/// Features:
+/// - Minimal vertex shader reusing gpu_tess vertex format
+/// - Packed position decoding (R10G10B10A2)
+/// - Outputs depth + depth² for VSM filtering
+/// - No lighting, fog, or texturing (depth only)
+pub const SHADOW_DEPTH_SHADER: &str = include_wesl!("shadow_depth");

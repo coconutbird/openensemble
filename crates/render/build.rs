@@ -11,6 +11,7 @@ fn main() {
         "foliage",
         "composite",
         "terrain",
+        "shadow_depth",
     ] {
         compiler.build_artifact(&format!("package::{name}").parse().unwrap(), name);
     }

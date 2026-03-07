@@ -362,68 +362,52 @@ impl TerrainViewer {
             }
 
             for chunk in &self.chunk_splat_data {
-                // Place chunk at atlas position matching its grid coordinates
-                // Shader calculates chunk_x/chunk_y from UV and uses that to index
+                // Place chunk at atlas position matching its grid coordinates.
+                // The shader looks up alpha at (chunk_x, chunk_y) where chunk_x = worldX
+                // and chunk_y = worldZ, so we place at (grid_x, grid_z).
                 let chunk_x = chunk.grid_x as u32;
                 let chunk_y = chunk.grid_z as u32;
 
-                // Copy alpha maps to atlas (build normally first)
+                // The alpha pixel data from the XTT file (decoded from Xbox 360 tiled format)
+                // needs mirror X + rotate 90° CCW applied PER-CHUNK to orient features
+                // correctly (e.g., roads). We apply this transform to the 64x64 pixels
+                // within each chunk, NOT to the whole atlas (which would also transpose
+                // chunk grid positions and break the layer ID mapping).
+                //
+                // Mirror X: (x, y) → (63-x, y)
+                // Rotate 90° CCW: (x, y) → (y, 63-x)
+                // Combined: (x, y) → mirror → (63-x, y) → rotate → (y, 63-(63-x)) = (y, x)
+                // So the per-chunk transform is just a transpose: src(x,y) → dst(y,x)
                 for y in 0..CHUNK_SIZE {
                     for x in 0..CHUNK_SIZE {
-                        let atlas_x = chunk_x * CHUNK_SIZE + x;
-                        let atlas_y = chunk_y * CHUNK_SIZE + y;
+                        // Apply per-chunk transpose: read from (x, y), write to (y, x)
+                        let src_idx = (y * CHUNK_SIZE + x) as usize;
+                        let dst_local_x = y;
+                        let dst_local_y = x;
+
+                        let atlas_x = chunk_x * CHUNK_SIZE + dst_local_x;
+                        let atlas_y = chunk_y * CHUNK_SIZE + dst_local_y;
                         let atlas_idx = ((atlas_y * ATLAS_SIZE + atlas_x) * 4) as usize;
-                        let chunk_idx = (y * CHUNK_SIZE + x) as usize;
 
                         // R = alpha for layer 1, G = layer 2, B = layer 3, A = layer 4
-                        if !chunk.alpha_maps.is_empty() && chunk_idx < chunk.alpha_maps[0].len() {
-                            atlas_data[atlas_idx] = chunk.alpha_maps[0][chunk_idx];
+                        if !chunk.alpha_maps.is_empty() && src_idx < chunk.alpha_maps[0].len() {
+                            atlas_data[atlas_idx] = chunk.alpha_maps[0][src_idx];
                         }
-                        if chunk.alpha_maps.len() > 1 && chunk_idx < chunk.alpha_maps[1].len() {
-                            atlas_data[atlas_idx + 1] = chunk.alpha_maps[1][chunk_idx];
+                        if chunk.alpha_maps.len() > 1 && src_idx < chunk.alpha_maps[1].len() {
+                            atlas_data[atlas_idx + 1] = chunk.alpha_maps[1][src_idx];
                         }
-                        if chunk.alpha_maps.len() > 2 && chunk_idx < chunk.alpha_maps[2].len() {
-                            atlas_data[atlas_idx + 2] = chunk.alpha_maps[2][chunk_idx];
+                        if chunk.alpha_maps.len() > 2 && src_idx < chunk.alpha_maps[2].len() {
+                            atlas_data[atlas_idx + 2] = chunk.alpha_maps[2][src_idx];
                         }
                         // A channel for layer 4 if we have it (rare)
-                        if chunk.alpha_maps.len() > 3 && chunk_idx < chunk.alpha_maps[3].len() {
-                            atlas_data[atlas_idx + 3] = chunk.alpha_maps[3][chunk_idx];
+                        if chunk.alpha_maps.len() > 3 && src_idx < chunk.alpha_maps[3].len() {
+                            atlas_data[atlas_idx + 3] = chunk.alpha_maps[3][src_idx];
                         } else {
                             atlas_data[atlas_idx + 3] = 255; // Unused alpha = opaque
                         }
                     }
                 }
             }
-
-            // The alpha data in the file is stored inverted, so we need to mirror horizontally
-            // then rotate 90° CCW to match the terrain's coordinate system
-
-            // Step 1: Mirror horizontally (flip X)
-            let mut mirrored_atlas = vec![0u8; (ATLAS_SIZE * ATLAS_SIZE * 4) as usize];
-            for y in 0..ATLAS_SIZE {
-                for x in 0..ATLAS_SIZE {
-                    let src_idx = ((y * ATLAS_SIZE + x) * 4) as usize;
-                    let dst_x = (ATLAS_SIZE - 1) - x;
-                    let dst_idx = ((y * ATLAS_SIZE + dst_x) * 4) as usize;
-                    mirrored_atlas[dst_idx..dst_idx + 4]
-                        .copy_from_slice(&atlas_data[src_idx..src_idx + 4]);
-                }
-            }
-
-            // Step 2: Rotate 90 degrees counter-clockwise
-            // Original (x, y) -> New (y, SIZE - 1 - x)
-            let mut rotated_atlas = vec![0u8; (ATLAS_SIZE * ATLAS_SIZE * 4) as usize];
-            for y in 0..ATLAS_SIZE {
-                for x in 0..ATLAS_SIZE {
-                    let src_idx = ((y * ATLAS_SIZE + x) * 4) as usize;
-                    let dst_x = y;
-                    let dst_y = (ATLAS_SIZE - 1) - x;
-                    let dst_idx = ((dst_y * ATLAS_SIZE + dst_x) * 4) as usize;
-                    rotated_atlas[dst_idx..dst_idx + 4]
-                        .copy_from_slice(&mirrored_atlas[src_idx..src_idx + 4]);
-                }
-            }
-            atlas_data = rotated_atlas;
 
             // Debug: Save alpha atlas to disk for inspection
             if let Err(e) = save_debug_atlas(&atlas_data, ATLAS_SIZE, "/tmp/alpha_atlas_debug.png")
@@ -789,18 +773,14 @@ impl TerrainViewer {
         let mut layer_data = vec![0u32; 256 * 8];
 
         for chunk in &self.chunk_splat_data {
-            // X-major order: index = gridX * 16 + gridZ
-            // The alpha atlas has mirror+rotate transform applied.
-            // When shader samples at screen (chunk_x, chunk_y), it gets alpha for original chunk (chunk_y, chunk_x).
-            // Shader computes: chunk_idx = chunk_y * 16 + chunk_x
-            // For this to match original chunk (chunk_y, chunk_x), we need:
-            //   buffer[chunk_y * 16 + chunk_x] = layers for original (grid_x=chunk_y, grid_z=chunk_x)
-            // Since chunk_y=grid_x and chunk_x=grid_z after transform, buffer index = grid_x * 16 + grid_z
-            let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
+            // Shader computes chunk_x from world_x (= grid_x) and chunk_y from world_z (= grid_z),
+            // then indexes: chunk_idx = chunk_y * 16 + chunk_x = grid_z * 16 + grid_x.
+            // The alpha atlas transform is per-chunk pixel orientation only (no grid transpose),
+            // so the layer buffer uses the same straightforward indexing.
+            let chunk_idx = (chunk.grid_z * 16 + chunk.grid_x) as usize;
             let base = chunk_idx * 8;
 
             for (i, &layer_id) in chunk.layer_texture_ids.iter().enumerate().take(8) {
-                // Use layer IDs directly - they appear to be 0-based indices into active_textures
                 layer_data[base + i] = layer_id as u32;
             }
         }
@@ -1506,6 +1486,9 @@ impl TerrainViewer {
         );
 
         let position_view = position_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        // Second view of position texture for shadow pass
+        let position_view_for_shadow =
+            position_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Create normal texture (R32Uint format)
         let normal_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -1713,6 +1696,7 @@ impl TerrainViewer {
             index_buffer,
             instance_buffer,
             position_view,
+            position_view_for_shadow,
             normal_view,
             ao_view,
             alpha_view,
@@ -1742,6 +1726,7 @@ impl TerrainViewer {
         index_buffer: wgpu::Buffer,
         instance_buffer: wgpu::Buffer,
         position_view: wgpu::TextureView,
+        position_view_for_shadow: wgpu::TextureView,
         normal_view: wgpu::TextureView,
         ao_view: wgpu::TextureView,
         alpha_view: wgpu::TextureView,
@@ -2114,6 +2099,7 @@ impl TerrainViewer {
             index_buffer,
             instance_buffer,
             position_view,
+            position_view_for_shadow,
             normal_view,
             ao_view,
             alpha_view,
@@ -2152,6 +2138,7 @@ impl TerrainViewer {
         index_buffer: wgpu::Buffer,
         instance_buffer: wgpu::Buffer,
         position_view: wgpu::TextureView,
+        position_view_for_shadow: wgpu::TextureView,
         normal_view: wgpu::TextureView,
         ao_view: wgpu::TextureView,
         alpha_view: wgpu::TextureView,
@@ -2175,7 +2162,7 @@ impl TerrainViewer {
     ) {
         use wgpu::util::DeviceExt;
 
-        // Create placeholder textures for shadow/blackmap (1x1, disabled by default)
+        // Create placeholder textures for blackmap (1x1, disabled by default)
         let placeholder_texture = |label: &str, data: &[u8; 4]| -> wgpu::TextureView {
             let tex = device.create_texture_with_data(
                 queue,
@@ -2199,8 +2186,58 @@ impl TerrainViewer {
             tex.create_view(&wgpu::TextureViewDescriptor::default())
         };
 
-        // Shadow map: white (depth=1.0 = no shadow, fully lit)
-        let shadow_map_view = placeholder_texture("Placeholder Shadow Map", &[255, 255, 255, 255]);
+        // Create shadow resources and use real shadow map texture
+        let vertex_buffer_layouts = &[
+            wgpu::VertexBufferLayout {
+                array_stride: 8,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &[wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x2,
+                    offset: 0,
+                    shader_location: 0,
+                }],
+            },
+            wgpu::VertexBufferLayout {
+                array_stride: 4,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &[wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Uint32,
+                    offset: 0,
+                    shader_location: 1,
+                }],
+            },
+        ];
+        let mut shadow = crate::shadow::ShadowResources::new(
+            device,
+            &camera_bind_group_layout,
+            vertex_buffer_layouts,
+        );
+        let num_verts = raw_data.num_verts_per_axis;
+        let num_patches = 64u32;
+        shadow.setup_params(
+            device,
+            queue,
+            &position_view_for_shadow,
+            [
+                num_verts as f32,
+                raw_data.tile_scale,
+                num_patches as f32,
+                num_patches as f32,
+            ],
+            [
+                raw_data.mid[0] - raw_data.range[0],
+                raw_data.mid[1] - raw_data.range[1],
+                raw_data.mid[2] - raw_data.range[2],
+            ],
+            [
+                raw_data.range[0] * 2.0,
+                raw_data.range[1] * 2.0,
+                raw_data.range[2] * 2.0,
+            ],
+        );
+        let shadow_map_view = &shadow.shadow_view;
+        log::info!("Shadow resources initialized");
+
         // Blackmap: alpha=0 means fully visible (no fog-of-war)
         let blackmap_view = placeholder_texture("Placeholder Blackmap", &[0, 0, 0, 0]);
         // Unexplored: black with alpha=0 (no unexplored overlay)
@@ -2289,7 +2326,7 @@ impl TerrainViewer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 17,
-                    resource: wgpu::BindingResource::TextureView(&shadow_map_view),
+                    resource: wgpu::BindingResource::TextureView(shadow_map_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 18,
@@ -2397,6 +2434,8 @@ impl TerrainViewer {
         // Now we have:
         // - expanded_vertex_buffer: patch triangle vertices (non-indexed)
         // - instance_buffer: patch indices for instancing
+
+        self.shadow_resources = Some(shadow);
 
         self.gpu = Some(GpuResources {
             pipeline,

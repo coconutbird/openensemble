@@ -81,6 +81,8 @@ pub struct TerrainViewer {
     pub foliage_qn_chunks: Vec<FoliageQNChunk>,
     /// Foliage GPU resources (pipeline, textures, bind groups).
     pub foliage_resources: Option<crate::foliage::FoliageResources>,
+    /// Shadow map resources (pipeline, depth texture, light VP).
+    pub shadow_resources: Option<crate::shadow::ShadowResources>,
 }
 
 impl TerrainViewer {
@@ -117,6 +119,7 @@ impl TerrainViewer {
             foliage_sets: Vec::new(),
             foliage_qn_chunks: Vec::new(),
             foliage_resources: None,
+            shadow_resources: None,
         }
     }
 
@@ -153,6 +156,7 @@ impl TerrainViewer {
             foliage_sets: Vec::new(),
             foliage_qn_chunks: Vec::new(),
             foliage_resources: None,
+            shadow_resources: None,
         }
     }
 
@@ -1225,9 +1229,29 @@ impl Application3D for TerrainViewer {
         ctx.queue
             .write_buffer(&gpu.params_buffer, 0, bytemuck::bytes_of(&params));
 
-        // Update lighting params (camera position for fog calculations)
+        // Compute shadow VP and update lighting params
+        let light_dir = glam::Vec3::new(0.4, 0.8, 0.3).normalize();
+        let mut shadow_vp_cols = [[1.0f32, 0.0, 0.0, 0.0]; 4];
+        let mut shadow_enabled = 0.0f32;
+
+        if let Some(shadow) = &mut self.shadow_resources {
+            let terrain_center = glam::Vec3::new(
+                gpu.terrain_size[0] * 0.5,
+                50.0, // approximate center height
+                gpu.terrain_size[1] * 0.5,
+            );
+            let terrain_size = glam::Vec3::new(gpu.terrain_size[0], 100.0, gpu.terrain_size[1]);
+            let vp = shadow.compute_light_vp(light_dir, terrain_center, terrain_size);
+            shadow.update_light_vp(ctx.queue);
+
+            let cols = vp.to_cols_array_2d();
+            shadow_vp_cols = cols;
+            shadow_enabled = 1.0;
+        }
+
+        // Update lighting params (camera position for fog calculations + shadow VP)
         if let Some(ref lighting_buffer) = gpu.lighting_buffer {
-            let lighting_params = LightingParams {
+            let mut lighting_params = LightingParams {
                 world_camera_pos: [
                     self.camera.position.x,
                     self.camera.position.y,
@@ -1236,6 +1260,12 @@ impl Application3D for TerrainViewer {
                 ],
                 ..Default::default()
             };
+            // Wire shadow VP matrix into lighting params
+            lighting_params.shadow_vp_col0 = shadow_vp_cols[0];
+            lighting_params.shadow_vp_col1 = shadow_vp_cols[1];
+            lighting_params.shadow_vp_col2 = shadow_vp_cols[2];
+            lighting_params.shadow_vp_col3 = shadow_vp_cols[3];
+            lighting_params.shadow_params[2] = shadow_enabled; // enabled flag
             ctx.queue
                 .write_buffer(lighting_buffer, 0, bytemuck::bytes_of(&lighting_params));
         }
@@ -1258,12 +1288,16 @@ impl Application3D for TerrainViewer {
             && let (Some(compositor), Some(bind_group)) =
                 (&mut self.compositor, &self.compositor_bind_group)
         {
-            // Get layer counts per chunk
-            let chunk_layer_counts: Vec<u32> = self
-                .chunk_splat_data
-                .iter()
-                .map(|c| c.layer_texture_ids.len() as u32)
-                .collect();
+            // Build layer counts indexed by grid position (grid_z * 16 + grid_x)
+            // to match the compositor's chunk_idx iteration order (0..256).
+            // chunk_splat_data is in file order which may differ from grid order.
+            let mut chunk_layer_counts = vec![1u32; 256];
+            for chunk in &self.chunk_splat_data {
+                let grid_idx = (chunk.grid_z * 16 + chunk.grid_x) as usize;
+                if grid_idx < 256 {
+                    chunk_layer_counts[grid_idx] = chunk.layer_texture_ids.len() as u32;
+                }
+            }
 
             compositor.composite_all_dirty(
                 ctx.encoder,
@@ -1271,6 +1305,19 @@ impl Application3D for TerrainViewer {
                 ctx.queue,
                 &chunk_layer_counts,
                 ctx.device,
+            );
+        }
+
+        // Shadow pass (renders terrain from light's perspective)
+        if let Some(shadow) = &self.shadow_resources
+            && gpu.use_gpu_tessellation
+        {
+            shadow.render(
+                ctx.encoder,
+                &gpu.vertex_buffer,
+                &gpu.index_buffer,
+                gpu.index_count,
+                gpu.num_patch_instances,
             );
         }
 

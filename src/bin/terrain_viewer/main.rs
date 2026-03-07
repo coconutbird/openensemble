@@ -25,6 +25,7 @@ mod camera;
 mod foliage;
 mod gpu;
 mod resources;
+mod shadow;
 mod types;
 mod viewer;
 
