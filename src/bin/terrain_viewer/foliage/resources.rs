@@ -1,8 +1,9 @@
 //! GPU resources for foliage rendering.
 
-use super::{FOLIAGE_SHADER, FoliageConfig};
+use super::FoliageConfig;
 #[allow(unused_imports)]
 use crate::types::FoliageSet;
+use render::terrain::FOLIAGE_SHADER;
 use render::wgpu;
 
 /// GPU resources for foliage rendering.

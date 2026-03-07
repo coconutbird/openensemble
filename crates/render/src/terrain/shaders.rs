@@ -40,3 +40,34 @@ pub const GPU_TESS_SHADER: &str = include_str!("shaders/gpu_tess.wgsl");
 /// - Alpha-blended layer compositing
 /// - Outputs to 8K atlas (16x16 chunks, 512x512 each)
 pub const COMPOSITE_SHADER: &str = include_str!("shaders/composite.wgsl");
+
+/// Foliage rendering shader based on terrainFoliage.fx.
+///
+/// Features:
+/// - Blade geometry fetched from position/normal textures
+/// - Deterministic random rotation and height scaling per blade
+/// - Terrain height sampling for blade base positioning
+/// - Distance-based alpha fade
+/// - Two-sided lighting (normal flipped toward camera)
+pub const FOLIAGE_SHADER: &str = include_str!("shaders/foliage.wgsl");
+
+/// Heightfield/decal patch shader based on terrainHeightField.fx.
+///
+/// Features:
+/// - Instanced quad patches with forward/right vector interpolation
+/// - Terrain-conforming via heightfield depth texture
+/// - Full lit pipeline: directional + SH ambient + specular
+/// - Normal mapping (DXN/BC5)
+/// - Fog (radial + planar)
+/// - Opacity-based alpha blending
+pub const HEIGHTFIELD_SHADER: &str = include_str!("shaders/terrain_heightfield.wgsl");
+
+/// Road shader based on terrainRoads.fx.
+///
+/// Features:
+/// - Pre-tessellated road geometry conforming to terrain
+/// - Terrain position/normal texture sampling for height + TBN
+/// - Full lit pipeline: directional + SH ambient + specular
+/// - Normal mapping (DXN/BC5)
+/// - Fog (radial + planar)
+pub const ROADS_SHADER: &str = include_str!("shaders/terrain_roads.wgsl");

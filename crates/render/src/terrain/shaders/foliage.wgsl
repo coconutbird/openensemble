@@ -1,17 +1,13 @@
-//! Foliage shader - WGSL implementation of terrainFoliage.fx
+// Foliage shader - WGSL implementation of terrainFoliage.fx
+//
+// Key features from original:
+// - Blade geometry fetched from position/normal textures
+// - Random rotation per blade using deterministic hash
+// - Random height scaling (0.25-1.0)
+// - Terrain height sampling for blade base position
+// - Distance-based alpha fade (400-500 units)
+// - Two-sided lighting (normal flipped toward camera)
 
-/// Foliage rendering shader.
-///
-/// Based on the original Halo Wars terrainFoliage.fx shader.
-///
-/// Key features from original:
-/// - Blade geometry fetched from position/normal textures
-/// - Random rotation per blade using deterministic hash
-/// - Random height scaling (0.25-1.0)
-/// - Terrain height sampling for blade base position
-/// - Distance-based alpha fade (400-500 units)
-/// - Two-sided lighting (normal flipped toward camera)
-pub const FOLIAGE_SHADER: &str = r#"
 // Camera uniform (shared with terrain shader - just view_proj matrix)
 struct CameraUniform {
     view_proj: mat4x4<f32>,
@@ -250,4 +246,3 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     return vec4<f32>(result, final_alpha);
 }
-"#;

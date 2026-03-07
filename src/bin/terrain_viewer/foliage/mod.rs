@@ -22,11 +22,9 @@
 
 mod render;
 mod resources;
-mod shader;
 
 pub use render::render_foliage;
 pub use resources::FoliageResources;
-pub use shader::FOLIAGE_SHADER;
 
 #[allow(unused_imports)]
 use crate::types::{FoliageQNChunk, FoliageSet};

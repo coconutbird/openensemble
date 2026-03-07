@@ -1,0 +1,214 @@
+// Road shader - WGSL implementation of terrainRoads.fx
+//
+// Renders pre-tessellated road geometry that conforms to terrain.
+// Roads are strips of triangles with per-vertex position and UV,
+// snapped to terrain height with TBN derived from terrain normals.
+//
+// Features from original HLSL:
+//   - Terrain position/normal sampling for height conforming
+//   - TBN from terrain normal (GiveTBNFromNormal)
+//   - Full lit pipeline: directional + SH ambient
+//   - Normal mapping (DXN/BC5 encoded)
+//   - Specular (Blinn-Phong)
+//   - Fog (radial + planar)
+
+struct CameraUniform {
+    view_proj: mat4x4<f32>,
+};
+@group(0) @binding(0)
+var<uniform> camera: CameraUniform;
+
+struct RoadParams {
+    // Terrain vals: x=numXVerts, y=scale (world size), z=unused, w=unused
+    terrain_vals: vec4<f32>,
+    // Position decompression: min.xyz
+    pos_comp_min: vec4<f32>,
+    // Position decompression: range.xyz
+    pos_comp_range: vec4<f32>,
+    // Camera position
+    camera_pos: vec4<f32>,
+    // Directional light
+    dir_light_vec: vec4<f32>,
+    dir_light_color: vec4<f32>,
+    // SH fill lighting
+    sh_fill_ar: vec4<f32>,
+    sh_fill_ag: vec4<f32>,
+    sh_fill_ab: vec4<f32>,
+    sh_fill_br: vec4<f32>,
+    sh_fill_bg: vec4<f32>,
+    sh_fill_bb: vec4<f32>,
+    sh_fill_c: vec4<f32>,
+    // Fog
+    fog_color: vec4<f32>,
+    fog_params: vec4<f32>,
+    planar_fog_color: vec4<f32>,
+    planar_fog_params: vec4<f32>,
+    // x=spec_power
+    spec_power: vec4<f32>,
+};
+@group(1) @binding(0)
+var<uniform> params: RoadParams;
+
+// Terrain position texture (packed XYZ sampled as float)
+@group(1) @binding(1)
+var t_terrain_pos: texture_2d<f32>;
+@group(1) @binding(2)
+var s_terrain: sampler;
+
+// Terrain basis/normal texture (packed normal)
+@group(1) @binding(3)
+var t_terrain_basis: texture_2d<f32>;
+
+// Road textures
+@group(2) @binding(0)
+var t_road_albedo: texture_2d<f32>;
+@group(2) @binding(1)
+var s_road: sampler;
+@group(2) @binding(2)
+var t_road_normal: texture_2d<f32>;
+@group(2) @binding(3)
+var t_road_specular: texture_2d<f32>;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) uv: vec2<f32>,
+};
+
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) world_pos: vec3<f32>,
+    @location(2) normal: vec3<f32>,
+    @location(3) tangent: vec3<f32>,
+    @location(4) binormal: vec3<f32>,
+    @location(5) fog_densities: vec2<f32>,
+};
+
+// --- Lighting helpers ---
+
+fn compute_sh_fill_lighting(n: vec3<f32>) -> vec3<f32> {
+    let n4 = vec4<f32>(n, 1.0);
+    var lc: vec3<f32>;
+    lc.x = dot(n4, params.sh_fill_ar);
+    lc.y = dot(n4, params.sh_fill_ag);
+    lc.z = dot(n4, params.sh_fill_ab);
+    let r2 = vec4<f32>(n.x * n.y, n.y * n.z, n.z * n.z, n.z * n.x);
+    var fq: vec3<f32>;
+    fq.x = dot(r2, params.sh_fill_br);
+    fq.y = dot(r2, params.sh_fill_bg);
+    fq.z = dot(r2, params.sh_fill_bb);
+    return lc + fq + params.sh_fill_c.xyz * (n.x * n.x - n.y * n.y);
+}
+
+fn compute_radial_fog_density(world_pos: vec3<f32>) -> f32 {
+    let cv = params.camera_pos.xyz - world_pos;
+    let d2 = dot(cv, cv);
+    return clamp(exp2(-(params.fog_params.x * max(0.0, d2 - params.fog_params.y))), 0.0, 1.0);
+}
+
+fn compute_fog(result: vec3<f32>, z_fog: f32, p_fog: f32) -> vec3<f32> {
+    var c = mix(params.planar_fog_color.xyz, result, p_fog);
+    return mix(params.fog_color.xyz, c, z_fog);
+}
+
+// TBN from terrain normal (matches GiveTBNFromNormal)
+fn compute_tbn(normal: vec3<f32>) -> mat3x3<f32> {
+    let binormal = normalize(vec3<f32>(0.0, normal.z, -normal.y));
+    return mat3x3<f32>(cross(binormal, normal), binormal, normal);
+}
+
+fn unpack_dxn_normal(s: vec4<f32>) -> vec3<f32> {
+    let nx = s.x * 2.0 - 1.0;
+    let ny = s.y * 2.0 - 1.0;
+    return vec3<f32>(nx, ny, sqrt(max(0.0, 1.0 - nx * nx - ny * ny)));
+}
+
+
+// --- Vertex shader ---
+// Roads sample terrain position/normal textures to conform to terrain surface.
+// Original: getTerrainDataAtPos() in terrainRoads.fx
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+
+    // Convert world XZ to terrain UV for sampling position/normal textures
+    // Original: uvVal = (gPos.zx / g_terrainVals.y) * g_terrainVals.x
+    let terrain_uv = vec2<f32>(
+        (in.position.z / params.terrain_vals.y) * params.terrain_vals.x,
+        (in.position.x / params.terrain_vals.y) * params.terrain_vals.x
+    );
+
+    // Sample terrain position texture to get Y offset
+    let pos_sample = textureSampleLevel(t_terrain_pos, s_terrain, terrain_uv, 0.0).xyz;
+    let offset = pos_sample * params.pos_comp_range.xyz - params.pos_comp_min.xyz;
+
+    // Road world position: keep input XZ, use terrain Y + small bias
+    let world_pos = vec3<f32>(in.position.x, offset.y + 0.01, in.position.z);
+
+    // Sample terrain normal for TBN
+    let norm_sample = textureSampleLevel(t_terrain_basis, s_terrain, terrain_uv, 0.0).xyz;
+    let terrain_normal = normalize(norm_sample * 2.0 - 1.0);
+    let tbn = compute_tbn(terrain_normal);
+
+    // Fog
+    let z_fog = compute_radial_fog_density(world_pos);
+    var p_fog = 1.0;
+    if (params.planar_fog_params.x > 0.5) {
+        let pd = max(0.0, params.planar_fog_params.y - world_pos.y);
+        p_fog = clamp(exp2(-(params.planar_fog_params.z * pd * pd)), 0.0, 1.0);
+    }
+
+    out.clip_position = camera.view_proj * vec4<f32>(world_pos, 1.0);
+    out.uv = in.uv;
+    out.world_pos = world_pos;
+    out.normal = tbn[2];
+    out.tangent = tbn[0];
+    out.binormal = tbn[1];
+    out.fog_densities = vec2<f32>(z_fog, p_fog);
+
+    return out;
+}
+
+// --- Fragment shader ---
+// Full lit road rendering with albedo, normal map, specular.
+// Matches mypsMain_ANS() in terrainRoads.fx
+
+const SPEC_TO_DIFFUSE_RATIO: f32 = 3.14159265;
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let albedo = textureSample(t_road_albedo, s_road, in.uv);
+    let tex_normal = unpack_dxn_normal(textureSample(t_road_normal, s_road, in.uv));
+    let specular = textureSample(t_road_specular, s_road, in.uv);
+
+    // Transform tangent-space normal to world space
+    let world_normal = normalize(
+        tex_normal.x * in.tangent +
+        tex_normal.y * in.binormal +
+        tex_normal.z * in.normal
+    );
+
+    // Directional lighting
+    let n_dot_l = max(dot(world_normal, params.dir_light_vec.xyz), 0.0);
+    var diffuse_sum = params.dir_light_color.rgb * n_dot_l;
+
+    // Specular (Blinn-Phong)
+    let view_dir = normalize(params.camera_pos.xyz - in.world_pos);
+    let half_vec = normalize(params.dir_light_vec.xyz + view_dir);
+    let n_dot_h = max(dot(world_normal, half_vec), 0.0);
+    var spec_sum = params.dir_light_color.rgb * pow(n_dot_h, params.spec_power.x);
+
+    // SH ambient
+    let ambient_sum = compute_sh_fill_lighting(world_normal);
+
+    // Combine
+    diffuse_sum += ambient_sum;
+    var result = diffuse_sum * albedo.rgb;
+    result += spec_sum * specular.rgb * SPEC_TO_DIFFUSE_RATIO;
+
+    // Fog
+    result = compute_fog(result, in.fog_densities.x, in.fog_densities.y);
+
+    return vec4<f32>(result, 1.0);
+}

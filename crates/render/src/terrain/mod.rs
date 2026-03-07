@@ -26,7 +26,10 @@ pub use loading::{
     load_foliage_sets, load_terrain_textures,
 };
 pub use mesh::{TerrainMesh, TessellationMode};
-pub use shaders::{COMPOSITE_SHADER, GPU_TESS_SHADER, TERRAIN_SHADER};
+pub use shaders::{
+    COMPOSITE_SHADER, FOLIAGE_SHADER, GPU_TESS_SHADER, HEIGHTFIELD_SHADER, ROADS_SHADER,
+    TERRAIN_SHADER,
+};
 pub use texture::{generate_mipmaps, mip_dimensions, mip_level_count};
 pub use types::{
     AlbedoData, ChunkDecalData, ChunkSplatData, DecalInstance, DecalTexture, FoliageBladeVertex,
