@@ -9,7 +9,7 @@
 
 use wesl::include_wesl;
 
-/// Basic terrain shader for CPU-tessellated mesh.
+/// Basic terrain shader for CPU-tessellated mesh (compiled from WESL).
 ///
 /// Features:
 /// - Texture array splatting with up to 8 textures
@@ -17,7 +17,7 @@ use wesl::include_wesl;
 /// - Normal mapping with BC5/DXN support
 /// - Multiple debug visualization modes (0-17)
 /// - Per-texture UV scaling
-pub const TERRAIN_SHADER: &str = include_str!("shaders/terrain.wgsl");
+pub const TERRAIN_SHADER: &str = include_wesl!("terrain");
 
 /// GPU tessellation shader using instanced patches (compiled from WESL).
 ///
