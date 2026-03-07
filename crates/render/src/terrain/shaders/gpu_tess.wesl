@@ -3,6 +3,7 @@ import package::shared::fog::compute_radial_fog_density;
 import package::shared::fog::compute_fog;
 import package::shared::fog::compute_planar_fog_density;
 import package::shared::normal::compute_tbn;
+import package::shared::specular::compute_blinn_phong_specular;
 
 // GPU tessellation shader - aligned with original Halo Wars gpuTerrainXbox.fx
 //
@@ -367,10 +368,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let n_dot_l = max(dot(world_normal, light_dir), 0.0);
     let dir_diffuse = lighting.dir_light_color.rgb * n_dot_l;
 
-    // Combine: (ambient * ao + directional) * albedo
-    // Original: result = (diffuseSum + ambientSum * ao) * albedo
+    // Specular (Blinn-Phong, matching heightfield/roads shaders)
+    let view_dir = normalize(lighting.world_camera_pos.xyz - in.world_pos);
+    let spec_power = 16.0; // Default terrain specular power
+    let spec_intensity = compute_blinn_phong_specular(world_normal, light_dir, view_dir, spec_power);
+    let spec_sum = lighting.dir_light_color.rgb * spec_intensity;
+
+    // Combine: (ambient * ao + directional) * albedo + specular
+    // Original: result = (diffuseSum + ambientSum * ao) * albedo + specSum * specMap * PI
     let ambient_sum = sh_ambient * ao_factor;
-    let lit_color = (ambient_sum + dir_diffuse) * color;
+    var lit_color = (ambient_sum + dir_diffuse) * color;
+    // Terrain uses AO as a specular mask (no separate spec map)
+    lit_color += spec_sum * ao_factor * 0.15; // Subtle terrain specular
 
     // Apply fog (interpolated from vertex shader)
     let final_color = compute_fog(lit_color, in.fog_densities.x, in.fog_densities.y, lighting.fog_color.xyz, lighting.planar_fog_color.xyz);
