@@ -2,6 +2,12 @@
 //!
 //! Contains shader code for both CPU-tessellated and GPU-tessellated terrain rendering,
 //! as well as the compositing shader for pre-baking terrain textures.
+//!
+//! Shaders using shared code (lighting, fog, TBN) are authored as `.wesl` files
+//! with `import` statements and compiled to WGSL at build time via the `wesl` crate.
+//! Plain WGSL shaders are loaded directly with `include_str!`.
+
+use wesl::include_wesl;
 
 /// Basic terrain shader for CPU-tessellated mesh.
 ///
@@ -13,7 +19,7 @@
 /// - Per-texture UV scaling
 pub const TERRAIN_SHADER: &str = include_str!("shaders/terrain.wgsl");
 
-/// GPU tessellation shader using instanced patches.
+/// GPU tessellation shader using instanced patches (compiled from WESL).
 ///
 /// Each instance is a terrain patch (16x16 vertices), and vertices sample
 /// position/normal from packed textures. This allows high-resolution terrain
@@ -26,7 +32,8 @@ pub const TERRAIN_SHADER: &str = include_str!("shaders/terrain.wgsl");
 /// - Alpha (transparency/holes) support
 /// - Normal map splatting
 /// - Multiple debug modes
-pub const GPU_TESS_SHADER: &str = include_str!("shaders/gpu_tess.wgsl");
+/// - Shared lighting/fog/TBN via WESL imports
+pub const GPU_TESS_SHADER: &str = include_wesl!("gpu_tess");
 
 /// GPU compositing shader for pre-baking terrain textures.
 ///
@@ -51,7 +58,7 @@ pub const COMPOSITE_SHADER: &str = include_str!("shaders/composite.wgsl");
 /// - Two-sided lighting (normal flipped toward camera)
 pub const FOLIAGE_SHADER: &str = include_str!("shaders/foliage.wgsl");
 
-/// Heightfield/decal patch shader based on terrainHeightField.fx.
+/// Heightfield/decal patch shader based on terrainHeightField.fx (compiled from WESL).
 ///
 /// Features:
 /// - Instanced quad patches with forward/right vector interpolation
@@ -60,9 +67,10 @@ pub const FOLIAGE_SHADER: &str = include_str!("shaders/foliage.wgsl");
 /// - Normal mapping (DXN/BC5)
 /// - Fog (radial + planar)
 /// - Opacity-based alpha blending
-pub const HEIGHTFIELD_SHADER: &str = include_str!("shaders/terrain_heightfield.wgsl");
+/// - Shared lighting/fog/TBN via WESL imports
+pub const HEIGHTFIELD_SHADER: &str = include_wesl!("terrain_heightfield");
 
-/// Road shader based on terrainRoads.fx.
+/// Road shader based on terrainRoads.fx (compiled from WESL).
 ///
 /// Features:
 /// - Pre-tessellated road geometry conforming to terrain
@@ -70,4 +78,5 @@ pub const HEIGHTFIELD_SHADER: &str = include_str!("shaders/terrain_heightfield.w
 /// - Full lit pipeline: directional + SH ambient + specular
 /// - Normal mapping (DXN/BC5)
 /// - Fog (radial + planar)
-pub const ROADS_SHADER: &str = include_str!("shaders/terrain_roads.wgsl");
+/// - Shared lighting/fog/TBN via WESL imports
+pub const ROADS_SHADER: &str = include_wesl!("terrain_roads");

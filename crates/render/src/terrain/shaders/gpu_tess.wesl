@@ -1,3 +1,9 @@
+import package::shared::lighting::compute_sh_fill_lighting;
+import package::shared::fog::compute_radial_fog_density;
+import package::shared::fog::compute_fog;
+import package::shared::fog::compute_planar_fog_density;
+import package::shared::normal::compute_tbn;
+
 // GPU tessellation shader - aligned with original Halo Wars gpuTerrainXbox.fx
 //
 // This shader implements the terrain rendering pipeline:
@@ -166,53 +172,7 @@ fn unpack_normal(packed: u32) -> vec3<f32> {
     return normalize(norm);
 }
 
-// Compute TBN from normal - matches original GiveTBNFromNormal in gpuTerrainVS.inc
-fn compute_tbn(normal: vec3<f32>) -> mat3x3<f32> {
-    // binormal = normalize(normal.xzy * vec3(0, 1, -1))
-    let binormal = normalize(vec3<f32>(0.0, normal.z, -normal.y));
-    let tangent = cross(binormal, normal);
-    return mat3x3<f32>(tangent, binormal, normal);
-}
 
-// SH fill lighting - matches computeSHFillLighting in shFillLighting.inc
-fn compute_sh_fill_lighting(n: vec3<f32>) -> vec3<f32> {
-    let normal4 = vec4<f32>(n, 1.0);
-
-    // Linear terms
-    var linear_color: vec3<f32>;
-    linear_color.x = dot(normal4, lighting.sh_fill_ar);
-    linear_color.y = dot(normal4, lighting.sh_fill_ag);
-    linear_color.z = dot(normal4, lighting.sh_fill_ab);
-
-    // First quadratic terms: r2 = normal.xyzz * normal.yzzx
-    let r2 = vec4<f32>(n.x * n.y, n.y * n.z, n.z * n.z, n.z * n.x);
-
-    var first_quad: vec3<f32>;
-    first_quad.x = dot(r2, lighting.sh_fill_br);
-    first_quad.y = dot(r2, lighting.sh_fill_bg);
-    first_quad.z = dot(r2, lighting.sh_fill_bb);
-
-    // Final quadratic: C * (nx*nx - ny*ny)
-    let nx2_ny2 = n.x * n.x - n.y * n.y;
-    let final_quad = lighting.sh_fill_c.xyz * nx2_ny2;
-
-    return linear_color + first_quad + final_quad;
-}
-
-// Radial fog density - matches computeRadialFogDensity in fogHelpers.inc
-fn compute_radial_fog_density(world_pos: vec3<f32>) -> f32 {
-    let camera_vec = lighting.world_camera_pos.xyz - world_pos;
-    let dist2 = dot(camera_vec, camera_vec);
-    let fog_dist2 = lighting.fog_params.x * max(0.0, dist2 - lighting.fog_params.y);
-    return clamp(exp2(-fog_dist2), 0.0, 1.0);
-}
-
-// Apply fog - matches computeFog in fogHelpers.inc
-fn compute_fog(result: vec3<f32>, z_fog_density: f32, planar_fog_density: f32) -> vec3<f32> {
-    var color = mix(lighting.planar_fog_color.xyz, result, planar_fog_density);
-    color = mix(lighting.fog_color.xyz, color, z_fog_density);
-    return color;
-}
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
@@ -259,12 +219,10 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let tbn = compute_tbn(normal);
 
     // Compute per-vertex fog densities (matches original fogHelpers.inc)
-    let z_fog_density = compute_radial_fog_density(world_pos);
+    let z_fog_density = compute_radial_fog_density(world_pos, lighting.world_camera_pos.xyz, lighting.fog_params.x, lighting.fog_params.y);
     var planar_fog_density = 1.0;
     if (lighting.planar_fog_params.x > 0.5) {
-        let planar_dist = max(0.0, lighting.planar_fog_params.y - world_pos.y);
-        let planar_fog_dist2 = lighting.planar_fog_params.z * planar_dist * planar_dist;
-        planar_fog_density = clamp(exp2(-planar_fog_dist2), 0.0, 1.0);
+        planar_fog_density = compute_planar_fog_density(world_pos.y, lighting.planar_fog_params.y, lighting.planar_fog_params.z);
     }
 
     out.clip_position = camera.view_proj * vec4<f32>(world_pos, 1.0);
@@ -402,7 +360,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // === Lighting pipeline (matches original shFillLighting.inc + dirLighting.inc) ===
 
     // SH fill lighting (ambient)
-    let sh_ambient = compute_sh_fill_lighting(world_normal);
+    let sh_ambient = compute_sh_fill_lighting(world_normal, lighting.sh_fill_ar, lighting.sh_fill_ag, lighting.sh_fill_ab, lighting.sh_fill_br, lighting.sh_fill_bg, lighting.sh_fill_bb, lighting.sh_fill_c);
 
     // Directional light
     let light_dir = normalize(lighting.dir_light_vec.xyz);
@@ -415,7 +373,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let lit_color = (ambient_sum + dir_diffuse) * color;
 
     // Apply fog (interpolated from vertex shader)
-    let final_color = compute_fog(lit_color, in.fog_densities.x, in.fog_densities.y);
+    let final_color = compute_fog(lit_color, in.fog_densities.x, in.fog_densities.y, lighting.fog_color.xyz, lighting.planar_fog_color.xyz);
 
     // Debug modes
     if (params.debug_mode > 13.5 && params.debug_mode < 14.5) {

@@ -1,3 +1,10 @@
+import package::shared::lighting::compute_sh_fill_lighting;
+import package::shared::fog::compute_radial_fog_density;
+import package::shared::fog::compute_fog;
+import package::shared::fog::compute_planar_fog_density;
+import package::shared::normal::compute_tbn;
+import package::shared::normal::unpack_dxn_normal;
+
 // Heightfield/Decal patch shader - WGSL implementation of terrainHeightField.fx
 //
 // Renders instanced quad patches ("decals") projected onto terrain.
@@ -80,46 +87,10 @@ struct VertexOutput {
     @location(7) fog_densities: vec2<f32>,
 };
 
-// --- Lighting helpers ---
-
-fn compute_sh_fill_lighting(n: vec3<f32>) -> vec3<f32> {
-    let normal4 = vec4<f32>(n, 1.0);
-    var lc: vec3<f32>;
-    lc.x = dot(normal4, params.sh_fill_ar);
-    lc.y = dot(normal4, params.sh_fill_ag);
-    lc.z = dot(normal4, params.sh_fill_ab);
-    let r2 = vec4<f32>(n.x * n.y, n.y * n.z, n.z * n.z, n.z * n.x);
-    var fq: vec3<f32>;
-    fq.x = dot(r2, params.sh_fill_br);
-    fq.y = dot(r2, params.sh_fill_bg);
-    fq.z = dot(r2, params.sh_fill_bb);
-    return lc + fq + params.sh_fill_c.xyz * (n.x * n.x - n.y * n.y);
-}
-
-fn compute_radial_fog_density(world_pos: vec3<f32>) -> f32 {
-    let cv = params.camera_pos.xyz - world_pos;
-    let d2 = dot(cv, cv);
-    return clamp(exp2(-(params.fog_params.x * max(0.0, d2 - params.fog_params.y))), 0.0, 1.0);
-}
-
-fn compute_fog(result: vec3<f32>, z_fog: f32, p_fog: f32) -> vec3<f32> {
-    var c = mix(params.planar_fog_color.xyz, result, p_fog);
-    return mix(params.fog_color.xyz, c, z_fog);
-}
-
-fn compute_tbn(normal: vec3<f32>) -> mat3x3<f32> {
-    let binormal = normalize(vec3<f32>(0.0, normal.z, -normal.y));
-    return mat3x3<f32>(cross(binormal, normal), binormal, normal);
-}
+// --- Local helpers ---
 
 fn heightfield_depth_to_y(s: vec2<f32>) -> vec2<f32> {
     return s * params.y_scale_ofs.x + params.y_scale_ofs.y;
-}
-
-fn unpack_dxn_normal(s: vec4<f32>) -> vec3<f32> {
-    let nx = s.x * 2.0 - 1.0;
-    let ny = s.y * 2.0 - 1.0;
-    return vec3<f32>(nx, ny, sqrt(max(0.0, 1.0 - nx * nx - ny * ny)));
 }
 
 
@@ -178,11 +149,10 @@ fn vs_main(in: VertexInput, instance: PatchInstance) -> VertexOutput {
     let tbn = compute_tbn(normal);
 
     // Fog
-    let z_fog = compute_radial_fog_density(world_pos.xyz);
+    let z_fog = compute_radial_fog_density(world_pos.xyz, params.camera_pos.xyz, params.fog_params.x, params.fog_params.y);
     var p_fog = 1.0;
     if (params.planar_fog_params.x > 0.5) {
-        let pd = max(0.0, params.planar_fog_params.y - world_pos.y);
-        p_fog = clamp(exp2(-(params.planar_fog_params.z * pd * pd)), 0.0, 1.0);
+        p_fog = compute_planar_fog_density(world_pos.y, params.planar_fog_params.y, params.planar_fog_params.z);
     }
 
     // sRGB to linear for instance color
@@ -237,7 +207,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var spec_sum = params.dir_light_color.rgb * pow(n_dot_h, params.spec_power.x);
 
     // SH ambient
-    let ambient_sum = compute_sh_fill_lighting(world_normal);
+    let ambient_sum = compute_sh_fill_lighting(world_normal, params.sh_fill_ar, params.sh_fill_ag, params.sh_fill_ab, params.sh_fill_br, params.sh_fill_bg, params.sh_fill_bb, params.sh_fill_c);
 
     // Combine lighting
     diffuse_sum += ambient_sum;
@@ -245,7 +215,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     result += spec_sum * spec_map * SPEC_TO_DIFFUSE_RATIO;
 
     // Apply fog
-    result = compute_fog(result, in.fog_densities.x, in.fog_densities.y);
+    result = compute_fog(result, in.fog_densities.x, in.fog_densities.y, params.fog_color.xyz, params.planar_fog_color.xyz);
 
     return vec4<f32>(result, in.color.a * opacity);
 }
