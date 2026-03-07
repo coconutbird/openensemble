@@ -4,6 +4,9 @@ import package::shared::fog::compute_fog;
 import package::shared::fog::compute_planar_fog_density;
 import package::shared::normal::compute_tbn;
 import package::shared::normal::unpack_dxn_normal;
+import package::shared::shadows::vsm_shadow;
+import package::shared::blackmap::apply_blackmap;
+import package::shared::local_lights::evaluate_omni_specular;
 
 // Heightfield/Decal patch shader - WGSL implementation of terrainHeightField.fx
 //
@@ -42,6 +45,18 @@ struct HeightfieldParams {
     planar_fog_color: vec4<f32>,
     planar_fog_params: vec4<f32>,    // x=enabled, y=start, z=density2
     spec_power: vec4<f32>,           // x=spec_power, y=conform_to_terrain (0/1)
+    // Shadow params
+    shadow_vp_col0: vec4<f32>,
+    shadow_vp_col1: vec4<f32>,
+    shadow_vp_col2: vec4<f32>,
+    shadow_vp_col3: vec4<f32>,
+    shadow_params: vec4<f32>,       // x = csm_scale, y = num_passes, z = enabled
+    // Blackmap params
+    blackmap_params0: vec4<f32>,    // rgb = bg_color, w = fog_scalar
+    blackmap_params1: vec4<f32>,    // x = unexplored_scalar, yz = bounds_lo_xz, w = enabled
+    blackmap_params2: vec4<f32>,    // x = pad, yz = bounds_hi_xz, w = bounds_falloff
+    // Local light params
+    local_light_params: vec4<f32>,  // x = num_lights, y = spec_power
 };
 @group(1) @binding(0)
 var<uniform> params: HeightfieldParams;
@@ -50,6 +65,16 @@ var<uniform> params: HeightfieldParams;
 var t_heightfield: texture_2d<f32>;
 @group(1) @binding(2)
 var s_heightfield: sampler;
+
+// Shadow, blackmap, and local light resources
+@group(1) @binding(3)
+var t_shadow_map: texture_2d<f32>;
+@group(1) @binding(4)
+var t_blackmap: texture_2d<f32>;
+@group(1) @binding(5)
+var t_unexplored: texture_2d<f32>;
+@group(1) @binding(6)
+var<storage, read> local_lights: array<vec4<f32>>;
 
 @group(2) @binding(0)
 var t_diffuse: texture_2d<f32>;
@@ -206,16 +231,72 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let n_dot_h = max(dot(world_normal, half_vec), 0.0);
     var spec_sum = params.dir_light_color.rgb * pow(n_dot_h, params.spec_power.x);
 
+    // === Shadows (VSM) ===
+    var shadow_factor = 1.0;
+    if (params.shadow_params.z > 0.5) {
+        let shadow_vp = mat4x4<f32>(
+            params.shadow_vp_col0,
+            params.shadow_vp_col1,
+            params.shadow_vp_col2,
+            params.shadow_vp_col3,
+        );
+        let shadow_pos = shadow_vp * vec4<f32>(in.world_pos, 1.0);
+        let shadow_ndc = shadow_pos.xyz / shadow_pos.w;
+        let shadow_uv = vec2<f32>(shadow_ndc.x * 0.5 + 0.5, shadow_ndc.y * -0.5 + 0.5);
+        let shadow_z = clamp(shadow_ndc.z, 0.0, 1.0);
+        shadow_factor = vsm_shadow(shadow_uv, shadow_z, params.dir_light_color.a, t_shadow_map, s_diffuse);
+    }
+    diffuse_sum *= shadow_factor;
+    spec_sum *= shadow_factor;
+
     // SH ambient
     let ambient_sum = compute_sh_fill_lighting(world_normal, params.sh_fill_ar, params.sh_fill_ag, params.sh_fill_ab, params.sh_fill_br, params.sh_fill_bg, params.sh_fill_bb, params.sh_fill_c);
 
+    // === Local lights ===
+    var local_diffuse = vec3<f32>(0.0);
+    var local_spec = 0.0;
+    let num_lights = u32(params.local_light_params.x);
+    let local_spec_power = params.local_light_params.y;
+    let world_reflect = reflect(-view_dir, world_normal);
+    for (var i = 0u; i < num_lights; i++) {
+        let base = i * 8u;
+        let light_pos = local_lights[base].xyz;
+        let omni_mul = local_lights[base].w;
+        let light_color = local_lights[base + 1u].xyz;
+        let omni_add = local_lights[base + 1u].w;
+        let decay_dist = local_lights[base + 2u].x;
+        let spec_int = local_lights[base + 3u].w;
+        let result = evaluate_omni_specular(
+            light_pos, light_color, omni_mul, omni_add, decay_dist, spec_int,
+            in.world_pos, world_normal, world_reflect, local_spec_power,
+        );
+        local_diffuse += result.xyz;
+        local_spec += result.w;
+    }
+
     // Combine lighting
-    diffuse_sum += ambient_sum;
-    var result = diffuse_sum * albedo;
-    result += spec_sum * spec_map * SPEC_TO_DIFFUSE_RATIO;
+    diffuse_sum += ambient_sum + local_diffuse;
+    var lit_color = diffuse_sum * albedo;
+    lit_color += (spec_sum * spec_map + vec3<f32>(local_spec)) * SPEC_TO_DIFFUSE_RATIO;
+
+    // === Blackmap (fog-of-war) ===
+    if (params.blackmap_params1.w > 0.5) {
+        let bm_uv = in.uv;
+        let vis_factor = textureSample(t_blackmap, s_diffuse, bm_uv).a;
+        let unexplored_sample = textureSample(t_unexplored, s_diffuse, bm_uv);
+        lit_color = apply_blackmap(
+            lit_color, in.world_pos, vis_factor, unexplored_sample,
+            params.blackmap_params0.xyz,
+            params.blackmap_params0.w,
+            params.blackmap_params1.x,
+            params.blackmap_params1.yz,
+            params.blackmap_params2.yz,
+            params.blackmap_params2.w,
+        );
+    }
 
     // Apply fog
-    result = compute_fog(result, in.fog_densities.x, in.fog_densities.y, params.fog_color.xyz, params.planar_fog_color.xyz);
+    lit_color = compute_fog(lit_color, in.fog_densities.x, in.fog_densities.y, params.fog_color.xyz, params.planar_fog_color.xyz);
 
-    return vec4<f32>(result, in.color.a * opacity);
+    return vec4<f32>(lit_color, in.color.a * opacity);
 }

@@ -2,6 +2,8 @@ import package::shared::lighting::compute_sh_fill_lighting;
 import package::shared::fog::compute_radial_fog_density;
 import package::shared::fog::compute_fog;
 import package::shared::fog::compute_planar_fog_density;
+import package::shared::shadows::vsm_shadow;
+import package::shared::blackmap::apply_blackmap;
 
 // Foliage shader - WGSL implementation of terrainFoliage.fx
 //
@@ -51,6 +53,16 @@ struct FoliageParams {
     sh_fill_bg: vec4<f32>,
     sh_fill_bb: vec4<f32>,
     sh_fill_c: vec4<f32>,
+    // Shadow params
+    shadow_vp_col0: vec4<f32>,
+    shadow_vp_col1: vec4<f32>,
+    shadow_vp_col2: vec4<f32>,
+    shadow_vp_col3: vec4<f32>,
+    shadow_params: vec4<f32>,       // x = csm_scale, y = num_passes, z = enabled
+    // Blackmap params
+    blackmap_params0: vec4<f32>,    // rgb = bg_color, w = fog_scalar
+    blackmap_params1: vec4<f32>,    // x = unexplored_scalar, yz = bounds_lo_xz, w = enabled
+    blackmap_params2: vec4<f32>,    // x = pad, yz = bounds_hi_xz, w = bounds_falloff
 };
 
 @group(0) @binding(0)
@@ -76,6 +88,14 @@ var t_heightmap: texture_2d<f32>;
 @group(1) @binding(5)
 var s_heightmap: sampler;
 
+// Shadow and blackmap textures
+@group(1) @binding(6)
+var t_shadow_map: texture_2d<f32>;
+@group(1) @binding(7)
+var t_blackmap: texture_2d<f32>;
+@group(1) @binding(8)
+var t_unexplored: texture_2d<f32>;
+
 // Foliage textures
 @group(2) @binding(0)
 var t_albedo: texture_2d<f32>;
@@ -97,6 +117,7 @@ struct VertexOutput {
     @location(1) diffuse_sum: vec3<f32>,
     @location(2) fog_densities: vec2<f32>,  // x = radial, y = planar
     @location(3) alpha_fade: f32,
+    @location(4) world_pos: vec3<f32>,
 };
 
 // Deterministic pseudo-random function (matching original shader)
@@ -246,6 +267,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.diffuse_sum = diffuse_sum;
     out.fog_densities = vec2<f32>(z_fog, p_fog);
     out.alpha_fade = alpha_fade;
+    out.world_pos = pos;
 
     return out;
 }
@@ -262,11 +284,48 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    // Apply lighting
-    var result = in.diffuse_sum * albedo.rgb;
+    // Apply lighting with shadow
+    var diffuse = in.diffuse_sum;
+
+    // === Shadows (VSM) ===
+    if (params.shadow_params.z > 0.5) {
+        let shadow_vp = mat4x4<f32>(
+            params.shadow_vp_col0,
+            params.shadow_vp_col1,
+            params.shadow_vp_col2,
+            params.shadow_vp_col3,
+        );
+        let shadow_pos = shadow_vp * vec4<f32>(in.world_pos, 1.0);
+        let shadow_ndc = shadow_pos.xyz / shadow_pos.w;
+        let shadow_uv = vec2<f32>(shadow_ndc.x * 0.5 + 0.5, shadow_ndc.y * -0.5 + 0.5);
+        let shadow_z = clamp(shadow_ndc.z, 0.0, 1.0);
+        let shadow_factor = vsm_shadow(shadow_uv, shadow_z, 0.3, t_shadow_map, s_foliage);
+        // Attenuate only the directional component (subtract ambient, apply shadow, re-add)
+        diffuse *= shadow_factor;
+    }
+
+    var lit_color = diffuse * albedo.rgb;
+
+    // === Blackmap (fog-of-war) ===
+    if (params.blackmap_params1.w > 0.5) {
+        // Use world XZ scaled to terrain UV for blackmap lookup
+        let terrain_size = (params.terrain_info.x - 1.0) * params.terrain_info.y;
+        let bm_uv = clamp(in.world_pos.xz / terrain_size, vec2<f32>(0.0), vec2<f32>(1.0));
+        let vis_factor = textureSample(t_blackmap, s_foliage, bm_uv).a;
+        let unexplored_sample = textureSample(t_unexplored, s_foliage, bm_uv);
+        lit_color = apply_blackmap(
+            lit_color, in.world_pos, vis_factor, unexplored_sample,
+            params.blackmap_params0.xyz,
+            params.blackmap_params0.w,
+            params.blackmap_params1.x,
+            params.blackmap_params1.yz,
+            params.blackmap_params2.yz,
+            params.blackmap_params2.w,
+        );
+    }
 
     // Apply fog
-    result = compute_fog(result, in.fog_densities.x, in.fog_densities.y, params.fog_color.xyz, params.planar_fog_color.xyz);
+    lit_color = compute_fog(lit_color, in.fog_densities.x, in.fog_densities.y, params.fog_color.xyz, params.planar_fog_color.xyz);
 
-    return vec4<f32>(result, final_alpha);
+    return vec4<f32>(lit_color, final_alpha);
 }

@@ -80,6 +80,16 @@ pub struct FoliageParamsUniform {
     pub sh_fill_bg: [f32; 4],
     pub sh_fill_bb: [f32; 4],
     pub sh_fill_c: [f32; 4],
+    // Shadow params (8 vec4s)
+    pub shadow_vp_col0: [f32; 4],
+    pub shadow_vp_col1: [f32; 4],
+    pub shadow_vp_col2: [f32; 4],
+    pub shadow_vp_col3: [f32; 4],
+    pub shadow_params: [f32; 4], // x = csm_scale, y = num_passes, z = enabled
+    // Blackmap params (3 vec4s)
+    pub blackmap_params0: [f32; 4], // rgb = bg_color, w = fog_scalar
+    pub blackmap_params1: [f32; 4], // x = unexplored_scalar, yz = bounds_lo_xz, w = enabled
+    pub blackmap_params2: [f32; 4], // x = pad, yz = bounds_hi_xz, w = bounds_falloff
 }
 
 impl FoliageResources {
@@ -150,6 +160,39 @@ impl FoliageResources {
                         binding: 5,
                         visibility: wgpu::ShaderStages::VERTEX,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                        count: None,
+                    },
+                    // Shadow map texture (binding 6)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // Blackmap texture (binding 7)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // Unexplored mask texture (binding 8)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 8,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
                         count: None,
                     },
                 ],
@@ -638,8 +681,91 @@ impl FoliageResources {
             sh_fill_bg: [0.0; 4],
             sh_fill_bb: [0.0; 4],
             sh_fill_c: [0.0; 4],
+            // Shadow disabled by default
+            shadow_vp_col0: [1.0, 0.0, 0.0, 0.0],
+            shadow_vp_col1: [0.0, 1.0, 0.0, 0.0],
+            shadow_vp_col2: [0.0, 0.0, 1.0, 0.0],
+            shadow_vp_col3: [0.0, 0.0, 0.0, 1.0],
+            shadow_params: [1.0, 1.0, 0.0, 0.0], // z=0 => disabled
+            // Blackmap disabled by default
+            blackmap_params0: [0.0, 0.0, 0.0, 0.5],
+            blackmap_params1: [0.3, 0.0, 0.0, 0.0], // w=0 => disabled
+            blackmap_params2: [0.0, 1024.0, 1024.0, 0.01],
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
+
+        // Create placeholder shadow/blackmap textures (1x1 dummy)
+        let dummy_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Foliage Dummy Shadow/Blackmap Texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        // White pixel for shadow map (fully lit)
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &dummy_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &[255u8, 255, 255, 255],
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let shadow_view = dummy_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let dummy_black_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Foliage Dummy Blackmap Texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &dummy_black_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &[0u8, 0, 0, 0], // Black / zero alpha (fully visible)
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let blackmap_view = dummy_black_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let unexplored_view = dummy_black_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Create the params bind group
         let params_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -669,6 +795,18 @@ impl FoliageResources {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::Sampler(&heightmap_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&shadow_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(&blackmap_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::TextureView(&unexplored_view),
                 },
             ],
         });
