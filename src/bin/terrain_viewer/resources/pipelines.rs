@@ -21,6 +21,7 @@ impl TerrainViewer {
         device: &wgpu::Device,
         terrain_array_view: &wgpu::TextureView,
         alpha_atlas_view: &wgpu::TextureView,
+        alpha_atlas_hi_view: &wgpu::TextureView,
         chunk_layers_buffer: &wgpu::Buffer,
         texture_scales_buffer: &wgpu::Buffer,
         sampler: &wgpu::Sampler,
@@ -42,6 +43,7 @@ impl TerrainViewer {
             device,
             terrain_array_view,
             alpha_atlas_view,
+            alpha_atlas_hi_view,
             chunk_layers_buffer,
             texture_scales_buffer,
             sampler,
@@ -145,6 +147,50 @@ impl TerrainViewer {
 
         self.foliage_resources = Some(foliage_resources);
     }
+
+    /// Initialize road GPU resources for rendering roads on terrain.
+    pub(crate) fn init_road_resources(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if self.road_chunks.is_empty() {
+            log::info!("No road data to render");
+            return;
+        }
+
+        let Some(gpu) = &self.gpu else {
+            log::warn!("Cannot initialize roads: GPU resources not available");
+            return;
+        };
+
+        // Use the first road chunk (typically there's only one road data blob)
+        let road = &self.road_chunks[0];
+        if road.positions.is_empty() {
+            log::warn!("Road '{}' has no vertices", road.texture_name);
+            return;
+        }
+
+        // Load road textures
+        let Some(source) = &self.asset_source else {
+            log::warn!("Cannot load road textures: no asset source");
+            return;
+        };
+
+        let Some(textures) = render::terrain::load_road_textures(source, &road.texture_name) else {
+            log::warn!("Failed to load road textures for '{}'", road.texture_name);
+            return;
+        };
+
+        let camera_bgl = &gpu.camera_bind_group_layout;
+        self.road_resources = Some(crate::roads::create_road_resources(
+            device,
+            queue,
+            camera_bgl,
+            self.surface_format,
+            &road.positions,
+            &road.uvs,
+            &textures.albedo_pixels,
+            textures.width,
+            textures.height,
+        ));
+    }
 }
 
 impl TerrainViewer {
@@ -220,8 +266,9 @@ impl TerrainViewer {
         let (_terrain_array, terrain_array_view) =
             self.create_terrain_texture_array(device, queue, &albedo);
 
-        // Create alpha atlas from chunk splat data
+        // Create alpha atlases from chunk splat data
         let (_alpha_atlas, alpha_atlas_view) = self.create_alpha_atlas(device, queue);
+        let (_alpha_atlas_hi, alpha_atlas_hi_view) = self.create_alpha_atlas_hi(device, queue);
 
         // Create XTT albedo texture (original pre-composited from game export)
         let (_xtt_albedo_texture, xtt_albedo_view) =
@@ -373,6 +420,7 @@ impl TerrainViewer {
             device,
             &terrain_array_view,
             &alpha_atlas_view,
+            &alpha_atlas_hi_view,
             &chunk_layers_buffer,
             &texture_scales_buffer,
             &sampler,
@@ -522,6 +570,9 @@ impl TerrainViewer {
 
         // Initialize foliage resources if we have foliage data
         self.init_foliage_resources(device, queue);
+
+        // Initialize road resources if we have road data
+        self.init_road_resources(device, queue);
     }
 }
 
@@ -817,8 +868,10 @@ impl TerrainViewer {
         let (_terrain_array, terrain_array_view) =
             self.create_terrain_texture_array(device, queue, &albedo);
 
-        // Create alpha atlas from chunk splat data (for texture splatting)
+        // Create alpha atlases from chunk splat data (for texture splatting)
+        // Lo atlas: layers 1-4 in RGBA, Hi atlas: layers 5-7 in RGB
         let (_alpha_atlas, alpha_atlas_view) = self.create_alpha_atlas(device, queue);
+        let (_alpha_atlas_hi, alpha_atlas_hi_view) = self.create_alpha_atlas_hi(device, queue);
 
         // Create chunk layers storage buffer (for texture splatting)
         let chunk_layers_buffer = self.create_chunk_layers_buffer(device);
@@ -858,6 +911,7 @@ impl TerrainViewer {
             normal_map_array_view,
             terrain_array_view,
             alpha_atlas_view,
+            alpha_atlas_hi_view,
             chunk_layers_buffer,
             alpha_sampler,
         );
@@ -887,6 +941,7 @@ impl TerrainViewer {
         normal_map_array_view: wgpu::TextureView,
         terrain_array_view: wgpu::TextureView,
         alpha_atlas_view: wgpu::TextureView,
+        alpha_atlas_hi_view: wgpu::TextureView,
         chunk_layers_buffer: wgpu::Buffer,
         alpha_sampler: wgpu::Sampler,
     ) {
@@ -1198,6 +1253,17 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
+                    // binding 20: High alpha texture array (overflow layers 5-7)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 20,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -1209,6 +1275,7 @@ impl TerrainViewer {
             device,
             &terrain_array_view,
             &alpha_atlas_view,
+            &alpha_atlas_hi_view,
             &chunk_layers_buffer,
             &texture_scales_buffer,
             &sampler,
@@ -1248,6 +1315,7 @@ impl TerrainViewer {
             normal_map_array_view,
             terrain_array_view,
             alpha_atlas_view,
+            alpha_atlas_hi_view,
             chunk_layers_buffer,
             alpha_sampler,
             tess_params_buffer,
@@ -1286,6 +1354,7 @@ impl TerrainViewer {
         normal_map_array_view: wgpu::TextureView,
         terrain_array_view: wgpu::TextureView,
         alpha_atlas_view: wgpu::TextureView,
+        alpha_atlas_hi_view: wgpu::TextureView,
         chunk_layers_buffer: wgpu::Buffer,
         alpha_sampler: wgpu::Sampler,
         tess_params_buffer: wgpu::Buffer,
@@ -1475,6 +1544,10 @@ impl TerrainViewer {
                     binding: 19,
                     resource: local_lights_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 20,
+                    resource: wgpu::BindingResource::TextureView(&alpha_atlas_hi_view),
+                },
             ],
         });
 
@@ -1604,5 +1677,8 @@ impl TerrainViewer {
 
         // Initialize foliage resources if we have foliage data
         self.init_foliage_resources(device, queue);
+
+        // Initialize road resources if we have road data
+        self.init_road_resources(device, queue);
     }
 }

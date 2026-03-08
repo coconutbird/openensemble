@@ -10,7 +10,7 @@
 
 use super::types::{
     ChunkDecalData, ChunkSplatData, DecalInstance, DecalTexture, FoliageQNChunk, FoliageSet,
-    NormalMapTexture, TerrainTexture,
+    NormalMapTexture, RoadChunkData, TerrainTexture,
 };
 use data::assets::AssetSource;
 use data::ddx::DdxTexture;
@@ -455,4 +455,112 @@ pub fn extract_foliage_chunks(xtt: &XttFile) -> Vec<FoliageQNChunk> {
 
     log::info!("Extracted {} foliage QN chunks", foliage_chunks.len());
     foliage_chunks
+}
+
+/// Extract road data from XTT file.
+/// Returns a list of road chunks (one per road in the scenario).
+pub fn extract_road_data(xtt: &XttFile) -> Vec<RoadChunkData> {
+    if xtt.road_data.is_empty() {
+        log::info!("No road data in XTT");
+        return Vec::new();
+    }
+
+    match data::xtt::decode_road_data(&xtt.road_data) {
+        Ok(road) => {
+            let total_verts: usize = road.qn_chunks.iter().map(|qn| qn.vertices.len()).sum();
+            log::info!(
+                "Decoded road '{}': {} QN chunks, {} total vertices",
+                road.texture_name,
+                road.qn_chunks.len(),
+                total_verts
+            );
+
+            // Flatten all QN chunk vertices into a single vertex list
+            let mut positions = Vec::with_capacity(total_verts);
+            let mut uvs = Vec::with_capacity(total_verts);
+
+            for qn in &road.qn_chunks {
+                for vert in &qn.vertices {
+                    positions.push(vert.position);
+                    uvs.push(vert.uv);
+                }
+            }
+
+            vec![RoadChunkData {
+                texture_name: road.texture_name,
+                positions,
+                uvs,
+            }]
+        }
+        Err(e) => {
+            log::warn!("Failed to decode road data: {}", e);
+            Vec::new()
+        }
+    }
+}
+
+/// Load road textures (albedo, normal, specular) from an asset source.
+/// Returns (albedo_pixels, normal_pixels, specular_pixels, width, height) or None.
+pub fn load_road_textures(source: &AssetSource, texture_name: &str) -> Option<RoadTextures> {
+    let base = format!("art/{}", texture_name.replace('\\', "/"));
+    let paths = [
+        format!("{}_df.ddx", base),
+        format!("{}_nm.ddx", base),
+        format!("{}_sp.ddx", base),
+    ];
+
+    let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
+    let file_data = source.read_parallel(&path_refs);
+
+    let albedo = file_data[0].as_ref().and_then(|d| {
+        DdxTexture::from_bytes(d)
+            .ok()
+            .and_then(|t| t.decode_to_rgba().ok())
+    });
+    let normal = file_data[1].as_ref().and_then(|d| {
+        DdxTexture::from_bytes(d)
+            .ok()
+            .and_then(|t| t.decode_to_rgba().ok())
+    });
+    let specular = file_data[2].as_ref().and_then(|d| {
+        DdxTexture::from_bytes(d)
+            .ok()
+            .and_then(|t| t.decode_to_rgba().ok())
+    });
+
+    if let Some(albedo_tex) = albedo {
+        let width = albedo_tex.width;
+        let height = albedo_tex.height;
+        log::info!(
+            "Loaded road textures for '{}': {}x{} (normal={}, specular={})",
+            texture_name,
+            width,
+            height,
+            normal.is_some(),
+            specular.is_some()
+        );
+        Some(RoadTextures {
+            width,
+            height,
+            albedo_pixels: albedo_tex.pixels,
+            normal_pixels: normal
+                .map(|t| t.pixels)
+                .unwrap_or_else(|| vec![128u8; (width * height * 4) as usize]),
+            specular_pixels: specular
+                .map(|t| t.pixels)
+                .unwrap_or_else(|| vec![0u8; (width * height * 4) as usize]),
+        })
+    } else {
+        log::warn!("Failed to load road albedo texture: {}_df.ddx", base);
+        None
+    }
+}
+
+/// Road texture data (albedo, normal, specular).
+pub struct RoadTextures {
+    pub width: u32,
+    pub height: u32,
+    pub albedo_pixels: Vec<u8>,
+    pub normal_pixels: Vec<u8>,
+    pub specular_pixels: Vec<u8>,
 }

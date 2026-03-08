@@ -86,6 +86,10 @@ pub struct TerrainViewer {
     pub foliage_resources: Option<crate::foliage::FoliageResources>,
     /// Shadow map resources (pipeline, depth texture, light VP).
     pub shadow_resources: Option<crate::shadow::ShadowResources>,
+    /// Road chunk data extracted from XTT.
+    pub road_chunks: Vec<render::terrain::RoadChunkData>,
+    /// Road GPU resources (pipeline, vertex buffer, textures).
+    pub road_resources: Option<crate::roads::RoadResources>,
 }
 
 impl TerrainViewer {
@@ -124,6 +128,8 @@ impl TerrainViewer {
             foliage_qn_chunks: Vec::new(),
             foliage_resources: None,
             shadow_resources: None,
+            road_chunks: Vec::new(),
+            road_resources: None,
         }
     }
 
@@ -162,6 +168,8 @@ impl TerrainViewer {
             foliage_qn_chunks: Vec::new(),
             foliage_resources: None,
             shadow_resources: None,
+            road_chunks: Vec::new(),
+            road_resources: None,
         }
     }
 
@@ -546,6 +554,20 @@ impl TerrainViewer {
 
         // Try to load foliage textures and geometry from ERA
         self.try_load_foliage_sets(&xtt.foliage.sets);
+
+        // Extract road data from XTT
+        self.road_chunks = render::terrain::extract_road_data(xtt);
+        if !self.road_chunks.is_empty() {
+            log::info!("Extracted {} road(s) from XTT", self.road_chunks.len());
+            for (i, road) in self.road_chunks.iter().enumerate() {
+                log::info!(
+                    "  Road {}: '{}' ({} vertices)",
+                    i,
+                    road.texture_name,
+                    road.positions.len()
+                );
+            }
+        }
     }
 
     /// Extract chunk splat data from XTT linkers for texture splatting.

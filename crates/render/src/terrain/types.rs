@@ -195,3 +195,18 @@ pub struct FoliageQNChunk {
     /// These are 32-bit indices used with triangle strips.
     pub index_buffers: Vec<Vec<u8>>,
 }
+
+// ============================================================================
+// Road Types
+// ============================================================================
+
+/// Decoded road data ready for rendering.
+#[derive(Clone, Debug)]
+pub struct RoadChunkData {
+    /// Road texture name (e.g., "roads\\road_01").
+    pub texture_name: String,
+    /// All road vertices (position + UV), flattened from all QN chunks.
+    pub positions: Vec<[f32; 3]>,
+    /// UV coordinates for each vertex.
+    pub uvs: Vec<[f32; 2]>,
+}

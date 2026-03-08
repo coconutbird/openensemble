@@ -372,19 +372,12 @@ impl TerrainViewer {
                         let dst_idx = slice_offset + (y * CHUNK_SIZE + x) as usize * 4;
 
                         // R = alpha for layer 1, G = layer 2, B = layer 3, A = layer 4
-                        if !chunk.alpha_maps.is_empty() && src_idx < chunk.alpha_maps[0].len() {
-                            array_data[dst_idx] = chunk.alpha_maps[0][src_idx];
-                        }
-                        if chunk.alpha_maps.len() > 1 && src_idx < chunk.alpha_maps[1].len() {
-                            array_data[dst_idx + 1] = chunk.alpha_maps[1][src_idx];
-                        }
-                        if chunk.alpha_maps.len() > 2 && src_idx < chunk.alpha_maps[2].len() {
-                            array_data[dst_idx + 2] = chunk.alpha_maps[2][src_idx];
-                        }
-                        if chunk.alpha_maps.len() > 3 && src_idx < chunk.alpha_maps[3].len() {
-                            array_data[dst_idx + 3] = chunk.alpha_maps[3][src_idx];
-                        } else {
-                            array_data[dst_idx + 3] = 255;
+                        // Unused layers get 0 alpha (not 255!) so they don't blend.
+                        for ch in 0..4usize {
+                            if chunk.alpha_maps.len() > ch && src_idx < chunk.alpha_maps[ch].len() {
+                                array_data[dst_idx + ch] = chunk.alpha_maps[ch][src_idx];
+                            }
+                            // else: already 0 from vec initialization
                         }
                     }
                 }
@@ -395,6 +388,93 @@ impl TerrainViewer {
 
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Alpha Texture Array"),
+            size: wgpu::Extent3d {
+                width: CHUNK_SIZE,
+                height: CHUNK_SIZE,
+                depth_or_array_layers: NUM_CHUNKS,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &array_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * CHUNK_SIZE),
+                rows_per_image: Some(CHUNK_SIZE),
+            },
+            wgpu::Extent3d {
+                width: CHUNK_SIZE,
+                height: CHUNK_SIZE,
+                depth_or_array_layers: NUM_CHUNKS,
+            },
+        );
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        (texture, view)
+    }
+
+    /// Creates the high alpha atlas texture for layers 5-7 (overflow layers).
+    /// Same format as create_alpha_atlas but stores alpha maps [4], [5], [6] in R, G, B.
+    pub(crate) fn create_alpha_atlas_hi(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
+        const CHUNK_SIZE: u32 = 64;
+        const NUM_CHUNKS: u32 = 256;
+
+        let slice_bytes = (CHUNK_SIZE * CHUNK_SIZE * 4) as usize;
+        let mut array_data = vec![0u8; slice_bytes * NUM_CHUNKS as usize];
+
+        if !self.chunk_splat_data.is_empty() {
+            for chunk in &self.chunk_splat_data {
+                let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
+                if chunk_idx >= NUM_CHUNKS as usize {
+                    continue;
+                }
+                let slice_offset = chunk_idx * slice_bytes;
+
+                // Only process chunks that have > 4 alpha maps
+                if chunk.alpha_maps.len() <= 4 {
+                    continue;
+                }
+
+                for y in 0..CHUNK_SIZE {
+                    for x in 0..CHUNK_SIZE {
+                        let src_idx = (x * CHUNK_SIZE + y) as usize; // transpose
+                        let dst_idx = slice_offset + (y * CHUNK_SIZE + x) as usize * 4;
+
+                        // R = alpha for layer 5, G = layer 6, B = layer 7, A = unused
+                        for ch in 0..3usize {
+                            let map_idx = 4 + ch;
+                            if chunk.alpha_maps.len() > map_idx
+                                && src_idx < chunk.alpha_maps[map_idx].len()
+                            {
+                                array_data[dst_idx + ch] = chunk.alpha_maps[map_idx][src_idx];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Alpha Texture Array Hi"),
             size: wgpu::Extent3d {
                 width: CHUNK_SIZE,
                 height: CHUNK_SIZE,

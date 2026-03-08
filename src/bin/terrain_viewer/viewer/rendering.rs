@@ -257,6 +257,11 @@ impl Application3D for TerrainViewer {
                     &self.foliage_qn_chunks,
                 );
             }
+
+            // Render roads on top of terrain
+            if let Some(roads) = &self.road_resources {
+                crate::roads::render_roads(&mut render_pass, roads, &gpu.camera_bind_group);
+            }
         }
     }
 }

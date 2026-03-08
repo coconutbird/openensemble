@@ -154,6 +154,10 @@ var t_unexplored: texture_2d<f32>;
 @group(1) @binding(19)
 var<storage, read> local_lights: array<vec4<f32>>;
 
+// High alpha texture array: overflow layers 5-7 (R=layer5, G=layer6, B=layer7)
+@group(1) @binding(20)
+var t_alpha_atlas_hi: texture_2d_array<f32>;
+
 struct VertexInput {
     // Per-vertex: local UV within patch [0, 1]
     @location(0) local_uv: vec2<f32>,
@@ -300,29 +304,32 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let chunk_uv = sample_uv * chunk_count;
     let grid_x = u32(clamp(floor(chunk_uv.x), 0.0, chunk_count.x - 1.0));  // UV.x = X
     let grid_z = u32(clamp(floor(chunk_uv.y), 0.0, chunk_count.y - 1.0));  // UV.y = Z
-    let chunk_idx = grid_z * u32(chunk_count.y) + grid_x;  // Z*16+X (matches Rust XTT layout)
+    let chunk_idx = grid_z * u32(chunk_count.x) + grid_x;  // Z*16+X (matches Rust XTT layout)
 
     // UV within the chunk (0-1), equivalent to original's TexCoord0/TexCoord1
     let in_chunk_uv = fract(chunk_uv);
 
     // Sample alpha from per-chunk texture array
-    // Original: tex3D(alphasSampler, float3(TexCoord0.xy, slice))[channel]
-    // The compositor's TexCoord0 is the quad UV (0→1) within the chunk.
-    // UV.x = X direction, UV.y = Z direction (HWDE: gPos = (X,Z)).
-    // Alpha textures are uploaded with the same layout as decoded — no transposition.
-    // in_chunk_uv = (frac_x, frac_z) maps directly to alpha texture.
-    // Apply half-pixel gutter inset matching original quad vertex setup (1/64 to 63/64).
-    let gutter = 1.0 / 64.0;
-    let guttered_uv = mix(vec2<f32>(gutter), vec2<f32>(1.0 - gutter), in_chunk_uv);
-    let alphas = textureSample(t_alpha_atlas, s_alpha, guttered_uv, chunk_idx);
+    // Original compositor uses gutter (1/64 to 63/64) because each chunk is pre-baked
+    // independently. For runtime splatting, we sample the full [0,1] range with
+    // half-pixel inset (0.5/64 to 63.5/64) so edge pixels align between adjacent chunks.
+    // Sampler uses ClampToEdge, so no bleed risk from the texture array.
+    let half_pixel = 0.5 / 64.0;
+    let alpha_uv = mix(vec2<f32>(half_pixel), vec2<f32>(1.0 - half_pixel), in_chunk_uv);
+    let alphas = textureSample(t_alpha_atlas, s_alpha, alpha_uv, chunk_idx);
+    let alphas_hi = textureSample(t_alpha_atlas_hi, s_alpha, alpha_uv, chunk_idx);
 
-    // Get layer texture indices for this chunk
+    // Get layer texture indices for this chunk (up to 8 layers)
     // Equivalent to original's g_LayerData[].x (layer index)
     let layer_base = chunk_idx * 8u;
     let layer0 = chunk_layers[layer_base];
     let layer1 = chunk_layers[layer_base + 1u];
     let layer2 = chunk_layers[layer_base + 2u];
     let layer3 = chunk_layers[layer_base + 3u];
+    let layer4 = chunk_layers[layer_base + 4u];
+    let layer5 = chunk_layers[layer_base + 5u];
+    let layer6 = chunk_layers[layer_base + 6u];
+    let layer7 = chunk_layers[layer_base + 7u];
 
     // Calculate tiled UVs with per-texture scaling
     // Original: Output.targetUVs = TexCoord0 * g_LayerData[indx].yz
@@ -341,40 +348,86 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Layer 0: base layer (always 100% coverage)
     var color = textureSampleLevel(t_terrain_array, s_terrain, uv0, layer0, 0.0).rgb;
 
-    // Layer 1: blend using alphas.r
-    if layer1 > 0u && alphas.r > 0.0 {
-        let layer1_color = textureSampleLevel(t_terrain_array, s_terrain, uv1, layer1, 0.0).rgb;
-        color = mix(color, layer1_color, alphas.r);
+    // Layers 1-3: blend using alphas RGBA (lo atlas)
+    // Only check alpha > 0 — texture ID 0 is valid for overlays.
+    // Unused layer slots have alpha = 0 in the texture, so they're naturally skipped.
+    if alphas.r > 0.0 {
+        let c = textureSampleLevel(t_terrain_array, s_terrain, uv1, layer1, 0.0).rgb;
+        color = mix(color, c, alphas.r);
     }
-    // Layer 2: blend using alphas.g
-    if layer2 > 0u && alphas.g > 0.0 {
-        let layer2_color = textureSampleLevel(t_terrain_array, s_terrain, uv2, layer2, 0.0).rgb;
-        color = mix(color, layer2_color, alphas.g);
+    if alphas.g > 0.0 {
+        let c = textureSampleLevel(t_terrain_array, s_terrain, uv2, layer2, 0.0).rgb;
+        color = mix(color, c, alphas.g);
     }
-    // Layer 3: blend using alphas.b
-    if layer3 > 0u && alphas.b > 0.0 {
-        let layer3_color = textureSampleLevel(t_terrain_array, s_terrain, uv3, layer3, 0.0).rgb;
-        color = mix(color, layer3_color, alphas.b);
+    if alphas.b > 0.0 {
+        let c = textureSampleLevel(t_terrain_array, s_terrain, uv3, layer3, 0.0).rgb;
+        color = mix(color, c, alphas.b);
+    }
+    // Layer 4: blend using alphas.a (lo atlas A channel)
+    if alphas.a > 0.0 {
+        let uv4 = tiling_uv * texture_scales[layer4];
+        let c = textureSampleLevel(t_terrain_array, s_terrain, uv4, layer4, 0.0).rgb;
+        color = mix(color, c, alphas.a);
+    }
+    // Layers 5-7: blend using alphas_hi RGB (hi atlas)
+    if alphas_hi.r > 0.0 {
+        let uv5 = tiling_uv * texture_scales[layer5];
+        let c = textureSampleLevel(t_terrain_array, s_terrain, uv5, layer5, 0.0).rgb;
+        color = mix(color, c, alphas_hi.r);
+    }
+    if alphas_hi.g > 0.0 {
+        let uv6 = tiling_uv * texture_scales[layer6];
+        let c = textureSampleLevel(t_terrain_array, s_terrain, uv6, layer6, 0.0).rgb;
+        color = mix(color, c, alphas_hi.g);
+    }
+    if alphas_hi.b > 0.0 {
+        let uv7 = tiling_uv * texture_scales[layer7];
+        let c = textureSampleLevel(t_terrain_array, s_terrain, uv7, layer7, 0.0).rgb;
+        color = mix(color, c, alphas_hi.b);
     }
 
-    // Blend normal maps from individual textures
+    // Blend normal maps from individual textures (all 8 layers)
     let nm0 = textureSampleLevel(t_normal_array, s_terrain, uv0, layer0, 0.0).rg * 2.0 - 1.0;
     var tangent_normal = vec3<f32>(nm0.x, nm0.y, sqrt(max(0.0, 1.0 - nm0.x * nm0.x - nm0.y * nm0.y)));
 
-    if layer1 > 0u && alphas.r > 0.0 {
-        let nm1 = textureSampleLevel(t_normal_array, s_terrain, uv1, layer1, 0.0).rg * 2.0 - 1.0;
-        let layer1_normal = vec3<f32>(nm1.x, nm1.y, sqrt(max(0.0, 1.0 - nm1.x * nm1.x - nm1.y * nm1.y)));
-        tangent_normal = mix(tangent_normal, layer1_normal, alphas.r);
+    if alphas.r > 0.0 {
+        let nm = textureSampleLevel(t_normal_array, s_terrain, uv1, layer1, 0.0).rg * 2.0 - 1.0;
+        let n = vec3<f32>(nm.x, nm.y, sqrt(max(0.0, 1.0 - nm.x * nm.x - nm.y * nm.y)));
+        tangent_normal = mix(tangent_normal, n, alphas.r);
     }
-    if layer2 > 0u && alphas.g > 0.0 {
-        let nm2 = textureSampleLevel(t_normal_array, s_terrain, uv2, layer2, 0.0).rg * 2.0 - 1.0;
-        let layer2_normal = vec3<f32>(nm2.x, nm2.y, sqrt(max(0.0, 1.0 - nm2.x * nm2.x - nm2.y * nm2.y)));
-        tangent_normal = mix(tangent_normal, layer2_normal, alphas.g);
+    if alphas.g > 0.0 {
+        let nm = textureSampleLevel(t_normal_array, s_terrain, uv2, layer2, 0.0).rg * 2.0 - 1.0;
+        let n = vec3<f32>(nm.x, nm.y, sqrt(max(0.0, 1.0 - nm.x * nm.x - nm.y * nm.y)));
+        tangent_normal = mix(tangent_normal, n, alphas.g);
     }
-    if layer3 > 0u && alphas.b > 0.0 {
-        let nm3 = textureSampleLevel(t_normal_array, s_terrain, uv3, layer3, 0.0).rg * 2.0 - 1.0;
-        let layer3_normal = vec3<f32>(nm3.x, nm3.y, sqrt(max(0.0, 1.0 - nm3.x * nm3.x - nm3.y * nm3.y)));
-        tangent_normal = mix(tangent_normal, layer3_normal, alphas.b);
+    if alphas.b > 0.0 {
+        let nm = textureSampleLevel(t_normal_array, s_terrain, uv3, layer3, 0.0).rg * 2.0 - 1.0;
+        let n = vec3<f32>(nm.x, nm.y, sqrt(max(0.0, 1.0 - nm.x * nm.x - nm.y * nm.y)));
+        tangent_normal = mix(tangent_normal, n, alphas.b);
+    }
+    if alphas.a > 0.0 {
+        let uv4 = tiling_uv * texture_scales[layer4];
+        let nm = textureSampleLevel(t_normal_array, s_terrain, uv4, layer4, 0.0).rg * 2.0 - 1.0;
+        let n = vec3<f32>(nm.x, nm.y, sqrt(max(0.0, 1.0 - nm.x * nm.x - nm.y * nm.y)));
+        tangent_normal = mix(tangent_normal, n, alphas.a);
+    }
+    if alphas_hi.r > 0.0 {
+        let uv5 = tiling_uv * texture_scales[layer5];
+        let nm = textureSampleLevel(t_normal_array, s_terrain, uv5, layer5, 0.0).rg * 2.0 - 1.0;
+        let n = vec3<f32>(nm.x, nm.y, sqrt(max(0.0, 1.0 - nm.x * nm.x - nm.y * nm.y)));
+        tangent_normal = mix(tangent_normal, n, alphas_hi.r);
+    }
+    if alphas_hi.g > 0.0 {
+        let uv6 = tiling_uv * texture_scales[layer6];
+        let nm = textureSampleLevel(t_normal_array, s_terrain, uv6, layer6, 0.0).rg * 2.0 - 1.0;
+        let n = vec3<f32>(nm.x, nm.y, sqrt(max(0.0, 1.0 - nm.x * nm.x - nm.y * nm.y)));
+        tangent_normal = mix(tangent_normal, n, alphas_hi.g);
+    }
+    if alphas_hi.b > 0.0 {
+        let uv7 = tiling_uv * texture_scales[layer7];
+        let nm = textureSampleLevel(t_normal_array, s_terrain, uv7, layer7, 0.0).rg * 2.0 - 1.0;
+        let n = vec3<f32>(nm.x, nm.y, sqrt(max(0.0, 1.0 - nm.x * nm.x - nm.y * nm.y)));
+        tangent_normal = mix(tangent_normal, n, alphas_hi.b);
     }
 
     // Apply bump power scaling
@@ -480,6 +533,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let final_color = compute_fog(lit_color, in.fog_densities.x, in.fog_densities.y, lighting.fog_color.xyz, lighting.planar_fog_color.xyz);
 
     // Debug modes
+    if params.debug_mode > 14.5 && params.debug_mode < 15.5 {
+        // Debug mode 15: Raw alpha visualization per chunk
+        // R = layer 1 alpha, G = layer 2 alpha, B = layer 3 alpha
+        return vec4<f32>(alphas.r, alphas.g, alphas.b, 1.0);
+    }
     if params.debug_mode > 13.5 && params.debug_mode < 14.5 {
         // Debug mode 14: Show layer0 texture ID per chunk (visualize layer buffer lookup)
         // This helps verify if the layer buffer indexing matches screen position

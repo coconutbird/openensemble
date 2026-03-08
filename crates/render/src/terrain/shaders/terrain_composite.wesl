@@ -33,6 +33,7 @@ struct CompositeParams {
 @group(0) @binding(4) var<storage, read> texture_scales: array<vec2<f32>>;
 @group(0) @binding(5) var s_terrain: sampler;
 @group(0) @binding(6) var s_alpha: sampler;
+@group(0) @binding(7) var t_alpha_atlas_hi: texture_2d_array<f32>;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -68,21 +69,26 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let grid_x = chunk_idx / 16u;  // = Z
     let grid_z = chunk_idx % 16u;  // = X
 
-    // --- Layer indices from storage buffer ---
+    // --- Layer indices from storage buffer (up to 8 layers) ---
     let base = chunk_idx * 8u;
     let layer0 = chunk_layers[base + 0u];
     let layer1 = chunk_layers[base + 1u];
     let layer2 = chunk_layers[base + 2u];
     let layer3 = chunk_layers[base + 3u];
+    let layer4 = chunk_layers[base + 4u];
+    let layer5 = chunk_layers[base + 5u];
+    let layer6 = chunk_layers[base + 6u];
+    let layer7 = chunk_layers[base + 7u];
 
     // --- Alpha sampling ---
     // Original: tex3D(alphasSampler, float3(TexCoord0.xy, slice))[channel]
     // Viewport uv = (0→1) within this chunk. uv.x = X direction, uv.y = Z direction.
-    // Alpha textures are uploaded with the same layout as decoded — no transposition.
-    // uv maps directly to alpha texture. Apply gutter inset (1/64 to 63/64).
-    let gutter = 1.0 / 64.0;
-    let alpha_uv = mix(vec2<f32>(gutter), vec2<f32>(1.0 - gutter), uv);
+    // Alpha textures are uploaded transposed (x↔y swap) so texture columns=X, rows=Z.
+    // uv maps directly to alpha texture. Apply half-pixel gutter inset (0.5/64 to 63.5/64).
+    let half_pixel = 0.5 / 64.0;
+    let alpha_uv = mix(vec2<f32>(half_pixel), vec2<f32>(1.0 - half_pixel), uv);
     let alphas = textureSampleLevel(t_alpha_atlas, s_alpha, alpha_uv, chunk_idx, 0.0);
+    let alphas_hi = textureSampleLevel(t_alpha_atlas_hi, s_alpha, alpha_uv, chunk_idx, 0.0);
 
     // --- Tiled texture UVs ---
     // Original: targetUVs = TexCoord0 * g_LayerData[indx].yz
@@ -96,22 +102,47 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let uv2 = tiling_uv * texture_scales[layer2];
     let uv3 = tiling_uv * texture_scales[layer3];
 
-    // --- Layer compositing ---
+    // --- Layer compositing (all 8 layers) ---
     // Original: multi-pass with SrcAlpha/InvSrcAlpha hardware blending
     // Equivalent to: result = mix(prev, layer_color, layer_alpha)
     var color = textureSampleLevel(t_terrain_array, s_terrain, uv0, layer0, 0.0).rgb;
 
-    if layer1 > 0u && alphas.r > 0.0 {
-        let c1 = textureSampleLevel(t_terrain_array, s_terrain, uv1, layer1, 0.0).rgb;
-        color = mix(color, c1, alphas.r);
+    // Layers 1-3: blend using alphas RGBA (lo atlas)
+    // Only check alpha > 0 — texture ID 0 is valid for overlays.
+    // Unused layer slots have alpha = 0 in the texture, so they're naturally skipped.
+    if alphas.r > 0.0 {
+        let c = textureSampleLevel(t_terrain_array, s_terrain, uv1, layer1, 0.0).rgb;
+        color = mix(color, c, alphas.r);
     }
-    if layer2 > 0u && alphas.g > 0.0 {
-        let c2 = textureSampleLevel(t_terrain_array, s_terrain, uv2, layer2, 0.0).rgb;
-        color = mix(color, c2, alphas.g);
+    if alphas.g > 0.0 {
+        let c = textureSampleLevel(t_terrain_array, s_terrain, uv2, layer2, 0.0).rgb;
+        color = mix(color, c, alphas.g);
     }
-    if layer3 > 0u && alphas.b > 0.0 {
-        let c3 = textureSampleLevel(t_terrain_array, s_terrain, uv3, layer3, 0.0).rgb;
-        color = mix(color, c3, alphas.b);
+    if alphas.b > 0.0 {
+        let c = textureSampleLevel(t_terrain_array, s_terrain, uv3, layer3, 0.0).rgb;
+        color = mix(color, c, alphas.b);
+    }
+    // Layer 4: blend using alphas.a (lo atlas A channel)
+    if alphas.a > 0.0 {
+        let uv4 = tiling_uv * texture_scales[layer4];
+        let c = textureSampleLevel(t_terrain_array, s_terrain, uv4, layer4, 0.0).rgb;
+        color = mix(color, c, alphas.a);
+    }
+    // Layers 5-7: blend using alphas_hi RGB (hi atlas)
+    if alphas_hi.r > 0.0 {
+        let uv5 = tiling_uv * texture_scales[layer5];
+        let c = textureSampleLevel(t_terrain_array, s_terrain, uv5, layer5, 0.0).rgb;
+        color = mix(color, c, alphas_hi.r);
+    }
+    if alphas_hi.g > 0.0 {
+        let uv6 = tiling_uv * texture_scales[layer6];
+        let c = textureSampleLevel(t_terrain_array, s_terrain, uv6, layer6, 0.0).rgb;
+        color = mix(color, c, alphas_hi.g);
+    }
+    if alphas_hi.b > 0.0 {
+        let uv7 = tiling_uv * texture_scales[layer7];
+        let c = textureSampleLevel(t_terrain_array, s_terrain, uv7, layer7, 0.0).rgb;
+        color = mix(color, c, alphas_hi.b);
     }
 
     // --- Debug modes ---

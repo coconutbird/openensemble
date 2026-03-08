@@ -202,6 +202,17 @@ impl CompositorResources {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // binding 7: high alpha texture array (overflow layers 5-7)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -265,6 +276,7 @@ impl CompositorResources {
         device: &wgpu::Device,
         terrain_array_view: &wgpu::TextureView,
         alpha_atlas_view: &wgpu::TextureView,
+        alpha_atlas_hi_view: &wgpu::TextureView,
         chunk_layers_buffer: &wgpu::Buffer,
         texture_scales_buffer: &wgpu::Buffer,
         sampler: &wgpu::Sampler,
@@ -305,6 +317,10 @@ impl CompositorResources {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: wgpu::BindingResource::Sampler(alpha_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(alpha_atlas_hi_view),
                 },
             ],
         })
