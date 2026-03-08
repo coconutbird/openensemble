@@ -20,10 +20,10 @@
 //!    - Gets height from terrain heightmap
 //!    - Uses alpha blending with distance fade
 
-mod render;
+mod rendering;
 mod resources;
 
-pub use render::render_foliage;
+pub use rendering::render_foliage;
 pub use resources::FoliageResources;
 
 #[allow(unused_imports)]

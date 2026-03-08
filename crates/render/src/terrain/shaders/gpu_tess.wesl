@@ -84,9 +84,10 @@ var t_normal_array: texture_2d_array<f32>;
 @group(1) @binding(9)
 var t_terrain_array: texture_2d_array<f32>;
 
-// Alpha atlas for all chunks (16x16 chunks, 64x64 per chunk = 1024x1024)
+// Alpha texture array: one 64×64 RGBA slice per chunk (256 slices)
+// Matches original Halo Wars per-chunk alpha texture approach
 @group(1) @binding(10)
-var t_alpha_atlas: texture_2d<f32>;
+var t_alpha_atlas: texture_2d_array<f32>;
 
 // Per-chunk layer data (256 chunks * 8 layer IDs = 2048 u32s)
 @group(1) @binding(11)
@@ -289,26 +290,28 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let vertex_normal = normalize(in.normal);
 
     // ==========================================================================
-    // TEXTURE SPLATTING - Runtime compositing aligned with gpuTerrainComposite.fx
+    // TEXTURE SPLATTING - Matches original gpuTerrainComposite.fx exactly
     // ==========================================================================
-    // Determine which chunk this pixel belongs to (0-15 in each axis)
+    // Original: index = gridX * numXChunks + gridZ
+    // where gridX = X world axis, gridZ = Z world axis
+    // sample_uv.x = worldX / extent = gridX direction
+    // sample_uv.y = worldZ / extent = gridZ direction
     let chunk_count = vec2<f32>(params.chunk_count.x, params.chunk_count.y);
     let chunk_uv = sample_uv * chunk_count;
-    let chunk_x = u32(clamp(floor(chunk_uv.x), 0.0, chunk_count.x - 1.0));
-    let chunk_y = u32(clamp(floor(chunk_uv.y), 0.0, chunk_count.y - 1.0));
+    let grid_x = u32(clamp(floor(chunk_uv.x), 0.0, chunk_count.x - 1.0));
+    let grid_z = u32(clamp(floor(chunk_uv.y), 0.0, chunk_count.y - 1.0));
+    let chunk_idx = grid_x * u32(chunk_count.y) + grid_z;
 
-    // Chunk index uses X-major ordering: chunk_idx = chunk_x * 16 + chunk_y
-    // This matches the original Halo Wars engine: idx = y + x * numXChunks
-    let chunk_idx = chunk_x * u32(chunk_count.y) + chunk_y;
-
-    // UV within the chunk (0-1), equivalent to original's TexCoord0
+    // UV within the chunk (0-1), equivalent to original's TexCoord0/TexCoord1
+    // Original quad vertices map (0,0)→(1,1) linearly — no rotation or swap
     let in_chunk_uv = fract(chunk_uv);
 
-    // Sample alpha atlas
-    // Original: tex3D(alphasSampler, float3(uv0, layer_group_z))[channel]
-    // Ours: 2D atlas where (chunk_x, chunk_y) region stores RGBA alpha values
-    let alpha_atlas_uv = (vec2<f32>(f32(chunk_x), f32(chunk_y)) + in_chunk_uv) / chunk_count;
-    let alphas = textureSample(t_alpha_atlas, s_alpha, alpha_atlas_uv);
+    // Sample alpha from per-chunk texture array
+    // Original: tex3D(alphasSampler, float3(uv0, indexes.x))[channel]
+    // Apply half-pixel gutter inset matching original quad vertex setup (1/64 to 63/64)
+    let gutter = 1.0 / 64.0;
+    let guttered_uv = mix(vec2<f32>(gutter), vec2<f32>(1.0 - gutter), in_chunk_uv);
+    let alphas = textureSample(t_alpha_atlas, s_alpha, guttered_uv, chunk_idx);
 
     // Get layer texture indices for this chunk
     // Equivalent to original's g_LayerData[].x (layer index)
@@ -486,20 +489,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // - (15,0) corner: BRIGHT BLUE (+X direction)
         // - (0,15) corner: BRIGHT GREEN (+Z direction)
         // - (15,15) corner: BRIGHT YELLOW (diagonal)
-        // Rest: gradient R=chunk_x/16, G=chunk_y/16
-        if (chunk_x < 2u && chunk_y < 2u) {
+        // Rest: gradient R=grid_x/16, G=grid_z/16
+        if (grid_x < 2u && grid_z < 2u) {
             return vec4<f32>(1.0, 0.0, 0.0, 1.0); // RED = origin (0,0)
         }
-        if (chunk_x > 13u && chunk_y < 2u) {
+        if (grid_x > 13u && grid_z < 2u) {
             return vec4<f32>(0.0, 0.0, 1.0, 1.0); // BLUE = +X direction (15,0)
         }
-        if (chunk_x < 2u && chunk_y > 13u) {
+        if (grid_x < 2u && grid_z > 13u) {
             return vec4<f32>(0.0, 1.0, 0.0, 1.0); // GREEN = +Z direction (0,15)
         }
-        if (chunk_x > 13u && chunk_y > 13u) {
+        if (grid_x > 13u && grid_z > 13u) {
             return vec4<f32>(1.0, 1.0, 0.0, 1.0); // YELLOW = diagonal (15,15)
         }
-        return vec4<f32>(f32(chunk_x) / 16.0, f32(chunk_y) / 16.0, 0.0, 1.0);
+        return vec4<f32>(f32(grid_x) / 16.0, f32(grid_z) / 16.0, 0.0, 1.0);
     }
     if (params.debug_mode > 11.5 && params.debug_mode < 12.5) {
         // Debug mode 12: GPU-composited atlas output

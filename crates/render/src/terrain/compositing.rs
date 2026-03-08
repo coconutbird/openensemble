@@ -120,11 +120,7 @@ pub struct CompositeParams {
     pub chunk_index: u32,
     /// Number of active layers for this chunk (1-8).
     pub num_layers: u32,
-    /// UV offset in output atlas (x, y).
-    pub chunk_offset: [f32; 2],
-    /// UV size in output atlas (width, height).
-    pub chunk_size: [f32; 2],
-    /// Padding to 32 bytes.
+    /// Padding to 16 bytes.
     pub _padding: [f32; 2],
 }
 
@@ -239,13 +235,13 @@ impl CompositorResources {
                     },
                     count: None,
                 },
-                // Alpha atlas
+                // Alpha texture array (per-chunk, 256 slices)
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
                         multisampled: false,
                     },
                     count: None,
@@ -401,8 +397,17 @@ impl CompositorResources {
 
     /// Composite a single chunk to the atlas.
     ///
-    /// This renders the composited texture for the given chunk index
-    /// to its region in the atlas.
+    /// The chunk is placed in the atlas so that the main terrain shader can
+    /// sample it at `sample_uv` (which is world_pos / terrain_extent).
+    ///
+    /// gpu_tess.wesl computes: chunk_idx = grid_x * 16 + grid_z
+    /// where grid_x = floor(sample_uv.x * 16), grid_z = floor(sample_uv.y * 16)
+    ///
+    /// So: grid_x = chunk_index / 16, grid_z = chunk_index % 16
+    ///
+    /// The main shader samples t_gpu_composited at sample_uv, so we place:
+    ///   viewport_x = grid_x * chunk_size  (maps to sample_uv.x)
+    ///   viewport_y = grid_z * chunk_size  (maps to sample_uv.y)
     pub fn composite_chunk(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -411,37 +416,20 @@ impl CompositorResources {
         chunk_index: u32,
         num_layers: u32,
     ) {
-        // Main shader computes: chunk_idx = chunk_y * 16 + chunk_x
-        // Where chunk_x = floor(sample_uv.x * 16), chunk_y = floor(sample_uv.y * 16)
-        // And sample_uv = (world_x / extent, world_z / extent)
-        //
-        // So: chunk_x = chunk_index % 16, chunk_y = chunk_index / 16
-        //
-        // Main shader samples t_gpu_composited at sample_uv, which maps to:
-        //   atlas_x = sample_uv.x * atlas_width = (chunk_x + fract) * chunk_size
-        //   atlas_y = sample_uv.y * atlas_height = (chunk_y + fract) * chunk_size
-        //
-        // Therefore we must place each chunk at viewport:
-        //   viewport_x = chunk_x * chunk_size
-        //   viewport_y = chunk_y * chunk_size
-        let chunk_x = chunk_index % self.config.chunks_x;
-        let chunk_y = chunk_index / self.config.chunks_x;
+        // Match gpu_tess: chunk_idx = grid_x * 16 + grid_z
+        let grid_x = chunk_index / self.config.chunks_z;
+        let grid_z = chunk_index % self.config.chunks_z;
 
-        let viewport_x = chunk_x * self.config.chunk_texture_size;
-        let viewport_y = chunk_y * self.config.chunk_texture_size;
+        // Place in atlas matching sample_uv layout:
+        // sample_uv.x → grid_x direction → atlas X
+        // sample_uv.y → grid_z direction → atlas Y
+        let viewport_x = grid_x * self.config.chunk_texture_size;
+        let viewport_y = grid_z * self.config.chunk_texture_size;
 
         // Update params buffer
         let params = CompositeParams {
             chunk_index,
             num_layers,
-            chunk_offset: [
-                chunk_x as f32 / self.config.chunks_x as f32,
-                chunk_y as f32 / self.config.chunks_z as f32,
-            ],
-            chunk_size: [
-                1.0 / self.config.chunks_x as f32,
-                1.0 / self.config.chunks_z as f32,
-            ],
             _padding: [0.0, 0.0],
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&[params]));
@@ -453,7 +441,7 @@ impl CompositorResources {
                 view: &self.albedo_atlas_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load, // Don't clear, we render per-chunk
+                    load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -462,7 +450,6 @@ impl CompositorResources {
             occlusion_query_set: None,
         });
 
-        // Set viewport to this chunk's region
         render_pass.set_viewport(
             viewport_x as f32,
             viewport_y as f32,
@@ -474,7 +461,7 @@ impl CompositorResources {
 
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, bind_group, &[]);
-        render_pass.draw(0..3, 0..1); // Fullscreen triangle
+        render_pass.draw(0..3, 0..1);
 
         // Mark chunk as clean
         self.dirty_chunks[chunk_index as usize] = false;
