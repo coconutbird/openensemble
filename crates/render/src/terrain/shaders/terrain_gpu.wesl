@@ -201,8 +201,6 @@ fn unpack_normal(packed: u32) -> vec3<f32> {
     return normalize(norm);
 }
 
-
-
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
@@ -250,14 +248,17 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     // Compute per-vertex fog densities (matches original fogHelpers.inc)
     let z_fog_density = compute_radial_fog_density(world_pos, lighting.world_camera_pos.xyz, lighting.fog_params.x, lighting.fog_params.y);
     var planar_fog_density = 1.0;
-    if (lighting.planar_fog_params.x > 0.5) {
+    if lighting.planar_fog_params.x > 0.5 {
         planar_fog_density = compute_planar_fog_density(world_pos.y, lighting.planar_fog_params.y, lighting.planar_fog_params.z);
     }
 
     out.clip_position = camera.view_proj * vec4<f32>(world_pos, 1.0);
     out.normal = normal;
     out.world_pos = world_pos;
-    out.uv = vec2<f32>(global_u, global_v);
+    // Z→U, X→V: match the game's UV convention (e.g. roads shader uses gPos.zx).
+    // global_u is X-direction (from patch_x), global_v is Z-direction (from patch_z).
+    // Swap so that UV.x = Z, UV.y = X.
+    out.uv = vec2<f32>(global_v, global_u);
     out.tangent = tbn[0];
     out.binormal = tbn[1];
     out.fog_densities = vec2<f32>(z_fog_density, planar_fog_density);
@@ -267,19 +268,22 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Compute UV from world position to ensure continuity across patch boundaries
+    // Compute UVs from world position
     let num_verts = u32(tess_params.terrain_info.x);
     let tile_scale = tess_params.terrain_info.y;
     let terrain_extent = f32(num_verts - 1u) * tile_scale;
-    let uv_from_world = vec2<f32>(
-        in.world_pos.x / terrain_extent,
-        in.world_pos.z / terrain_extent
+    // Splat/tiling UV: X→U, Z→V (matches HWDE: uvCoord0 = gPos/64 where gPos = (X,Z))
+    let sample_uv = vec2<f32>(
+        in.world_pos.x / terrain_extent,  // U = world X
+        in.world_pos.z / terrain_extent   // V = world Z
     );
-    let sample_uv = uv_from_world;
+    // XTD/unique texture UV: same as sample_uv = (X, Z).
+    // Both splatting and baked textures use (X→U, Z→V) in our implementation.
+    let xtd_uv = sample_uv;
 
-    // Sample alpha texture for terrain holes/transparency
-    let alpha = textureSample(t_alpha, s_terrain, sample_uv).r;
-    if (alpha < 0.5) {
+    // Sample alpha texture for terrain holes/transparency (XTD-decoded)
+    let alpha = textureSample(t_alpha, s_terrain, xtd_uv).r;
+    if alpha < 0.5 {
         discard;
     }
 
@@ -288,23 +292,26 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // ==========================================================================
     // TEXTURE SPLATTING - Matches original gpuTerrainComposite.fx exactly
     // ==========================================================================
-    // Original: index = gridX * numXChunks + gridZ
-    // where gridX = X world axis, gridZ = Z world axis
-    // sample_uv.x = worldX / extent = gridX direction
-    // sample_uv.y = worldZ / extent = gridZ direction
+    // UV convention: U = world X, V = world Z (HWDE: uvCoord0 = gPos/64 = (X,Z)/64)
+    // XTT data uses grid_x→Z, grid_z→X (misleading names). Rust indexes as grid_x*16+grid_z = Z*16+X.
+    // So shader must also produce chunk_idx = Z*16+X: grid_z_shader * 16 + grid_x_shader
+    // where grid_x_shader = X direction (from UV.x), grid_z_shader = Z direction (from UV.y).
     let chunk_count = vec2<f32>(params.chunk_count.x, params.chunk_count.y);
     let chunk_uv = sample_uv * chunk_count;
-    let grid_x = u32(clamp(floor(chunk_uv.x), 0.0, chunk_count.x - 1.0));
-    let grid_z = u32(clamp(floor(chunk_uv.y), 0.0, chunk_count.y - 1.0));
-    let chunk_idx = grid_x * u32(chunk_count.y) + grid_z;
+    let grid_x = u32(clamp(floor(chunk_uv.x), 0.0, chunk_count.x - 1.0));  // UV.x = X
+    let grid_z = u32(clamp(floor(chunk_uv.y), 0.0, chunk_count.y - 1.0));  // UV.y = Z
+    let chunk_idx = grid_z * u32(chunk_count.y) + grid_x;  // Z*16+X (matches Rust XTT layout)
 
     // UV within the chunk (0-1), equivalent to original's TexCoord0/TexCoord1
-    // Original quad vertices map (0,0)→(1,1) linearly — no rotation or swap
     let in_chunk_uv = fract(chunk_uv);
 
     // Sample alpha from per-chunk texture array
-    // Original: tex3D(alphasSampler, float3(uv0, indexes.x))[channel]
-    // Apply half-pixel gutter inset matching original quad vertex setup (1/64 to 63/64)
+    // Original: tex3D(alphasSampler, float3(TexCoord0.xy, slice))[channel]
+    // The compositor's TexCoord0 is the quad UV (0→1) within the chunk.
+    // UV.x = X direction, UV.y = Z direction (HWDE: gPos = (X,Z)).
+    // Alpha textures are uploaded with the same layout as decoded — no transposition.
+    // in_chunk_uv = (frac_x, frac_z) maps directly to alpha texture.
+    // Apply half-pixel gutter inset matching original quad vertex setup (1/64 to 63/64).
     let gutter = 1.0 / 64.0;
     let guttered_uv = mix(vec2<f32>(gutter), vec2<f32>(1.0 - gutter), in_chunk_uv);
     let alphas = textureSample(t_alpha_atlas, s_alpha, guttered_uv, chunk_idx);
@@ -319,12 +326,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Calculate tiled UVs with per-texture scaling
     // Original: Output.targetUVs = TexCoord0 * g_LayerData[indx].yz
-    // We use continuous UVs (base_uv) to ensure seamless chunk boundaries
-    let base_uv = sample_uv * chunk_count;
-    let uv0 = base_uv * texture_scales[layer0];
-    let uv1 = base_uv * texture_scales[layer1];
-    let uv2 = base_uv * texture_scales[layer2];
-    let uv3 = base_uv * texture_scales[layer3];
+    // TexCoord0 = (X, Z) within chunk. u_scale applies to X, v_scale applies to Z.
+    let tiling_uv = sample_uv * chunk_count;  // (X, Z) continuous across chunks
+    let uv0 = tiling_uv * texture_scales[layer0];
+    let uv1 = tiling_uv * texture_scales[layer1];
+    let uv2 = tiling_uv * texture_scales[layer2];
+    let uv3 = tiling_uv * texture_scales[layer3];
 
     // Runtime texture splatting - same blending as compositor
     // Original uses hardware alpha blending (SrcAlpha/OneMinusSrcAlpha)
@@ -335,17 +342,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var color = textureSampleLevel(t_terrain_array, s_terrain, uv0, layer0, 0.0).rgb;
 
     // Layer 1: blend using alphas.r
-    if (layer1 > 0u && alphas.r > 0.0) {
+    if layer1 > 0u && alphas.r > 0.0 {
         let layer1_color = textureSampleLevel(t_terrain_array, s_terrain, uv1, layer1, 0.0).rgb;
         color = mix(color, layer1_color, alphas.r);
     }
     // Layer 2: blend using alphas.g
-    if (layer2 > 0u && alphas.g > 0.0) {
+    if layer2 > 0u && alphas.g > 0.0 {
         let layer2_color = textureSampleLevel(t_terrain_array, s_terrain, uv2, layer2, 0.0).rgb;
         color = mix(color, layer2_color, alphas.g);
     }
     // Layer 3: blend using alphas.b
-    if (layer3 > 0u && alphas.b > 0.0) {
+    if layer3 > 0u && alphas.b > 0.0 {
         let layer3_color = textureSampleLevel(t_terrain_array, s_terrain, uv3, layer3, 0.0).rgb;
         color = mix(color, layer3_color, alphas.b);
     }
@@ -354,17 +361,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let nm0 = textureSampleLevel(t_normal_array, s_terrain, uv0, layer0, 0.0).rg * 2.0 - 1.0;
     var tangent_normal = vec3<f32>(nm0.x, nm0.y, sqrt(max(0.0, 1.0 - nm0.x * nm0.x - nm0.y * nm0.y)));
 
-    if (layer1 > 0u && alphas.r > 0.0) {
+    if layer1 > 0u && alphas.r > 0.0 {
         let nm1 = textureSampleLevel(t_normal_array, s_terrain, uv1, layer1, 0.0).rg * 2.0 - 1.0;
         let layer1_normal = vec3<f32>(nm1.x, nm1.y, sqrt(max(0.0, 1.0 - nm1.x * nm1.x - nm1.y * nm1.y)));
         tangent_normal = mix(tangent_normal, layer1_normal, alphas.r);
     }
-    if (layer2 > 0u && alphas.g > 0.0) {
+    if layer2 > 0u && alphas.g > 0.0 {
         let nm2 = textureSampleLevel(t_normal_array, s_terrain, uv2, layer2, 0.0).rg * 2.0 - 1.0;
         let layer2_normal = vec3<f32>(nm2.x, nm2.y, sqrt(max(0.0, 1.0 - nm2.x * nm2.x - nm2.y * nm2.y)));
         tangent_normal = mix(tangent_normal, layer2_normal, alphas.g);
     }
-    if (layer3 > 0u && alphas.b > 0.0) {
+    if layer3 > 0u && alphas.b > 0.0 {
         let nm3 = textureSampleLevel(t_normal_array, s_terrain, uv3, layer3, 0.0).rg * 2.0 - 1.0;
         let layer3_normal = vec3<f32>(nm3.x, nm3.y, sqrt(max(0.0, 1.0 - nm3.x * nm3.x - nm3.y * nm3.y)));
         tangent_normal = mix(tangent_normal, layer3_normal, alphas.b);
@@ -383,8 +390,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let tbn = mat3x3<f32>(tangent, binormal, vertex_normal);
     let world_normal = normalize(tbn * tangent_normal);
 
-    // Sample AO texture
-    let ao = textureSample(t_ao, s_terrain, sample_uv).r;
+    // Sample AO texture (XTD-decoded, uses xtd_uv)
+    let ao = textureSample(t_ao, s_terrain, xtd_uv).r;
     let ao_intensity = lighting.ao_params.x;
     let ao_factor = mix(1.0, ao, ao_intensity);
 
@@ -400,7 +407,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // === Directional shadow (VSM) ===
     var shadow_factor = 1.0;
-    if (lighting.shadow_params.z > 0.5) {
+    if lighting.shadow_params.z > 0.5 {
         // Transform world position to shadow space
         let shadow_vp = mat4x4<f32>(
             lighting.shadow_vp_col0,
@@ -454,7 +461,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     lit_color += (dir_spec * 0.15 + local_spec) * ao_factor;
 
     // === Blackmap (fog-of-war) ===
-    if (lighting.blackmap_params1.w > 0.5) {
+    if lighting.blackmap_params1.w > 0.5 {
         let blackmap_uv = sample_uv; // Use terrain UV for blackmap lookup
         let vis_factor = textureSample(t_blackmap, s_terrain, blackmap_uv).a;
         let unexplored_sample = textureSample(t_unexplored, s_terrain, blackmap_uv);
@@ -473,12 +480,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let final_color = compute_fog(lit_color, in.fog_densities.x, in.fog_densities.y, lighting.fog_color.xyz, lighting.planar_fog_color.xyz);
 
     // Debug modes
-    if (params.debug_mode > 13.5 && params.debug_mode < 14.5) {
+    if params.debug_mode > 13.5 && params.debug_mode < 14.5 {
         // Debug mode 14: Show layer0 texture ID per chunk (visualize layer buffer lookup)
         // This helps verify if the layer buffer indexing matches screen position
         return vec4<f32>(f32(layer0) / 8.0, 0.0, 0.0, 1.0);
     }
-    if (params.debug_mode > 12.5 && params.debug_mode < 13.5) {
+    if params.debug_mode > 12.5 && params.debug_mode < 13.5 {
         // Debug mode 13: Chunk grid visualization with corner markers
         // Corner markers (2x2 chunk areas):
         // - (0,0) corner: BRIGHT RED (world origin)
@@ -486,49 +493,49 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // - (0,15) corner: BRIGHT GREEN (+Z direction)
         // - (15,15) corner: BRIGHT YELLOW (diagonal)
         // Rest: gradient R=grid_x/16, G=grid_z/16
-        if (grid_x < 2u && grid_z < 2u) {
+        if grid_x < 2u && grid_z < 2u {
             return vec4<f32>(1.0, 0.0, 0.0, 1.0); // RED = origin (0,0)
         }
-        if (grid_x > 13u && grid_z < 2u) {
+        if grid_x > 13u && grid_z < 2u {
             return vec4<f32>(0.0, 0.0, 1.0, 1.0); // BLUE = +X direction (15,0)
         }
-        if (grid_x < 2u && grid_z > 13u) {
+        if grid_x < 2u && grid_z > 13u {
             return vec4<f32>(0.0, 1.0, 0.0, 1.0); // GREEN = +Z direction (0,15)
         }
-        if (grid_x > 13u && grid_z > 13u) {
+        if grid_x > 13u && grid_z > 13u {
             return vec4<f32>(1.0, 1.0, 0.0, 1.0); // YELLOW = diagonal (15,15)
         }
         return vec4<f32>(f32(grid_x) / 16.0, f32(grid_z) / 16.0, 0.0, 1.0);
     }
-    if (params.debug_mode > 11.5 && params.debug_mode < 12.5) {
+    if params.debug_mode > 11.5 && params.debug_mode < 12.5 {
         // Debug mode 12: GPU-composited atlas output
         // Sample from the 8K×8K GPU-composited atlas
         let gpu_composited_color = textureSample(t_gpu_composited, s_terrain, sample_uv);
         return vec4<f32>(gpu_composited_color.rgb, 1.0);
     }
-    if (params.debug_mode > 10.5 && params.debug_mode < 11.5) {
+    if params.debug_mode > 10.5 && params.debug_mode < 11.5 {
         // Debug mode 11: terrain UV visualization
         return vec4<f32>(sample_uv.x, sample_uv.y, 0.0, 1.0);
     }
-    if (params.debug_mode > 9.5 && params.debug_mode < 10.5) {
+    if params.debug_mode > 9.5 && params.debug_mode < 10.5 {
         return vec4<f32>(0.5, 0.7, 0.3, 1.0);  // Solid green
     }
-    if (params.debug_mode > 7.5 && params.debug_mode < 8.5) {
+    if params.debug_mode > 7.5 && params.debug_mode < 8.5 {
         return vec4<f32>(ao, ao, ao, 1.0);
     }
-    if (params.debug_mode > 8.5 && params.debug_mode < 9.5) {
-        let xtt_color = textureSample(t_xtt_albedo, s_terrain, sample_uv);
+    if params.debug_mode > 8.5 && params.debug_mode < 9.5 {
+        let xtt_color = textureSample(t_xtt_albedo, s_terrain, xtd_uv);
         return vec4<f32>(xtt_color.rgb * 0.7, 1.0);
     }
-    if (params.debug_mode > 6.5 && params.debug_mode < 7.5) {
-        let xtt_color = textureSample(t_xtt_albedo, s_terrain, sample_uv);
+    if params.debug_mode > 6.5 && params.debug_mode < 7.5 {
+        let xtt_color = textureSample(t_xtt_albedo, s_terrain, xtd_uv);
         return vec4<f32>(xtt_color.rgb, 1.0);
     }
-    if (params.debug_mode > 0.5 && params.debug_mode < 1.5) {
+    if params.debug_mode > 0.5 && params.debug_mode < 1.5 {
         let edge_threshold = 0.02;
         let is_edge = in_chunk_uv.x < edge_threshold || in_chunk_uv.x > (1.0 - edge_threshold) ||
                       in_chunk_uv.y < edge_threshold || in_chunk_uv.y > (1.0 - edge_threshold);
-        if (is_edge) {
+        if is_edge {
             return vec4<f32>(1.0, 0.0, 0.0, 1.0);
         }
     }

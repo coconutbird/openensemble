@@ -14,7 +14,8 @@ impl TerrainViewer {
         let mut layer_data = vec![0u32; 256 * 8];
 
         for chunk in &self.chunk_splat_data {
-            let chunk_idx = (chunk.grid_z * 16 + chunk.grid_x) as usize;
+            // X-major indexing (game convention): gridX * 16 + gridZ
+            let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
             let base = chunk_idx * 8;
 
             for (i, &layer_id) in chunk.layer_texture_ids.iter().enumerate().take(8) {
@@ -29,7 +30,7 @@ impl TerrainViewer {
         // Log first few chunks for debugging
         log::info!("=== First 5 chunk layer IDs in buffer ===");
         for chunk in self.chunk_splat_data.iter().take(5) {
-            let chunk_idx = (chunk.grid_z * 16 + chunk.grid_x) as usize;
+            let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
             log::info!(
                 "  Chunk ({}, {}) idx={}: layers={:?}",
                 chunk.grid_x,

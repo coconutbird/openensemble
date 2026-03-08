@@ -228,7 +228,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
     // Flip normal toward camera for two-sided lighting
     let to_camera = normalize(params.camera_pos - pos);
-    if (dot(to_camera, normal) < 0.0) {
+    if dot(to_camera, normal) < 0.0 {
         normal = -normal;
     }
 
@@ -251,7 +251,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     // Fog densities
     let z_fog = compute_radial_fog_density(pos, params.camera_pos, params.fog_params.x, params.fog_params.y);
     var p_fog = 1.0;
-    if (params.planar_fog_params.x > 0.5) {
+    if params.planar_fog_params.x > 0.5 {
         p_fog = compute_planar_fog_density(pos.y, params.planar_fog_params.y, params.planar_fog_params.z);
     }
 
@@ -280,7 +280,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Alpha test
     let final_alpha = opacity * in.alpha_fade;
-    if (final_alpha < 0.1) {
+    if final_alpha < 0.1 {
         discard;
     }
 
@@ -288,7 +288,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var diffuse = in.diffuse_sum;
 
     // === Shadows (VSM) ===
-    if (params.shadow_params.z > 0.5) {
+    if params.shadow_params.z > 0.5 {
         let shadow_vp = mat4x4<f32>(
             params.shadow_vp_col0,
             params.shadow_vp_col1,
@@ -307,7 +307,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var lit_color = diffuse * albedo.rgb;
 
     // === Blackmap (fog-of-war) ===
-    if (params.blackmap_params1.w > 0.5) {
+    if params.blackmap_params1.w > 0.5 {
         // Use world XZ scaled to terrain UV for blackmap lookup
         let terrain_size = (params.terrain_info.x - 1.0) * params.terrain_info.y;
         let bm_uv = clamp(in.world_pos.xz / terrain_size, vec2<f32>(0.0), vec2<f32>(1.0));

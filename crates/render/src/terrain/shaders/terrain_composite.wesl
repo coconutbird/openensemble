@@ -12,7 +12,7 @@
 //   - Viewport + scissor rect isolates each chunk's 512×512 region in the 8K atlas
 //
 // The main terrain shader (terrain_gpu.wesl) samples this atlas at:
-//   sample_uv = world_pos.xz / terrain_extent
+//   sample_uv = (world_pos.x, world_pos.z) / terrain_extent   (X→U, Z→V)
 // which maps to atlas position:
 //   atlas_x = sample_uv.x * atlas_width  = (grid_x + fract) * chunk_size
 //   atlas_y = sample_uv.y * atlas_height = (grid_z + fract) * chunk_size
@@ -63,9 +63,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let uv = in.uv;
 
     // Decompose chunk index → grid position
-    // Matches terrain_gpu.wesl: chunk_idx = grid_x * 16 + grid_z
-    let grid_x = chunk_idx / 16u;
-    let grid_z = chunk_idx % 16u;
+    // chunk_idx = Z*16+X (XTT layout: grid_x=Z, grid_z=X)
+    // grid_x here = Z direction, grid_z here = X direction
+    let grid_x = chunk_idx / 16u;  // = Z
+    let grid_z = chunk_idx % 16u;  // = X
 
     // --- Layer indices from storage buffer ---
     let base = chunk_idx * 8u;
@@ -75,58 +76,60 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let layer3 = chunk_layers[base + 3u];
 
     // --- Alpha sampling ---
-    // Original: tex3D(alphasSampler, float3(uv, slice))[channel]
-    // Gutter inset: alpha textures are 64×64, inset by half-pixel to avoid edge artifacts
+    // Original: tex3D(alphasSampler, float3(TexCoord0.xy, slice))[channel]
+    // Viewport uv = (0→1) within this chunk. uv.x = X direction, uv.y = Z direction.
+    // Alpha textures are uploaded with the same layout as decoded — no transposition.
+    // uv maps directly to alpha texture. Apply gutter inset (1/64 to 63/64).
     let gutter = 1.0 / 64.0;
     let alpha_uv = mix(vec2<f32>(gutter), vec2<f32>(1.0 - gutter), uv);
     let alphas = textureSampleLevel(t_alpha_atlas, s_alpha, alpha_uv, chunk_idx, 0.0);
 
     // --- Tiled texture UVs ---
     // Original: targetUVs = TexCoord0 * g_LayerData[indx].yz
-    // TexCoord0 is the in-chunk UV (0→1), but we use continuous UVs across chunks
-    // for seamless boundaries: base_uv = (grid_x + uv.x, grid_z + uv.y)
-    // This matches terrain_gpu.wesl: base_uv = sample_uv * chunk_count
-    let base_uv = vec2<f32>(f32(grid_x), f32(grid_z)) + uv;
+    // Viewport is placed at (X*size, Z*size), so uv.x = X direction, uv.y = Z direction.
+    // grid_z = X, grid_x = Z (from chunk_idx decomposition of Z*16+X layout).
+    // tiling_uv = (X + frac_X, Z + frac_Z) so u_scale applies to X, v_scale to Z.
+    let tiling_uv = vec2<f32>(f32(grid_z) + uv.x, f32(grid_x) + uv.y);
 
-    let uv0 = base_uv * texture_scales[layer0];
-    let uv1 = base_uv * texture_scales[layer1];
-    let uv2 = base_uv * texture_scales[layer2];
-    let uv3 = base_uv * texture_scales[layer3];
+    let uv0 = tiling_uv * texture_scales[layer0];
+    let uv1 = tiling_uv * texture_scales[layer1];
+    let uv2 = tiling_uv * texture_scales[layer2];
+    let uv3 = tiling_uv * texture_scales[layer3];
 
     // --- Layer compositing ---
     // Original: multi-pass with SrcAlpha/InvSrcAlpha hardware blending
     // Equivalent to: result = mix(prev, layer_color, layer_alpha)
     var color = textureSampleLevel(t_terrain_array, s_terrain, uv0, layer0, 0.0).rgb;
 
-    if (layer1 > 0u && alphas.r > 0.0) {
+    if layer1 > 0u && alphas.r > 0.0 {
         let c1 = textureSampleLevel(t_terrain_array, s_terrain, uv1, layer1, 0.0).rgb;
         color = mix(color, c1, alphas.r);
     }
-    if (layer2 > 0u && alphas.g > 0.0) {
+    if layer2 > 0u && alphas.g > 0.0 {
         let c2 = textureSampleLevel(t_terrain_array, s_terrain, uv2, layer2, 0.0).rgb;
         color = mix(color, c2, alphas.g);
     }
-    if (layer3 > 0u && alphas.b > 0.0) {
+    if layer3 > 0u && alphas.b > 0.0 {
         let c3 = textureSampleLevel(t_terrain_array, s_terrain, uv3, layer3, 0.0).rgb;
         color = mix(color, c3, alphas.b);
     }
 
     // --- Debug modes ---
-    if (params.debug_mode == 1u) {
+    if params.debug_mode == 1u {
         return vec4<f32>(uv.x, uv.y, 0.0, 1.0);           // UV gradient
     }
-    if (params.debug_mode == 2u) {
+    if params.debug_mode == 2u {
         return vec4<f32>(f32(grid_x) / 16.0, f32(grid_z) / 16.0, 0.0, 1.0); // Chunk ID
     }
-    if (params.debug_mode == 3u) {
+    if params.debug_mode == 3u {
         return vec4<f32>(alphas.r, alphas.g, alphas.b, 1.0); // Alpha channels
     }
-    if (params.debug_mode == 4u) {
+    if params.debug_mode == 4u {
         return vec4<f32>(textureSampleLevel(t_terrain_array, s_terrain, uv0, layer0, 0.0).rgb, 1.0);
     }
-    if (params.debug_mode == 5u) {
-        // base_uv / 16 should match Mode 11 (sample_uv) exactly
-        return vec4<f32>(base_uv.x / 16.0, base_uv.y / 16.0, 0.0, 1.0);
+    if params.debug_mode == 5u {
+        // tiling_uv / 16 shows the tiling UV gradient
+        return vec4<f32>(tiling_uv.x / 16.0, tiling_uv.y / 16.0, 0.0, 1.0);
     }
 
     return vec4<f32>(color, 1.0);

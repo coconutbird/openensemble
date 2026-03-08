@@ -111,7 +111,7 @@ fn evaluate_omni_specular(
     let r_dot_l = max(dot(world_reflect, light_norm), 0.0);
     let denom = spec_power - (spec_power - 1.0) * r_dot_l;
     var spec_contrib = 0.0;
-    if (denom > 0.0001) {
+    if denom > 0.0001 {
         spec_contrib = r_dot_l / denom * spec_intensity;
     }
 

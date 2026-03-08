@@ -16,7 +16,7 @@
 pub struct TerrainParams {
     /// Terrain size in world units [width, depth].
     pub terrain_size: [f32; 2],
-    /// Number of chunks in each direction [x, z].
+    /// Number of chunks in each direction [x, z] (X→U, Z→V convention).
     pub chunk_count: [f32; 2],
     /// Texture tiling scale.
     pub texture_tile_scale: f32,

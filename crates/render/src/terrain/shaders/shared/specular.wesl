@@ -22,7 +22,7 @@ const SPEC_TO_DIFFUSE_RATIO: f32 = 3.14159265;
 /// `spec_power` - specular exponent (higher = tighter highlight)
 fn specular_schlick(r_dot_l: f32, spec_power: f32) -> f32 {
     let denom = spec_power - spec_power * r_dot_l + r_dot_l;
-    if (denom < 0.0001) {
+    if denom < 0.0001 {
         return 0.0;
     }
     return r_dot_l / denom;

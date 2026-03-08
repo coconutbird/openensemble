@@ -34,9 +34,9 @@ fn pcf_2x2(
 
     // Sample 4 neighboring texels (matching original OffsetX/Y = ±0.5)
     let d00 = textureSampleLevel(shadow_map, shadow_samp, shadow_uv + vec2<f32>(-0.5, -0.5) * texel_size, 0.0).r;
-    let d10 = textureSampleLevel(shadow_map, shadow_samp, shadow_uv + vec2<f32>( 0.5, -0.5) * texel_size, 0.0).r;
-    let d01 = textureSampleLevel(shadow_map, shadow_samp, shadow_uv + vec2<f32>(-0.5,  0.5) * texel_size, 0.0).r;
-    let d11 = textureSampleLevel(shadow_map, shadow_samp, shadow_uv + vec2<f32>( 0.5,  0.5) * texel_size, 0.0).r;
+    let d10 = textureSampleLevel(shadow_map, shadow_samp, shadow_uv + vec2<f32>(0.5, -0.5) * texel_size, 0.0).r;
+    let d01 = textureSampleLevel(shadow_map, shadow_samp, shadow_uv + vec2<f32>(-0.5, 0.5) * texel_size, 0.0).r;
+    let d11 = textureSampleLevel(shadow_map, shadow_samp, shadow_uv + vec2<f32>(0.5, 0.5) * texel_size, 0.0).r;
 
     // Bilinear weights from fractional texel position
     let f = fract(shadow_uv * vec2<f32>(textureDimensions(shadow_map, 0)) - 0.5);
@@ -89,7 +89,7 @@ fn vsm_shadow(
     avg_z2 /= 9.0;
 
     // Fragment is fully lit if closer than mean depth
-    if (fragment_z <= avg_z) {
+    if fragment_z <= avg_z {
         return 1.0;
     }
 
@@ -124,7 +124,7 @@ fn compute_dir_shadow(
     // Cascade selection (matching original dirLighting.inc)
     let max_coord = max(abs(shadow_coords.x), abs(shadow_coords.y));
     var cascade = floor(max_coord * csm_scale);
-    if (cascade < 1.0) {
+    if cascade < 1.0 {
         cascade = 0.0;
     } else {
         cascade = min(floor(log2(cascade) + 1.0), num_passes - 1.0);
@@ -136,7 +136,7 @@ fn compute_dir_shadow(
 
     // Check if outside last cascade
     let abs_scaled = abs(scaled.xy);
-    if (cascade >= num_passes - 1.0 && max(abs_scaled.x, abs_scaled.y) > 0.999) {
+    if cascade >= num_passes - 1.0 && max(abs_scaled.x, abs_scaled.y) > 0.999 {
         return 1.0; // Outside shadow range
     }
 

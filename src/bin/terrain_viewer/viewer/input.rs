@@ -28,7 +28,11 @@ impl Application for TerrainViewer {
             self.wireframe = !self.wireframe;
         }
 
-        // Debug mode toggle: 1-5 for specific modes, 0 or ` for normal
+        // Debug mode toggle: Q for mode 0 (runtime splatting), 0 for mode 12 (GPU composited)
+        if input.is_key_pressed(KeyCode::Q) {
+            self.debug_mode = 0;
+            log::info!("Debug mode: 0 (runtime splatting - HWDE ground truth)");
+        }
         if input.is_key_pressed(KeyCode::Key1) {
             self.debug_mode = 1;
             log::info!("Debug mode: 1 (alpha values)");

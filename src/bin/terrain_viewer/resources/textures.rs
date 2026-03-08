@@ -357,8 +357,8 @@ impl TerrainViewer {
             }
 
             for chunk in &self.chunk_splat_data {
-                // Z-major indexing to match shader: idx = gridZ * 16 + gridX
-                let chunk_idx = (chunk.grid_z * 16 + chunk.grid_x) as usize;
+                // X-major chunk indexing (game convention): gridX * numZChunks + gridZ
+                let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
                 if chunk_idx >= NUM_CHUNKS as usize {
                     continue;
                 }
@@ -366,12 +366,10 @@ impl TerrainViewer {
 
                 for y in 0..CHUNK_SIZE {
                     for x in 0..CHUNK_SIZE {
-                        // 90° CCW rotation: dst(x,y) = src(y, CHUNK_SIZE-1-x)
-                        // 90° CCW rotation per chunk: src(x,y) → dst(y, SIZE-1-x)
-                        let src_idx = (y * CHUNK_SIZE + (CHUNK_SIZE - 1 - x)) as usize;
-                        let dst_x = y;
-                        let dst_y = CHUNK_SIZE - 1 - x;
-                        let dst_idx = slice_offset + (dst_y * CHUNK_SIZE + dst_x) as usize * 4;
+                        // Decoded alpha has x=Z, y=X (XTT convention). Transpose so that
+                        // texture columns=X, rows=Z — matching sample_uv = (X→U, Z→V).
+                        let src_idx = (x * CHUNK_SIZE + y) as usize; // transpose: swap x↔y
+                        let dst_idx = slice_offset + (y * CHUNK_SIZE + x) as usize * 4;
 
                         // R = alpha for layer 1, G = layer 2, B = layer 3, A = layer 4
                         if !chunk.alpha_maps.is_empty() && src_idx < chunk.alpha_maps[0].len() {

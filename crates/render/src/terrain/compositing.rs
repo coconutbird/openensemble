@@ -361,12 +361,15 @@ impl CompositorResources {
         let chunk_size = self.config.chunk_texture_size;
 
         for &chunk_idx in &dirty_indices {
-            // chunk_idx = grid_x * 16 + grid_z
-            let grid_x = chunk_idx / self.config.chunks_z;
-            let grid_z = chunk_idx % self.config.chunks_z;
+            // chunk_idx = Z*16+X (XTT layout: grid_x=Z, grid_z=X)
+            let grid_x = chunk_idx / self.config.chunks_z; // = Z
+            let grid_z = chunk_idx % self.config.chunks_z; // = X
 
-            let viewport_x = grid_x * chunk_size;
-            let viewport_y = grid_z * chunk_size;
+            // Atlas layout: X→U (columns), Z→V (rows) to match terrain_gpu's
+            // sample_uv = (worldX/extent, worldZ/extent)
+            // grid_z = X direction → viewport_x, grid_x = Z direction → viewport_y
+            let viewport_x = grid_z * chunk_size;
+            let viewport_y = grid_x * chunk_size;
 
             let dynamic_offset = (chunk_idx as u64 * PARAMS_ALIGN) as u32;
 

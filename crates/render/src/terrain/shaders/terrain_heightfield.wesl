@@ -118,7 +118,6 @@ fn heightfield_depth_to_y(s: vec2<f32>) -> vec2<f32> {
     return s * params.y_scale_ofs.x + params.y_scale_ofs.y;
 }
 
-
 // --- Vertex shader for instanced patch rendering ---
 
 @vertex
@@ -128,11 +127,11 @@ fn vs_main(in: VertexInput, instance: PatchInstance) -> VertexOutput {
     // Generate quad vertices from vertex_index (0-5 for two triangles)
     var local_uv: vec2<f32>;
     let vi = in.vertex_index % 6u;
-    if (vi == 0u) { local_uv = vec2<f32>(0.0, 0.0); }
-    else if (vi == 1u) { local_uv = vec2<f32>(1.0, 0.0); }
-    else if (vi == 2u) { local_uv = vec2<f32>(0.0, 1.0); }
-    else if (vi == 3u) { local_uv = vec2<f32>(0.0, 1.0); }
-    else if (vi == 4u) { local_uv = vec2<f32>(1.0, 0.0); }
+    if vi == 0u { local_uv = vec2<f32>(0.0, 0.0); }
+    else if vi == 1u { local_uv = vec2<f32>(1.0, 0.0); }
+    else if vi == 2u { local_uv = vec2<f32>(0.0, 1.0); }
+    else if vi == 3u { local_uv = vec2<f32>(0.0, 1.0); }
+    else if vi == 4u { local_uv = vec2<f32>(1.0, 0.0); }
     else { local_uv = vec2<f32>(1.0, 1.0); }
 
     // Interpolate position on quad using forward/right vectors
@@ -143,7 +142,7 @@ fn vs_main(in: VertexInput, instance: PatchInstance) -> VertexOutput {
     var world_pos = vec4<f32>(p, 1.0);
 
     // Terrain conforming via heightfield sampling
-    if (params.spec_power.y > 0.5) {
+    if params.spec_power.y > 0.5 {
         let hf_pos = params.world_to_heightfield * world_pos;
         let hf_uv = hf_pos.xy * params.sample_params.zw;
         let hf_sample = textureSampleLevel(t_heightfield, s_heightfield, hf_uv, 0.0);
@@ -155,12 +154,12 @@ fn vs_main(in: VertexInput, instance: PatchInstance) -> VertexOutput {
         let center_lo_hi_y = heightfield_depth_to_y(center_sample.xy);
 
         var center_y = center_lo_hi_y.x;
-        if (abs(instance.position.y - center_lo_hi_y.y) < abs(instance.position.y - center_y)) {
+        if abs(instance.position.y - center_lo_hi_y.y) < abs(instance.position.y - center_y) {
             center_y = center_lo_hi_y.y;
         }
 
         var sample_y = lo_hi_y.x;
-        if (abs(center_y - lo_hi_y.y) < abs(center_y - lo_hi_y.x)) {
+        if abs(center_y - lo_hi_y.y) < abs(center_y - lo_hi_y.x) {
             sample_y = lo_hi_y.y;
         }
 
@@ -176,7 +175,7 @@ fn vs_main(in: VertexInput, instance: PatchInstance) -> VertexOutput {
     // Fog
     let z_fog = compute_radial_fog_density(world_pos.xyz, params.camera_pos.xyz, params.fog_params.x, params.fog_params.y);
     var p_fog = 1.0;
-    if (params.planar_fog_params.x > 0.5) {
+    if params.planar_fog_params.x > 0.5 {
         p_fog = compute_planar_fog_density(world_pos.y, params.planar_fog_params.y, params.planar_fog_params.z);
     }
 
@@ -233,7 +232,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // === Shadows (VSM) ===
     var shadow_factor = 1.0;
-    if (params.shadow_params.z > 0.5) {
+    if params.shadow_params.z > 0.5 {
         let shadow_vp = mat4x4<f32>(
             params.shadow_vp_col0,
             params.shadow_vp_col1,
@@ -280,7 +279,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     lit_color += (spec_sum * spec_map + vec3<f32>(local_spec)) * SPEC_TO_DIFFUSE_RATIO;
 
     // === Blackmap (fog-of-war) ===
-    if (params.blackmap_params1.w > 0.5) {
+    if params.blackmap_params1.w > 0.5 {
         let bm_uv = in.uv;
         let vis_factor = textureSample(t_blackmap, s_diffuse, bm_uv).a;
         let unexplored_sample = textureSample(t_unexplored, s_diffuse, bm_uv);

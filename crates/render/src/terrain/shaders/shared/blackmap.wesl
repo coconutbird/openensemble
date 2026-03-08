@@ -43,7 +43,7 @@ fn compute_blackmap_scalar(
 
     // Three-layer brightness interpolation
     var brightness: f32;
-    if (vis_factor <= 0.5) {
+    if vis_factor <= 0.5 {
         brightness = mix(1.0, fog_scalar, vis_factor * 2.0);
     } else {
         brightness = mix(fog_scalar, unexplored_scalar, (vis_factor - 0.5) * 2.0);
@@ -89,7 +89,7 @@ fn apply_blackmap(
     let layer2 = mix(color, unexplored_color.rgb, unexplored_color.a) * unexplored_scalar;
 
     var result: vec3<f32>;
-    if (vis_factor <= 0.5) {
+    if vis_factor <= 0.5 {
         result = mix(layer0, layer1, vis_factor * 2.0);
     } else {
         result = mix(layer1, layer2, (vis_factor - 0.5) * 2.0);

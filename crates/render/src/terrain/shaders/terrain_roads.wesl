@@ -116,9 +116,6 @@ struct VertexOutput {
     @location(5) fog_densities: vec2<f32>,
 };
 
-
-
-
 // --- Vertex shader ---
 // Roads sample terrain position/normal textures to conform to terrain surface.
 // Original: getTerrainDataAtPos() in terrainRoads.fx
@@ -149,7 +146,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     // Fog
     let z_fog = compute_radial_fog_density(world_pos, params.camera_pos.xyz, params.fog_params.x, params.fog_params.y);
     var p_fog = 1.0;
-    if (params.planar_fog_params.x > 0.5) {
+    if params.planar_fog_params.x > 0.5 {
         p_fog = compute_planar_fog_density(world_pos.y, params.planar_fog_params.y, params.planar_fog_params.z);
     }
 
@@ -195,7 +192,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // === Shadows (VSM) ===
     var shadow_factor = 1.0;
-    if (params.shadow_params.z > 0.5) {
+    if params.shadow_params.z > 0.5 {
         let shadow_vp = mat4x4<f32>(
             params.shadow_vp_col0,
             params.shadow_vp_col1,
@@ -242,7 +239,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     lit_color += (spec_sum * specular.rgb + vec3<f32>(local_spec)) * SPEC_TO_DIFFUSE_RATIO;
 
     // === Blackmap (fog-of-war) ===
-    if (params.blackmap_params1.w > 0.5) {
+    if params.blackmap_params1.w > 0.5 {
         let bm_uv = in.uv;
         let vis_factor = textureSample(t_blackmap, s_road, bm_uv).a;
         let unexplored_sample = textureSample(t_unexplored, s_road, bm_uv);
