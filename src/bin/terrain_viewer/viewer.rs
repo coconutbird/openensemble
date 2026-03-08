@@ -1288,12 +1288,9 @@ impl Application3D for TerrainViewer {
             && let (Some(compositor), Some(bind_group)) =
                 (&mut self.compositor, &self.compositor_bind_group)
         {
-            // Build layer counts indexed by grid position (grid_z * 16 + grid_x)
-            // to match the compositor's chunk_idx iteration order (0..256).
-            // chunk_splat_data is in file order which may differ from grid order.
             let mut chunk_layer_counts = vec![1u32; 256];
             for chunk in &self.chunk_splat_data {
-                let grid_idx = (chunk.grid_z * 16 + chunk.grid_x) as usize;
+                let grid_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
                 if grid_idx < 256 {
                     chunk_layer_counts[grid_idx] = chunk.layer_texture_ids.len() as u32;
                 }

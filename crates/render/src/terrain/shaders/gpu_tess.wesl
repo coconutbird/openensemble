@@ -297,9 +297,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let chunk_x = u32(clamp(floor(chunk_uv.x), 0.0, chunk_count.x - 1.0));
     let chunk_y = u32(clamp(floor(chunk_uv.y), 0.0, chunk_count.y - 1.0));
 
-    // Chunk index uses Y-major ordering: chunk_idx = chunk_y * 16 + chunk_x
-    // This matches the compositor's chunk_index and layer buffer layout
-    let chunk_idx = chunk_y * u32(chunk_count.x) + chunk_x;
+    // Chunk index uses X-major ordering: chunk_idx = chunk_x * 16 + chunk_y
+    // This matches the original Halo Wars engine: idx = y + x * numXChunks
+    let chunk_idx = chunk_x * u32(chunk_count.y) + chunk_y;
 
     // UV within the chunk (0-1), equivalent to original's TexCoord0
     let in_chunk_uv = fract(chunk_uv);

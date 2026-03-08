@@ -83,9 +83,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let in_chunk_uv = in.uv;
 
     // Derive chunk grid position from index
-    // chunk_idx = chunk_y * 16 + chunk_x (Y-major, matching main shader)
-    let chunk_x = chunk_idx % 16u;
-    let chunk_y = chunk_idx / 16u;
+    // chunk_idx = chunk_x * 16 + chunk_y (X-major, matching original Halo Wars engine)
+    let chunk_y = chunk_idx % 16u;
+    let chunk_x = chunk_idx / 16u;
 
     // Get layer texture indices for this chunk
     let layer_base = chunk_idx * 8u;

@@ -362,9 +362,6 @@ impl TerrainViewer {
             }
 
             for chunk in &self.chunk_splat_data {
-                // Place chunk at atlas position matching its grid coordinates.
-                // The shader looks up alpha at (chunk_x, chunk_y) where chunk_x = worldX
-                // and chunk_y = worldZ, so we place at (grid_x, grid_z).
                 let chunk_x = chunk.grid_x as u32;
                 let chunk_y = chunk.grid_z as u32;
 
@@ -372,21 +369,17 @@ impl TerrainViewer {
                 // needs mirror X + rotate 90° CCW applied PER-CHUNK to orient features
                 // correctly (e.g., roads). We apply this transform to the 64x64 pixels
                 // within each chunk, NOT to the whole atlas (which would also transpose
-                // chunk grid positions and break the layer ID mapping).
-                //
-                // Mirror X: (x, y) → (63-x, y)
-                // Rotate 90° CCW: (x, y) → (y, 63-x)
-                // Combined: (x, y) → mirror → (63-x, y) → rotate → (y, 63-(63-x)) = (y, x)
-                // So the per-chunk transform is just a transpose: src(x,y) → dst(y,x)
+                // No per-chunk transform needed: the alpha decode now uses the correct
+                // D3D A4R4G4B4 channel mapping, so the decoded alpha maps are already
+                // in the correct orientation.
                 for y in 0..CHUNK_SIZE {
                     for x in 0..CHUNK_SIZE {
-                        // Apply per-chunk transpose: read from (x, y), write to (y, x)
-                        let src_idx = (y * CHUNK_SIZE + x) as usize;
-                        let dst_local_x = y;
-                        let dst_local_y = x;
+                        // Transpose per-tile: the decoded alpha maps need (x,y)→(y,x)
+                        // to align with the X-major chunk grid ordering
+                        let src_idx = (x * CHUNK_SIZE + y) as usize;
 
-                        let atlas_x = chunk_x * CHUNK_SIZE + dst_local_x;
-                        let atlas_y = chunk_y * CHUNK_SIZE + dst_local_y;
+                        let atlas_x = chunk_x * CHUNK_SIZE + x;
+                        let atlas_y = chunk_y * CHUNK_SIZE + y;
                         let atlas_idx = ((atlas_y * ATLAS_SIZE + atlas_x) * 4) as usize;
 
                         // R = alpha for layer 1, G = layer 2, B = layer 3, A = layer 4
@@ -523,7 +516,6 @@ impl TerrainViewer {
             let tex_height = self.terrain_textures[0].height;
 
             for chunk in &self.chunk_splat_data {
-                // Place chunk at position matching its grid coordinates
                 let chunk_x = chunk.grid_x as u32;
                 let chunk_z = chunk.grid_z as u32;
 
@@ -773,11 +765,7 @@ impl TerrainViewer {
         let mut layer_data = vec![0u32; 256 * 8];
 
         for chunk in &self.chunk_splat_data {
-            // Shader computes chunk_x from world_x (= grid_x) and chunk_y from world_z (= grid_z),
-            // then indexes: chunk_idx = chunk_y * 16 + chunk_x = grid_z * 16 + grid_x.
-            // The alpha atlas transform is per-chunk pixel orientation only (no grid transpose),
-            // so the layer buffer uses the same straightforward indexing.
-            let chunk_idx = (chunk.grid_z * 16 + chunk.grid_x) as usize;
+            let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
             let base = chunk_idx * 8;
 
             for (i, &layer_id) in chunk.layer_texture_ids.iter().enumerate().take(8) {
@@ -815,10 +803,13 @@ impl TerrainViewer {
         use wgpu::util::DeviceExt;
 
         // Each texture has a vec2<f32> with (u_scale, v_scale)
-        // Max 8 textures to match the texture array
-        let mut scale_data = vec![1.0f32; 8 * 2]; // Default scale of 1.0
+        // Must cover ALL active textures since splat_layer_ids can reference any index.
+        // The original game stores these in g_LayerData[i].yz per-layer, but we store
+        // them per-texture and look up by texture index in the shader.
+        let num_textures = self.terrain_textures.len().max(1);
+        let mut scale_data = vec![1.0f32; num_textures * 2]; // Default scale of 1.0
 
-        for (i, tex) in self.terrain_textures.iter().enumerate().take(8) {
+        for (i, tex) in self.terrain_textures.iter().enumerate() {
             // Game stores scale as i32, but shader needs f32
             // Scale values are typically 1, 2, 4, etc.
             scale_data[i * 2] = tex.u_scale as f32;
