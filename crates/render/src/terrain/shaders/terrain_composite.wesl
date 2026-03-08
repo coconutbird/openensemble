@@ -124,6 +124,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (params.debug_mode == 4u) {
         return vec4<f32>(textureSampleLevel(t_terrain_array, s_terrain, uv0, layer0, 0.0).rgb, 1.0);
     }
+    if (params.debug_mode == 5u) {
+        // base_uv / 16 should match Mode 11 (sample_uv) exactly
+        return vec4<f32>(base_uv.x / 16.0, base_uv.y / 16.0, 0.0, 1.0);
+    }
 
     return vec4<f32>(color, 1.0);
 }

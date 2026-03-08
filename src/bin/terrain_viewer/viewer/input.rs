@@ -95,15 +95,16 @@ impl Application for TerrainViewer {
             );
         }
 
-        // Cycle compositor debug mode: V key (0=normal, 1=UV, 2=chunkID, 3=alpha, 4=layer0)
+        // Cycle compositor debug mode: V key (0=normal, 1=UV, 2=chunkID, 3=alpha, 4=layer0, 5=base_uv)
         if input.is_key_pressed(KeyCode::V) {
-            self.compositor_debug_mode = (self.compositor_debug_mode + 1) % 5;
+            self.compositor_debug_mode = (self.compositor_debug_mode + 1) % 6;
             let mode_name = match self.compositor_debug_mode {
                 0 => "normal compositing",
                 1 => "UV gradient (R=u, G=v)",
                 2 => "chunk ID color (R=gridX, G=gridZ)",
                 3 => "alpha visualization (R/G/B)",
                 4 => "layer 0 only (base texture)",
+                5 => "base_uv/16 (should match Mode 11)",
                 _ => "unknown",
             };
             log::info!(
