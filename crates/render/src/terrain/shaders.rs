@@ -19,34 +19,32 @@ use wesl::include_wesl;
 /// - Per-texture UV scaling
 pub const TERRAIN_SHADER: &str = include_wesl!("terrain");
 
-/// GPU tessellation shader using instanced patches (compiled from WESL).
+/// GPU terrain rendering shader using instanced patches (compiled from WESL).
 ///
-/// Each instance is a terrain patch (16x16 vertices), and vertices sample
-/// position/normal from packed textures. This allows high-resolution terrain
-/// rendering without sending all vertices to the GPU.
+/// Port of the original gpuTerrainXbox.fx. Each instance is a terrain patch
+/// (16x16 vertices), and vertices sample position/normal from packed textures.
 ///
 /// Features:
 /// - Packed position decoding (R10G10B10A2)
 /// - Packed normal decoding
 /// - AO texture sampling with proper untiling
 /// - Alpha (transparency/holes) support
+/// - Runtime texture splatting or GPU-composited atlas sampling
 /// - Normal map splatting
 /// - Multiple debug modes
 /// - Shared lighting/fog/TBN via WESL imports
-pub const GPU_TESS_SHADER: &str = include_wesl!("gpu_tess");
+pub const GPU_TESS_SHADER: &str = include_wesl!("terrain_gpu");
 
 /// GPU compositing shader for pre-baking terrain textures (compiled from WESL).
 ///
-/// This shader renders terrain splat layers to a render target, creating
-/// a unique composited texture per chunk. This is the approach used by
-/// retail Halo Wars DE for high-quality terrain rendering.
+/// Port of the original gpuTerrainComposite.fx. Renders terrain splat layers
+/// to an 8K×8K atlas (16×16 chunks, 512×512 each) using the same splatting
+/// logic as the runtime shader.
 ///
-/// Features:
-/// - Fullscreen triangle rendering for chunk regions
-/// - Texture array sampling with per-texture UV scaling
-/// - Alpha-blended layer compositing
-/// - Outputs to 8K atlas (16x16 chunks, 512x512 each)
-pub const COMPOSITE_SHADER: &str = include_wesl!("composite");
+/// Original game uses multi-pass with hardware alpha blending (one layer per
+/// pass). We use single-pass with manual mix() which is mathematically
+/// equivalent.
+pub const COMPOSITE_SHADER: &str = include_wesl!("terrain_composite");
 
 /// Foliage rendering shader based on terrainFoliage.fx (compiled from WESL).
 ///

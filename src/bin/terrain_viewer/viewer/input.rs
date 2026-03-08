@@ -95,6 +95,28 @@ impl Application for TerrainViewer {
             );
         }
 
+        // Cycle compositor debug mode: V key (0=normal, 1=UV, 2=chunkID, 3=alpha, 4=layer0)
+        if input.is_key_pressed(KeyCode::V) {
+            self.compositor_debug_mode = (self.compositor_debug_mode + 1) % 5;
+            let mode_name = match self.compositor_debug_mode {
+                0 => "normal compositing",
+                1 => "UV gradient (R=u, G=v)",
+                2 => "chunk ID color (R=gridX, G=gridZ)",
+                3 => "alpha visualization (R/G/B)",
+                4 => "layer 0 only (base texture)",
+                _ => "unknown",
+            };
+            log::info!(
+                "Compositor debug mode: {} ({})",
+                self.compositor_debug_mode,
+                mode_name
+            );
+            // Re-composite all chunks with the new debug mode
+            if let Some(compositor) = &mut self.compositor {
+                compositor.mark_all_dirty();
+            }
+        }
+
         // Bump power (normal map strength) adjustment: B to decrease, N to increase
         if input.is_key_pressed(KeyCode::B) {
             self.bump_power = (self.bump_power - 0.25).max(0.0);
@@ -169,6 +191,55 @@ impl Application for TerrainViewer {
     }
 
     fn ui(&mut self, ctx: &egui::Context) {
+        // Always-visible HUD overlay at top-center of screen
+        {
+            let debug_name = match self.debug_mode {
+                0 => "0: Normal",
+                1 => "1: Alpha Values",
+                2 => "2: In-Chunk UVs",
+                3 => "3: Raw Atlas",
+                4 => "4: Terrain UVs",
+                5 => "5: Pre-Composited",
+                6 => "6: Layer IDs",
+                7 => "7: Chunk Grid",
+                8 => "8: L1 Info",
+                9 => "9: XTT Albedo",
+                10 => "10: Tex Test",
+                11 => "11: Terrain UV Viz",
+                12 => "12: GPU Composited",
+                13 => "13: Layer 0 Only",
+                14 => "14: Layer 1 ID",
+                15 => "15: Layer 1 Only",
+                16 => "16: Rock",
+                17 => "17: CPU Blend",
+                _ => "Unknown",
+            };
+            let comp_debug_name = match self.compositor_debug_mode {
+                0 => "Normal",
+                1 => "UV Gradient",
+                2 => "Chunk ID",
+                3 => "Alpha Viz",
+                4 => "Layer 0 Only",
+                _ => "Unknown",
+            };
+            let screen_rect = ctx.screen_rect();
+            egui::Area::new(egui::Id::new("hud_overlay"))
+                .fixed_pos(egui::pos2(screen_rect.width() / 2.0 - 160.0, 8.0))
+                .interactable(false)
+                .show(ctx, |ui| {
+                    egui::Frame::new()
+                        .fill(egui::Color32::from_black_alpha(180))
+                        .inner_margin(egui::Margin::same(8))
+                        .corner_radius(4.0)
+                        .show(ui, |ui| {
+                            ui.colored_label(
+                                egui::Color32::WHITE,
+                                format!("Mode: {}  |  Comp: {} (V)", debug_name, comp_debug_name),
+                            );
+                        });
+                });
+        }
+
         if self.show_info {
             egui::Window::new("Terrain Info")
                 .default_pos([10.0, 10.0])

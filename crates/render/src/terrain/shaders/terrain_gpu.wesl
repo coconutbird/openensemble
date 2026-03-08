@@ -97,16 +97,12 @@ var<storage, read> chunk_layers: array<u32>;
 @group(1) @binding(12)
 var s_alpha: sampler;
 
-// Pre-composited albedo atlas (all layers blended on CPU)
-@group(1) @binding(13)
-var t_composited: texture_2d<f32>;
-
 // Per-texture UV scales (8 textures * vec2<f32> = 16 floats)
-@group(1) @binding(14)
+@group(1) @binding(13)
 var<storage, read> texture_scales: array<vec2<f32>>;
 
 // GPU-composited albedo atlas (from compositor, 8K×8K for 256 chunks)
-@group(1) @binding(15)
+@group(1) @binding(14)
 var t_gpu_composited: texture_2d<f32>;
 
 // Lighting parameters - matches original Halo Wars cbShared lighting fields
@@ -139,23 +135,23 @@ struct LightingParams {
     // Local light params
     local_light_params: vec4<f32>,  // x = num_lights, y = spec_power
 };
-@group(1) @binding(16)
+@group(1) @binding(15)
 var<uniform> lighting: LightingParams;
 
 // Shadow map texture (depth values from light's perspective)
-@group(1) @binding(17)
+@group(1) @binding(16)
 var t_shadow_map: texture_2d<f32>;
 
 // Blackmap visibility texture (alpha = visibility factor)
-@group(1) @binding(18)
+@group(1) @binding(17)
 var t_blackmap: texture_2d<f32>;
 
 // Blackmap unexplored mask texture
-@group(1) @binding(19)
+@group(1) @binding(18)
 var t_unexplored: texture_2d<f32>;
 
 // Local lights storage buffer (8 vec4s per light, up to 20 lights)
-@group(1) @binding(20)
+@group(1) @binding(19)
 var<storage, read> local_lights: array<vec4<f32>>;
 
 struct VertexInput {

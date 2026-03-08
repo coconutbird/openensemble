@@ -190,6 +190,7 @@ impl Application3D for TerrainViewer {
                 ctx.queue,
                 &chunk_layer_counts,
                 ctx.device,
+                self.compositor_debug_mode,
             );
         }
 

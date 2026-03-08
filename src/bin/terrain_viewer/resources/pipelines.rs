@@ -223,10 +223,6 @@ impl TerrainViewer {
         // Create alpha atlas from chunk splat data
         let (_alpha_atlas, alpha_atlas_view) = self.create_alpha_atlas(device, queue);
 
-        // Create pre-composited albedo atlas (correct blending, no boundary issues)
-        let (_composited_texture, composited_view) =
-            self.create_composited_albedo_atlas(device, queue);
-
         // Create XTT albedo texture (original pre-composited from game export)
         let (_xtt_albedo_texture, xtt_albedo_view) =
             self.create_xtt_albedo_texture(device, queue, &albedo);
@@ -337,27 +333,16 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
-                    // binding 5: pre-composited albedo texture
+                    // binding 5: alpha atlas sampler (linear filtering like the game)
                     wgpu::BindGroupLayoutEntry {
                         binding: 5,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    // binding 6: alpha atlas sampler (linear filtering like the game)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 6,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
-                    // binding 7: XTT albedo (original pre-composited from game export)
+                    // binding 6: XTT albedo (original pre-composited from game export)
                     wgpu::BindGroupLayoutEntry {
-                        binding: 7,
+                        binding: 6,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
                             multisampled: false,
@@ -366,9 +351,9 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
-                    // binding 8: Texture scales buffer (per-texture u_scale/v_scale)
+                    // binding 7: Texture scales buffer (per-texture u_scale/v_scale)
                     wgpu::BindGroupLayoutEntry {
-                        binding: 8,
+                        binding: 7,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -423,18 +408,14 @@ impl TerrainViewer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::TextureView(&composited_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
                     resource: wgpu::BindingResource::Sampler(&alpha_sampler),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 7,
+                    binding: 6,
                     resource: wgpu::BindingResource::TextureView(&xtt_albedo_view),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 8,
+                    binding: 7,
                     resource: texture_scales_buffer.as_entire_binding(),
                 },
             ],
@@ -842,10 +823,6 @@ impl TerrainViewer {
         // Create chunk layers storage buffer (for texture splatting)
         let chunk_layers_buffer = self.create_chunk_layers_buffer(device);
 
-        // Create CPU-composited albedo atlas (for comparison/debugging)
-        let (_composited_texture, composited_view) =
-            self.create_composited_albedo_atlas(device, queue);
-
         // Create alpha sampler (linear filtering like the game for smooth blending)
         let alpha_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Alpha Atlas Sampler"),
@@ -881,7 +858,6 @@ impl TerrainViewer {
             normal_map_array_view,
             terrain_array_view,
             alpha_atlas_view,
-            composited_view,
             chunk_layers_buffer,
             alpha_sampler,
         );
@@ -911,7 +887,6 @@ impl TerrainViewer {
         normal_map_array_view: wgpu::TextureView,
         terrain_array_view: wgpu::TextureView,
         alpha_atlas_view: wgpu::TextureView,
-        composited_view: wgpu::TextureView,
         chunk_layers_buffer: wgpu::Buffer,
         alpha_sampler: wgpu::Sampler,
     ) {
@@ -1146,20 +1121,9 @@ impl TerrainViewer {
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
-                    // binding 13: CPU-composited albedo atlas
+                    // binding 13: Texture scales buffer (per-texture u_scale/v_scale)
                     wgpu::BindGroupLayoutEntry {
                         binding: 13,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // binding 14: Texture scales buffer (per-texture u_scale/v_scale)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 14,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -1168,9 +1132,9 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
-                    // binding 15: GPU-composited albedo atlas (from compositor)
+                    // binding 14: GPU-composited albedo atlas (from compositor)
                     wgpu::BindGroupLayoutEntry {
-                        binding: 15,
+                        binding: 14,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
                             sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -1179,9 +1143,9 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
-                    // binding 16: Lighting params uniform (SH, directional, fog, shadow, blackmap, local lights)
+                    // binding 15: Lighting params uniform (SH, directional, fog, shadow, blackmap, local lights)
                     wgpu::BindGroupLayoutEntry {
-                        binding: 16,
+                        binding: 15,
                         visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
@@ -1190,7 +1154,18 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
-                    // binding 17: Shadow map texture
+                    // binding 16: Shadow map texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 16,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // binding 17: Blackmap visibility texture
                     wgpu::BindGroupLayoutEntry {
                         binding: 17,
                         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -1201,7 +1176,7 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
-                    // binding 18: Blackmap visibility texture
+                    // binding 18: Blackmap unexplored mask texture
                     wgpu::BindGroupLayoutEntry {
                         binding: 18,
                         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -1212,20 +1187,9 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
-                    // binding 19: Blackmap unexplored mask texture
+                    // binding 19: Local lights storage buffer
                     wgpu::BindGroupLayoutEntry {
                         binding: 19,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // binding 20: Local lights storage buffer
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 20,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -1284,7 +1248,6 @@ impl TerrainViewer {
             normal_map_array_view,
             terrain_array_view,
             alpha_atlas_view,
-            composited_view,
             chunk_layers_buffer,
             alpha_sampler,
             tess_params_buffer,
@@ -1323,7 +1286,6 @@ impl TerrainViewer {
         normal_map_array_view: wgpu::TextureView,
         terrain_array_view: wgpu::TextureView,
         alpha_atlas_view: wgpu::TextureView,
-        composited_view: wgpu::TextureView,
         chunk_layers_buffer: wgpu::Buffer,
         alpha_sampler: wgpu::Sampler,
         tess_params_buffer: wgpu::Buffer,
@@ -1485,36 +1447,32 @@ impl TerrainViewer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 13,
-                    resource: wgpu::BindingResource::TextureView(&composited_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 14,
                     resource: texture_scales_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 15,
+                    binding: 14,
                     resource: wgpu::BindingResource::TextureView(
                         self.compositor.as_ref().unwrap().albedo_atlas_view(),
                     ),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 16,
+                    binding: 15,
                     resource: lighting_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 17,
+                    binding: 16,
                     resource: wgpu::BindingResource::TextureView(shadow_map_view),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 18,
+                    binding: 17,
                     resource: wgpu::BindingResource::TextureView(&blackmap_view),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 19,
+                    binding: 18,
                     resource: wgpu::BindingResource::TextureView(&unexplored_view),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 20,
+                    binding: 19,
                     resource: local_lights_buffer.as_entire_binding(),
                 },
             ],

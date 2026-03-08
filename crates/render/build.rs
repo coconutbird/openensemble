@@ -5,11 +5,11 @@ fn main() {
 
     // Compile each WESL entry point to WGSL in OUT_DIR.
     for name in &[
-        "gpu_tess",
+        "terrain_gpu",
         "terrain_heightfield",
         "terrain_roads",
         "foliage",
-        "composite",
+        "terrain_composite",
         "terrain",
         "shadow_depth",
     ] {

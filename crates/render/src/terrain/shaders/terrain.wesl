@@ -34,21 +34,17 @@ struct TerrainParams {
 @group(1) @binding(4)
 var<uniform> params: TerrainParams;
 
-// Pre-composited albedo atlas (all layers blended on CPU)
-@group(1) @binding(5)
-var t_composited: texture_2d<f32>;
-
 // Separate sampler for alpha atlas (Nearest filtering to avoid chunk boundary bleeding)
-@group(1) @binding(6)
+@group(1) @binding(5)
 var s_alpha: sampler;
 
 // XTT albedo (original pre-composited from game export)
-@group(1) @binding(7)
+@group(1) @binding(6)
 var t_xtt_albedo: texture_2d<f32>;
 
 // Per-texture UV scales (8 textures * vec2<f32> = 16 floats)
 // These control how many times each texture tiles across the terrain
-@group(1) @binding(8)
+@group(1) @binding(7)
 var<storage, read> texture_scales: array<vec2<f32>>;
 
 struct VertexInput {
@@ -135,10 +131,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     } else if (debug_mode == 4) {
         // Show raw terrain mesh UVs (should be smooth 0-1 gradient across entire terrain)
         return vec4<f32>(in.uv.x, in.uv.y, 0.0, 1.0);
-    } else if (debug_mode == 5) {
-        // Show pre-composited albedo (correct blending, no boundary issues)
-        let comp_color = textureSample(t_composited, s_terrain, in.uv);
-        return vec4<f32>(comp_color.rgb * lighting, 1.0);
     }
     // More debug modes continued in fragment shader body...
 

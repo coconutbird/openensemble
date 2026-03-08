@@ -66,6 +66,8 @@ pub struct TerrainViewer {
     pub compositor_bind_group: Option<wgpu::BindGroup>,
     /// Whether to use GPU compositing (vs runtime splatting).
     pub use_gpu_compositing: bool,
+    /// Debug mode for compositor: 0=normal, 1=UV, 2=chunk ID, 3=alpha, 4=layer0.
+    pub compositor_debug_mode: u32,
     /// LOD configuration for distance-based compositing quality.
     pub lod_config: LodConfig,
     /// Pre-calculated chunk center positions [x, y, z] for LOD calculations.
@@ -112,6 +114,7 @@ impl TerrainViewer {
             compositor: None,
             compositor_bind_group: None,
             use_gpu_compositing: true, // Enabled by default to test GPU compositing
+            compositor_debug_mode: 0,
             lod_config: LodConfig::default(),
             chunk_centers: Vec::new(),
             decal_textures: Vec::new(),
@@ -149,6 +152,7 @@ impl TerrainViewer {
             compositor: None,
             compositor_bind_group: None,
             use_gpu_compositing: true, // Enabled by default to test GPU compositing
+            compositor_debug_mode: 0,
             lod_config: LodConfig::default(),
             chunk_centers: Vec::new(),
             decal_textures: Vec::new(),
