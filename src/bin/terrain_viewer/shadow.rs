@@ -39,8 +39,8 @@ pub struct ShadowResources {
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ShadowParamsUniform {
     pub terrain_info: [f32; 4],
-    pub world_min: [f32; 4],
-    pub world_range: [f32; 4],
+    pub mid: [f32; 4],
+    pub range: [f32; 4],
 }
 
 impl ShadowResources {
@@ -214,13 +214,13 @@ impl ShadowResources {
         queue: &wgpu::Queue,
         position_texture_view: &wgpu::TextureView,
         terrain_info: [f32; 4],
-        world_min: [f32; 3],
-        world_range: [f32; 3],
+        mid: [f32; 3],
+        range: [f32; 3],
     ) {
         let params = ShadowParamsUniform {
             terrain_info,
-            world_min: [world_min[0], world_min[1], world_min[2], 0.0],
-            world_range: [world_range[0], world_range[1], world_range[2], 0.0],
+            mid: [mid[0], mid[1], mid[2], 0.0],
+            range: [range[0], range[1], range[2], 0.0],
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
 

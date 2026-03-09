@@ -1432,16 +1432,8 @@ impl TerrainViewer {
                 num_patches as f32,
                 num_patches as f32,
             ],
-            [
-                raw_data.mid[0] - raw_data.range[0],
-                raw_data.mid[1] - raw_data.range[1],
-                raw_data.mid[2] - raw_data.range[2],
-            ],
-            [
-                raw_data.range[0] * 2.0,
-                raw_data.range[1] * 2.0,
-                raw_data.range[2] * 2.0,
-            ],
+            raw_data.mid,
+            raw_data.range,
         );
         let shadow_map_view = &shadow.shadow_view;
         log::info!("Shadow resources initialized");

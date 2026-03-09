@@ -272,17 +272,22 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Compute UVs from world position
+    // Use grid-based UV from vertex shader, NOT world position.
+    // The game computes uvCoord0 = gPos / 64 (grid position only, no displacement).
+    // The composited atlas is written using grid-based coordinates, so sampling must
+    // also use grid-based UVs. Using world_pos would include the position displacement
+    // from unpack_position(), shifting the texture sampling and causing textures to
+    // "climb" onto neighboring areas.
+    //
+    // Vertex shader outputs: out.uv = vec2(global_v, global_u) where
+    //   global_u = X direction, global_v = Z direction
+    // So in.uv.y = X, in.uv.x = Z. We need sample_uv = (X, Z):
+    let sample_uv = vec2<f32>(in.uv.y, in.uv.x);
+
     let num_verts = u32(tess_params.terrain_info.x);
     let tile_scale = tess_params.terrain_info.y;
     let terrain_extent = f32(num_verts - 1u) * tile_scale;
-    // Splat/tiling UV: X→U, Z→V (matches HWDE: uvCoord0 = gPos/64 where gPos = (X,Z))
-    let sample_uv = vec2<f32>(
-        in.world_pos.x / terrain_extent,  // U = world X
-        in.world_pos.z / terrain_extent   // V = world Z
-    );
-    // XTD/unique texture UV: same as sample_uv = (X, Z).
-    // Both splatting and baked textures use (X→U, Z→V) in our implementation.
+    // XTD/unique texture UV: same grid-based UV.
     let xtd_uv = sample_uv;
 
     // Sample alpha texture for terrain holes/transparency (XTD-decoded)

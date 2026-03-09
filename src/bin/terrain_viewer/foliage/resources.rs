@@ -853,8 +853,8 @@ impl FoliageResources {
             let y_raw = ((packed >> 10) & 0x3FF) as f32 / 1023.0;
             let _z_raw = ((packed >> 20) & 0x3FF) as f32 / 1023.0;
 
-            // Decode to world position
-            let y = mid[1] + (y_raw * 2.0 - 1.0) * range[1];
+            // Decode to world position: norm * range - mid (matches game bytecode)
+            let y = y_raw * range[1] - mid[1];
 
             min_height = min_height.min(y);
             max_height = max_height.max(y);

@@ -16,10 +16,10 @@ var<uniform> camera: Camera;
 struct ShadowParams {
     // terrain_info: num_verts_per_axis, tile_scale, num_patches_x, num_patches_z
     terrain_info: vec4<f32>,
-    // world_min: x, y, z, pad
-    world_min: vec4<f32>,
-    // world_range: x, y, z, pad
-    world_range: vec4<f32>,
+    // Position decoding: mid (posCompMin) x, y, z, pad
+    mid: vec4<f32>,
+    // Position decoding: range (posCompRange) x, y, z, pad
+    range: vec4<f32>,
 };
 @group(1) @binding(0)
 var<uniform> shadow_params: ShadowParams;
@@ -39,17 +39,20 @@ struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
 };
 
-// Decode packed R10G10B10A2 position (same as gpu_tess.wesl)
+// Decode packed R10G10B10A2 position (same as terrain_gpu.wesl)
+// Formula matches game bytecode: offset = texel * posCompRange - posCompMin
 fn unpack_position(packed: u32, mid: vec3<f32>, range: vec3<f32>) -> vec3<f32> {
     let x_bits = packed & 0x3FFu;
     let y_bits = (packed >> 10u) & 0x3FFu;
     let z_bits = (packed >> 20u) & 0x3FFu;
 
-    let x_norm = f32(x_bits) / 1023.0;
-    let y_norm = f32(y_bits) / 1023.0;
-    let z_norm = f32(z_bits) / 1023.0;
+    let norm = vec3<f32>(
+        f32(x_bits) / 1023.0,
+        f32(y_bits) / 1023.0,
+        f32(z_bits) / 1023.0
+    );
 
-    return mid + (vec3<f32>(x_norm, y_norm, z_norm) - 0.5) * range;
+    return norm * range - mid;
 }
 
 @vertex
@@ -76,8 +79,18 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let tex_y = u32(v * f32(num_verts - 1u));
     let packed = textureLoad(t_positions, vec2<u32>(tex_x, tex_y), 0).r;
 
-    let mid = shadow_params.world_min.xyz + shadow_params.world_range.xyz * 0.5;
-    let pos = unpack_position(packed, mid, shadow_params.world_range.xyz);
+    let local_pos = unpack_position(packed, shadow_params.mid.xyz, shadow_params.range.xyz);
+
+    // Reconstruct world position: grid * tileScale + displacement (same as terrain_gpu.wesl)
+    let global_u = clamp(round(u * f32(num_verts - 1u)) / f32(num_verts - 1u), 0.0, 1.0);
+    let global_v = clamp(round(v * f32(num_verts - 1u)) / f32(num_verts - 1u), 0.0, 1.0);
+    let grid_x = global_u * f32(num_verts - 1u);
+    let grid_z = global_v * f32(num_verts - 1u);
+    let pos = vec3<f32>(
+        grid_x * tile_scale + local_pos.x,
+        local_pos.y,
+        grid_z * tile_scale + local_pos.z,
+    );
 
     // Transform to light clip space
     out.clip_position = camera.view_proj * vec4<f32>(pos, 1.0);
