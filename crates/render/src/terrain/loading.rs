@@ -269,14 +269,16 @@ pub fn load_foliage_sets(source: &AssetSource, foliage_sets: &[FoliageSetInfo]) 
         foliage_sets.len()
     );
 
-    // Build all paths (4 textures per foliage set)
-    let mut all_paths: Vec<String> = Vec::with_capacity(foliage_sets.len() * 4);
+    // Build all paths (4 textures + 1 XML per foliage set = 5 per set)
+    let files_per_set = 5;
+    let mut all_paths: Vec<String> = Vec::with_capacity(foliage_sets.len() * files_per_set);
     for set_info in foliage_sets {
         let base_path = format!("art/{}", set_info.filename.replace('\\', "/"));
         all_paths.push(format!("{}_df.ddx", base_path)); // albedo
         all_paths.push(format!("{}_op.ddx", base_path)); // opacity
         all_paths.push(format!("{}_nm.ddx", base_path)); // normal
         all_paths.push(format!("{}_sp.ddx", base_path)); // specular
+        all_paths.push(format!("{}.xml", base_path)); // blade geometry XML
     }
 
     // Load all files in parallel
@@ -288,7 +290,7 @@ pub fn load_foliage_sets(source: &AssetSource, foliage_sets: &[FoliageSetInfo]) 
         .into_par_iter()
         .map(|i| {
             let set_info = &foliage_sets[i];
-            let base_idx = i * 4;
+            let base_idx = i * files_per_set;
 
             let mut foliage_set = FoliageSet {
                 name: set_info.filename.clone(),
@@ -316,9 +318,17 @@ pub fn load_foliage_sets(source: &AssetSource, foliage_sets: &[FoliageSetInfo]) 
                 && let Ok(ddx) = DdxTexture::from_bytes(data)
                 && let Ok(decoded) = ddx.decode_to_rgba()
             {
+                log::info!(
+                    "  Loaded foliage opacity: {} ({}x{})",
+                    set_info.filename,
+                    decoded.width,
+                    decoded.height
+                );
                 foliage_set.opacity_width = decoded.width;
                 foliage_set.opacity_height = decoded.height;
                 foliage_set.opacity_pixels = decoded.pixels;
+            } else {
+                log::warn!("  No foliage opacity texture for: {}", set_info.filename);
             }
 
             // Decode normal (_nm)
@@ -339,6 +349,13 @@ pub fn load_foliage_sets(source: &AssetSource, foliage_sets: &[FoliageSetInfo]) 
                 foliage_set.specular_width = decoded.width;
                 foliage_set.specular_height = decoded.height;
                 foliage_set.specular_pixels = decoded.pixels;
+            }
+
+            // Parse blade geometry from XML (.xml.xmb)
+            if let Some(xml_data) = &all_data[base_idx + 4] {
+                parse_foliage_blade_xml(xml_data, &mut foliage_set);
+            } else {
+                log::warn!("  No foliage blade XML for: {}", set_info.filename);
             }
 
             foliage_set
@@ -563,4 +580,159 @@ pub struct RoadTextures {
     pub albedo_pixels: Vec<u8>,
     pub normal_pixels: Vec<u8>,
     pub specular_pixels: Vec<u8>,
+}
+
+
+/// Parse foliage blade geometry from an XMB (compiled XML) file.
+///
+/// The XML format (from TerrainFoliage.cpp) is:
+/// ```xml
+/// <foliageset typecount="N" numVertsPerType="10" backsideShadowScalar="1.0">
+///   <setElements>
+///     <setElement>
+///       <elementVerts>
+///         <vert pos="x,y,z" norm="x,y,z" uv="u,v"/>
+///         ...
+///       </elementVerts>
+///     </setElement>
+///   </setElements>
+/// </foliageset>
+/// ```
+///
+/// Data is stored as:
+/// - positions texture: [pos.x, pos.y, pos.z, uv.x]
+/// - normals texture: [norm.x, norm.y, norm.z, uv.y]
+fn parse_foliage_blade_xml(xml_data: &[u8], foliage_set: &mut FoliageSet) {
+    use data::xmb::{XmbData, XmbReader};
+    use std::io::Cursor;
+
+    // Try XMB binary first, then fall back to raw XML text
+    let xmb = match XmbReader::read(Cursor::new(xml_data)) {
+        Ok(xmb) => xmb,
+        Err(_) => {
+            // Try as raw XML text
+            let xml_str = match std::str::from_utf8(xml_data) {
+                Ok(s) => s,
+                Err(e) => {
+                    log::warn!("  Foliage XML is not valid UTF-8: {}", e);
+                    return;
+                }
+            };
+            match XmbData::from_xml(xml_str) {
+                Ok(xmb) => xmb,
+                Err(e) => {
+                    log::warn!("  Failed to parse foliage XML: {}", e);
+                    return;
+                }
+            }
+        }
+    };
+
+    let root = match xmb.root() {
+        Some(r) => r,
+        None => {
+            log::warn!("  Foliage XMB has no root node");
+            return;
+        }
+    };
+
+    // Read attributes from root <foliageset> node
+    let mut num_blade_types: u32 = 0;
+    let mut num_verts_per_type: u32 = 10;
+
+    if let Some(attr) = root.get_attribute("typecount") {
+        num_blade_types = attr.value_string().parse().unwrap_or(0);
+    }
+    if let Some(attr) = root.get_attribute("numVertsPerType") {
+        num_verts_per_type = attr.value_string().parse().unwrap_or(10);
+    }
+    if let Some(attr) = root.get_attribute("backsideShadowScalar") {
+        foliage_set.backside_shadow_scalar = attr.value_string().parse().unwrap_or(1.0);
+    }
+
+    if num_blade_types == 0 || num_verts_per_type == 0 {
+        log::warn!(
+            "  Foliage XMB has invalid blade counts: types={}, verts={}",
+            num_blade_types,
+            num_verts_per_type
+        );
+        return;
+    }
+
+    let total_verts = (num_blade_types * num_verts_per_type) as usize;
+    let mut positions: Vec<[f32; 4]> = Vec::with_capacity(total_verts);
+    let mut normals: Vec<[f32; 4]> = Vec::with_capacity(total_verts);
+
+    // Find <setElements> node
+    let set_elements = match root.children.iter().find(|n| n.name == "setElements") {
+        Some(n) => n,
+        None => {
+            log::warn!("  Foliage XMB missing <setElements>");
+            return;
+        }
+    };
+
+    // Iterate <setElement> → <elementVerts> → <vert>
+    for set_element in &set_elements.children {
+        if set_element.name != "setElement" {
+            continue;
+        }
+        for child in &set_element.children {
+            if child.name != "elementVerts" {
+                continue;
+            }
+            for vert_node in &child.children {
+                if vert_node.name != "vert" {
+                    continue;
+                }
+                if positions.len() >= total_verts {
+                    break;
+                }
+
+                let pos = parse_vector_attr(vert_node, "pos");
+                let nrm = parse_vector_attr(vert_node, "norm");
+                let uv = parse_vector2_attr(vert_node, "uv");
+
+                positions.push([pos[0], pos[1], pos[2], uv[0]]);
+                normals.push([nrm[0], nrm[1], nrm[2], uv[1]]);
+            }
+        }
+    }
+
+    log::info!(
+        "  Loaded foliage blade geometry: {} ({} blade types, {} verts/blade, {} total verts)",
+        foliage_set.name,
+        num_blade_types,
+        num_verts_per_type,
+        positions.len()
+    );
+
+    foliage_set.num_blade_types = num_blade_types;
+    foliage_set.num_verts_per_blade = num_verts_per_type;
+    foliage_set.blade_positions = positions;
+    foliage_set.blade_normals = normals;
+}
+
+/// Parse a "x,y,z" vector attribute from an XMB node.
+fn parse_vector_attr(node: &data::xmb::Node, attr_name: &str) -> [f32; 3] {
+    if let Some(attr) = node.get_attribute(attr_name) {
+        let s = attr.value_string();
+        let parts: Vec<f32> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
+        if parts.len() >= 3 {
+            return [parts[0], parts[1], parts[2]];
+        }
+    }
+    [0.0, 0.0, 0.0]
+}
+
+/// Parse a "u,v" vector2 attribute from an XMB node.
+fn parse_vector2_attr(node: &data::xmb::Node, attr_name: &str) -> [f32; 2] {
+    if let Some(attr) = node.get_attribute(attr_name) {
+        let s = attr.value_string();
+        let parts: Vec<f32> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
+        if parts.len() >= 2 {
+            return [parts[0], parts[1]];
+        }
+    }
+    [0.0, 0.0]
 }

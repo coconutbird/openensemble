@@ -68,35 +68,35 @@ struct FoliageParams {
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;
 
+// Per-chunk data (dynamic uniform buffer — offset changes per draw call)
+struct ChunkInfo {
+    chunk_offset: vec2<f32>,   // mMinXVert, mMinZVert from quad node
+    num_verts_per_blade: f32,
+    _pad: f32,
+};
+
 @group(1) @binding(0)
 var<uniform> params: FoliageParams;
 
-// Blade geometry textures (position.xyz + u, normal.xyz + v)
 @group(1) @binding(1)
-var t_blade_positions: texture_2d<f32>;
-
-@group(1) @binding(2)
-var t_blade_normals: texture_2d<f32>;
-
-@group(1) @binding(3)
-var s_blade: sampler;
+var<uniform> chunk_info: ChunkInfo;
 
 // Terrain heightmap for positioning blades
-@group(1) @binding(4)
+@group(1) @binding(2)
 var t_heightmap: texture_2d<f32>;
 
-@group(1) @binding(5)
+@group(1) @binding(3)
 var s_heightmap: sampler;
 
 // Shadow and blackmap textures
-@group(1) @binding(6)
+@group(1) @binding(4)
 var t_shadow_map: texture_2d<f32>;
-@group(1) @binding(7)
+@group(1) @binding(5)
 var t_blackmap: texture_2d<f32>;
-@group(1) @binding(8)
+@group(1) @binding(6)
 var t_unexplored: texture_2d<f32>;
 
-// Foliage textures
+// Per-set material textures + blade geometry
 @group(2) @binding(0)
 var t_albedo: texture_2d<f32>;
 
@@ -106,6 +106,16 @@ var t_opacity: texture_2d<f32>;
 @group(2) @binding(2)
 var s_foliage: sampler;
 
+// Blade geometry textures (position.xyz + u, normal.xyz + v) — per set
+@group(2) @binding(3)
+var t_blade_positions: texture_2d<f32>;
+
+@group(2) @binding(4)
+var t_blade_normals: texture_2d<f32>;
+
+@group(2) @binding(5)
+var s_blade: sampler;
+
 struct VertexInput {
     @builtin(vertex_index) vertex_index: u32,
     @builtin(instance_index) instance_index: u32,
@@ -114,10 +124,12 @@ struct VertexInput {
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) uv: vec2<f32>,
-    @location(1) diffuse_sum: vec3<f32>,
-    @location(2) fog_densities: vec2<f32>,  // x = radial, y = planar
-    @location(3) alpha_fade: f32,
-    @location(4) world_pos: vec3<f32>,
+    @location(1) dir_diffuse: vec3<f32>,    // directional diffuse (clamped, pre-shadow)
+    @location(2) ambient_sum: vec3<f32>,    // SH ambient (never shadowed)
+    @location(3) fog_densities: vec2<f32>,  // x = radial, y = planar
+    @location(4) alpha_fade: f32,
+    @location(5) world_pos: vec3<f32>,
+    @location(6) n_dot_l: f32,             // for conditional shadow
 };
 
 // Deterministic pseudo-random function (matching original shader)
@@ -139,92 +151,82 @@ fn rotate_2d(input: vec2<f32>, theta: f32) -> vec2<f32> {
     );
 }
 
-// Sample terrain height at given world XZ position
-fn get_terrain_height(world_xz: vec2<f32>) -> f32 {
-    let num_verts = params.terrain_info.x;
-    let tile_scale = params.terrain_info.y;
-    let terrain_size = (num_verts - 1.0) * tile_scale;
-
-    // Convert world position to UV coordinates
-    let uv = clamp(world_xz / terrain_size, vec2<f32>(0.0), vec2<f32>(1.0));
-
-    // Sample height (Y) from heightmap
-    let height_sample = textureSampleLevel(t_heightmap, s_heightmap, uv, 0.0);
-    return height_sample.r; // R32Float texture stores height directly
+// Sample terrain offset at given UV position.
+// Game samples full XYZ displacement from position texture; we use pre-decoded
+// R32Float heightmap for Y. XZ displacement is typically small and omitted here.
+fn get_terrain_offset(uv: vec2<f32>) -> vec3<f32> {
+    let clamped_uv = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
+    let height = textureSampleLevel(t_heightmap, s_heightmap, clamped_uv, 0.0).r;
+    return vec3<f32>(0.0, height, 0.0);
 }
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
 
-    let num_verts_per_blade = u32(params.foliage_info.x);
+    let num_verts_per_blade = u32(chunk_info.num_verts_per_blade);
     let num_blades_per_node: u32 = 64u;
 
-    // Decode blade and vertex index from instance/vertex
-    // instance_index encodes: blade_type (high 16 bits) + blade_index (low 16 bits)
-    let blade_type = in.instance_index >> 16u;
-    let blade_index = in.instance_index & 0xFFFFu;
+    // instance_index = blade_index (0..4095) — chunk offset comes from dynamic uniform
+    let blade_index = in.instance_index;
     let vertex_in_blade = in.vertex_index % num_verts_per_blade;
 
+    // Chunk offset from QN chunk data (mMinXVert, mMinZVert), passed via dynamic uniform
+    let chunk_offset_x = chunk_info.chunk_offset.x;
+    let chunk_offset_z = chunk_info.chunk_offset.y;
+
+    // Blade type: cycle through available types based on blade index
+    let blade_type = blade_index % u32(max(1.0, f32(textureDimensions(t_blade_positions, 0).x) / f32(num_verts_per_blade)));
+
     // Fetch blade vertex from geometry texture
-    let pixel_coord = vec2<f32>(
-        f32(vertex_in_blade) + f32(blade_type * num_verts_per_blade),
-        0.5
-    );
-    let tex_size = vec2<f32>(textureDimensions(t_blade_positions, 0));
-    let tex_uv = pixel_coord / tex_size;
+    // Game uses ld_structured (integer index, no filtering) — we use textureLoad to match
+    let pixel_x = vertex_in_blade + blade_type * num_verts_per_blade;
+    let pos_sample = textureLoad(t_blade_positions, vec2<u32>(pixel_x, 0u), 0);
+    let norm_sample = textureLoad(t_blade_normals, vec2<u32>(pixel_x, 0u), 0);
 
-    let pos_sample = textureSampleLevel(t_blade_positions, s_blade, tex_uv, 0.0);
-    let norm_sample = textureSampleLevel(t_blade_normals, s_blade, tex_uv, 0.0);
-
-    // Blade position from texture - scale up for visibility
-    // Original blade geometry is in model units, scale to world units
-    var pos = pos_sample.xyz * 5.0; // Scale blade size
+    // Blade geometry from texture (no scaling — matches game: pos = pos0)
+    // Game HLSL: uv0.x = pos0.w; uv0.y = 1-norm0.w;  (V is flipped!)
+    var pos = pos_sample.xyz;
     let blade_uv = vec2<f32>(pos_sample.w, 1.0 - norm_sample.w);
     var normal = norm_sample.xyz;
 
-    // Random values per blade (deterministic based on blade index)
-    let rnd = our_rand(vec2<f32>(f32(blade_index), f32(blade_index)));
+    // Random values per blade (deterministic based on LOCAL blade index within chunk)
+    // Game uses bladeIndex (0-4095), NOT global instance index
+    let local_blade_index = blade_index;
+    let rnd = our_rand(vec2<f32>(f32(local_blade_index), f32(local_blade_index)));
 
-    // Grid position - spread blades across terrain
-    // With 4096 blades in 64x64 grid, scale by ~16 to cover full terrain (1024 verts)
-    let num_verts = params.terrain_info.x;
-    let grid_scale = (num_verts - 1.0) / 64.0; // Scale factor to cover full terrain
+    // Grid position within chunk
+    // Game HLSL: trns = float2(bladeIndex / 64 + 0.5, bladeIndex % 64)
+    // Then trns += g_terrainVals.zw (chunk offset)
+    var trns_x = f32(blade_index / num_blades_per_node) + 0.5 + chunk_offset_x;
+    var trns_z = f32(blade_index % num_blades_per_node) + chunk_offset_z;
 
-    var grid_pos = vec2<f32>(
-        f32(blade_index / num_blades_per_node) + 0.5,
-        f32(blade_index % num_blades_per_node)
-    );
-    // Scale to cover more terrain
-    grid_pos *= grid_scale;
-    // Add chunk offset (for per-chunk rendering later)
-    grid_pos += vec2<f32>(params.terrain_info.z, params.terrain_info.w);
-    // Add random jitter within cell (scaled)
-    grid_pos += (rnd * 2.0 - 1.0) * 0.9 * grid_scale;
+    // Jitter
+    trns_x += (rnd.x * 2.0 - 1.0) * 0.9;
+    trns_z += (rnd.y * 2.0 - 1.0) * 0.9;
 
     // Rotate blade around Y axis
-    let rotation_angle = rnd.y * 360.0;
-    pos.x = rotate_2d(pos.xz, rotation_angle).x;
-    pos.z = rotate_2d(pos.xz, rotation_angle).y;
-    normal.x = rotate_2d(normal.xz, rotation_angle).x;
-    normal.z = rotate_2d(normal.xz, rotation_angle).y;
+    let rot_angle = rnd.y * 360.0;
+    let pos_rot = rotate_2d(pos.xz, rot_angle);
+    let norm_rot = rotate_2d(normal.xz, rot_angle);
+    normal.x = norm_rot.x;
+    normal.z = norm_rot.y;
     normal = normalize(normal);
 
-    // Scale position by tile scale and add grid offset to get world XZ
+    pos.x = pos_rot.x;
+    pos.z = pos_rot.y;
     let tile_scale = params.terrain_info.y;
-    let world_x = grid_pos.x * tile_scale;
-    let world_z = grid_pos.y * tile_scale;
-
-    // Random height scaling (0.25 to 1.0)
+    pos.x += trns_x * tile_scale;
+    pos.z += trns_z * tile_scale;
     pos.y *= max(0.25, rnd.x);
 
-    // Get terrain height at blade base world position
-    let terrain_height = get_terrain_height(vec2<f32>(world_x, world_z));
-
-    // Position blade in world space
-    pos.x += world_x;
-    pos.y += terrain_height;
-    pos.z += world_z;
+    // Terrain heightmap UV
+    // Game bytecode: sample_l r1.xyz, r1.zxz, t2 (swaps UV for game's texture layout)
+    // But our heightmap is stored matching our terrain shader's (x, z) convention — no swap needed
+    let num_verts = params.terrain_info.x;
+    let terrain_uv = vec2<f32>(trns_x, trns_z) / num_verts;
+    let terrain_offset = get_terrain_offset(terrain_uv);
+    pos += terrain_offset;
 
     // Flip normal toward camera for two-sided lighting
     let to_camera = normalize(params.camera_pos - pos);
@@ -234,19 +236,19 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
     // Directional diffuse lighting (diffuse only, no specular for foliage)
     let n_dot_l = max(dot(normal, params.dir_light_vec), 0.0);
-    var diffuse_sum = params.dir_light_color * n_dot_l;
+    var dir_diffuse = params.dir_light_color * n_dot_l;
 
     // Clamp by backside shadow scalar (prevents fully black backfaces)
-    diffuse_sum = clamp(diffuse_sum, vec3<f32>(1.0 - params.backside_shadow_scalar), vec3<f32>(1.0));
+    // Game does this BEFORE adding ambient, so ambient is never clamped
+    dir_diffuse = clamp(dir_diffuse, vec3<f32>(1.0 - params.backside_shadow_scalar), vec3<f32>(1.0));
 
-    // SH ambient fill lighting
+    // SH ambient fill lighting (separate — never shadowed, per game bytecode)
     let ambient_sum = compute_sh_fill_lighting(
         normal,
         params.sh_fill_ar, params.sh_fill_ag, params.sh_fill_ab,
         params.sh_fill_br, params.sh_fill_bg, params.sh_fill_bb,
         params.sh_fill_c,
     );
-    diffuse_sum += ambient_sum;
 
     // Fog densities
     let z_fog = compute_radial_fog_density(pos, params.camera_pos, params.fog_params.x, params.fog_params.y);
@@ -264,31 +266,37 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     // Output
     out.clip_position = camera.view_proj * vec4<f32>(pos, 1.0);
     out.uv = blade_uv;
-    out.diffuse_sum = diffuse_sum;
+    out.dir_diffuse = dir_diffuse;
+    out.ambient_sum = ambient_sum;
     out.fog_densities = vec2<f32>(z_fog, p_fog);
     out.alpha_fade = alpha_fade;
     out.world_pos = pos;
+    out.n_dot_l = n_dot_l;
 
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // DEBUG: visualize UVs as color (uncomment to debug)
+    // return vec4<f32>(in.uv.x, in.uv.y, 0.0, 1.0);
+
     // Sample textures
     let albedo = textureSample(t_albedo, s_foliage, in.uv);
     let opacity = textureSample(t_opacity, s_foliage, in.uv).r;
 
-    // Alpha test
+    // Alpha test (game uses 0.6666 threshold — confirmed in bytecode PS)
     let final_alpha = opacity * in.alpha_fade;
-    if final_alpha < 0.1 {
+    if final_alpha < 0.6666 {
         discard;
     }
 
-    // Apply lighting with shadow
-    var diffuse = in.diffuse_sum;
+    // Lighting: shadow applied to directional ONLY, ambient never shadowed
+    // (matches game bytecode: diffuseSum *= shadowFactor, then diffuseSum += ambientSum)
+    var dir_diffuse = in.dir_diffuse;
 
-    // === Shadows (VSM) ===
-    if params.shadow_params.z > 0.5 {
+    // === Shadows (VSM) — only when nDotL > 0, matching game ===
+    if params.shadow_params.z > 0.5 && in.n_dot_l > 0.0 {
         let shadow_vp = mat4x4<f32>(
             params.shadow_vp_col0,
             params.shadow_vp_col1,
@@ -300,10 +308,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let shadow_uv = vec2<f32>(shadow_ndc.x * 0.5 + 0.5, shadow_ndc.y * -0.5 + 0.5);
         let shadow_z = clamp(shadow_ndc.z, 0.0, 1.0);
         let shadow_factor = vsm_shadow(shadow_uv, shadow_z, 0.3, t_shadow_map, s_foliage);
-        // Attenuate only the directional component (subtract ambient, apply shadow, re-add)
-        diffuse *= shadow_factor;
+        dir_diffuse *= shadow_factor;
     }
 
+    // Combine: shadowed directional + unshadowed ambient
+    let diffuse = dir_diffuse + in.ambient_sum;
     var lit_color = diffuse * albedo.rgb;
 
     // === Blackmap (fog-of-war) ===
@@ -327,5 +336,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Apply fog
     lit_color = compute_fog(lit_color, in.fog_densities.x, in.fog_densities.y, params.fog_color.xyz, params.planar_fog_color.xyz);
 
+    // Game outputs opacity * alphaDistScalar as alpha, uses alpha blending
+    // The discard at 0.6666 culls fully transparent pixels; remaining are blended
     return vec4<f32>(lit_color, final_alpha);
 }

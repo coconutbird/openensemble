@@ -6,20 +6,36 @@ use crate::types::FoliageSet;
 use render::terrain::FOLIAGE_SHADER;
 use render::wgpu;
 
+/// A single foliage draw call (one per QN chunk × set pair).
+pub struct FoliageDrawCall {
+    /// Dynamic offset into chunk_info_buffer for this draw.
+    pub dynamic_offset: u32,
+    /// Which foliage set to render (index into set_resources).
+    pub set_index: usize,
+    /// Number of vertices per blade for this set.
+    pub num_verts_per_blade: u32,
+}
+
 /// GPU resources for foliage rendering.
 pub struct FoliageResources {
     /// Render pipeline for foliage.
     pub pipeline: wgpu::RenderPipeline,
-    /// Uniform buffer for foliage parameters.
+    /// Uniform buffer for foliage parameters (global — lighting, fog, etc).
     pub params_buffer: wgpu::Buffer,
-    /// Bind group layout for foliage params and geometry textures.
+    /// Dynamic uniform buffer for per-chunk data (chunk offsets).
+    pub chunk_info_buffer: Option<wgpu::Buffer>,
+    /// Bind group layout for foliage params + terrain textures.
     pub params_bind_group_layout: wgpu::BindGroupLayout,
-    /// Bind group layout for foliage material textures.
+    /// Bind group layout for foliage material textures + blade geometry.
     pub material_bind_group_layout: wgpu::BindGroupLayout,
     /// Per-set resources (textures, bind groups).
     pub set_resources: Vec<FoliageSetResources>,
-    /// Params bind group (geometry textures + heightmap).
+    /// Params bind group (terrain textures + dynamic chunk info).
     pub params_bind_group: Option<wgpu::BindGroup>,
+    /// Pre-built draw calls from QN chunk data.
+    pub draw_calls: Vec<FoliageDrawCall>,
+    /// Minimum uniform buffer offset alignment (for dynamic uniform).
+    pub min_offset_alignment: u32,
     /// Current configuration.
     pub config: FoliageConfig,
 }
@@ -34,10 +50,10 @@ pub struct FoliageSetResources {
     pub _opacity_view: wgpu::TextureView,
     /// Blade positions texture (xyz = pos, w = u).
     pub _blade_positions_texture: wgpu::Texture,
-    pub blade_positions_view: wgpu::TextureView,
+    pub _blade_positions_view: wgpu::TextureView,
     /// Blade normals texture (xyz = normal, w = v).
     pub _blade_normals_texture: wgpu::Texture,
-    pub blade_normals_view: wgpu::TextureView,
+    pub _blade_normals_view: wgpu::TextureView,
     /// Material bind group.
     pub material_bind_group: wgpu::BindGroup,
     /// Number of blade types in this set.
@@ -92,6 +108,17 @@ pub struct FoliageParamsUniform {
     pub blackmap_params2: [f32; 4], // x = pad, yz = bounds_hi_xz, w = bounds_falloff
 }
 
+/// Per-chunk uniform data (must match shader ChunkInfo struct).
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ChunkInfoUniform {
+    /// Chunk offset: mMinXVert, mMinZVert from quad node
+    pub chunk_offset: [f32; 2],
+    /// Number of vertices per blade (varies per set)
+    pub num_verts_per_blade: f32,
+    pub _pad: f32,
+}
+
 impl FoliageResources {
     /// Create foliage rendering resources.
     pub fn new(
@@ -99,12 +126,15 @@ impl FoliageResources {
         surface_format: wgpu::TextureFormat,
         camera_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Self {
+        let min_offset_alignment = device.limits().min_uniform_buffer_offset_alignment;
+
         // Create bind group layouts
+        // Group 1: global params + per-chunk dynamic uniform + terrain textures
         let params_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Foliage Params Bind Group Layout"),
                 entries: &[
-                    // Params uniform
+                    // binding 0: Global params uniform (static)
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
@@ -115,18 +145,20 @@ impl FoliageResources {
                         },
                         count: None,
                     },
-                    // Blade positions texture (Rgba32Float - not filterable)
+                    // binding 1: Per-chunk info (dynamic offset)
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
                         visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: true,
+                            min_binding_size: wgpu::BufferSize::new(
+                                std::mem::size_of::<ChunkInfoUniform>() as u64,
+                            ),
                         },
                         count: None,
                     },
-                    // Blade normals texture (Rgba32Float - not filterable)
+                    // binding 2: Heightmap texture (R32Float - not filterable)
                     wgpu::BindGroupLayoutEntry {
                         binding: 2,
                         visibility: wgpu::ShaderStages::VERTEX,
@@ -137,56 +169,38 @@ impl FoliageResources {
                         },
                         count: None,
                     },
-                    // Blade sampler (non-filtering for float32 textures)
+                    // binding 3: Heightmap sampler (non-filtering)
                     wgpu::BindGroupLayoutEntry {
                         binding: 3,
                         visibility: wgpu::ShaderStages::VERTEX,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                         count: None,
                     },
-                    // Heightmap texture (R32Float - not filterable)
+                    // binding 4: Shadow map
                     wgpu::BindGroupLayoutEntry {
                         binding: 4,
-                        visibility: wgpu::ShaderStages::VERTEX,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
                             view_dimension: wgpu::TextureViewDimension::D2,
                             multisampled: false,
                         },
                         count: None,
                     },
-                    // Heightmap sampler (non-filtering for float32 texture)
+                    // binding 5: Blackmap
                     wgpu::BindGroupLayoutEntry {
                         binding: 5,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
                         count: None,
                     },
-                    // Shadow map texture (binding 6)
+                    // binding 6: Unexplored mask
                     wgpu::BindGroupLayoutEntry {
                         binding: 6,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // Blackmap texture (binding 7)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 7,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // Unexplored mask texture (binding 8)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 8,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
                             sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -198,11 +212,12 @@ impl FoliageResources {
                 ],
             });
 
+        // Group 2: per-set material textures + blade geometry
         let material_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Foliage Material Bind Group Layout"),
                 entries: &[
-                    // Albedo texture
+                    // binding 0: Albedo texture
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -213,7 +228,7 @@ impl FoliageResources {
                         },
                         count: None,
                     },
-                    // Opacity texture
+                    // binding 1: Opacity texture
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
                         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -224,11 +239,40 @@ impl FoliageResources {
                         },
                         count: None,
                     },
-                    // Foliage sampler
+                    // binding 2: Foliage sampler (filtering)
                     wgpu::BindGroupLayoutEntry {
                         binding: 2,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    // binding 3: Blade positions texture (Rgba32Float)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // binding 4: Blade normals texture (Rgba32Float)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // binding 5: Blade sampler (non-filtering for float32)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                         count: None,
                     },
                 ],
@@ -272,6 +316,7 @@ impl FoliageResources {
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_format,
+                    // Game uses alpha blending with discard at 0.6666 as optimization
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -301,10 +346,13 @@ impl FoliageResources {
         Self {
             pipeline,
             params_buffer,
+            chunk_info_buffer: None,
             params_bind_group_layout,
             material_bind_group_layout,
             set_resources: Vec::new(),
             params_bind_group: None,
+            draw_calls: Vec::new(),
+            min_offset_alignment,
             config: FoliageConfig::default(),
         }
     }
@@ -373,7 +421,7 @@ impl FoliageResources {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                format: wgpu::TextureFormat::Rgba8Unorm,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
@@ -410,7 +458,7 @@ impl FoliageResources {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                format: wgpu::TextureFormat::Rgba8Unorm,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
@@ -437,6 +485,13 @@ impl FoliageResources {
         // For now, generate a simple default blade if not loaded
         let (blade_positions, blade_normals, num_blade_types, num_verts) =
             if !set.blade_positions.is_empty() {
+                log::info!(
+                    "Foliage '{}': using loaded blade geometry ({} types, {} verts/blade, {} total)",
+                    set.name,
+                    set.num_blade_types,
+                    set.num_verts_per_blade,
+                    set.blade_positions.len()
+                );
                 (
                     set.blade_positions.clone(),
                     set.blade_normals.clone(),
@@ -444,8 +499,21 @@ impl FoliageResources {
                     set.num_verts_per_blade,
                 )
             } else {
-                // Generate default grass blade geometry
-                Self::generate_default_blade_geometry()
+                // Infer blade type count from texture aspect ratio:
+                // each blade type occupies a square region (height x height) in the atlas
+                let inferred_types = if set.albedo_height > 0 {
+                    (set.albedo_width / set.albedo_height).max(1)
+                } else {
+                    1
+                };
+                log::info!(
+                    "Foliage '{}': inferred {} blade types from {}x{} texture",
+                    set.name,
+                    inferred_types,
+                    set.albedo_width,
+                    set.albedo_height,
+                );
+                Self::generate_default_blade_geometry(inferred_types)
             };
 
         let blade_positions_texture = Self::create_blade_texture(
@@ -468,19 +536,29 @@ impl FoliageResources {
         let blade_normals_view =
             blade_normals_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Create material sampler
+        // Create material sampler — game uses WRAP address mode for foliage textures
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Foliage Material Sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
 
-        // Create material bind group
+        // Blade sampler (non-filtering for Rgba32Float textures)
+        let blade_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Foliage Blade Sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        // Create material bind group (includes blade geometry textures)
         let material_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(&format!("Foliage Material Bind Group: {}", set.name)),
             layout: &self.material_bind_group_layout,
@@ -497,6 +575,18 @@ impl FoliageResources {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&blade_positions_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&blade_normals_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Sampler(&blade_sampler),
+                },
             ],
         });
 
@@ -506,44 +596,56 @@ impl FoliageResources {
             _opacity_texture: opacity_texture,
             _opacity_view: opacity_view,
             _blade_positions_texture: blade_positions_texture,
-            blade_positions_view,
+            _blade_positions_view: blade_positions_view,
             _blade_normals_texture: blade_normals_texture,
-            blade_normals_view,
+            _blade_normals_view: blade_normals_view,
             material_bind_group,
             num_blade_types,
             num_verts_per_blade: num_verts,
         })
     }
 
-    /// Generate default grass blade geometry (simple quad strip).
-    fn generate_default_blade_geometry() -> (Vec<[f32; 4]>, Vec<[f32; 4]>, u32, u32) {
-        let num_verts = 10u32;
-        let num_blade_types = 1u32;
+    /// Generate default grass blade geometry (simple quad strip) for N blade types.
+    ///
+    /// Each blade type gets UVs covering its horizontal slice of the atlas texture.
+    /// For a texture with N types, type i covers U range [i/N, (i+1)/N].
+    fn generate_default_blade_geometry(
+        num_blade_types: u32,
+    ) -> (Vec<[f32; 4]>, Vec<[f32; 4]>, u32, u32) {
+        let num_verts_per_blade = 10u32;
 
-        let mut positions = Vec::with_capacity(num_verts as usize);
-        let mut normals = Vec::with_capacity(num_verts as usize);
+        let total_verts = (num_verts_per_blade * num_blade_types) as usize;
+        let mut positions = Vec::with_capacity(total_verts);
+        let mut normals = Vec::with_capacity(total_verts);
 
         // Simple grass blade: 5 quads stacked vertically
         // Width tapers from base to top
+        // Note: game blade geometry is stored at world scale (no shader scaling).
+        // Typical game blades are ~1.5 units tall, ~0.3 wide.
         let blade_height = 1.5;
-        let base_width = 0.1;
+        let base_width = 0.3;
 
-        for i in 0..5 {
-            let t = i as f32 / 4.0;
-            let y = t * blade_height;
-            let width = base_width * (1.0 - t * 0.8); // Taper to 20% at top
-            let _u = t;
+        for blade_type in 0..num_blade_types {
+            // UV range for this blade type in the atlas
+            let u_min = blade_type as f32 / num_blade_types as f32;
+            let u_max = (blade_type + 1) as f32 / num_blade_types as f32;
 
-            // Left vertex
-            positions.push([-width, y, 0.0, 0.0]); // x, y, z, u
-            normals.push([0.0, 0.0, 1.0, 1.0 - t]); // nx, ny, nz, v
+            for i in 0..5 {
+                let t = i as f32 / 4.0;
+                let y = t * blade_height;
+                let width = base_width * (1.0 - t * 0.8); // Taper to 20% at top
 
-            // Right vertex
-            positions.push([width, y, 0.0, 1.0]); // x, y, z, u
-            normals.push([0.0, 0.0, 1.0, 1.0 - t]); // nx, ny, nz, v
+                // Left vertex
+                positions.push([-width, y, 0.0, u_min]); // x, y, z, u
+                normals.push([0.0, 0.0, 1.0, 1.0 - t]); // nx, ny, nz, v
+
+                // Right vertex
+                positions.push([width, y, 0.0, u_max]); // x, y, z, u
+                normals.push([0.0, 0.0, 1.0, 1.0 - t]); // nx, ny, nz, v
+            }
         }
 
-        (positions, normals, num_blade_types, num_verts)
+        (positions, normals, num_blade_types, num_verts_per_blade)
     }
 
     /// Create a 1D texture for blade vertex data.
@@ -594,7 +696,7 @@ impl FoliageResources {
         texture
     }
 
-    /// Create the params bind group with heightmap and blade geometry textures.
+    /// Create the params bind group with heightmap and chunk info dynamic buffer.
     ///
     /// This requires terrain data to create the heightmap texture.
     pub fn create_params_bind_group(
@@ -614,9 +716,8 @@ impl FoliageResources {
             Self::create_heightmap_texture(device, queue, terrain_data, num_verts);
         let heightmap_view = heightmap_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Create samplers
-        let blade_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Foliage Blade Sampler"),
+        let heightmap_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Foliage Heightmap Sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -625,26 +726,14 @@ impl FoliageResources {
             ..Default::default()
         });
 
-        let heightmap_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Foliage Heightmap Sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest, // R32Float doesn't support linear filtering
-            min_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-
-        // Use blade textures from first set
+        // Write initial params uniform
         let first_set = &self.set_resources[0];
-
-        // Write initial params uniform (camera_pos will be updated per frame)
         let params = FoliageParamsUniform {
             terrain_info: [
                 num_verts as f32,
                 terrain_data.tile_scale,
-                0.0, // chunk_offset_x - will be updated per chunk
-                0.0, // chunk_offset_z
+                0.0, // unused (chunk offset now in ChunkInfo)
+                0.0,
             ],
             world_min: [
                 terrain_data.mid[0] - terrain_data.range[0],
@@ -660,20 +749,17 @@ impl FoliageResources {
             ],
             foliage_info: [
                 first_set.num_verts_per_blade as f32,
-                1.0 / 64.0, // rcp_num_blades (64x64 grid per chunk)
+                1.0 / 64.0,
                 self.config.fade_start_distance,
                 self.config.max_render_distance,
             ],
-            camera_pos_time: [0.0, 100.0, 0.0, 0.0], // Initial camera pos, time
-            // Default directional light (sun-like, from upper-right)
-            dir_light_vec: [0.4472, 0.8944, 0.0, 1.0], // xyz = normalized light dir, w = backside_shadow_scalar
+            camera_pos_time: [0.0, 100.0, 0.0, 0.0],
+            dir_light_vec: [0.4472, 0.8944, 0.0, 1.0],
             dir_light_color: [1.0, 1.0, 1.0, 0.0],
-            // Fog defaults (disabled)
             fog_params: [0.0, 0.0, 0.0, 0.0],
             fog_color: [0.7, 0.8, 0.9, 1.0],
-            planar_fog_params: [0.0, 0.0, 0.0, 0.0], // x=0 means disabled
+            planar_fog_params: [0.0, 0.0, 0.0, 0.0],
             planar_fog_color: [0.7, 0.8, 0.9, 1.0],
-            // SH fill lighting defaults (uniform ambient ~0.3)
             sh_fill_ar: [0.0, 0.0, 0.0, 0.3],
             sh_fill_ag: [0.0, 0.0, 0.0, 0.3],
             sh_fill_ab: [0.0, 0.0, 0.0, 0.3],
@@ -681,93 +767,48 @@ impl FoliageResources {
             sh_fill_bg: [0.0; 4],
             sh_fill_bb: [0.0; 4],
             sh_fill_c: [0.0; 4],
-            // Shadow disabled by default
             shadow_vp_col0: [1.0, 0.0, 0.0, 0.0],
             shadow_vp_col1: [0.0, 1.0, 0.0, 0.0],
             shadow_vp_col2: [0.0, 0.0, 1.0, 0.0],
             shadow_vp_col3: [0.0, 0.0, 0.0, 1.0],
-            shadow_params: [1.0, 1.0, 0.0, 0.0], // z=0 => disabled
-            // Blackmap disabled by default
+            shadow_params: [1.0, 1.0, 0.0, 0.0],
             blackmap_params0: [0.0, 0.0, 0.0, 0.5],
-            blackmap_params1: [0.3, 0.0, 0.0, 0.0], // w=0 => disabled
+            blackmap_params1: [0.3, 0.0, 0.0, 0.0],
             blackmap_params2: [0.0, 1024.0, 1024.0, 0.01],
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
 
+        // Use existing chunk_info_buffer (from build_draw_calls) or create a minimal one
+        if self.chunk_info_buffer.is_none() {
+            let aligned_size = Self::align_up(
+                std::mem::size_of::<ChunkInfoUniform>() as u32,
+                self.min_offset_alignment,
+            );
+            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Foliage Chunk Info Buffer (initial)"),
+                size: aligned_size as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let default_chunk = ChunkInfoUniform {
+                chunk_offset: [0.0, 0.0],
+                num_verts_per_blade: first_set.num_verts_per_blade as f32,
+                _pad: 0.0,
+            };
+            queue.write_buffer(&buf, 0, bytemuck::bytes_of(&default_chunk));
+            self.chunk_info_buffer = Some(buf);
+        }
+        let chunk_info_buffer = self.chunk_info_buffer.as_ref().unwrap();
+
         // Create placeholder shadow/blackmap textures (1x1 dummy)
-        let dummy_tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Foliage Dummy Shadow/Blackmap Texture"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        // White pixel for shadow map (fully lit)
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &dummy_tex,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &[255u8, 255, 255, 255],
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: None,
-            },
-            wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
+        let dummy_tex = Self::create_dummy_texture(device, queue, "Shadow", &[255, 255, 255, 255]);
         let shadow_view = dummy_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let dummy_black_tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Foliage Dummy Blackmap Texture"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &dummy_black_tex,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &[0u8, 0, 0, 0], // Black / zero alpha (fully visible)
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: None,
-            },
-            wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
+        let dummy_black_tex = Self::create_dummy_texture(device, queue, "Blackmap", &[0, 0, 0, 0]);
         let blackmap_view = dummy_black_tex.create_view(&wgpu::TextureViewDescriptor::default());
         let unexplored_view = dummy_black_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Create the params bind group
+        // Create the params bind group (new layout: params + chunk_info dynamic + terrain textures)
         let params_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Foliage Params Bind Group"),
             layout: &self.params_bind_group_layout,
@@ -778,34 +819,32 @@ impl FoliageResources {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&first_set.blade_positions_view),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &chunk_info_buffer,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(
+                            std::mem::size_of::<ChunkInfoUniform>() as u64,
+                        ),
+                    }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&first_set.blade_normals_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&blade_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
                     resource: wgpu::BindingResource::TextureView(&heightmap_view),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 5,
+                    binding: 3,
                     resource: wgpu::BindingResource::Sampler(&heightmap_sampler),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 6,
+                    binding: 4,
                     resource: wgpu::BindingResource::TextureView(&shadow_view),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 7,
+                    binding: 5,
                     resource: wgpu::BindingResource::TextureView(&blackmap_view),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 8,
+                    binding: 6,
                     resource: wgpu::BindingResource::TextureView(&unexplored_view),
                 },
             ],
@@ -816,6 +855,173 @@ impl FoliageResources {
             "Created foliage params bind group with {}x{} heightmap",
             num_verts,
             num_verts
+        );
+    }
+
+    /// Create a 1x1 dummy texture with the given RGBA pixel.
+    fn create_dummy_texture(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        label: &str,
+        pixel: &[u8; 4],
+    ) -> wgpu::Texture {
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(&format!("Foliage Dummy {} Texture", label)),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            pixel,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        tex
+    }
+
+    /// Align `value` up to the next multiple of `alignment`.
+    fn align_up(value: u32, alignment: u32) -> u32 {
+        (value + alignment - 1) & !(alignment - 1)
+    }
+
+    /// Build draw calls and chunk info buffer from QN chunk data.
+    ///
+    /// This pre-computes all draw calls and fills the dynamic uniform buffer
+    /// with per-chunk offsets. Must be called after create_params_bind_group.
+    pub fn build_draw_calls(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        qn_chunks: &[crate::types::FoliageQNChunk],
+        num_verts_per_axis: u32,
+    ) {
+        self.draw_calls.clear();
+
+        if qn_chunks.is_empty() || self.set_resources.is_empty() {
+            log::info!("No QN chunks or sets — no foliage draw calls");
+            return;
+        }
+
+        let chunks_per_axis = num_verts_per_axis / 64;
+        let aligned_slot = Self::align_up(
+            std::mem::size_of::<ChunkInfoUniform>() as u32,
+            self.min_offset_alignment,
+        );
+
+        // Count total draw calls (one per chunk × set pair)
+        let mut total_draws = 0usize;
+        for qn in qn_chunks {
+            total_draws += qn.num_sets as usize;
+        }
+
+        // Allocate chunk info data (aligned slots)
+        let buffer_size = (total_draws as u32) * aligned_slot;
+        let mut chunk_data = vec![0u8; buffer_size as usize];
+
+        let mut draw_idx = 0u32;
+        for (qn_i, qn) in qn_chunks.iter().enumerate() {
+            // Convert qn_parent_index to grid coordinates
+            // Game: index = gridX * numXChunks + gridZ (TerrainIO.cpp)
+            // So: gridX = index / numXChunks, gridZ = index % numXChunks
+            // Then: mMinXVert = gridX * 64, mMinZVert = gridZ * 64
+            let grid_x = qn.qn_parent_index / chunks_per_axis;
+            let grid_z = qn.qn_parent_index % chunks_per_axis;
+            let min_x_vert = (grid_x * 64) as f32;
+            let min_z_vert = (grid_z * 64) as f32;
+
+            if qn_i < 5 {
+                log::debug!(
+                    "  QN[{}] parent_idx={}, grid=({},{}), minVert=({},{}), sets={}, set_indices={:?}",
+                    qn_i, qn.qn_parent_index, grid_x, grid_z,
+                    min_x_vert, min_z_vert, qn.num_sets, qn.set_indices
+                );
+            }
+
+            for set_slot in 0..qn.num_sets as usize {
+                let set_idx = qn.set_indices[set_slot] as usize;
+                if set_idx >= self.set_resources.len() {
+                    continue; // Skip invalid set indices
+                }
+
+                let set_res = &self.set_resources[set_idx];
+                let offset = (draw_idx * aligned_slot) as usize;
+
+                let chunk_info = ChunkInfoUniform {
+                    chunk_offset: [min_x_vert, min_z_vert],
+                    num_verts_per_blade: set_res.num_verts_per_blade as f32,
+                    _pad: 0.0,
+                };
+
+                let bytes = bytemuck::bytes_of(&chunk_info);
+                chunk_data[offset..offset + bytes.len()].copy_from_slice(bytes);
+
+                self.draw_calls.push(FoliageDrawCall {
+                    dynamic_offset: draw_idx * aligned_slot,
+                    set_index: set_idx,
+                    num_verts_per_blade: set_res.num_verts_per_blade,
+                });
+
+                draw_idx += 1;
+            }
+        }
+
+        if self.draw_calls.is_empty() {
+            log::info!("No valid foliage draw calls generated");
+            return;
+        }
+
+        // Create the chunk info buffer
+        let chunk_info_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Foliage Chunk Info Buffer"),
+            size: buffer_size as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&chunk_info_buffer, 0, &chunk_data);
+
+        // Recreate params bind group with the new (larger) chunk info buffer
+        if let Some(params_bg) = &self.params_bind_group {
+            // We need to get the existing entries from the old bind group...
+            // Unfortunately wgpu doesn't let us inspect bind groups, so we need
+            // to recreate it. The caller should call create_params_bind_group first,
+            // then build_draw_calls. But we stored the buffer, so let's just
+            // update the buffer reference.
+            // Actually, we need to recreate the bind group since the buffer changed.
+            // For now, store the buffer and let the caller rebuild.
+            let _ = params_bg; // suppress warning
+        }
+
+        self.chunk_info_buffer = Some(chunk_info_buffer);
+
+        log::info!(
+            "Built {} foliage draw calls from {} QN chunks (grid {}x{}, aligned_slot={})",
+            self.draw_calls.len(),
+            qn_chunks.len(),
+            chunks_per_axis,
+            chunks_per_axis,
+            aligned_slot,
         );
     }
 

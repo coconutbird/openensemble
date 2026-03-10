@@ -136,9 +136,17 @@ impl TerrainViewer {
             foliage_resources.set_resources.len()
         );
 
-        // Create params bind group if we have terrain data and foliage sets
+        // Build draw calls from QN chunk data, then create params bind group
         if !foliage_resources.set_resources.is_empty() {
             if let Some(raw_data) = &self.raw_xtd_data {
+                // Build draw calls first (creates the chunk_info_buffer)
+                foliage_resources.build_draw_calls(
+                    device,
+                    queue,
+                    &self.foliage_qn_chunks,
+                    raw_data.num_verts_per_axis,
+                );
+                // Then create params bind group (references the chunk_info_buffer)
                 foliage_resources.create_params_bind_group(device, queue, raw_data);
             } else {
                 log::warn!("Cannot create foliage params bind group: no terrain data");
