@@ -152,9 +152,10 @@ impl FoliageResources {
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: true,
-                            min_binding_size: wgpu::BufferSize::new(
-                                std::mem::size_of::<ChunkInfoUniform>() as u64,
-                            ),
+                            min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
+                                ChunkInfoUniform,
+                            >()
+                                as u64),
                         },
                         count: None,
                     },
@@ -483,38 +484,40 @@ impl FoliageResources {
 
         // Create blade geometry textures
         // For now, generate a simple default blade if not loaded
-        let (blade_positions, blade_normals, num_blade_types, num_verts) =
-            if !set.blade_positions.is_empty() {
-                log::info!(
-                    "Foliage '{}': using loaded blade geometry ({} types, {} verts/blade, {} total)",
-                    set.name,
-                    set.num_blade_types,
-                    set.num_verts_per_blade,
-                    set.blade_positions.len()
-                );
-                (
-                    set.blade_positions.clone(),
-                    set.blade_normals.clone(),
-                    set.num_blade_types,
-                    set.num_verts_per_blade,
-                )
+        let (blade_positions, blade_normals, num_blade_types, num_verts) = if !set
+            .blade_positions
+            .is_empty()
+        {
+            log::info!(
+                "Foliage '{}': using loaded blade geometry ({} types, {} verts/blade, {} total)",
+                set.name,
+                set.num_blade_types,
+                set.num_verts_per_blade,
+                set.blade_positions.len()
+            );
+            (
+                set.blade_positions.clone(),
+                set.blade_normals.clone(),
+                set.num_blade_types,
+                set.num_verts_per_blade,
+            )
+        } else {
+            // Infer blade type count from texture aspect ratio:
+            // each blade type occupies a square region (height x height) in the atlas
+            let inferred_types = if set.albedo_height > 0 {
+                (set.albedo_width / set.albedo_height).max(1)
             } else {
-                // Infer blade type count from texture aspect ratio:
-                // each blade type occupies a square region (height x height) in the atlas
-                let inferred_types = if set.albedo_height > 0 {
-                    (set.albedo_width / set.albedo_height).max(1)
-                } else {
-                    1
-                };
-                log::info!(
-                    "Foliage '{}': inferred {} blade types from {}x{} texture",
-                    set.name,
-                    inferred_types,
-                    set.albedo_width,
-                    set.albedo_height,
-                );
-                Self::generate_default_blade_geometry(inferred_types)
+                1
             };
+            log::info!(
+                "Foliage '{}': inferred {} blade types from {}x{} texture",
+                set.name,
+                inferred_types,
+                set.albedo_width,
+                set.albedo_height,
+            );
+            Self::generate_default_blade_geometry(inferred_types)
+        };
 
         let blade_positions_texture = Self::create_blade_texture(
             device,
@@ -822,9 +825,7 @@ impl FoliageResources {
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &chunk_info_buffer,
                         offset: 0,
-                        size: wgpu::BufferSize::new(
-                            std::mem::size_of::<ChunkInfoUniform>() as u64,
-                        ),
+                        size: wgpu::BufferSize::new(std::mem::size_of::<ChunkInfoUniform>() as u64),
                     }),
                 },
                 wgpu::BindGroupEntry {
@@ -954,8 +955,14 @@ impl FoliageResources {
             if qn_i < 5 {
                 log::debug!(
                     "  QN[{}] parent_idx={}, grid=({},{}), minVert=({},{}), sets={}, set_indices={:?}",
-                    qn_i, qn.qn_parent_index, grid_x, grid_z,
-                    min_x_vert, min_z_vert, qn.num_sets, qn.set_indices
+                    qn_i,
+                    qn.qn_parent_index,
+                    grid_x,
+                    grid_z,
+                    min_x_vert,
+                    min_z_vert,
+                    qn.num_sets,
+                    qn.set_indices
                 );
             }
 

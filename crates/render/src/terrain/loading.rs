@@ -582,7 +582,6 @@ pub struct RoadTextures {
     pub specular_pixels: Vec<u8>,
 }
 
-
 /// Parse foliage blade geometry from an XMB (compiled XML) file.
 ///
 /// The XML format (from TerrainFoliage.cpp) is:
