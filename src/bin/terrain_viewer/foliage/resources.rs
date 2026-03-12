@@ -1125,8 +1125,9 @@ impl FoliageResources {
             let min_z_vert = (info.grid_z * 64) as f32;
             let offset = (draw_idx as u32 * aligned_slot) as usize;
 
+            // Swap X/Z offsets to rotate the foliage layer to match terrain orientation
             let chunk_info = ChunkInfoUniform {
-                chunk_offset: [min_x_vert, min_z_vert],
+                chunk_offset: [min_z_vert, min_x_vert],
                 num_verts_per_blade: info.num_verts_per_blade as f32,
                 blade_data_offset: blade_data_offset as f32,
             };
