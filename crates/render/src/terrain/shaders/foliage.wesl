@@ -72,7 +72,7 @@ var<uniform> camera: CameraUniform;
 struct ChunkInfo {
     chunk_offset: vec2<f32>,   // mMinXVert, mMinZVert from quad node
     num_verts_per_blade: f32,
-    _pad: f32,
+    blade_data_offset: f32,    // offset into blade map texture for this draw call
 };
 
 @group(1) @binding(0)
@@ -95,6 +95,11 @@ var t_shadow_map: texture_2d<f32>;
 var t_blackmap: texture_2d<f32>;
 @group(1) @binding(6)
 var t_unexplored: texture_2d<f32>;
+
+// Blade map texture: each texel is (grid_position, blade_type) as u32 pair.
+// Indexed by blade_data_offset + instance_index.
+@group(1) @binding(7)
+var t_blade_map: texture_2d<u32>;
 
 // Per-set material textures + blade geometry
 @group(2) @binding(0)
@@ -151,13 +156,16 @@ fn rotate_2d(input: vec2<f32>, theta: f32) -> vec2<f32> {
     );
 }
 
-// Sample terrain offset at given UV position.
-// Game samples full XYZ displacement from position texture; we use pre-decoded
-// R32Float heightmap for Y. XZ displacement is typically small and omitted here.
+// Sample terrain displacement at given UV position.
+// Game samples full XYZ displacement from position texture (getTerrainDataAtPos).
+// Our heightmap stores the same XYZ in an Rgba32Float texture.
+// Note: The original HLSL swaps UV because the Xbox 360 texture is stored transposed.
+// Our heightmap is created from the same data as the terrain position texture,
+// which is indexed as (x, z) — no swap needed.
 fn get_terrain_offset(uv: vec2<f32>) -> vec3<f32> {
     let clamped_uv = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
-    let height = textureSampleLevel(t_heightmap, s_heightmap, clamped_uv, 0.0).r;
-    return vec3<f32>(0.0, height, 0.0);
+    let sample = textureSampleLevel(t_heightmap, s_heightmap, clamped_uv, 0.0);
+    return sample.xyz;
 }
 
 @vertex
@@ -167,19 +175,23 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let num_verts_per_blade = u32(chunk_info.num_verts_per_blade);
     let num_blades_per_node: u32 = 64u;
 
-    // instance_index = blade_index (0..4095) — chunk offset comes from dynamic uniform
-    let blade_index = in.instance_index;
     let vertex_in_blade = in.vertex_index % num_verts_per_blade;
 
     // Chunk offset from QN chunk data (mMinXVert, mMinZVert), passed via dynamic uniform
     let chunk_offset_x = chunk_info.chunk_offset.x;
     let chunk_offset_z = chunk_info.chunk_offset.y;
 
-    // Blade type: cycle through available types based on blade index
-    let blade_type = blade_index % u32(max(1.0, f32(textureDimensions(t_blade_positions, 0).x) / f32(num_verts_per_blade)));
+    // Look up blade placement from blade map texture.
+    // Each instance maps to a (grid_position, blade_type) entry parsed from the
+    // original index buffer. blade_data_offset locates this draw call's entries.
+    let blade_map_idx = u32(chunk_info.blade_data_offset) + in.instance_index;
+    let blade_map_width = textureDimensions(t_blade_map, 0).x;
+    let blade_map_coord = vec2<u32>(blade_map_idx % blade_map_width, blade_map_idx / blade_map_width);
+    let blade_info = textureLoad(t_blade_map, blade_map_coord, 0);
+    let blade_index = blade_info.r;  // grid position (0..4095) = localIndex from export
+    let blade_type = blade_info.g;   // blade type from index buffer
 
-    // Fetch blade vertex from geometry texture
-    // Game uses ld_structured (integer index, no filtering) — we use textureLoad to match
+    // Fetch blade vertex from geometry texture using the correct blade type
     let pixel_x = vertex_in_blade + blade_type * num_verts_per_blade;
     let pos_sample = textureLoad(t_blade_positions, vec2<u32>(pixel_x, 0u), 0);
     let norm_sample = textureLoad(t_blade_normals, vec2<u32>(pixel_x, 0u), 0);
@@ -191,9 +203,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     var normal = norm_sample.xyz;
 
     // Random values per blade (deterministic based on LOCAL blade index within chunk)
-    // Game uses bladeIndex (0-4095), NOT global instance index
-    let local_blade_index = blade_index;
-    let rnd = our_rand(vec2<f32>(f32(local_blade_index), f32(local_blade_index)));
+    // Game uses bladeIndex (the grid position 0-4095), NOT instance_index
+    let rnd = our_rand(vec2<f32>(f32(blade_index), f32(blade_index)));
 
     // Grid position within chunk
     // Game HLSL: trns = float2(bladeIndex / 64 + 0.5, bladeIndex % 64)
@@ -221,8 +232,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     pos.y *= max(0.25, rnd.x);
 
     // Terrain heightmap UV
-    // Game bytecode: sample_l r1.xyz, r1.zxz, t2 (swaps UV for game's texture layout)
-    // But our heightmap is stored matching our terrain shader's (x, z) convention — no swap needed
+    // Original HLSL: getTerrainDataAtPos(trns * g_terrainVals.x) where .x = 1/numVerts
     let num_verts = params.terrain_info.x;
     let terrain_uv = vec2<f32>(trns_x, trns_z) / num_verts;
     let terrain_offset = get_terrain_offset(terrain_uv);

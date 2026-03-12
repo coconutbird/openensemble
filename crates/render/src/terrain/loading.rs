@@ -274,16 +274,30 @@ pub fn load_foliage_sets(source: &AssetSource, foliage_sets: &[FoliageSetInfo]) 
     let mut all_paths: Vec<String> = Vec::with_capacity(foliage_sets.len() * files_per_set);
     for set_info in foliage_sets {
         let base_path = format!("art/{}", set_info.filename.replace('\\', "/"));
-        all_paths.push(format!("{}_df.ddx", base_path)); // albedo
-        all_paths.push(format!("{}_op.ddx", base_path)); // opacity
-        all_paths.push(format!("{}_nm.ddx", base_path)); // normal
-        all_paths.push(format!("{}_sp.ddx", base_path)); // specular
-        all_paths.push(format!("{}.xml", base_path)); // blade geometry XML
+        let paths = [
+            format!("{}_df.ddx", base_path),
+            format!("{}_op.ddx", base_path),
+            format!("{}_nm.ddx", base_path),
+            format!("{}_sp.ddx", base_path),
+            format!("{}.xml", base_path),
+        ];
+        for p in &paths {
+            log::info!("  Foliage asset path: {}", p);
+        }
+        all_paths.extend(paths);
     }
 
     // Load all files in parallel
     let path_refs: Vec<&str> = all_paths.iter().map(|s| s.as_str()).collect();
     let all_data = source.read_parallel(&path_refs);
+
+    // Log which files were found vs missing
+    for (i, path) in all_paths.iter().enumerate() {
+        match &all_data[i] {
+            Some(data) => log::info!("  Found: {} ({} bytes)", path, data.len()),
+            None => log::warn!("  MISSING: {}", path),
+        }
+    }
 
     // Process each foliage set in parallel
     let loaded_sets: Vec<FoliageSet> = (0..foliage_sets.len())
@@ -298,19 +312,22 @@ pub fn load_foliage_sets(source: &AssetSource, foliage_sets: &[FoliageSetInfo]) 
             };
 
             // Decode albedo (_df)
-            if let Some(data) = &all_data[base_idx]
-                && let Ok(ddx) = DdxTexture::from_bytes(data)
-                && let Ok(decoded) = ddx.decode_to_rgba()
-            {
-                log::info!(
-                    "  Loaded foliage albedo: {} ({}x{})",
-                    set_info.filename,
-                    decoded.width,
-                    decoded.height
-                );
-                foliage_set.albedo_width = decoded.width;
-                foliage_set.albedo_height = decoded.height;
-                foliage_set.albedo_pixels = decoded.pixels;
+            if let Some(data) = &all_data[base_idx] {
+                log::info!("  Decoding foliage albedo DDX for '{}' ({} bytes)", set_info.filename, data.len());
+                match DdxTexture::from_bytes(data) {
+                    Ok(ddx) => match ddx.decode_to_rgba() {
+                        Ok(decoded) => {
+                            log::info!("    Decoded albedo: {}x{}, {} bytes", decoded.width, decoded.height, decoded.pixels.len());
+                            foliage_set.albedo_width = decoded.width;
+                            foliage_set.albedo_height = decoded.height;
+                            foliage_set.albedo_pixels = decoded.pixels;
+                        }
+                        Err(e) => log::error!("    Failed to decode albedo DDX: {}", e),
+                    },
+                    Err(e) => log::error!("    Failed to parse albedo DDX: {}", e),
+                }
+            } else {
+                log::warn!("  No albedo data found for '{}'", set_info.filename);
             }
 
             // Decode opacity (_op)
