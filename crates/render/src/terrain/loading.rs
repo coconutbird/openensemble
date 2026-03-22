@@ -619,11 +619,10 @@ pub struct RoadTextures {
 /// - positions texture: [pos.x, pos.y, pos.z, uv.x]
 /// - normals texture: [norm.x, norm.y, norm.z, uv.y]
 fn parse_foliage_blade_xml(xml_data: &[u8], foliage_set: &mut FoliageSet) {
-    use data::xmb::{XmbData, XmbReader};
-    use std::io::Cursor;
+    use data::xmb::{Document as XmbDocument, Reader as XmbReader};
 
     // Try XMB binary first, then fall back to raw XML text
-    let xmb = match XmbReader::read(Cursor::new(xml_data)) {
+    let xmb = match XmbReader::read(xml_data) {
         Ok(xmb) => xmb,
         Err(_) => {
             // Try as raw XML text
@@ -634,7 +633,7 @@ fn parse_foliage_blade_xml(xml_data: &[u8], foliage_set: &mut FoliageSet) {
                     return;
                 }
             };
-            match XmbData::from_xml(xml_str) {
+            match XmbDocument::from_xml(xml_str) {
                 Ok(xmb) => xmb,
                 Err(e) => {
                     log::warn!("  Failed to parse foliage XML: {}", e);

@@ -11,8 +11,8 @@ use std::path::PathBuf;
 
 use data::Scenario;
 use data::assets::AssetSource;
-use data::xtd::{TessellationData, XtdFile, XtdReader};
-use data::xtt::{ActiveTextureInfo, XttFile, XttReader};
+use data::xtd::{self, TessellationData, XtdFile};
+use data::xtt::{self, ActiveTextureInfo, XttFile};
 use glam::Vec3;
 use render::terrain::{Camera, CompositorResources, LodConfig, TessellationMode};
 use render::wgpu;
@@ -210,13 +210,13 @@ impl TerrainViewer {
             // Load from file path (legacy mode)
             log::info!("Loading XTD from file: {}", path.display());
             match std::fs::read(path) {
-                Ok(data) => match XtdReader::read(&data) {
+                Ok(data) => match xtd::Reader::read(&data) {
                     Ok(xtd) => {
                         // Try to load XTT from same location
                         let xtt_path = path.with_extension("xtt");
                         let xtt = if xtt_path.exists() {
                             match std::fs::read(&xtt_path) {
-                                Ok(xtt_data) => match XttReader::read(&xtt_data) {
+                                Ok(xtt_data) => match xtt::Reader::read(&xtt_data) {
                                     Ok(xtt) => Some(xtt),
                                     Err(e) => {
                                         log::warn!("Failed to parse XTT: {}", e);

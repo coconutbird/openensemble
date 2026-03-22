@@ -18,9 +18,8 @@
 
 use crate::assets::{AssetError, AssetSource};
 use crate::terrain::{Terrain, TerrainError};
-use crate::xmb::{Node, XmbData, XmbReader};
+use crate::xmb::{Node, Document, Reader};
 use glam::Vec3;
-use std::io::Cursor;
 use thiserror::Error;
 
 /// Scenario loading errors.
@@ -181,19 +180,18 @@ impl Scenario {
     // --- Private parsing methods ---
 
     fn parse_xmb_bytes(bytes: &[u8]) -> Result<Self, ScenarioError> {
-        let cursor = Cursor::new(bytes);
-        let xmb_data = XmbReader::read(cursor)?;
+        let xmb_data = Reader::read_ecf(bytes)?;
         Self::parse_xmb_data(&xmb_data)
     }
 
     /// Parse a scenario from XML string (for testing only).
     #[doc(hidden)]
     pub fn from_xml_str(xml: &str) -> Result<Self, ScenarioError> {
-        let xmb_data = XmbData::from_xml(xml)?;
+        let xmb_data = Document::from_xml(xml)?;
         Self::parse_xmb_data(&xmb_data)
     }
 
-    fn parse_xmb_data(xmb: &XmbData) -> Result<Self, ScenarioError> {
+    fn parse_xmb_data(xmb: &Document) -> Result<Self, ScenarioError> {
         let mut scenario = Self::default();
         if let Some(root) = xmb.root() {
             Self::parse_node(root, &mut scenario)?;

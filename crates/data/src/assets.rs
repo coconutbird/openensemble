@@ -27,12 +27,11 @@
 //!     .with_override_dir("mods/my_mod");
 //! ```
 
-use crate::era::MmapEraArchive;
 use crate::paths::{GAME_DIR_ENV_VAR, era_path, game_dir, is_valid_game_dir};
-use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use thiserror::Error;
 
 /// Errors that can occur during asset loading.
@@ -54,17 +53,23 @@ pub enum AssetError {
     Io(#[from] std::io::Error),
 }
 
-/// Pre-indexed memory-mapped ERA archive for fast parallel lookups.
-struct IndexedMmapEra {
-    archive: MmapEraArchive,
+/// Pre-indexed ERA archive for fast lookups.
+///
+/// Opens the ERA file with decryption and builds a path→index map.
+/// The inner `Reader` is wrapped in a `Mutex` because `read_entry`
+/// requires `&mut self` (it seeks within the file).
+struct IndexedEra {
+    reader: Mutex<era::Reader<era::DecryptReader<std::fs::File>>>,
     /// Maps normalized path (lowercase, backslashes) to entry index.
     index: HashMap<String, usize>,
 }
 
-impl IndexedMmapEra {
+impl IndexedEra {
     fn open(path: &Path) -> Result<Self, AssetError> {
-        let archive = MmapEraArchive::open(path)?;
-        let index = archive
+        let file = std::fs::File::open(path)?;
+        let keys = era::TeaKeys::default_archive_keys();
+        let reader = era::Reader::from_encrypted(file, keys)?;
+        let index = reader
             .iter()
             .enumerate()
             .filter_map(|(i, e)| {
@@ -73,37 +78,34 @@ impl IndexedMmapEra {
                     .map(|n| (n.replace('/', "\\").to_lowercase(), i))
             })
             .collect();
-        Ok(Self { archive, index })
+        Ok(Self {
+            reader: Mutex::new(reader),
+            index,
+        })
     }
 
-    /// Read a single entry (thread-safe).
+    /// Read a single entry.
     fn read(&self, normalized_path: &str) -> Option<Vec<u8>> {
         let idx = self.index.get(normalized_path)?;
-        self.archive.read_entry(*idx).ok()
+        let mut reader = self.reader.lock().ok()?;
+        reader.read_entry(*idx).ok()
     }
 
-    /// Read multiple entries in parallel.
-    fn read_parallel(&self, normalized_paths: &[&str]) -> Vec<Option<Vec<u8>>> {
-        // Collect indices
-        let indices: Vec<Option<usize>> = normalized_paths
+    /// Read multiple entries.
+    fn read_many(&self, normalized_paths: &[&str]) -> Vec<Option<Vec<u8>>> {
+        let mut reader = self.reader.lock().unwrap();
+        normalized_paths
             .iter()
-            .map(|p| self.index.get(*p).copied())
-            .collect();
-
-        // Read in parallel
-        indices
-            .par_iter()
-            .map(|idx| idx.and_then(|i| self.archive.read_entry(i).ok()))
+            .map(|p| {
+                self.index
+                    .get(*p)
+                    .and_then(|&idx| reader.read_entry(idx).ok())
+            })
             .collect()
     }
 
     fn contains(&self, normalized_path: &str) -> bool {
         self.index.contains_key(normalized_path)
-    }
-
-    #[allow(dead_code)]
-    fn get_index(&self, normalized_path: &str) -> Option<usize> {
-        self.index.get(normalized_path).copied()
     }
 }
 
@@ -115,9 +117,9 @@ pub struct AssetSource {
     /// Local directory to check first (for development/modding).
     override_dir: Option<PathBuf>,
     /// Scenario ERA (e.g., blood_gulch.era).
-    scenario_era: Option<IndexedMmapEra>,
+    scenario_era: Option<IndexedEra>,
     /// Root ERA (root.era).
-    root_era: Option<IndexedMmapEra>,
+    root_era: Option<IndexedEra>,
 }
 
 impl AssetSource {
@@ -136,19 +138,16 @@ impl AssetSource {
         let root_era_path = era_path("root");
 
         let scenario_era = if scenario_era_path.exists() {
-            log::info!(
-                "Opening scenario ERA (mmap): {}",
-                scenario_era_path.display()
-            );
-            Some(IndexedMmapEra::open(&scenario_era_path)?)
+            log::info!("Opening scenario ERA: {}", scenario_era_path.display());
+            Some(IndexedEra::open(&scenario_era_path)?)
         } else {
             log::warn!("Scenario ERA not found: {}", scenario_era_path.display());
             None
         };
 
         let root_era = if root_era_path.exists() {
-            log::info!("Opening root ERA (mmap): {}", root_era_path.display());
-            Some(IndexedMmapEra::open(&root_era_path)?)
+            log::info!("Opening root ERA: {}", root_era_path.display());
+            Some(IndexedEra::open(&root_era_path)?)
         } else {
             None
         };
@@ -175,8 +174,8 @@ impl AssetSource {
         let root_era_path = era_path("root");
 
         let root_era = if root_era_path.exists() {
-            log::info!("Opening root ERA (mmap): {}", root_era_path.display());
-            Some(IndexedMmapEra::open(&root_era_path)?)
+            log::info!("Opening root ERA: {}", root_era_path.display());
+            Some(IndexedEra::open(&root_era_path)?)
         } else {
             return Err(AssetError::NotFound("root.era not found".to_string()));
         };
@@ -279,9 +278,9 @@ impl AssetSource {
             .map(|&i| normalized_refs[i])
             .collect();
 
-        // Try scenario ERA first (parallel)
+        // Try scenario ERA first
         if let Some(era) = &self.scenario_era {
-            let era_results = era.read_parallel(&era_paths);
+            let era_results = era.read_many(&era_paths);
             let mut still_needed: Vec<usize> = Vec::new();
 
             for (j, &orig_idx) in remaining_indices.iter().enumerate() {
@@ -292,13 +291,13 @@ impl AssetSource {
                 }
             }
 
-            // Try root ERA for remaining (parallel)
+            // Try root ERA for remaining
             if !still_needed.is_empty()
                 && let Some(root_era) = &self.root_era
             {
                 let root_paths: Vec<&str> =
                     still_needed.iter().map(|&i| normalized_refs[i]).collect();
-                let root_results = root_era.read_parallel(&root_paths);
+                let root_results = root_era.read_many(&root_paths);
 
                 for (j, &orig_idx) in still_needed.iter().enumerate() {
                     if let Some(data) = root_results[j].clone() {
@@ -308,7 +307,7 @@ impl AssetSource {
             }
         } else if let Some(root_era) = &self.root_era {
             // No scenario ERA, try root directly
-            let root_results = root_era.read_parallel(&era_paths);
+            let root_results = root_era.read_many(&era_paths);
             for (j, &orig_idx) in remaining_indices.iter().enumerate() {
                 if let Some(data) = root_results[j].clone() {
                     results[orig_idx] = Some(data);

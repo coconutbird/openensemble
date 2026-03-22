@@ -18,9 +18,8 @@ use crate::proto::{
     ObjectType, ProtoDatabase, ProtoFlags, ProtoId, ProtoObject, ProtoSquad, ProtoTech,
     ResourceCost, SquadUnit, TechEffect,
 };
-use crate::xmb::{Error as XmbError, Node, XmbData, XmbReader};
+use crate::xmb::{Error as XmbError, Node, Document, Reader};
 use std::collections::HashMap;
-use std::io::Cursor;
 use thiserror::Error;
 
 /// Errors that can occur when loading the game database.
@@ -156,7 +155,7 @@ pub struct GameDatabase {
     /// Damage types by name
     pub damage_types_by_name: HashMap<String, u32>,
     /// Raw XMB data for all loaded files (by filename)
-    pub raw_xmb: HashMap<String, XmbData>,
+    pub raw_xmb: HashMap<String, Document>,
     /// List of all loaded XMB file paths
     pub loaded_files: Vec<String>,
 }
@@ -210,8 +209,7 @@ impl GameDatabase {
 
     /// Load XMB data from bytes and parse it.
     fn load_xmb_data(&mut self, filename: &str, data: &[u8]) -> Result<(), DatabaseError> {
-        let cursor = Cursor::new(data);
-        let xmb = XmbReader::read(cursor)?;
+        let xmb = Reader::read(data)?;
 
         self.loaded_files.push(filename.to_string());
 
@@ -246,7 +244,7 @@ impl GameDatabase {
     }
 
     /// Get a raw XMB file by path (case-insensitive search).
-    pub fn get_xmb(&self, path: &str) -> Option<&XmbData> {
+    pub fn get_xmb(&self, path: &str) -> Option<&Document> {
         let path_lower = path.to_lowercase();
         self.raw_xmb
             .iter()
@@ -280,7 +278,7 @@ impl GameDatabase {
     // Parsing functions for known XMB file types
     // ========================================================================
 
-    fn parse_objects(&mut self, xmb: &XmbData, _filename: &str) -> Result<(), DatabaseError> {
+    fn parse_objects(&mut self, xmb: &Document, _filename: &str) -> Result<(), DatabaseError> {
         let root = match xmb.root() {
             Some(r) => r,
             None => return Ok(()),
@@ -378,7 +376,7 @@ impl GameDatabase {
         }
     }
 
-    fn parse_squads(&mut self, xmb: &XmbData, _filename: &str) -> Result<(), DatabaseError> {
+    fn parse_squads(&mut self, xmb: &Document, _filename: &str) -> Result<(), DatabaseError> {
         let root = match xmb.root() {
             Some(r) => r,
             None => return Ok(()),
@@ -428,7 +426,7 @@ impl GameDatabase {
         squad
     }
 
-    fn parse_techs(&mut self, xmb: &XmbData, _filename: &str) -> Result<(), DatabaseError> {
+    fn parse_techs(&mut self, xmb: &Document, _filename: &str) -> Result<(), DatabaseError> {
         let root = match xmb.root() {
             Some(r) => r,
             None => return Ok(()),
@@ -507,7 +505,7 @@ impl GameDatabase {
         }
     }
 
-    fn parse_civs(&mut self, xmb: &XmbData, _filename: &str) -> Result<(), DatabaseError> {
+    fn parse_civs(&mut self, xmb: &Document, _filename: &str) -> Result<(), DatabaseError> {
         let root = match xmb.root() {
             Some(r) => r,
             None => return Ok(()),
@@ -555,7 +553,7 @@ impl GameDatabase {
         Ok(())
     }
 
-    fn parse_leaders(&mut self, xmb: &XmbData, _filename: &str) -> Result<(), DatabaseError> {
+    fn parse_leaders(&mut self, xmb: &Document, _filename: &str) -> Result<(), DatabaseError> {
         let root = match xmb.root() {
             Some(r) => r,
             None => return Ok(()),
@@ -604,7 +602,7 @@ impl GameDatabase {
         Ok(())
     }
 
-    fn parse_powers(&mut self, xmb: &XmbData, _filename: &str) -> Result<(), DatabaseError> {
+    fn parse_powers(&mut self, xmb: &Document, _filename: &str) -> Result<(), DatabaseError> {
         let root = match xmb.root() {
             Some(r) => r,
             None => return Ok(()),
@@ -649,7 +647,7 @@ impl GameDatabase {
         Ok(())
     }
 
-    fn parse_abilities(&mut self, xmb: &XmbData, _filename: &str) -> Result<(), DatabaseError> {
+    fn parse_abilities(&mut self, xmb: &Document, _filename: &str) -> Result<(), DatabaseError> {
         let root = match xmb.root() {
             Some(r) => r,
             None => return Ok(()),
@@ -694,7 +692,7 @@ impl GameDatabase {
         Ok(())
     }
 
-    fn parse_weapon_types(&mut self, xmb: &XmbData, _filename: &str) -> Result<(), DatabaseError> {
+    fn parse_weapon_types(&mut self, xmb: &Document, _filename: &str) -> Result<(), DatabaseError> {
         let root = match xmb.root() {
             Some(r) => r,
             None => return Ok(()),
@@ -743,7 +741,7 @@ impl GameDatabase {
         Ok(())
     }
 
-    fn parse_game_modes(&mut self, xmb: &XmbData, _filename: &str) -> Result<(), DatabaseError> {
+    fn parse_game_modes(&mut self, xmb: &Document, _filename: &str) -> Result<(), DatabaseError> {
         let root = match xmb.root() {
             Some(r) => r,
             None => return Ok(()),
@@ -786,7 +784,7 @@ impl GameDatabase {
         Ok(())
     }
 
-    fn parse_damage_types(&mut self, xmb: &XmbData, _filename: &str) -> Result<(), DatabaseError> {
+    fn parse_damage_types(&mut self, xmb: &Document, _filename: &str) -> Result<(), DatabaseError> {
         let root = match xmb.root() {
             Some(r) => r,
             None => return Ok(()),

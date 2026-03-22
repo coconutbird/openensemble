@@ -19,8 +19,8 @@
 //! ```
 
 use crate::assets::{AssetError, AssetSource};
-use crate::xtd::{XtdFile, XtdReader};
-use crate::xtt::{XttFile, XttReader};
+use crate::xtd::{XtdFile, Reader as XtdReader};
+use crate::xtt::{XttFile, Reader as XttReader};
 use std::path::PathBuf;
 use thiserror::Error;
 

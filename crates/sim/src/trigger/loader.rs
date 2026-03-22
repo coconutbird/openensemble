@@ -3,9 +3,7 @@
 //! This module handles loading vanilla Halo Wars trigger scripts from their
 //! binary XMB format into the internal representation used by the trigger engine.
 
-use std::io::{Read, Seek};
-
-use data::xmb::{XmbData, XmbReader};
+use data::xmb::{Document as XmbDocument, Reader as XmbReader};
 
 use super::{
     Condition, ConditionType, Effect, EffectType, Trigger, TriggerScript, TriggerValue, TriggerVar,
@@ -47,19 +45,14 @@ pub type LoadResult<T> = Result<T, LoadError>;
 pub struct VanillaLoader;
 
 impl VanillaLoader {
-    /// Load a trigger script from a reader (file, bytes, etc).
-    pub fn load<R: Read + Seek>(reader: R) -> LoadResult<TriggerScript> {
-        let xmb = XmbReader::read(reader)?;
+    /// Load a trigger script from raw bytes.
+    pub fn load_bytes(data: &[u8]) -> LoadResult<TriggerScript> {
+        let xmb = XmbReader::read(data)?;
         Self::from_xmb(&xmb)
     }
 
-    /// Load a trigger script from raw bytes.
-    pub fn load_bytes(data: &[u8]) -> LoadResult<TriggerScript> {
-        Self::load(std::io::Cursor::new(data))
-    }
-
     /// Convert parsed XMB data into a TriggerScript.
-    pub fn from_xmb(xmb: &XmbData) -> LoadResult<TriggerScript> {
+    pub fn from_xmb(xmb: &XmbDocument) -> LoadResult<TriggerScript> {
         let root = xmb
             .root()
             .ok_or_else(|| LoadError::MissingElement("TriggerScript root".into()))?;
