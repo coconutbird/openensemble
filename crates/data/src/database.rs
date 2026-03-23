@@ -284,7 +284,7 @@ impl GameDatabase {
             None => return Ok(()),
         };
 
-        let mut id_counter: ProtoId = 1;
+        let mut id_counter: ProtoId = 0;
 
         for node in &root.children {
             if node.name == "Object" {
@@ -382,7 +382,7 @@ impl GameDatabase {
             None => return Ok(()),
         };
 
-        let mut id_counter: ProtoId = 1;
+        let mut id_counter: ProtoId = 0;
 
         for node in &root.children {
             if node.name == "Squad" {
@@ -432,7 +432,7 @@ impl GameDatabase {
             None => return Ok(()),
         };
 
-        let mut id_counter: ProtoId = 1;
+        let mut id_counter: ProtoId = 0;
 
         for node in &root.children {
             if node.name == "Tech" {
@@ -511,7 +511,7 @@ impl GameDatabase {
             None => return Ok(()),
         };
 
-        let mut id_counter: u32 = 1;
+        let mut id_counter: u32 = 0;
 
         for node in &root.children {
             if node.name == "Civ" {
@@ -559,7 +559,7 @@ impl GameDatabase {
             None => return Ok(()),
         };
 
-        let mut id_counter: u32 = 1;
+        let mut id_counter: u32 = 0;
 
         for node in &root.children {
             if node.name == "Leader" {
@@ -608,7 +608,7 @@ impl GameDatabase {
             None => return Ok(()),
         };
 
-        let mut id_counter: u32 = 1;
+        let mut id_counter: u32 = 0;
 
         for node in &root.children {
             if node.name == "Power" {
@@ -653,7 +653,7 @@ impl GameDatabase {
             None => return Ok(()),
         };
 
-        let mut id_counter: u32 = 1;
+        let mut id_counter: u32 = 0;
 
         for node in &root.children {
             if node.name == "Ability" {
@@ -698,7 +698,7 @@ impl GameDatabase {
             None => return Ok(()),
         };
 
-        let mut id_counter: u32 = 1;
+        let mut id_counter: u32 = 0;
 
         for node in &root.children {
             if node.name == "WeaponType" || node.name == "Weapon" {
@@ -747,7 +747,7 @@ impl GameDatabase {
             None => return Ok(()),
         };
 
-        let mut id_counter: u32 = 1;
+        let mut id_counter: u32 = 0;
 
         for node in &root.children {
             if node.name == "GameMode" || node.name == "Mode" {
@@ -790,7 +790,7 @@ impl GameDatabase {
             None => return Ok(()),
         };
 
-        let mut id_counter: u32 = 1;
+        let mut id_counter: u32 = 0;
 
         for node in &root.children {
             if node.name == "DamageType" {

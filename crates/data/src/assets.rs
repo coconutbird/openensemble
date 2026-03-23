@@ -1,18 +1,28 @@
 //! Unified asset loading from local files or ERA archives.
 //!
 //! [`AssetSource`] provides a single interface for loading assets with automatic
-//! fallback through multiple sources:
+//! fallback through multiple ERA archives, matching the original game's
+//! `BArchiveManager` load order.
+//!
+//! ## ERA archive priority (highest to lowest)
 //!
 //! 1. **Override directory** - Local files for development/modding
 //! 2. **Scenario ERA** - Scenario-specific assets (e.g., blood_gulch.era)
-//! 3. **Root ERA** - Global assets (root.era)
+//! 3. **scenarioshared.era** - Assets shared across scenarios
+//! 4. **root_update.era** - Patch/update overrides for root.era
+//! 5. **root.era** - Global game assets
+//! 6. **locale_update.era** - Patch/update overrides for locale.era
+//! 7. **locale.era** - Localized content
+//!
+//! This matches the original `BArchiveManager::reloadRootArchive` and
+//! `BArchiveManager::beginScenarioPrefetch` load chain from the game binary.
 //!
 //! # Example
 //!
 //! ```ignore
 //! use data::assets::AssetSource;
 //!
-//! // Create asset source for a scenario
+//! // Create asset source for a scenario (loads full ERA chain)
 //! let source = AssetSource::for_scenario("blood_gulch")?;
 //!
 //! // Read raw bytes
@@ -111,79 +121,121 @@ impl IndexedEra {
 
 /// Unified asset source for loading from overrides or ERA archives.
 ///
-/// Uses memory-mapped ERA archives for efficient parallel loading.
-/// Searches sources in order: override dir → scenario ERA → root ERA.
+/// Maintains an ordered list of ERA archives matching the original game's
+/// `BArchiveManager` load chain. Archives earlier in the list have higher
+/// priority (later-loaded archives override earlier ones in the original game,
+/// and we store them in search order: highest priority first).
 pub struct AssetSource {
     /// Local directory to check first (for development/modding).
     override_dir: Option<PathBuf>,
-    /// Scenario ERA (e.g., blood_gulch.era).
-    scenario_era: Option<IndexedEra>,
-    /// Root ERA (root.era).
-    root_era: Option<IndexedEra>,
+    /// ERA archives in priority order (highest priority first).
+    /// Matches BArchiveManager: scenario > scenarioshared > root_update > root > locale_update > locale.
+    eras: Vec<IndexedEra>,
 }
 
+/// Names and labels for ERA archives, in priority order (highest first).
+/// The original game loads them in reverse order (locale first, scenario last),
+/// but searches them last-loaded-first, which is equivalent to our ordering.
+const ERA_NAMES_ROOT: &[(&str, &str)] = &[
+    ("root_update", "root_update.era (patch)"),
+    ("root", "root.era"),
+    ("locale_update", "locale_update.era (patch)"),
+    ("locale", "locale.era"),
+];
+
+const ERA_NAMES_SCENARIO: &[(&str, &str)] = &[
+    ("scenarioshared", "scenarioshared.era"),
+];
+
 impl AssetSource {
-    /// Create an asset source for a scenario.
-    ///
-    /// Opens the scenario ERA and root ERA with memory mapping for parallel access.
-    pub fn for_scenario(scenario_name: &str) -> Result<Self, AssetError> {
+    /// Validate the game directory is set and valid.
+    fn validate_game_dir() -> Result<(), AssetError> {
         if !is_valid_game_dir() {
             if std::env::var(GAME_DIR_ENV_VAR).is_err() {
                 return Err(AssetError::GameDirNotSet(GAME_DIR_ENV_VAR));
             }
             return Err(AssetError::InvalidGameDir(game_dir().clone()));
         }
+        Ok(())
+    }
 
+    /// Try to open an ERA archive, returning None if not found on disk.
+    fn try_open_era(name: &str, label: &str) -> Result<Option<IndexedEra>, AssetError> {
+        let path = era_path(name);
+        if path.exists() {
+            log::info!("Opening {}: {}", label, path.display());
+            Ok(Some(IndexedEra::open(&path)?))
+        } else {
+            log::debug!("{} not found, skipping", label);
+            Ok(None)
+        }
+    }
+
+    /// Load the root ERA chain (root, root_update, locale, locale_update).
+    ///
+    /// Returns archives in priority order (root_update before root, etc).
+    fn load_root_eras() -> Result<Vec<IndexedEra>, AssetError> {
+        let mut eras = Vec::new();
+        for &(name, label) in ERA_NAMES_ROOT {
+            if let Some(era) = Self::try_open_era(name, label)? {
+                eras.push(era);
+            }
+        }
+        if eras.is_empty() {
+            return Err(AssetError::NotFound("root.era not found".to_string()));
+        }
+        Ok(eras)
+    }
+
+    /// Create an asset source for a scenario.
+    ///
+    /// Opens the full ERA chain matching BArchiveManager:
+    /// scenario ERA → scenarioshared.era → root_update.era → root.era →
+    /// locale_update.era → locale.era
+    pub fn for_scenario(scenario_name: &str) -> Result<Self, AssetError> {
+        Self::validate_game_dir()?;
+
+        let mut eras = Vec::new();
+
+        // 1. Scenario-specific ERA (highest priority)
         let scenario_era_path = era_path(scenario_name);
-        let root_era_path = era_path("root");
-
-        let scenario_era = if scenario_era_path.exists() {
+        if scenario_era_path.exists() {
             log::info!("Opening scenario ERA: {}", scenario_era_path.display());
-            Some(IndexedEra::open(&scenario_era_path)?)
+            eras.push(IndexedEra::open(&scenario_era_path)?);
         } else {
             log::warn!("Scenario ERA not found: {}", scenario_era_path.display());
-            None
-        };
+        }
 
-        let root_era = if root_era_path.exists() {
-            log::info!("Opening root ERA: {}", root_era_path.display());
-            Some(IndexedEra::open(&root_era_path)?)
-        } else {
-            None
-        };
+        // 2. scenarioshared.era
+        for &(name, label) in ERA_NAMES_SCENARIO {
+            if let Some(era) = Self::try_open_era(name, label)? {
+                eras.push(era);
+            }
+        }
+
+        // 3. Root chain (root_update, root, locale_update, locale)
+        eras.extend(Self::load_root_eras()?);
 
         Ok(Self {
             override_dir: None,
-            scenario_era,
-            root_era,
+            eras,
         })
     }
 
-    /// Create an asset source for root.era only (no scenario ERA).
+    /// Create an asset source for the root ERA chain only (no scenario ERA).
+    ///
+    /// Loads: root_update.era → root.era → locale_update.era → locale.era
     ///
     /// Use this when loading global game data (XMB files, etc.) that doesn't
     /// depend on a specific scenario.
     pub fn root_only() -> Result<Self, AssetError> {
-        if !is_valid_game_dir() {
-            if std::env::var(GAME_DIR_ENV_VAR).is_err() {
-                return Err(AssetError::GameDirNotSet(GAME_DIR_ENV_VAR));
-            }
-            return Err(AssetError::InvalidGameDir(game_dir().clone()));
-        }
+        Self::validate_game_dir()?;
 
-        let root_era_path = era_path("root");
-
-        let root_era = if root_era_path.exists() {
-            log::info!("Opening root ERA: {}", root_era_path.display());
-            Some(IndexedEra::open(&root_era_path)?)
-        } else {
-            return Err(AssetError::NotFound("root.era not found".to_string()));
-        };
+        let eras = Self::load_root_eras()?;
 
         Ok(Self {
             override_dir: None,
-            scenario_era: None,
-            root_era,
+            eras,
         })
     }
 
@@ -197,17 +249,15 @@ impl AssetSource {
 
     /// Read raw bytes for an asset path.
     ///
-    /// Searches in order: override directory → scenario ERA → root ERA.
-    /// Thread-safe due to memory-mapped ERA archives.
+    /// Searches in priority order: override directory → ERA chain
+    /// (scenario → scenarioshared → root_update → root → locale_update → locale).
     ///
     /// Path format: `"art/terrain/stone_df.ddx"` (forward or back slashes accepted).
     pub fn read(&self, path: &str) -> Result<Vec<u8>, AssetError> {
-        // Normalize path for comparison (lowercase, backslashes)
         let normalized = path.replace('/', "\\").to_lowercase();
 
         // 1. Try override directory
         if let Some(override_dir) = &self.override_dir {
-            // Convert to forward slashes for filesystem
             let local_path = override_dir.join(path.replace('\\', "/"));
             if local_path.exists() {
                 log::debug!("Loading from override: {}", local_path.display());
@@ -215,20 +265,12 @@ impl AssetSource {
             }
         }
 
-        // 2. Try scenario ERA
-        if let Some(era) = &self.scenario_era
-            && let Some(data) = era.read(&normalized)
-        {
-            log::debug!("Loading from scenario ERA: {}", path);
-            return Ok(data);
-        }
-
-        // 3. Try root ERA
-        if let Some(era) = &self.root_era
-            && let Some(data) = era.read(&normalized)
-        {
-            log::debug!("Loading from root ERA: {}", path);
-            return Ok(data);
+        // 2. Try ERA chain in priority order
+        for era in &self.eras {
+            if let Some(data) = era.read(&normalized) {
+                log::debug!("Loading from ERA: {}", path);
+                return Ok(data);
+            }
         }
 
         Err(AssetError::NotFound(path.to_string()))
@@ -238,17 +280,14 @@ impl AssetSource {
     ///
     /// Returns a Vec with the same length as `paths`, where each element is
     /// `Some(data)` if the asset was found, or `None` if not found.
-    ///
-    /// Uses rayon for parallel decompression across all CPU cores.
     pub fn read_parallel(&self, paths: &[&str]) -> Vec<Option<Vec<u8>>> {
-        // Normalize all paths
         let normalized: Vec<String> = paths
             .iter()
             .map(|p| p.replace('/', "\\").to_lowercase())
             .collect();
         let normalized_refs: Vec<&str> = normalized.iter().map(|s| s.as_str()).collect();
 
-        // Check override directory first (still sequential for filesystem)
+        // Check override directory first
         let mut results: Vec<Option<Vec<u8>>> = vec![None; paths.len()];
         let mut remaining_indices: Vec<usize> = Vec::new();
 
@@ -272,17 +311,19 @@ impl AssetSource {
             return results;
         }
 
-        // Build list of paths still needed from ERA
-        let era_paths: Vec<&str> = remaining_indices
-            .iter()
-            .map(|&i| normalized_refs[i])
-            .collect();
+        // Walk the ERA chain in priority order, resolving remaining assets
+        for era in &self.eras {
+            if remaining_indices.is_empty() {
+                break;
+            }
 
-        // Try scenario ERA first
-        if let Some(era) = &self.scenario_era {
+            let era_paths: Vec<&str> = remaining_indices
+                .iter()
+                .map(|&i| normalized_refs[i])
+                .collect();
             let era_results = era.read_many(&era_paths);
-            let mut still_needed: Vec<usize> = Vec::new();
 
+            let mut still_needed = Vec::new();
             for (j, &orig_idx) in remaining_indices.iter().enumerate() {
                 if let Some(data) = era_results[j].clone() {
                     results[orig_idx] = Some(data);
@@ -290,29 +331,7 @@ impl AssetSource {
                     still_needed.push(orig_idx);
                 }
             }
-
-            // Try root ERA for remaining
-            if !still_needed.is_empty()
-                && let Some(root_era) = &self.root_era
-            {
-                let root_paths: Vec<&str> =
-                    still_needed.iter().map(|&i| normalized_refs[i]).collect();
-                let root_results = root_era.read_many(&root_paths);
-
-                for (j, &orig_idx) in still_needed.iter().enumerate() {
-                    if let Some(data) = root_results[j].clone() {
-                        results[orig_idx] = Some(data);
-                    }
-                }
-            }
-        } else if let Some(root_era) = &self.root_era {
-            // No scenario ERA, try root directly
-            let root_results = root_era.read_many(&era_paths);
-            for (j, &orig_idx) in remaining_indices.iter().enumerate() {
-                if let Some(data) = root_results[j].clone() {
-                    results[orig_idx] = Some(data);
-                }
-            }
+            remaining_indices = still_needed;
         }
 
         results
@@ -320,11 +339,10 @@ impl AssetSource {
 
     /// Check if an asset exists without loading it.
     ///
-    /// Searches in order: override directory → scenario ERA → root ERA.
+    /// Searches in priority order: override directory → ERA chain.
     pub fn exists(&self, path: &str) -> bool {
         let normalized = path.replace('/', "\\").to_lowercase();
 
-        // Check override directory
         if let Some(override_dir) = &self.override_dir {
             let local_path = override_dir.join(path.replace('\\', "/"));
             if local_path.exists() {
@@ -332,26 +350,13 @@ impl AssetSource {
             }
         }
 
-        // Check scenario ERA
-        if let Some(era) = &self.scenario_era
-            && era.contains(&normalized)
-        {
-            return true;
-        }
-
-        // Check root ERA
-        if let Some(era) = &self.root_era
-            && era.contains(&normalized)
-        {
-            return true;
-        }
-
-        false
+        self.eras.iter().any(|era| era.contains(&normalized))
     }
 
     /// List all assets matching a predicate.
     ///
     /// Returns normalized paths (lowercase, backslashes).
+    /// Collects from all ERA archives, avoiding duplicates.
     /// Note: Only searches ERA archives, not override directory.
     pub fn list<F>(&self, predicate: F) -> Vec<String>
     where
@@ -359,17 +364,7 @@ impl AssetSource {
     {
         let mut results = Vec::new();
 
-        // Collect from scenario ERA
-        if let Some(era) = &self.scenario_era {
-            for path in era.index.keys() {
-                if predicate(path) && !results.contains(path) {
-                    results.push(path.clone());
-                }
-            }
-        }
-
-        // Collect from root ERA (avoiding duplicates)
-        if let Some(era) = &self.root_era {
+        for era in &self.eras {
             for path in era.index.keys() {
                 if predicate(path) && !results.contains(path) {
                     results.push(path.clone());

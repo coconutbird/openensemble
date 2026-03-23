@@ -105,7 +105,10 @@ impl HeadlessServer {
     pub fn load_scenario(&mut self, scenario_name: &str) -> Result<()> {
         let scenario = Scenario::load(scenario_name).context("Failed to load scenario from ERA")?;
 
-        let loaded = load_scenario_into_world(&scenario);
+        // Use loaded database for name→ID resolution, or an empty one if skipped
+        let empty_db = GameDatabase::new();
+        let db = self.database.as_ref().unwrap_or(&empty_db);
+        let loaded = load_scenario_into_world(&scenario, db);
         self.world = loaded.world;
 
         log::info!(
@@ -123,7 +126,9 @@ impl HeadlessServer {
     pub fn load_scenario_xml(&mut self, xml: &str) -> Result<()> {
         let scenario = Scenario::from_xml_str(xml).context("Failed to parse scenario XML")?;
 
-        let loaded = load_scenario_into_world(&scenario);
+        let empty_db = GameDatabase::new();
+        let db = self.database.as_ref().unwrap_or(&empty_db);
+        let loaded = load_scenario_into_world(&scenario, db);
         self.world = loaded.world;
 
         log::info!(

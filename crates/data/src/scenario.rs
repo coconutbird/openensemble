@@ -59,10 +59,10 @@ pub struct ScenarioPosition {
 pub struct ScenarioPlayer {
     /// Player name.
     pub name: String,
-    /// Civilization ID (1 = UNSC, 2 = Covenant).
-    pub civ_id: i32,
-    /// Leader ID.
-    pub leader_id: i32,
+    /// Civilization name (e.g. "UNSC", "Covenant") — resolved to ID via GameDatabase.
+    pub civ_name: String,
+    /// Leader name (e.g. "Cutter", "Arbiter") — resolved to ID via GameDatabase.
+    pub leader_name: String,
     /// Team ID.
     pub team_id: u8,
     /// Player color index.
@@ -262,8 +262,6 @@ impl Scenario {
 
     fn parse_player_node(node: &Node) -> Result<ScenarioPlayer, ScenarioError> {
         let mut player = ScenarioPlayer {
-            civ_id: 1,
-            leader_id: -1,
             controllable: true,
             default_resources: true,
             forward: Vec3::Z,
@@ -276,8 +274,8 @@ impl Scenario {
             let value = attr.value_string();
             match attr.name.as_str() {
                 "Name" => player.name = value,
-                "Civ" => player.civ_id = Self::civ_name_to_id(&value),
-                "Leader" | "Leader1" => player.leader_id = Self::leader_name_to_id(&value),
+                "Civ" => player.civ_name = value,
+                "Leader" | "Leader1" => player.leader_name = value,
                 "Team" => player.team_id = value.parse().unwrap_or(0),
                 "Color" => player.color = value.parse().unwrap_or(-1),
                 "UseStartingUnits" => player.use_starting_units = value == "true",
@@ -346,25 +344,6 @@ impl Scenario {
         Ok(Vec3::new(x, y, z))
     }
 
-    fn civ_name_to_id(name: &str) -> i32 {
-        match name.to_lowercase().as_str() {
-            "unsc" => 1,
-            "covenant" => 2,
-            _ => 1, // Default to UNSC
-        }
-    }
-
-    fn leader_name_to_id(name: &str) -> i32 {
-        match name.to_lowercase().as_str() {
-            "cutter" => 1,
-            "anders" => 2,
-            "forge" => 3,
-            "arbiter" => 4,
-            "prophet" => 5,
-            "brute" => 6,
-            _ => -1,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -406,9 +385,11 @@ mod tests {
         // Check players
         assert_eq!(scenario.players.len(), 2);
         assert_eq!(scenario.players[0].name, "Player1");
-        assert_eq!(scenario.players[0].civ_id, 1); // UNSC
+        assert_eq!(scenario.players[0].civ_name, "UNSC");
+        assert_eq!(scenario.players[0].leader_name, "Cutter");
         assert_eq!(scenario.players[1].name, "Player2");
-        assert_eq!(scenario.players[1].civ_id, 2); // Covenant
+        assert_eq!(scenario.players[1].civ_name, "Covenant");
+        assert_eq!(scenario.players[1].leader_name, "Arbiter");
 
         // Check objects
         assert_eq!(scenario.objects.len(), 3);

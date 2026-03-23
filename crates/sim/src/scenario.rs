@@ -14,13 +14,15 @@
 //! let scenario = Scenario::load("blood_gulch")?;
 //!
 //! // Load into simulation world
-//! let loaded = load_scenario_into_world(&scenario);
+//! let db = GameDatabase::load()?;
+//! let loaded = load_scenario_into_world(&scenario, &db);
 //! println!("Created {} players", loaded.world.player_count());
 //! ```
 
 use crate::entity_id::EntityId;
 use crate::player::PlayerType;
 use crate::world::World;
+use data::GameDatabase;
 use std::collections::HashMap;
 
 // Re-export scenario types from data crate for convenience
@@ -55,10 +57,11 @@ impl LoadedScenario {
 /// use sim::load_scenario_into_world;
 ///
 /// let scenario = Scenario::load("blood_gulch")?;
-/// let loaded = load_scenario_into_world(&scenario);
+/// let db = GameDatabase::load()?;
+/// let loaded = load_scenario_into_world(&scenario, &db);
 /// println!("Created {} players", loaded.world.player_count());
 /// ```
-pub fn load_scenario_into_world(scenario: &Scenario) -> LoadedScenario {
+pub fn load_scenario_into_world(scenario: &Scenario, db: &GameDatabase) -> LoadedScenario {
     let mut world = World::new();
     let mut scenario_id_to_entity_id = HashMap::new();
 
@@ -72,8 +75,19 @@ pub fn load_scenario_into_world(scenario: &Scenario) -> LoadedScenario {
         let player_id = (i + 1) as u8; // +1 because Gaia is 0
         if let Some(player) = world.get_player_mut(player_id) {
             player.name = scenario_player.name.clone();
-            player.civ_id = scenario_player.civ_id;
-            player.leader_id = scenario_player.leader_id;
+
+            // Resolve civ/leader names to IDs via database (0-based, parse order)
+            player.civ_id = db
+                .civs_by_name
+                .get(&scenario_player.civ_name)
+                .map(|&id| id as i32)
+                .unwrap_or(-1);
+            player.leader_id = db
+                .leaders_by_name
+                .get(&scenario_player.leader_name)
+                .map(|&id| id as i32)
+                .unwrap_or(-1);
+
             player.team_id = scenario_player.team_id;
             player.player_type = if scenario_player.controllable {
                 PlayerType::Human
@@ -147,7 +161,8 @@ mod tests {
     #[test]
     fn test_load_into_world() {
         let scenario = Scenario::from_xml_str(SAMPLE_SCENARIO).unwrap();
-        let loaded = load_scenario_into_world(&scenario);
+        let db = GameDatabase::new(); // empty db — names won't resolve
+        let loaded = load_scenario_into_world(&scenario, &db);
 
         // Check players (Gaia + 2 players)
         assert_eq!(loaded.world.player_count(), 3);
@@ -155,13 +170,13 @@ mod tests {
         // Check player 1
         let p1 = loaded.world.get_player(1).unwrap();
         assert_eq!(p1.name, "Player1");
-        assert_eq!(p1.civ_id, 1);
         assert_eq!(p1.team_id, 1);
+        // civ_id/leader_id are -1 since db is empty (no civs/leaders loaded)
+        assert_eq!(p1.civ_id, -1);
 
         // Check player 2
         let p2 = loaded.world.get_player(2).unwrap();
         assert_eq!(p2.name, "Player2");
-        assert_eq!(p2.civ_id, 2);
         assert_eq!(p2.team_id, 2);
 
         // Check squads were created
