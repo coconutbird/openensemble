@@ -2,21 +2,11 @@
 name = "data"
 version.workspace = true
 edition.workspace = true
-description = "Proto data loading for Halo Wars game definitions"
+description = "Thin wrapper over ensemble-assets pipeline for OpenEnsemble game data"
 
 [dependencies]
-thiserror = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
+pipeline = { workspace = true }
 log = { workspace = true }
-rayon = "1.10"
-
-# File format parsers from ensemble-rs (local paths for debugging)
-xmb = { path = "../../../ensemble-rs/crates/xmb" }
-era = { path = "../../../ensemble-rs/crates/era" }
-xtd = { path = "../../../ensemble-rs/crates/xtd" }
-xtt = { path = "../../../ensemble-rs/crates/xtt" }
-ddx = { path = "../../../ensemble-rs/crates/ddx" }
 glam.workspace = true
 
 [dev-dependencies]

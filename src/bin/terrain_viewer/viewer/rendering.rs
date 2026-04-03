@@ -2,12 +2,11 @@
 //!
 //! Implements the `Application3D` trait: GPU initialization, resize, and render pass.
 
-use render::terrain::{LightingParams, TerrainParams, TessellationMode};
+use render::terrain::{LightingParams, RawXtdData, TerrainParams, TessellationMode};
 use render::{Application3D, RenderContext, wgpu};
 
 use super::TerrainViewer;
 use crate::gpu::create_depth_texture;
-use crate::types::RawXtdData;
 
 impl Application3D for TerrainViewer {
     fn init_gpu(
@@ -36,10 +35,11 @@ impl Application3D for TerrainViewer {
 
     fn render_3d(&mut self, ctx: &mut RenderContext) {
         // Create GPU resources if not yet created and terrain is loaded
-        if self.gpu.is_none() && self.terrain.is_some() {
+        if self.gpu.is_none() && self.scene.is_some() {
+            let scene = self.scene.as_mut().unwrap();
             // Check if we should use GPU tessellation
             if self.tessellation_mode == TessellationMode::Gpu {
-                if let Some(raw_data) = &self.raw_xtd_data {
+                if let Some(raw_data) = &scene.raw_xtd_data {
                     let raw_data_clone = RawXtdData {
                         packed_positions: raw_data.packed_positions.clone(),
                         packed_normals: raw_data.packed_normals.clone(),
@@ -50,7 +50,7 @@ impl Application3D for TerrainViewer {
                         ao_data: raw_data.ao_data.clone(),
                         alpha_data: raw_data.alpha_data.clone(),
                     };
-                    let albedo = self.albedo.take();
+                    let albedo = scene.albedo.take();
                     self.create_gpu_tessellation_resources(
                         ctx.device,
                         ctx.queue,
@@ -64,12 +64,12 @@ impl Application3D for TerrainViewer {
                     log::warn!(
                         "GPU tessellation requested but no raw XTD data available, falling back to regular rendering"
                     );
-                    let terrain = self.terrain.as_ref().unwrap();
-                    let positions = terrain.positions.clone();
-                    let normals = terrain.normals.clone();
-                    let uvs = terrain.uvs.clone();
-                    let indices = terrain.indices.clone();
-                    let albedo = self.albedo.take();
+                    let mesh = &scene.mesh;
+                    let positions = mesh.positions.clone();
+                    let normals = mesh.normals.clone();
+                    let uvs = mesh.uvs.clone();
+                    let indices = mesh.indices.clone();
+                    let albedo = scene.albedo.take();
                     self.create_gpu_resources_from_data(
                         ctx.device, ctx.queue, &positions, &normals, &uvs, &indices, albedo,
                         ctx.size.0, ctx.size.1,
@@ -77,12 +77,12 @@ impl Application3D for TerrainViewer {
                 }
             } else {
                 // Regular rendering (no tessellation or CPU tessellation)
-                let terrain = self.terrain.as_ref().unwrap();
-                let positions = terrain.positions.clone();
-                let normals = terrain.normals.clone();
-                let uvs = terrain.uvs.clone();
-                let indices = terrain.indices.clone();
-                let albedo = self.albedo.take();
+                let mesh = &scene.mesh;
+                let positions = mesh.positions.clone();
+                let normals = mesh.normals.clone();
+                let uvs = mesh.uvs.clone();
+                let indices = mesh.indices.clone();
+                let albedo = scene.albedo.take();
                 self.create_gpu_resources_from_data(
                     ctx.device, ctx.queue, &positions, &normals, &uvs, &indices, albedo,
                     ctx.size.0, ctx.size.1,
@@ -176,8 +176,9 @@ impl Application3D for TerrainViewer {
             && let (Some(compositor), Some(bind_group)) =
                 (&mut self.compositor, &self.compositor_bind_group)
         {
+            let chunk_splat_data = self.scene.as_ref().map(|s| &s.chunk_splat_data);
             let mut chunk_layer_counts = vec![1u32; 256];
-            for chunk in &self.chunk_splat_data {
+            for chunk in chunk_splat_data.into_iter().flatten() {
                 let grid_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
                 if grid_idx < 256 {
                     chunk_layer_counts[grid_idx] = chunk.layer_texture_ids.len() as u32;
@@ -254,7 +255,7 @@ impl Application3D for TerrainViewer {
                     &mut render_pass,
                     foliage,
                     &gpu.camera_bind_group,
-                    &self.foliage_qn_chunks,
+                    self.scene.as_ref().map(|s| s.foliage_qn_chunks.as_slice()).unwrap_or(&[]),
                 );
             }
 

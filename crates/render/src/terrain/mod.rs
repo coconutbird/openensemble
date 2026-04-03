@@ -14,6 +14,7 @@ mod camera;
 mod compositing;
 pub mod loading;
 mod mesh;
+mod scene;
 mod shaders;
 mod texture;
 pub mod types;
@@ -33,7 +34,9 @@ pub use shaders::{
 };
 pub use texture::{generate_mipmaps, mip_dimensions, mip_level_count};
 pub use types::{
-    AlbedoData, ChunkDecalData, ChunkSplatData, DecalInstance, DecalTexture, FoliageBladeVertex,
-    FoliageQNChunk, FoliageSet, NormalMapTexture, RoadChunkData, TerrainTexture,
+    AlbedoData, AlphaTextureData, AoTextureData, ChunkDecalData, ChunkSplatData, DecalInstance,
+    DecalTexture, FoliageBladeVertex, FoliageQNChunk, FoliageSet, NormalMapTexture, RawXtdData,
+    RoadChunkData, TerrainTexture,
 };
+pub use scene::TerrainScene;
 pub use uniforms::{CameraUniform, GpuTessParams, LightingParams, TerrainParams};

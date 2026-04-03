@@ -22,6 +22,9 @@ sim = { path = "crates/sim" }
 net = { path = "crates/net" }
 data = { path = "crates/data" }
 
+# ensemble-assets (sibling repo) — single dependency for all game data
+pipeline = { path = "../ensemble-assets/crates/pipeline" }
+
 # Windowing and Graphics (pure Rust)
 winit = "0.30"
 wgpu = "24.0"
@@ -69,6 +72,7 @@ render = { workspace = true }
 sim = { workspace = true }
 net = { workspace = true }
 data = { workspace = true }
+pipeline = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
 anyhow = { workspace = true }

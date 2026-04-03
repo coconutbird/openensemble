@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-data = { path = "../data" }
+pipeline = { workspace = true }
 xcore = { workspace = true }
 winit = { workspace = true }
 wgpu = { workspace = true }

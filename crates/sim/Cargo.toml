@@ -10,6 +10,6 @@ thiserror = { workspace = true }
 byteorder = { workspace = true }
 binrw = { workspace = true }
 quick-xml = { workspace = true }
-data = { path = "../data" }
+pipeline = { workspace = true }
 
 [dev-dependencies]

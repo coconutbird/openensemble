@@ -261,27 +261,27 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scenario::{Scenario, load_scenario_into_world};
+    use crate::scenario::{ScenarioData, load_scenario_into_world};
     use crate::simulation::Simulation;
-    use data::GameDatabase;
+    use pipeline::database::hw1::Database;
 
     /// Sample scenario for testing
     const TEST_SCENARIO: &str = r#"<?xml version="1.0"?>
 <Scenario>
   <Players>
-    <Player id="1" name="TestPlayer1" civ="UNSC" leader="Cutter" team="1" />
-    <Player id="2" name="TestPlayer2" civ="Covenant" leader="Arbiter" team="2" />
+    <Player Name="TestPlayer1" Civ="UNSC" Leader1="Cutter" Team="1" />
+    <Player Name="TestPlayer2" Civ="Covenant" Leader1="Arbiter" Team="2" />
   </Players>
   <Objects>
-    <Squad player="1" protoSquad="unsc_inf_marine_01" x="10.0" z="20.0" />
-    <Squad player="2" protoSquad="cov_inf_grunt_01" x="50.0" z="60.0" />
+    <Object IsSquad="true" Player="1" ID="0" Position="10.0,0.0,20.0">unsc_inf_marine_01</Object>
+    <Object IsSquad="true" Player="2" ID="1" Position="50.0,0.0,60.0">cov_inf_grunt_01</Object>
   </Objects>
 </Scenario>"#;
 
     /// Run a simulation for a given number of ticks and return the final checksum.
     fn run_simulation(seed: u64, ticks: u32) -> (u32, u32) {
-        let scenario = Scenario::from_xml_str(TEST_SCENARIO).unwrap();
-        let db = GameDatabase::new();
+        let scenario = ScenarioData::from_xml_str(TEST_SCENARIO).unwrap();
+        let db = Database::new();
         let mut loaded = load_scenario_into_world(&scenario, &db);
         loaded.world.rng.set_seed64(seed);
 
@@ -384,8 +384,8 @@ mod tests {
 
     /// Run simulation with movement commands for determinism testing.
     fn run_simulation_with_movement(seed: u64, ticks: u32) -> (u32, u32) {
-        let scenario = Scenario::from_xml_str(TEST_SCENARIO).unwrap();
-        let db = GameDatabase::new();
+        let scenario = ScenarioData::from_xml_str(TEST_SCENARIO).unwrap();
+        let db = Database::new();
         let mut loaded = load_scenario_into_world(&scenario, &db);
         loaded.world.rng.set_seed64(seed);
 

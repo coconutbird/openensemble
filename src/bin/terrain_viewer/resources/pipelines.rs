@@ -59,9 +59,10 @@ impl TerrainViewer {
     /// Calculate chunk center positions based on terrain bounds.
     /// Chunks are arranged in a 16×16 grid covering the terrain.
     pub(crate) fn calculate_chunk_centers(&mut self) {
-        let Some(terrain) = &self.terrain else {
+        let Some(scene) = &self.scene else {
             return;
         };
+        let terrain = &scene.mesh;
 
         let world_min = terrain.world_min;
         let world_max = terrain.world_max;
@@ -92,13 +93,13 @@ impl TerrainViewer {
 
     /// Initialize foliage GPU resources for rendering grass/vegetation.
     pub(crate) fn init_foliage_resources(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        // Check if we have foliage data
-        if self.foliage_sets.is_empty() {
+        let Some(scene) = &self.scene else { return };
+
+        if scene.foliage_sets.is_empty() {
             log::info!("No foliage sets to render");
             return;
         }
 
-        // Check if we have GPU resources with camera bind group layout
         let Some(gpu) = &self.gpu else {
             log::warn!("Cannot initialize foliage: GPU resources not available");
             return;
@@ -106,19 +107,17 @@ impl TerrainViewer {
 
         log::info!(
             "Initializing foliage resources: {} sets, {} QN chunks",
-            self.foliage_sets.len(),
-            self.foliage_qn_chunks.len()
+            scene.foliage_sets.len(),
+            scene.foliage_qn_chunks.len()
         );
 
-        // Create foliage resources
         let mut foliage_resources = crate::foliage::FoliageResources::new(
             device,
             self.surface_format,
             &gpu.camera_bind_group_layout,
         );
 
-        // Create GPU resources for each foliage set
-        for (i, set) in self.foliage_sets.iter().enumerate() {
+        for (i, set) in scene.foliage_sets.iter().enumerate() {
             if let Some(set_resources) = foliage_resources.create_set_resources(device, queue, set)
             {
                 log::info!(
@@ -131,22 +130,14 @@ impl TerrainViewer {
             }
         }
 
-        log::info!(
-            "Foliage resources initialized: {} sets with GPU resources",
-            foliage_resources.set_resources.len()
-        );
-
-        // Build draw calls from QN chunk data, then create params bind group
         if !foliage_resources.set_resources.is_empty() {
-            if let Some(raw_data) = &self.raw_xtd_data {
-                // Build draw calls first (creates the chunk_info_buffer)
+            if let Some(raw_data) = &scene.raw_xtd_data {
                 foliage_resources.build_draw_calls(
                     device,
                     queue,
-                    &self.foliage_qn_chunks,
+                    &scene.foliage_qn_chunks,
                     raw_data.num_verts_per_axis,
                 );
-                // Then create params bind group (references the chunk_info_buffer)
                 foliage_resources.create_params_bind_group(device, queue, raw_data);
             } else {
                 log::warn!("Cannot create foliage params bind group: no terrain data");
@@ -158,7 +149,9 @@ impl TerrainViewer {
 
     /// Initialize road GPU resources for rendering roads on terrain.
     pub(crate) fn init_road_resources(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        if self.road_chunks.is_empty() {
+        let Some(scene) = &self.scene else { return };
+
+        if scene.road_chunks.is_empty() {
             log::info!("No road data to render");
             return;
         }
@@ -168,20 +161,21 @@ impl TerrainViewer {
             return;
         };
 
-        // Use the first road chunk (typically there's only one road data blob)
-        let road = &self.road_chunks[0];
+        let road = &scene.road_chunks[0];
         if road.positions.is_empty() {
             log::warn!("Road '{}' has no vertices", road.texture_name);
             return;
         }
 
-        // Load road textures
-        let Some(source) = &self.asset_source else {
+        // Load road textures (take source temporarily since we need &mut)
+        let Some(mut source) = self.asset_source.take() else {
             log::warn!("Cannot load road textures: no asset source");
             return;
         };
 
-        let Some(textures) = render::terrain::load_road_textures(source, &road.texture_name) else {
+        let textures = render::terrain::load_road_textures(&mut source, &road.texture_name);
+        self.asset_source = Some(source);
+        let Some(textures) = textures else {
             log::warn!("Failed to load road textures for '{}'", road.texture_name);
             return;
         };
@@ -286,8 +280,8 @@ impl TerrainViewer {
         let chunk_layers_buffer = self.create_chunk_layers_buffer(device);
 
         // Create terrain params uniform
-        let (terrain_size, tile_scale) = if let Some(terrain) = &self.terrain {
-            (terrain.size(), terrain.tile_scale)
+        let (terrain_size, tile_scale) = if let Some(scene) = &self.scene {
+            (scene.mesh.size(), scene.mesh.tile_scale)
         } else {
             (Vec3::new(1024.0, 100.0, 1024.0), 1.0)
         };
@@ -573,7 +567,7 @@ impl TerrainViewer {
             "GPU resources created: {} vertices, {} indices, {} terrain textures",
             positions.len(),
             indices.len(),
-            self.terrain_textures.len()
+            self.scene.as_ref().map_or(0, |s| s.terrain_textures.len())
         );
 
         // Initialize foliage resources if we have foliage data
@@ -978,8 +972,8 @@ impl TerrainViewer {
         });
 
         // Create terrain params buffer for debug mode
-        let terrain_size = if let Some(terrain) = &self.terrain {
-            terrain.size()
+        let terrain_size = if let Some(scene) = &self.scene {
+            scene.mesh.size()
         } else {
             Vec3::new(1024.0, 100.0, 1024.0)
         };

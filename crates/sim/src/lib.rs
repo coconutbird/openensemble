@@ -41,7 +41,7 @@ pub use player::{
 };
 pub use random::Random;
 pub use scenario::{
-    LoadedScenario, Scenario, ScenarioError, ScenarioObject, ScenarioPlayer, ScenarioPosition,
+    LoadedScenario, ScenarioData, ScenarioObject, ScenarioPlayer, ScenarioPosition,
     load_scenario_into_world,
 };
 pub use serialize::{SerializeError, deserialize_command, serialize_command};

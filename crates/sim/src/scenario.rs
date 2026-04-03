@@ -1,20 +1,19 @@
 //! Scenario world loading for Halo Wars maps.
 //!
 //! This module provides functionality to load scenario data into the simulation world.
-//! The scenario data itself is parsed by the `data` crate; this module handles
+//! The scenario data itself is parsed by the `pipeline` crate; this module handles
 //! the simulation-specific logic of creating players and entities.
 //!
 //! # Example
 //!
 //! ```ignore
-//! use data::Scenario;
+//! use pipeline::hw1::scenario::ScenarioData;
+//! use pipeline::database::hw1::Database;
 //! use sim::load_scenario_into_world;
 //!
-//! // Load scenario from ERA archives
-//! let scenario = Scenario::load("blood_gulch")?;
-//!
-//! // Load into simulation world
-//! let db = GameDatabase::load()?;
+//! // Load scenario data from parsed SCN file
+//! let scenario = ScenarioData::default();
+//! let db = Database::new();
 //! let loaded = load_scenario_into_world(&scenario, &db);
 //! println!("Created {} players", loaded.world.player_count());
 //! ```
@@ -22,11 +21,11 @@
 use crate::entity_id::EntityId;
 use crate::player::PlayerType;
 use crate::world::World;
-use data::GameDatabase;
+use pipeline::database::hw1::Database;
 use std::collections::HashMap;
 
-// Re-export scenario types from data crate for convenience
-pub use data::{Scenario, ScenarioError, ScenarioObject, ScenarioPlayer, ScenarioPosition};
+// Re-export scenario types from pipeline for convenience
+pub use pipeline::hw1::scenario::{ScenarioData, ScenarioObject, ScenarioPlayer, ScenarioPosition};
 
 /// Result of loading a scenario into a world.
 ///
@@ -53,73 +52,89 @@ impl LoadedScenario {
 /// # Example
 ///
 /// ```ignore
-/// use data::Scenario;
+/// use pipeline::hw1::scenario::ScenarioData;
+/// use pipeline::database::hw1::Database;
 /// use sim::load_scenario_into_world;
 ///
-/// let scenario = Scenario::load("blood_gulch")?;
-/// let db = GameDatabase::load()?;
+/// let scenario = ScenarioData::default();
+/// let db = Database::new();
 /// let loaded = load_scenario_into_world(&scenario, &db);
 /// println!("Created {} players", loaded.world.player_count());
 /// ```
-pub fn load_scenario_into_world(scenario: &Scenario, db: &GameDatabase) -> LoadedScenario {
+pub fn load_scenario_into_world(scenario: &ScenarioData, db: &Database) -> LoadedScenario {
     let mut world = World::new();
     let mut scenario_id_to_entity_id = HashMap::new();
 
+    let players = scenario
+        .players
+        .as_ref()
+        .map_or(&[][..], |w| &w.entries);
+    let objects = scenario
+        .objects
+        .as_ref()
+        .map_or(&[][..], |w| &w.entries);
+
     // Initialize players
     // Player 0 is always Gaia (created by init_players)
-    let player_count = scenario.players.len() as u8;
+    let player_count = players.len() as u8;
     world.init_players(player_count);
 
     // Configure players from scenario data
-    for (i, scenario_player) in scenario.players.iter().enumerate() {
+    for (i, scenario_player) in players.iter().enumerate() {
         let player_id = (i + 1) as u8; // +1 because Gaia is 0
         if let Some(player) = world.get_player_mut(player_id) {
             player.name = scenario_player.name.clone();
 
             // Resolve civ/leader names to IDs via database (0-based, parse order)
             player.civ_id = db
-                .civs_by_name
-                .get(&scenario_player.civ_name)
-                .map(|&id| id as i32)
+                .civs
+                .iter()
+                .position(|c| c.name == scenario_player.civ)
+                .map(|id| id as i32)
                 .unwrap_or(-1);
             player.leader_id = db
-                .leaders_by_name
-                .get(&scenario_player.leader_name)
-                .map(|&id| id as i32)
+                .leaders
+                .iter()
+                .position(|l| l.name == scenario_player.leader1)
+                .map(|id| id as i32)
                 .unwrap_or(-1);
 
-            player.team_id = scenario_player.team_id;
+            player.team_id = scenario_player.team as u8;
             player.player_type = if scenario_player.controllable {
                 PlayerType::Human
             } else {
                 PlayerType::ComputerAi
             };
 
-            // Set starting resources if not using defaults
-            if !scenario_player.default_resources {
-                for (j, &amount) in scenario_player.resources.iter().enumerate() {
-                    player.resources.set(j, amount);
-                }
+            // Set starting resources from scenario player fields
+            if scenario_player.supplies != 0.0 || scenario_player.power != 0.0 {
+                player.resources.set(0, scenario_player.supplies);
+                player.resources.set(1, scenario_player.power);
             }
         }
     }
 
     // Create entities from scenario objects
-    for obj in &scenario.objects {
+    for obj in objects {
         if obj.is_squad {
-            // Create squad
-            let entity_id = world.create_squad_at(obj.player_id, obj.position);
+            // Parse position from string "x,y,z" → glam::Vec3
+            let pos = obj.position_vec3();
+            let position = glam::Vec3::new(pos[0], pos[1], pos[2]);
 
-            // Set proto ID and forward direction
+            // Create squad
+            let entity_id = world.create_squad_at(obj.player as u8, position);
+
+            // Set forward direction
             if let Some(squad) = world.get_squad_mut(entity_id) {
-                squad.base.set_forward(obj.forward);
+                let fwd = obj.forward_vec3();
+                squad.base.set_forward(glam::Vec3::new(fwd[0], fwd[1], fwd[2]));
                 // TODO: Look up proto_squad_id from database by name
                 // squad.proto_squad_id = database.get_proto_squad(&obj.proto_name);
             }
 
             // Map scenario ID to entity ID
-            if obj.scenario_id >= 0 {
-                scenario_id_to_entity_id.insert(obj.scenario_id, entity_id);
+            if obj.id >= 0 {
+                scenario_id_to_entity_id.insert(obj.id, entity_id);
             }
         }
         // TODO: Handle non-squad objects (buildings, props, etc.)
@@ -142,8 +157,8 @@ mod tests {
         <Position Number="2" Position="200.0,0.0,200.0" Forward="0.0,0.0,-1.0" />
     </Positions>
     <Players>
-        <Player Name="Player1" Civ="UNSC" Leader="Cutter" Team="1" Color="0" />
-        <Player Name="Player2" Civ="Covenant" Leader="Arbiter" Team="2" Color="1" />
+        <Player Name="Player1" Civ="UNSC" Leader1="Cutter" Team="1" Color="0" />
+        <Player Name="Player2" Civ="Covenant" Leader1="Arbiter" Team="2" Color="1" />
     </Players>
     <Objects>
         <Object IsSquad="true" Player="1" ID="0" Position="100.0,0.0,100.0" Forward="0.0,0.0,1.0">
@@ -160,8 +175,8 @@ mod tests {
 
     #[test]
     fn test_load_into_world() {
-        let scenario = Scenario::from_xml_str(SAMPLE_SCENARIO).unwrap();
-        let db = GameDatabase::new(); // empty db — names won't resolve
+        let scenario = ScenarioData::from_xml_str(SAMPLE_SCENARIO).unwrap();
+        let db = Database::new(); // empty db — names won't resolve
         let loaded = load_scenario_into_world(&scenario, &db);
 
         // Check players (Gaia + 2 players)
@@ -179,8 +194,12 @@ mod tests {
         assert_eq!(p2.name, "Player2");
         assert_eq!(p2.team_id, 2);
 
-        // Check squads were created
-        assert_eq!(scenario.squad_count(), 3);
+        // Check squads were created (count objects with is_squad=true)
+        let squad_count = scenario
+            .objects
+            .as_ref()
+            .map_or(0, |o| o.entries.iter().filter(|e| e.is_squad).count());
+        assert_eq!(squad_count, 3);
 
         // Check scenario ID mapping
         let entity_id = loaded.get_entity_id(0).unwrap();

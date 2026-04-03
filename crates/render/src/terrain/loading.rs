@@ -12,9 +12,9 @@ use super::types::{
     ChunkDecalData, ChunkSplatData, DecalInstance, DecalTexture, FoliageQNChunk, FoliageSet,
     NormalMapTexture, RoadChunkData, TerrainTexture,
 };
-use data::assets::AssetSource;
-use data::ddx::DdxTexture;
-use data::xtt::{ActiveDecalInfo, ActiveTextureInfo, FoliageSetInfo, XttFile};
+use pipeline::ddx::DdxTexture;
+use pipeline::source::{AssetSource, StdFileProvider};
+use pipeline::xtt::{ActiveDecalInfo, ActiveTextureInfo, FoliageSetInfo, XttFile};
 use rayon::prelude::*;
 
 /// Load terrain textures (diffuse and normal maps) from an asset source.
@@ -23,7 +23,7 @@ use rayon::prelude::*;
 /// Returns a tuple of (terrain_textures, normal_textures).
 /// Textures are loaded in the same order as active_textures to maintain index alignment.
 pub fn load_terrain_textures(
-    source: &AssetSource,
+    source: &mut AssetSource<StdFileProvider>,
     active_textures: &[ActiveTextureInfo],
 ) -> (Vec<TerrainTexture>, Vec<NormalMapTexture>) {
     if active_textures.is_empty() {
@@ -52,8 +52,11 @@ pub fn load_terrain_textures(
         .map(|s| s.as_str())
         .collect();
 
-    // Load all files in parallel
-    let all_data = source.read_parallel(&all_paths);
+    // Load all files sequentially (AssetSource requires &mut self)
+    let all_data: Vec<Option<Vec<u8>>> = all_paths
+        .iter()
+        .map(|p| source.resolve_exact(p))
+        .collect();
 
     // Split results back into diffuse and normal
     let (diffuse_data, normal_data) = all_data.split_at(active_textures.len());
@@ -154,7 +157,7 @@ fn create_placeholder_texture(name: &str) -> TerrainTexture {
 ///
 /// Uses parallel loading for both ERA decompression and DDX decoding.
 pub fn load_decal_textures(
-    source: &AssetSource,
+    source: &mut AssetSource<StdFileProvider>,
     active_decals: &[ActiveDecalInfo],
 ) -> Vec<DecalTexture> {
     if active_decals.is_empty() {
@@ -184,8 +187,11 @@ pub fn load_decal_textures(
         .map(|s| s.as_str())
         .collect();
 
-    // Load all files in parallel
-    let all_data = source.read_parallel(&all_paths);
+    // Load all files sequentially (AssetSource requires &mut self)
+    let all_data: Vec<Option<Vec<u8>>> = all_paths
+        .iter()
+        .map(|p| source.resolve_exact(p))
+        .collect();
 
     // Split results
     let (diffuse_data, opacity_data) = all_data.split_at(active_decals.len());
@@ -258,7 +264,7 @@ pub fn load_decal_textures(
 ///
 /// Uses parallel loading for both ERA decompression and DDX decoding.
 /// Each foliage set has 4 textures: albedo (_df), opacity (_op), normal (_nm), specular (_sp).
-pub fn load_foliage_sets(source: &AssetSource, foliage_sets: &[FoliageSetInfo]) -> Vec<FoliageSet> {
+pub fn load_foliage_sets(source: &mut AssetSource<StdFileProvider>, foliage_sets: &[FoliageSetInfo]) -> Vec<FoliageSet> {
     if foliage_sets.is_empty() {
         log::info!("No foliage sets to load");
         return Vec::new();
@@ -287,9 +293,11 @@ pub fn load_foliage_sets(source: &AssetSource, foliage_sets: &[FoliageSetInfo]) 
         all_paths.extend(paths);
     }
 
-    // Load all files in parallel
-    let path_refs: Vec<&str> = all_paths.iter().map(|s| s.as_str()).collect();
-    let all_data = source.read_parallel(&path_refs);
+    // Load all files sequentially (AssetSource requires &mut self)
+    let all_data: Vec<Option<Vec<u8>>> = all_paths
+        .iter()
+        .map(|p| source.resolve_exact(p))
+        .collect();
 
     // Log which files were found vs missing
     for (i, path) in all_paths.iter().enumerate() {
@@ -508,7 +516,7 @@ pub fn extract_road_data(xtt: &XttFile) -> Vec<RoadChunkData> {
         return Vec::new();
     }
 
-    match data::xtt::decode_road_data(&xtt.road_data) {
+    match pipeline::xtt::decode_road_data(&xtt.road_data) {
         Ok(road) => {
             let total_verts: usize = road.qn_chunks.iter().map(|qn| qn.vertices.len()).sum();
             log::info!(
@@ -544,7 +552,7 @@ pub fn extract_road_data(xtt: &XttFile) -> Vec<RoadChunkData> {
 
 /// Load road textures (albedo, normal, specular) from an asset source.
 /// Returns (albedo_pixels, normal_pixels, specular_pixels, width, height) or None.
-pub fn load_road_textures(source: &AssetSource, texture_name: &str) -> Option<RoadTextures> {
+pub fn load_road_textures(source: &mut AssetSource<StdFileProvider>, texture_name: &str) -> Option<RoadTextures> {
     let base = format!("art/{}", texture_name.replace('\\', "/"));
     let paths = [
         format!("{}_df.ddx", base),
@@ -552,8 +560,10 @@ pub fn load_road_textures(source: &AssetSource, texture_name: &str) -> Option<Ro
         format!("{}_sp.ddx", base),
     ];
 
-    let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
-    let file_data = source.read_parallel(&path_refs);
+    let file_data: Vec<Option<Vec<u8>>> = paths
+        .iter()
+        .map(|p| source.resolve_exact(p))
+        .collect();
 
     let albedo = file_data[0].as_ref().and_then(|d| {
         DdxTexture::from_bytes(d)
@@ -628,7 +638,7 @@ pub struct RoadTextures {
 /// - positions texture: [pos.x, pos.y, pos.z, uv.x]
 /// - normals texture: [norm.x, norm.y, norm.z, uv.y]
 fn parse_foliage_blade_xml(xml_data: &[u8], foliage_set: &mut FoliageSet) {
-    use data::xmb::{Document as XmbDocument, Reader as XmbReader};
+    use pipeline::xmb::{Document as XmbDocument, Reader as XmbReader};
 
     // Try XMB binary first, then fall back to raw XML text
     let xmb = match XmbReader::read(xml_data) {
@@ -738,7 +748,7 @@ fn parse_foliage_blade_xml(xml_data: &[u8], foliage_set: &mut FoliageSet) {
 }
 
 /// Parse a "x,y,z" vector attribute from an XMB node.
-fn parse_vector_attr(node: &data::xmb::Node, attr_name: &str) -> [f32; 3] {
+fn parse_vector_attr(node: &pipeline::xmb::Node, attr_name: &str) -> [f32; 3] {
     if let Some(attr) = node.get_attribute(attr_name) {
         let s = attr.value_string();
         let parts: Vec<f32> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
@@ -750,7 +760,7 @@ fn parse_vector_attr(node: &data::xmb::Node, attr_name: &str) -> [f32; 3] {
 }
 
 /// Parse a "u,v" vector2 attribute from an XMB node.
-fn parse_vector2_attr(node: &data::xmb::Node, attr_name: &str) -> [f32; 2] {
+fn parse_vector2_attr(node: &pipeline::xmb::Node, attr_name: &str) -> [f32; 2] {
     if let Some(attr) = node.get_attribute(attr_name) {
         let s = attr.value_string();
         let parts: Vec<f32> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();

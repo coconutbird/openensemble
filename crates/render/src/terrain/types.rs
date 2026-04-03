@@ -210,3 +210,46 @@ pub struct RoadChunkData {
     /// UV coordinates for each vertex.
     pub uvs: Vec<[f32; 2]>,
 }
+
+// ============================================================================
+// Raw XTD Types (for GPU tessellation)
+// ============================================================================
+
+/// Raw XTD vertex data for GPU tessellation (before decoding to world positions).
+pub struct RawXtdData {
+    /// Packed position data (R10G10B10A2 format).
+    pub packed_positions: Vec<u32>,
+    /// Packed normal data.
+    pub packed_normals: Vec<u32>,
+    /// Number of vertices per axis (e.g., 1025).
+    pub num_verts_per_axis: u32,
+    /// Atlas mid point for decoding.
+    pub mid: [f32; 3],
+    /// Atlas range for decoding.
+    pub range: [f32; 3],
+    /// Tile scale for world position.
+    pub tile_scale: f32,
+    /// Ambient occlusion data (R8 values, half resolution).
+    pub ao_data: Option<AoTextureData>,
+    /// Alpha/transparency data (R8 values, half resolution).
+    pub alpha_data: Option<AlphaTextureData>,
+}
+
+/// Half-resolution AO texture data as decoded from the game.
+/// Dimensions: full width × half height (e.g., 1024×512 for 1024×1024 terrain).
+#[derive(Clone)]
+pub struct AoTextureData {
+    pub values: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Half-resolution Alpha texture data as decoded from the game.
+/// Dimensions: full width × half height (same as AO).
+/// Used for terrain transparency (holes, cliff edges).
+#[derive(Clone)]
+pub struct AlphaTextureData {
+    pub values: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}

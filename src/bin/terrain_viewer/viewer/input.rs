@@ -160,11 +160,11 @@ impl Application for TerrainViewer {
             self.camera.yaw = saved_camera_yaw;
             self.camera.pitch = saved_camera_pitch;
 
-            if let Some(ref terrain) = self.terrain {
+            if let Some(ref scene) = self.scene {
                 log::info!(
                     "Terrain reloaded: {} vertices, {} triangles",
-                    terrain.positions.len(),
-                    terrain.indices.len() / 3
+                    scene.mesh.positions.len(),
+                    scene.mesh.indices.len() / 3
                 );
             }
         }
@@ -254,15 +254,15 @@ impl Application for TerrainViewer {
                         self.camera.position.x, self.camera.position.y, self.camera.position.z
                     ));
 
-                    if let Some(terrain) = &self.terrain {
+                    if let Some(scene) = &self.scene {
                         ui.separator();
-                        ui.label(format!("Vertices: {}", terrain.positions.len()));
-                        ui.label(format!("Triangles: {}", terrain.indices.len() / 3));
+                        ui.label(format!("Vertices: {}", scene.mesh.positions.len()));
+                        ui.label(format!("Triangles: {}", scene.mesh.indices.len() / 3));
                         ui.label(format!(
                             "World Size: {:.0} x {:.0} x {:.0}",
-                            terrain.size().x,
-                            terrain.size().y,
-                            terrain.size().z
+                            scene.mesh.size().x,
+                            scene.mesh.size().y,
+                            scene.mesh.size().z
                         ));
                         ui.label(format!("Tessellation: {}", self.tessellation_mode.name()));
                         ui.label(format!(

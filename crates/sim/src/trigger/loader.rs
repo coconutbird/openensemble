@@ -3,7 +3,7 @@
 //! This module handles loading vanilla Halo Wars trigger scripts from their
 //! binary XMB format into the internal representation used by the trigger engine.
 
-use data::xmb::{Document as XmbDocument, Reader as XmbReader};
+use pipeline::xmb::{Document as XmbDocument, Reader as XmbReader};
 
 use super::{
     Condition, ConditionType, Effect, EffectType, Trigger, TriggerScript, TriggerValue, TriggerVar,
@@ -14,7 +14,7 @@ use super::{
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError {
     #[error("XMB parse error: {0}")]
-    XmbError(#[from] data::xmb::Error),
+    XmbError(#[from] pipeline::xmb::Error),
 
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
@@ -92,7 +92,7 @@ impl VanillaLoader {
     }
 
     /// Parse a TriggerVar node.
-    fn parse_trigger_var(node: &data::xmb::Node) -> LoadResult<TriggerVar> {
+    fn parse_trigger_var(node: &pipeline::xmb::Node) -> LoadResult<TriggerVar> {
         let id: VarId = get_attr_u32(node, "ID")?;
 
         let type_str = get_attr_string(node, "Type")?;
@@ -123,7 +123,7 @@ impl VanillaLoader {
     }
 
     /// Parse a Trigger node.
-    fn parse_trigger(node: &data::xmb::Node) -> LoadResult<Trigger> {
+    fn parse_trigger(node: &pipeline::xmb::Node) -> LoadResult<Trigger> {
         let id = get_attr_u32(node, "ID")?;
         let mut trigger = Trigger::new(id);
 
@@ -185,7 +185,7 @@ impl VanillaLoader {
     }
 
     /// Parse TriggerConditions node (contains And or Or wrapper).
-    fn parse_conditions(node: &data::xmb::Node, trigger: &mut Trigger) -> LoadResult<()> {
+    fn parse_conditions(node: &pipeline::xmb::Node, trigger: &mut Trigger) -> LoadResult<()> {
         // Find the And or Or wrapper node
         for child in &node.children {
             if child.name == "Or" {
@@ -212,7 +212,7 @@ impl VanillaLoader {
     }
 
     /// Parse a Condition node.
-    fn parse_condition(node: &data::xmb::Node) -> LoadResult<Condition> {
+    fn parse_condition(node: &pipeline::xmb::Node) -> LoadResult<Condition> {
         let dbid = get_attr_i32(node, "DBID")?;
         let condition_type =
             ConditionType::from_u16(dbid as u16).ok_or(LoadError::UnknownConditionType(dbid))?;
@@ -243,7 +243,7 @@ impl VanillaLoader {
     }
 
     /// Parse an Effect node.
-    fn parse_effect(node: &data::xmb::Node) -> LoadResult<Effect> {
+    fn parse_effect(node: &pipeline::xmb::Node) -> LoadResult<Effect> {
         let dbid = get_attr_i32(node, "DBID")?;
         let effect_type =
             EffectType::from_u16(dbid as u16).ok_or(LoadError::UnknownEffectType(dbid))?;
@@ -268,7 +268,7 @@ impl VanillaLoader {
     /// Parse Var children to extract input/output variable references.
     /// Vars with SigID are inputs, vars with Output="true" are outputs.
     fn parse_var_refs(
-        node: &data::xmb::Node,
+        node: &pipeline::xmb::Node,
         inputs: &mut Vec<VarId>,
         outputs: &mut Vec<VarId>,
     ) -> LoadResult<()> {
@@ -298,14 +298,14 @@ impl VanillaLoader {
 // ============================================================================
 
 /// Get a required string attribute.
-fn get_attr_string(node: &data::xmb::Node, name: &str) -> LoadResult<String> {
+fn get_attr_string(node: &pipeline::xmb::Node, name: &str) -> LoadResult<String> {
     node.get_attribute(name)
         .map(|a| a.value_string())
         .ok_or_else(|| LoadError::MissingAttribute(name.into()))
 }
 
 /// Get a required u32 attribute.
-fn get_attr_u32(node: &data::xmb::Node, name: &str) -> LoadResult<u32> {
+fn get_attr_u32(node: &pipeline::xmb::Node, name: &str) -> LoadResult<u32> {
     let s = get_attr_string(node, name)?;
     s.parse().map_err(|_| LoadError::InvalidValue {
         field: name.into(),
@@ -314,7 +314,7 @@ fn get_attr_u32(node: &data::xmb::Node, name: &str) -> LoadResult<u32> {
 }
 
 /// Get a required i32 attribute.
-fn get_attr_i32(node: &data::xmb::Node, name: &str) -> LoadResult<i32> {
+fn get_attr_i32(node: &pipeline::xmb::Node, name: &str) -> LoadResult<i32> {
     let s = get_attr_string(node, name)?;
     s.parse().map_err(|_| LoadError::InvalidValue {
         field: name.into(),

@@ -7,7 +7,8 @@
 //! - Replay validation
 
 use anyhow::{Context, Result};
-use data::{GameDatabase, Scenario};
+use data::GameDatabase;
+use pipeline::hw1::scenario::ScenarioData;
 use sim::{Session, SessionState, Simulation, World, load_scenario_into_world};
 use std::time::{Duration, Instant};
 
@@ -66,16 +67,17 @@ impl HeadlessServer {
             None
         } else {
             log::info!("Loading game database...");
-            let db =
-                GameDatabase::load().context("Failed to load game database from game directory")?;
+            let mut src = data::load_game_assets();
+            let db = GameDatabase::load(&mut src)
+                .map_err(|e| anyhow::anyhow!("{e}"))
+                .context("Failed to load game database from game directory")?;
 
             log::info!(
-                "Loaded {} proto objects, {} civs, {} leaders",
-                db.proto.objects.len(),
+                "Loaded {} objects, {} civs, {} leaders",
+                db.objects.len(),
                 db.civs.len(),
                 db.leaders.len()
             );
-            log::info!("Loaded {} XMB files total", db.loaded_files.len());
             Some(db)
         };
 
@@ -101,21 +103,19 @@ impl HeadlessServer {
         })
     }
 
-    /// Load a scenario by name from ERA archives.
-    pub fn load_scenario(&mut self, scenario_name: &str) -> Result<()> {
-        let scenario = Scenario::load(scenario_name).context("Failed to load scenario from ERA")?;
-
-        // Use loaded database for name→ID resolution, or an empty one if skipped
+    /// Load a scenario from a [`ScenarioData`] instance.
+    pub fn load_scenario_data(&mut self, scenario: &ScenarioData) -> Result<()> {
         let empty_db = GameDatabase::new();
         let db = self.database.as_ref().unwrap_or(&empty_db);
-        let loaded = load_scenario_into_world(&scenario, db);
+        let loaded = load_scenario_into_world(scenario, db);
         self.world = loaded.world;
 
+        let player_count = scenario.players.as_ref().map_or(0, |p| p.entries.len());
+        let object_count = scenario.objects.as_ref().map_or(0, |o| o.entries.len());
         log::info!(
-            "Scenario loaded: {} players, {} squads, {} objects",
-            scenario.players.len(),
-            scenario.squad_count(),
-            scenario.object_count()
+            "Scenario loaded: {} players, {} objects",
+            player_count,
+            object_count
         );
 
         Ok(())
@@ -124,20 +124,9 @@ impl HeadlessServer {
     /// Load a scenario from XML string (for testing).
     #[doc(hidden)]
     pub fn load_scenario_xml(&mut self, xml: &str) -> Result<()> {
-        let scenario = Scenario::from_xml_str(xml).context("Failed to parse scenario XML")?;
-
-        let empty_db = GameDatabase::new();
-        let db = self.database.as_ref().unwrap_or(&empty_db);
-        let loaded = load_scenario_into_world(&scenario, db);
-        self.world = loaded.world;
-
-        log::info!(
-            "Scenario loaded: {} players, {} squads",
-            scenario.players.len(),
-            scenario.squad_count()
-        );
-
-        Ok(())
+        let scenario =
+            ScenarioData::from_xml_str(xml).context("Failed to parse scenario XML")?;
+        self.load_scenario_data(&scenario)
     }
 
     /// Start the simulation.
@@ -317,8 +306,8 @@ fn main() -> Result<()> {
     let test_scenario = r#"<?xml version="1.0" encoding="utf-8"?>
 <Scenario>
     <Players>
-        <Player Name="Player1" Civ="UNSC" Leader="Cutter" Team="1" />
-        <Player Name="Player2" Civ="Covenant" Leader="Arbiter" Team="2" />
+        <Player Name="Player1" Civ="UNSC" Leader1="Cutter" Team="1" />
+        <Player Name="Player2" Civ="Covenant" Leader1="Arbiter" Team="2" />
     </Players>
     <Objects>
         <Object IsSquad="true" Player="1" ID="0" Position="100.0,0.0,100.0">unsc_inf_marine_01</Object>

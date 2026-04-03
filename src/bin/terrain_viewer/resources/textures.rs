@@ -16,12 +16,14 @@ impl TerrainViewer {
         queue: &wgpu::Queue,
         albedo: &Option<AlbedoData>,
     ) -> (wgpu::Texture, wgpu::TextureView) {
+        let scene = self.scene.as_ref().expect("scene must be loaded");
+        let terrain_textures = &scene.terrain_textures;
         // Use terrain textures if available, otherwise fall back to albedo or white
-        if !self.terrain_textures.is_empty() {
+        if !terrain_textures.is_empty() {
             // All textures should be same size (e.g., 1024x1024)
-            let tex_width = self.terrain_textures[0].width;
-            let tex_height = self.terrain_textures[0].height;
-            let layer_count = self.terrain_textures.len() as u32;
+            let tex_width = terrain_textures[0].width;
+            let tex_height = terrain_textures[0].height;
+            let layer_count = terrain_textures.len() as u32;
             let num_mips = mip_level_count(tex_width, tex_height);
 
             log::info!(
@@ -48,7 +50,7 @@ impl TerrainViewer {
             });
 
             // Upload each layer with mipmaps
-            for (i, tex) in self.terrain_textures.iter().enumerate() {
+            for (i, tex) in terrain_textures.iter().enumerate() {
                 // Generate mipmaps for this texture
                 let mips = generate_mipmaps(&tex.pixels, tex_width, tex_height);
 
@@ -193,11 +195,13 @@ impl TerrainViewer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> (wgpu::Texture, wgpu::TextureView) {
-        if !self.normal_textures.is_empty() {
+        let scene = self.scene.as_ref().expect("scene must be loaded");
+        let normal_textures = &scene.normal_textures;
+        if !normal_textures.is_empty() {
             // All normal maps should be same size as terrain textures
-            let tex_width = self.normal_textures[0].width;
-            let tex_height = self.normal_textures[0].height;
-            let layer_count = self.normal_textures.len() as u32;
+            let tex_width = normal_textures[0].width;
+            let tex_height = normal_textures[0].height;
+            let layer_count = normal_textures.len() as u32;
             let num_mips = mip_level_count(tex_width, tex_height);
 
             log::info!(
@@ -225,7 +229,7 @@ impl TerrainViewer {
             });
 
             // Upload each layer with mipmaps
-            for (i, tex) in self.normal_textures.iter().enumerate() {
+            for (i, tex) in normal_textures.iter().enumerate() {
                 // Generate mipmaps for this texture
                 let mips = generate_mipmaps(&tex.pixels, tex_width, tex_height);
 
@@ -323,6 +327,8 @@ impl TerrainViewer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> (wgpu::Texture, wgpu::TextureView) {
+        let scene = self.scene.as_ref().expect("scene must be loaded");
+        let chunk_splat_data = &scene.chunk_splat_data;
         // Per-chunk alpha texture array: 256 slices of 64×64 RGBA
         // Matches original Halo Wars approach where each chunk has its own alpha texture.
         // Each pixel's RGBA channels hold alpha weights for layers 1-4.
@@ -333,13 +339,13 @@ impl TerrainViewer {
         let slice_bytes = (CHUNK_SIZE * CHUNK_SIZE * 4) as usize;
         let mut array_data = vec![0u8; slice_bytes * NUM_CHUNKS as usize];
 
-        if !self.chunk_splat_data.is_empty() {
+        if !chunk_splat_data.is_empty() {
             log::info!(
                 "Creating alpha texture array from {} chunks",
-                self.chunk_splat_data.len()
+                chunk_splat_data.len()
             );
 
-            for (i, chunk) in self.chunk_splat_data.iter().take(5).enumerate() {
+            for (i, chunk) in chunk_splat_data.iter().take(5).enumerate() {
                 let non_zero: usize = chunk
                     .alpha_maps
                     .iter()
@@ -356,7 +362,7 @@ impl TerrainViewer {
                 );
             }
 
-            for chunk in &self.chunk_splat_data {
+            for chunk in chunk_splat_data {
                 // X-major chunk indexing (game convention): gridX * numZChunks + gridZ
                 let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
                 if chunk_idx >= NUM_CHUNKS as usize {
@@ -435,14 +441,16 @@ impl TerrainViewer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> (wgpu::Texture, wgpu::TextureView) {
+        let scene = self.scene.as_ref().expect("scene must be loaded");
+        let chunk_splat_data = &scene.chunk_splat_data;
         const CHUNK_SIZE: u32 = 64;
         const NUM_CHUNKS: u32 = 256;
 
         let slice_bytes = (CHUNK_SIZE * CHUNK_SIZE * 4) as usize;
         let mut array_data = vec![0u8; slice_bytes * NUM_CHUNKS as usize];
 
-        if !self.chunk_splat_data.is_empty() {
-            for chunk in &self.chunk_splat_data {
+        if !chunk_splat_data.is_empty() {
+            for chunk in chunk_splat_data {
                 let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
                 if chunk_idx >= NUM_CHUNKS as usize {
                     continue;
