@@ -19,7 +19,11 @@ pub use xtt;
 
 pub use assets::{AssetError, AssetSource};
 pub use database::{
-    Ability, Civilization, DamageType, DatabaseError, GameDatabase, GameMode, Leader, Power,
+    Ability, Civilization, DamageModifier, DamageType, DatabaseError, GameData, GameDatabase,
+    GameMode, Leader,
+    LeaderPopOverride, LeaderResourceOverride, LeaderStartingSquad, LeaderStartingUnit,
+    LeaderSupportPower, ObjectTypeEntry, CivPlayerColors, PlayerColor, PlayerColorData,
+    PlayerColorSet, PopDefinition, Power, TerrainTileType,
     WeaponType,
 };
 pub use paths::{GAME_DIR_ENV_VAR, era_path, game_dir, game_file, is_valid_game_dir};

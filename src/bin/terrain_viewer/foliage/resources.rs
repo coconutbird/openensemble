@@ -981,10 +981,7 @@ impl FoliageResources {
     /// Index buffer format (from XTT_FoliageExport.cs):
     /// Each 32-bit entry: upper 16 bits = blade_type, lower 16 bits = localIndex * numVertsPerBlade + vert
     /// Entries for one blade are followed by a 0xFFFF strip reset marker.
-    fn parse_index_buffer(
-        ib_data: &[u8],
-        num_verts_per_blade: u32,
-    ) -> Vec<[u32; 2]> {
+    fn parse_index_buffer(ib_data: &[u8], num_verts_per_blade: u32) -> Vec<[u32; 2]> {
         let mut blade_entries = Vec::new();
 
         if ib_data.len() < 4 || num_verts_per_blade == 0 {
@@ -1073,7 +1070,12 @@ impl FoliageResources {
             if qn_i < 5 {
                 log::debug!(
                     "  QN[{}] parent_idx={}, grid=({},{}), sets={}, set_indices={:?}",
-                    qn_i, qn.qn_parent_index, grid_x, grid_z, qn.num_sets, qn.set_indices
+                    qn_i,
+                    qn.qn_parent_index,
+                    grid_x,
+                    grid_z,
+                    qn.num_sets,
+                    qn.set_indices
                 );
             }
 
@@ -1198,8 +1200,7 @@ impl FoliageResources {
                 depth_or_array_layers: 1,
             },
         );
-        let blade_map_view =
-            blade_map_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let blade_map_view = blade_map_texture.create_view(&wgpu::TextureViewDescriptor::default());
         self.blade_map_texture = Some(blade_map_texture);
         self.blade_map_view = Some(blade_map_view);
 
@@ -1238,8 +1239,7 @@ impl FoliageResources {
         num_verts: u32,
     ) -> wgpu::Texture {
         // Decode packed positions to get XYZ displacement values
-        let mut positions: Vec<[f32; 4]> =
-            Vec::with_capacity((num_verts * num_verts) as usize);
+        let mut positions: Vec<[f32; 4]> = Vec::with_capacity((num_verts * num_verts) as usize);
 
         let mid = terrain_data.mid;
         let range = terrain_data.range;

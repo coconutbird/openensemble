@@ -18,7 +18,7 @@
 
 use crate::assets::{AssetError, AssetSource};
 use crate::terrain::{Terrain, TerrainError};
-use crate::xmb::{Node, Document, Reader};
+use crate::xmb::{Document, Node, Reader};
 use glam::Vec3;
 use thiserror::Error;
 
@@ -343,7 +343,6 @@ impl Scenario {
 
         Ok(Vec3::new(x, y, z))
     }
-
 }
 
 #[cfg(test)]

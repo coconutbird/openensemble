@@ -143,9 +143,7 @@ const ERA_NAMES_ROOT: &[(&str, &str)] = &[
     ("locale", "locale.era"),
 ];
 
-const ERA_NAMES_SCENARIO: &[(&str, &str)] = &[
-    ("scenarioshared", "scenarioshared.era"),
-];
+const ERA_NAMES_SCENARIO: &[(&str, &str)] = &[("scenarioshared", "scenarioshared.era")];
 
 impl AssetSource {
     /// Validate the game directory is set and valid.

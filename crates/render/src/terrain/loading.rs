@@ -313,11 +313,20 @@ pub fn load_foliage_sets(source: &AssetSource, foliage_sets: &[FoliageSetInfo]) 
 
             // Decode albedo (_df)
             if let Some(data) = &all_data[base_idx] {
-                log::info!("  Decoding foliage albedo DDX for '{}' ({} bytes)", set_info.filename, data.len());
+                log::info!(
+                    "  Decoding foliage albedo DDX for '{}' ({} bytes)",
+                    set_info.filename,
+                    data.len()
+                );
                 match DdxTexture::from_bytes(data) {
                     Ok(ddx) => match ddx.decode_to_rgba() {
                         Ok(decoded) => {
-                            log::info!("    Decoded albedo: {}x{}, {} bytes", decoded.width, decoded.height, decoded.pixels.len());
+                            log::info!(
+                                "    Decoded albedo: {}x{}, {} bytes",
+                                decoded.width,
+                                decoded.height,
+                                decoded.pixels.len()
+                            );
                             foliage_set.albedo_width = decoded.width;
                             foliage_set.albedo_height = decoded.height;
                             foliage_set.albedo_pixels = decoded.pixels;
