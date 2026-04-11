@@ -18,17 +18,20 @@ pub mod paths;
 pub use pipeline;
 
 // Re-export format crates from pipeline for convenience
-pub use pipeline::ddx;
 pub use pipeline::database;
+pub use pipeline::ddx;
 pub use pipeline::xmb;
 pub use pipeline::xtd;
 pub use pipeline::xtt;
 
 // Re-export key types at crate root for ergonomics
-pub use pipeline::source::{AssetSource, StdFileProvider};
+pub use pipeline::database::hw1::{Civ, Database as GameDatabase, Leader, ProtoObject};
 pub use pipeline::hw1::loader;
-pub use pipeline::hw1::scenario::{ScenarioData, ScenarioDescriptor, ScenarioList, ScenarioObject, ScenarioPlayer, ScenarioPosition};
-pub use pipeline::database::hw1::{Database as GameDatabase, ProtoObject, Civ, Leader};
+pub use pipeline::hw1::scenario::{
+    ScenarioData, ScenarioDescriptor, ScenarioList, ScenarioObject, ScenarioPlayer,
+    ScenarioPosition,
+};
+pub use pipeline::source::{AssetSource, StdFileProvider};
 
 pub use paths::{GAME_DIR_ENV_VAR, game_dir, game_file, is_valid_game_dir};
 

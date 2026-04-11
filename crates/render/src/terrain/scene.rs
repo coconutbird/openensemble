@@ -8,10 +8,10 @@ use pipeline::source::{AssetSource, StdFileProvider};
 use pipeline::xtd::{TessellationData, XtdFile};
 use pipeline::xtt::XttFile;
 
+use super::TerrainMesh;
 use super::loading;
 use super::mesh::TessellationMode;
 use super::types::*;
-use super::TerrainMesh;
 
 /// All decoded terrain data needed for rendering.
 ///
@@ -48,6 +48,10 @@ pub struct TerrainScene {
     pub foliage_qn_chunks: Vec<FoliageQNChunk>,
     /// Road vertex data extracted from XTT.
     pub road_chunks: Vec<RoadChunkData>,
+
+    // -- Lighting --
+    /// Decoded lighting texture data from XTD (L8 luminance, full resolution).
+    pub lighting_data: Option<LightingTextureData>,
 }
 
 impl TerrainScene {
@@ -68,15 +72,33 @@ impl TerrainScene {
         let raw_xtd_data = Self::extract_raw_xtd(xtd);
         let mesh = Self::build_mesh(xtd, tessellation_mode, tessellation_data.as_ref())?;
 
+        // Decode lighting data (L8 luminance at full resolution)
+        let lighting_data = xtd.decode_lighting().ok().map(|ld| {
+            log::info!("Lighting texture: {}x{} ({} bytes)", ld.width, ld.height, ld.values.len());
+            LightingTextureData {
+                values: ld.values,
+                width: ld.width as u32,
+                height: ld.height as u32,
+            }
+        });
+
         // -- XTT processing --
-        let (albedo, terrain_textures, normal_textures, chunk_splat_data,
-             decal_textures, decal_instances, chunk_decal_data,
-             foliage_sets, foliage_qn_chunks, road_chunks) =
-            if let Some(xtt) = xtt {
-                Self::process_xtt(xtt, source)
-            } else {
-                Default::default()
-            };
+        let (
+            albedo,
+            terrain_textures,
+            normal_textures,
+            chunk_splat_data,
+            decal_textures,
+            decal_instances,
+            chunk_decal_data,
+            foliage_sets,
+            foliage_qn_chunks,
+            road_chunks,
+        ) = if let Some(xtt) = xtt {
+            Self::process_xtt(xtt, source)
+        } else {
+            Default::default()
+        };
 
         Ok(Self {
             mesh,
@@ -92,9 +114,9 @@ impl TerrainScene {
             foliage_sets,
             foliage_qn_chunks,
             road_chunks,
+            lighting_data,
         })
     }
-
 
     /// Extract raw XTD data for GPU tessellation.
     fn extract_raw_xtd(xtd: &XtdFile) -> Option<RawXtdData> {

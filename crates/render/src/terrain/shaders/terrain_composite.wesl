@@ -91,11 +91,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let alphas_hi = textureSampleLevel(t_alpha_atlas_hi, s_alpha, alpha_uv, chunk_idx, 0.0);
 
     // --- Tiled texture UVs ---
-    // Original: targetUVs = TexCoord0 * g_LayerData[indx].yz
-    // Viewport is placed at (X*size, Z*size), so uv.x = X direction, uv.y = Z direction.
-    // grid_z = X, grid_x = Z (from chunk_idx decomposition of Z*16+X layout).
-    // tiling_uv = (X + frac_X, Z + frac_Z) so u_scale applies to X, v_scale to Z.
-    let tiling_uv = vec2<f32>(f32(grid_z) + uv.x, f32(grid_x) + uv.y);
+    // Original HWDE: gPos = (Z, X), TexCoord0 = gPos/64, targetUVs = TexCoord0 * layerScale
+    // The original shader samples terrain textures with U=Z, V=X.
+    // grid_x = Z, grid_z = X (from chunk_idx decomposition of Z*16+X layout).
+    // tiling_uv = (Z + frac_Z, X + frac_X) to match original (Z, X) convention.
+    let tiling_uv = vec2<f32>(f32(grid_x) + uv.y, f32(grid_z) + uv.x);
 
     let uv0 = tiling_uv * texture_scales[layer0];
     let uv1 = tiling_uv * texture_scales[layer1];

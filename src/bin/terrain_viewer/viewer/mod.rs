@@ -9,11 +9,11 @@ mod rendering;
 
 use std::path::PathBuf;
 
-use pipeline::source::{AssetSource, StdFileProvider};
+use glam::Vec3;
 use pipeline::hw1;
+use pipeline::source::{AssetSource, StdFileProvider};
 use pipeline::xtd;
 use pipeline::xtt;
-use glam::Vec3;
 use render::terrain::{Camera, CompositorResources, LodConfig, TerrainScene, TessellationMode};
 use render::wgpu;
 
@@ -106,63 +106,64 @@ impl TerrainViewer {
 
     fn load_terrain(&mut self) {
         // Determine which loading path to use
-        let (xtd_file, xtt_file, asset_source_opt) = if let Some(scenario_name) = &self.scenario_name {
-            log::info!("Loading scenario via pipeline::World: {}", scenario_name);
-            let dir = data::paths::game_dir();
-            let dir_str = dir.to_string_lossy();
+        let (xtd_file, xtt_file, asset_source_opt) =
+            if let Some(scenario_name) = &self.scenario_name {
+                log::info!("Loading scenario via pipeline::World: {}", scenario_name);
+                let dir = data::paths::game_dir();
+                let dir_str = dir.to_string_lossy();
 
-            let (mut world, mut src) = match hw1::World::load(&dir_str) {
-                Ok(ws) => ws,
-                Err(e) => {
-                    self.load_error = Some(format!("Failed to load World: {}", e));
-                    log::error!("{}", self.load_error.as_ref().unwrap());
-                    return;
-                }
-            };
-            world.swap_scenario(&mut src, scenario_name);
-
-            let Some(xtd) = world.terrain_data else {
-                self.load_error = Some(format!(
-                    "World loaded but no XTD terrain data for scenario '{}'",
-                    scenario_name
-                ));
-                log::error!("{}", self.load_error.as_ref().unwrap());
-                return;
-            };
-
-            (xtd, world.terrain_textures, Some(src))
-        } else if let Some(path) = &self.xtd_path {
-            // Load from file path (legacy mode — no ERA, no World)
-            log::info!("Loading XTD from file: {}", path.display());
-            match std::fs::read(path) {
-                Ok(data) => match xtd::Reader::read(&data) {
-                    Ok(xtd) => {
-                        let xtt_path = path.with_extension("xtt");
-                        let xtt = if xtt_path.exists() {
-                            std::fs::read(&xtt_path)
-                                .ok()
-                                .and_then(|d| xtt::Reader::read(&d).ok())
-                        } else {
-                            None
-                        };
-                        (xtd, xtt, None)
-                    }
+                let (mut world, mut src) = match hw1::World::load(&dir_str) {
+                    Ok(ws) => ws,
                     Err(e) => {
-                        self.load_error = Some(format!("Failed to parse XTD: {}", e));
+                        self.load_error = Some(format!("Failed to load World: {}", e));
                         log::error!("{}", self.load_error.as_ref().unwrap());
                         return;
                     }
-                },
-                Err(e) => {
-                    self.load_error = Some(format!("Failed to read file: {}", e));
+                };
+                world.swap_scenario(&mut src, scenario_name);
+
+                let Some(xtd) = world.terrain_data else {
+                    self.load_error = Some(format!(
+                        "World loaded but no XTD terrain data for scenario '{}'",
+                        scenario_name
+                    ));
                     log::error!("{}", self.load_error.as_ref().unwrap());
                     return;
+                };
+
+                (xtd, world.terrain_textures, Some(src))
+            } else if let Some(path) = &self.xtd_path {
+                // Load from file path (legacy mode — no ERA, no World)
+                log::info!("Loading XTD from file: {}", path.display());
+                match std::fs::read(path) {
+                    Ok(data) => match xtd::Reader::read(&data) {
+                        Ok(xtd) => {
+                            let xtt_path = path.with_extension("xtt");
+                            let xtt = if xtt_path.exists() {
+                                std::fs::read(&xtt_path)
+                                    .ok()
+                                    .and_then(|d| xtt::Reader::read(&d).ok())
+                            } else {
+                                None
+                            };
+                            (xtd, xtt, None)
+                        }
+                        Err(e) => {
+                            self.load_error = Some(format!("Failed to parse XTD: {}", e));
+                            log::error!("{}", self.load_error.as_ref().unwrap());
+                            return;
+                        }
+                    },
+                    Err(e) => {
+                        self.load_error = Some(format!("Failed to read file: {}", e));
+                        log::error!("{}", self.load_error.as_ref().unwrap());
+                        return;
+                    }
                 }
-            }
-        } else {
-            self.load_error = Some("No terrain source specified".to_string());
-            return;
-        };
+            } else {
+                self.load_error = Some("No terrain source specified".to_string());
+                return;
+            };
 
         // Store asset source for road texture loading later
         self.asset_source = asset_source_opt;

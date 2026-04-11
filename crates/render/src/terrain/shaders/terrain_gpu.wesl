@@ -337,9 +337,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let layer7 = chunk_layers[layer_base + 7u];
 
     // Calculate tiled UVs with per-texture scaling
-    // Original: Output.targetUVs = TexCoord0 * g_LayerData[indx].yz
-    // TexCoord0 = (X, Z) within chunk. u_scale applies to X, v_scale applies to Z.
-    let tiling_uv = sample_uv * chunk_count;  // (X, Z) continuous across chunks
+    // Original HWDE: gPos = (Z, X), TexCoord0 = gPos/64, targetUVs = TexCoord0 * layerScale
+    // Terrain textures are sampled with U=Z, V=X in the original shader.
+    // sample_uv = (X, Z), so we swap to (Z, X) to match original convention.
+    let tiling_uv = (sample_uv * chunk_count).yx;  // (Z, X) to match HWDE
     let uv0 = tiling_uv * texture_scales[layer0];
     let uv1 = tiling_uv * texture_scales[layer1];
     let uv2 = tiling_uv * texture_scales[layer2];

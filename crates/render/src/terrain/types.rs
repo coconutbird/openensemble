@@ -253,3 +253,11 @@ pub struct AlphaTextureData {
     pub width: u32,
     pub height: u32,
 }
+
+/// Lighting texture data (L8/R8 luminance) at full terrain resolution.
+#[derive(Clone)]
+pub struct LightingTextureData {
+    pub values: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}

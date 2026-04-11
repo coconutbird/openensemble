@@ -28,6 +28,7 @@ pub use loading::{
     load_terrain_textures,
 };
 pub use mesh::{TerrainMesh, TessellationMode};
+pub use scene::TerrainScene;
 pub use shaders::{
     COMPOSITE_SHADER, FOLIAGE_SHADER, GPU_TESS_SHADER, HEIGHTFIELD_SHADER, ROADS_SHADER,
     SHADOW_DEPTH_SHADER, TERRAIN_SHADER,
@@ -38,5 +39,4 @@ pub use types::{
     DecalTexture, FoliageBladeVertex, FoliageQNChunk, FoliageSet, NormalMapTexture, RawXtdData,
     RoadChunkData, TerrainTexture,
 };
-pub use scene::TerrainScene;
 pub use uniforms::{CameraUniform, GpuTessParams, LightingParams, TerrainParams};

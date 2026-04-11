@@ -53,10 +53,8 @@ pub fn load_terrain_textures(
         .collect();
 
     // Load all files sequentially (AssetSource requires &mut self)
-    let all_data: Vec<Option<Vec<u8>>> = all_paths
-        .iter()
-        .map(|p| source.resolve_exact(p))
-        .collect();
+    let all_data: Vec<Option<Vec<u8>>> =
+        all_paths.iter().map(|p| source.resolve_exact(p)).collect();
 
     // Split results back into diffuse and normal
     let (diffuse_data, normal_data) = all_data.split_at(active_textures.len());
@@ -188,10 +186,8 @@ pub fn load_decal_textures(
         .collect();
 
     // Load all files sequentially (AssetSource requires &mut self)
-    let all_data: Vec<Option<Vec<u8>>> = all_paths
-        .iter()
-        .map(|p| source.resolve_exact(p))
-        .collect();
+    let all_data: Vec<Option<Vec<u8>>> =
+        all_paths.iter().map(|p| source.resolve_exact(p)).collect();
 
     // Split results
     let (diffuse_data, opacity_data) = all_data.split_at(active_decals.len());
@@ -264,7 +260,10 @@ pub fn load_decal_textures(
 ///
 /// Uses parallel loading for both ERA decompression and DDX decoding.
 /// Each foliage set has 4 textures: albedo (_df), opacity (_op), normal (_nm), specular (_sp).
-pub fn load_foliage_sets(source: &mut AssetSource<StdFileProvider>, foliage_sets: &[FoliageSetInfo]) -> Vec<FoliageSet> {
+pub fn load_foliage_sets(
+    source: &mut AssetSource<StdFileProvider>,
+    foliage_sets: &[FoliageSetInfo],
+) -> Vec<FoliageSet> {
     if foliage_sets.is_empty() {
         log::info!("No foliage sets to load");
         return Vec::new();
@@ -294,10 +293,8 @@ pub fn load_foliage_sets(source: &mut AssetSource<StdFileProvider>, foliage_sets
     }
 
     // Load all files sequentially (AssetSource requires &mut self)
-    let all_data: Vec<Option<Vec<u8>>> = all_paths
-        .iter()
-        .map(|p| source.resolve_exact(p))
-        .collect();
+    let all_data: Vec<Option<Vec<u8>>> =
+        all_paths.iter().map(|p| source.resolve_exact(p)).collect();
 
     // Log which files were found vs missing
     for (i, path) in all_paths.iter().enumerate() {
@@ -511,13 +508,8 @@ pub fn extract_foliage_chunks(xtt: &XttFile) -> Vec<FoliageQNChunk> {
 /// Extract road data from XTT file.
 /// Returns a list of road chunks (one per road in the scenario).
 pub fn extract_road_data(xtt: &XttFile) -> Vec<RoadChunkData> {
-    if xtt.road_data.is_empty() {
-        log::info!("No road data in XTT");
-        return Vec::new();
-    }
-
-    match pipeline::xtt::decode_road_data(&xtt.road_data) {
-        Ok(road) => {
+    match xtt.decode_road() {
+        Ok(Some(road)) => {
             let total_verts: usize = road.qn_chunks.iter().map(|qn| qn.vertices.len()).sum();
             log::info!(
                 "Decoded road '{}': {} QN chunks, {} total vertices",
@@ -543,6 +535,10 @@ pub fn extract_road_data(xtt: &XttFile) -> Vec<RoadChunkData> {
                 uvs,
             }]
         }
+        Ok(None) => {
+            log::info!("No road data in XTT");
+            Vec::new()
+        }
         Err(e) => {
             log::warn!("Failed to decode road data: {}", e);
             Vec::new()
@@ -552,7 +548,10 @@ pub fn extract_road_data(xtt: &XttFile) -> Vec<RoadChunkData> {
 
 /// Load road textures (albedo, normal, specular) from an asset source.
 /// Returns (albedo_pixels, normal_pixels, specular_pixels, width, height) or None.
-pub fn load_road_textures(source: &mut AssetSource<StdFileProvider>, texture_name: &str) -> Option<RoadTextures> {
+pub fn load_road_textures(
+    source: &mut AssetSource<StdFileProvider>,
+    texture_name: &str,
+) -> Option<RoadTextures> {
     let base = format!("art/{}", texture_name.replace('\\', "/"));
     let paths = [
         format!("{}_df.ddx", base),
@@ -560,10 +559,7 @@ pub fn load_road_textures(source: &mut AssetSource<StdFileProvider>, texture_nam
         format!("{}_sp.ddx", base),
     ];
 
-    let file_data: Vec<Option<Vec<u8>>> = paths
-        .iter()
-        .map(|p| source.resolve_exact(p))
-        .collect();
+    let file_data: Vec<Option<Vec<u8>>> = paths.iter().map(|p| source.resolve_exact(p)).collect();
 
     let albedo = file_data[0].as_ref().and_then(|d| {
         DdxTexture::from_bytes(d)

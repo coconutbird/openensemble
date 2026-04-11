@@ -255,7 +255,10 @@ impl Application3D for TerrainViewer {
                     &mut render_pass,
                     foliage,
                     &gpu.camera_bind_group,
-                    self.scene.as_ref().map(|s| s.foliage_qn_chunks.as_slice()).unwrap_or(&[]),
+                    self.scene
+                        .as_ref()
+                        .map(|s| s.foliage_qn_chunks.as_slice())
+                        .unwrap_or(&[]),
                 );
             }
 

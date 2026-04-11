@@ -124,8 +124,7 @@ impl HeadlessServer {
     /// Load a scenario from XML string (for testing).
     #[doc(hidden)]
     pub fn load_scenario_xml(&mut self, xml: &str) -> Result<()> {
-        let scenario =
-            ScenarioData::from_xml_str(xml).context("Failed to parse scenario XML")?;
+        let scenario = ScenarioData::from_xml_str(xml).context("Failed to parse scenario XML")?;
         self.load_scenario_data(&scenario)
     }
 

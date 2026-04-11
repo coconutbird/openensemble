@@ -65,14 +65,8 @@ pub fn load_scenario_into_world(scenario: &ScenarioData, db: &Database) -> Loade
     let mut world = World::new();
     let mut scenario_id_to_entity_id = HashMap::new();
 
-    let players = scenario
-        .players
-        .as_ref()
-        .map_or(&[][..], |w| &w.entries);
-    let objects = scenario
-        .objects
-        .as_ref()
-        .map_or(&[][..], |w| &w.entries);
+    let players = scenario.players.as_ref().map_or(&[][..], |w| &w.entries);
+    let objects = scenario.objects.as_ref().map_or(&[][..], |w| &w.entries);
 
     // Initialize players
     // Player 0 is always Gaia (created by init_players)
@@ -127,7 +121,9 @@ pub fn load_scenario_into_world(scenario: &ScenarioData, db: &Database) -> Loade
             // Set forward direction
             if let Some(squad) = world.get_squad_mut(entity_id) {
                 let fwd = obj.forward_vec3();
-                squad.base.set_forward(glam::Vec3::new(fwd[0], fwd[1], fwd[2]));
+                squad
+                    .base
+                    .set_forward(glam::Vec3::new(fwd[0], fwd[1], fwd[2]));
                 // TODO: Look up proto_squad_id from database by name
                 // squad.proto_squad_id = database.get_proto_squad(&obj.proto_name);
             }
