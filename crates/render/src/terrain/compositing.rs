@@ -79,7 +79,7 @@ pub struct CompositeParams {
     pub chunk_index: u32,
     pub num_layers: u32,
     pub debug_mode: u32,
-    pub _padding: f32,
+    pub num_decal_layers: u32,
 }
 
 /// Aligned params slot (256 bytes to satisfy wgpu dynamic offset alignment).
@@ -213,6 +213,50 @@ impl CompositorResources {
                     },
                     count: None,
                 },
+                // binding 8: decal alpha atlas (per-chunk decal alpha maps)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // binding 9: chunk decal layers storage (per-chunk decal instance IDs)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 9,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // binding 10: decal instances storage (rotation, center, hdr_scale per instance)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 10,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // binding 11: decal UV scales storage (per-instance u_scale, v_scale)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 11,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -281,6 +325,10 @@ impl CompositorResources {
         texture_scales_buffer: &wgpu::Buffer,
         sampler: &wgpu::Sampler,
         alpha_sampler: &wgpu::Sampler,
+        decal_alpha_atlas_view: &wgpu::TextureView,
+        chunk_decal_layers_buffer: &wgpu::Buffer,
+        decal_instances_buffer: &wgpu::Buffer,
+        decal_uv_scales_buffer: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Composite Bind Group"),
@@ -322,6 +370,22 @@ impl CompositorResources {
                     binding: 7,
                     resource: wgpu::BindingResource::TextureView(alpha_atlas_hi_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::TextureView(decal_alpha_atlas_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: chunk_decal_layers_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: decal_instances_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: decal_uv_scales_buffer.as_entire_binding(),
+                },
             ],
         })
     }
@@ -337,6 +401,7 @@ impl CompositorResources {
         bind_group: &wgpu::BindGroup,
         queue: &wgpu::Queue,
         chunk_layer_counts: &[u32],
+        chunk_decal_layer_counts: &[u32],
         device: &wgpu::Device,
         debug_mode: u32,
     ) {
@@ -358,11 +423,16 @@ impl CompositorResources {
                 .copied()
                 .unwrap_or(1);
 
+            let num_decal_layers = chunk_decal_layer_counts
+                .get(chunk_idx as usize)
+                .copied()
+                .unwrap_or(0);
+
             let params = CompositeParams {
                 chunk_index: chunk_idx,
                 num_layers,
                 debug_mode,
-                _padding: 0.0,
+                num_decal_layers,
             };
 
             let offset = chunk_idx as u64 * PARAMS_ALIGN;

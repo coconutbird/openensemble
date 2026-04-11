@@ -176,7 +176,8 @@ impl Application3D for TerrainViewer {
             && let (Some(compositor), Some(bind_group)) =
                 (&mut self.compositor, &self.compositor_bind_group)
         {
-            let chunk_splat_data = self.scene.as_ref().map(|s| &s.chunk_splat_data);
+            let scene = self.scene.as_ref();
+            let chunk_splat_data = scene.map(|s| &s.chunk_splat_data);
             let mut chunk_layer_counts = vec![1u32; 256];
             for chunk in chunk_splat_data.into_iter().flatten() {
                 let grid_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
@@ -185,11 +186,21 @@ impl Application3D for TerrainViewer {
                 }
             }
 
+            let chunk_decal_data = self.scene.as_ref().map(|s| &s.chunk_decal_data);
+            let mut chunk_decal_layer_counts = vec![0u32; 256];
+            for chunk in chunk_decal_data.into_iter().flatten() {
+                let grid_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
+                if grid_idx < 256 {
+                    chunk_decal_layer_counts[grid_idx] = chunk.decal_layer_ids.len() as u32;
+                }
+            }
+
             compositor.composite_all_dirty(
                 ctx.encoder,
                 bind_group,
                 ctx.queue,
                 &chunk_layer_counts,
+                &chunk_decal_layer_counts,
                 ctx.device,
                 self.compositor_debug_mode,
             );

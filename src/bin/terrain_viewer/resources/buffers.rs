@@ -84,4 +84,88 @@ impl TerrainViewer {
             usage: wgpu::BufferUsages::STORAGE,
         })
     }
+
+    /// Creates the chunk decal layers buffer.
+    /// 256 chunks × 8 decal layer slots = 2048 u32s.
+    /// Each entry is the decal instance index for that chunk's decal layer.
+    pub(crate) fn create_chunk_decal_layers_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
+        use wgpu::util::DeviceExt;
+        let scene = self.scene.as_ref().expect("scene must be loaded");
+
+        // 256 chunks * 8 decal layers = 2048 u32s
+        let mut layer_data = vec![0u32; 256 * 8];
+
+        for chunk in &scene.chunk_decal_data {
+            let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
+            if chunk_idx >= 256 {
+                continue;
+            }
+            let base = chunk_idx * 8;
+            for (i, &decal_id) in chunk.decal_layer_ids.iter().enumerate().take(8) {
+                layer_data[base + i] = decal_id as u32;
+            }
+        }
+
+        log::info!(
+            "Creating chunk decal layers buffer: {} chunks with decals",
+            scene.chunk_decal_data.len()
+        );
+
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Chunk Decal Layers Buffer"),
+            contents: bytemuck::cast_slice(&layer_data),
+            usage: wgpu::BufferUsages::STORAGE,
+        })
+    }
+
+    /// Creates the decal instances buffer.
+    /// Each instance is a vec4<f32>: (rotation, center_u, center_v, hdr_scale).
+    pub(crate) fn create_decal_instances_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
+        use wgpu::util::DeviceExt;
+        let scene = self.scene.as_ref().expect("scene must be loaded");
+
+        // At least 1 entry to avoid zero-sized buffer
+        let num = scene.decal_instances.len().max(1);
+        let mut data = vec![[0.0f32; 4]; num];
+
+        for (i, inst) in scene.decal_instances.iter().enumerate() {
+            data[i] = [inst.rotation, inst.tile_center_x, inst.tile_center_y, 1.0];
+        }
+
+        log::info!(
+            "Creating decal instances buffer: {} instances",
+            scene.decal_instances.len()
+        );
+
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Decal Instances Buffer"),
+            contents: bytemuck::cast_slice(&data),
+            usage: wgpu::BufferUsages::STORAGE,
+        })
+    }
+
+    /// Creates the decal UV scales buffer.
+    /// Each entry is a vec2<f32>: (u_scale, v_scale) per decal instance.
+    pub(crate) fn create_decal_uv_scales_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
+        use wgpu::util::DeviceExt;
+        let scene = self.scene.as_ref().expect("scene must be loaded");
+
+        let num = scene.decal_instances.len().max(1);
+        let mut data = vec![[1.0f32; 2]; num];
+
+        for (i, inst) in scene.decal_instances.iter().enumerate() {
+            data[i] = [inst.u_scale, inst.v_scale];
+        }
+
+        log::info!(
+            "Creating decal UV scales buffer: {} entries",
+            scene.decal_instances.len()
+        );
+
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Decal UV Scales Buffer"),
+            contents: bytemuck::cast_slice(&data),
+            usage: wgpu::BufferUsages::STORAGE,
+        })
+    }
 }

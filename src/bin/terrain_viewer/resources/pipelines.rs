@@ -19,6 +19,7 @@ impl TerrainViewer {
     pub(crate) fn init_compositor(
         &mut self,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         terrain_array_view: &wgpu::TextureView,
         alpha_atlas_view: &wgpu::TextureView,
         alpha_atlas_hi_view: &wgpu::TextureView,
@@ -38,7 +39,14 @@ impl TerrainViewer {
         // Create compositor resources (atlas textures, pipeline, bind group layout)
         let compositor = CompositorResources::new(device, config);
 
-        // Create bind group with actual terrain textures
+        // Create decal resources
+        let (_decal_alpha_atlas, decal_alpha_atlas_view) =
+            self.create_decal_alpha_atlas(device, queue);
+        let chunk_decal_layers_buffer = self.create_chunk_decal_layers_buffer(device);
+        let decal_instances_buffer = self.create_decal_instances_buffer(device);
+        let decal_uv_scales_buffer = self.create_decal_uv_scales_buffer(device);
+
+        // Create bind group with actual terrain textures + decal resources
         let bind_group = compositor.create_bind_group(
             device,
             terrain_array_view,
@@ -48,6 +56,10 @@ impl TerrainViewer {
             texture_scales_buffer,
             sampler,
             alpha_sampler,
+            &decal_alpha_atlas_view,
+            &chunk_decal_layers_buffer,
+            &decal_instances_buffer,
+            &decal_uv_scales_buffer,
         );
 
         self.compositor = Some(compositor);
@@ -420,6 +432,7 @@ impl TerrainViewer {
         // Initialize GPU compositor (for pre-baked terrain textures)
         self.init_compositor(
             device,
+            queue,
             &terrain_array_view,
             &alpha_atlas_view,
             &alpha_atlas_hi_view,
@@ -1087,10 +1100,10 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
-                    // binding 4: sampler
+                    // binding 4: sampler (used in both VS for light texture and PS for terrain)
                     wgpu::BindGroupLayoutEntry {
                         binding: 4,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
@@ -1266,6 +1279,17 @@ impl TerrainViewer {
                         },
                         count: None,
                     },
+                    // binding 21: Light texture (L8 luminance from XTD)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 21,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -1275,6 +1299,7 @@ impl TerrainViewer {
         // Initialize GPU compositor (for pre-baked terrain textures)
         self.init_compositor(
             device,
+            queue,
             &terrain_array_view,
             &alpha_atlas_view,
             &alpha_atlas_hi_view,
@@ -1445,6 +1470,50 @@ impl TerrainViewer {
         // Unexplored: black with alpha=0 (no unexplored overlay)
         let unexplored_view = placeholder_texture("Placeholder Unexplored", &[0, 0, 0, 0]);
 
+        // Light texture (L8 luminance from XTD, HWDE: gVertSampler_light_Texture)
+        let light_view = if let Some(scene) = &self.scene
+            && let Some(ld) = &scene.lighting_data
+        {
+            let tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Light Texture"),
+                size: wgpu::Extent3d {
+                    width: ld.width,
+                    height: ld.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &ld.values,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(ld.width),
+                    rows_per_image: Some(ld.height),
+                },
+                wgpu::Extent3d {
+                    width: ld.width,
+                    height: ld.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+            log::info!("Created light texture: {}x{}", ld.width, ld.height);
+            tex.create_view(&wgpu::TextureViewDescriptor::default())
+        } else {
+            // Placeholder: mid-gray (neutral lighting)
+            placeholder_texture("Placeholder Light", &[128, 128, 128, 255])
+        };
+
         // Empty local lights buffer (minimum 16 bytes for storage buffer)
         let local_lights_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Local Lights Buffer"),
@@ -1541,6 +1610,10 @@ impl TerrainViewer {
                 wgpu::BindGroupEntry {
                     binding: 20,
                     resource: wgpu::BindingResource::TextureView(&alpha_atlas_hi_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 21,
+                    resource: wgpu::BindingResource::TextureView(&light_view),
                 },
             ],
         });

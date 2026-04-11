@@ -264,7 +264,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let z_fog = compute_radial_fog_density(pos, params.camera_pos, params.fog_params.x, params.fog_params.y);
     var p_fog = 1.0;
     if params.planar_fog_params.x > 0.5 {
-        p_fog = compute_planar_fog_density(pos.y, params.planar_fog_params.y, params.planar_fog_params.z);
+        p_fog = compute_planar_fog_density(pos, params.camera_pos, params.planar_fog_params.y, params.planar_fog_params.z);
     }
 
     // Distance-based alpha fade

@@ -147,7 +147,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let z_fog = compute_radial_fog_density(world_pos, params.camera_pos.xyz, params.fog_params.x, params.fog_params.y);
     var p_fog = 1.0;
     if params.planar_fog_params.x > 0.5 {
-        p_fog = compute_planar_fog_density(world_pos.y, params.planar_fog_params.y, params.planar_fog_params.z);
+        p_fog = compute_planar_fog_density(world_pos, params.camera_pos.xyz, params.planar_fog_params.y, params.planar_fog_params.z);
     }
 
     out.clip_position = camera.view_proj * vec4<f32>(world_pos, 1.0);

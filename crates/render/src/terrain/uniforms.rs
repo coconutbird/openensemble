@@ -170,6 +170,14 @@ pub struct LightingParams {
     // --- Local light params ---
     /// Local light params [num_lights, spec_power, pad, pad].
     pub local_light_params: [f32; 4],
+
+    // --- Bump fadeout params (HWDE cb4[35]) ---
+    /// Fadeout params [fadeout_min, fadeout_max, fadeout_bias, pad].
+    pub fadeout_params: [f32; 4],
+
+    // --- Blackmap UV scales (HWDE cb4[33-34]) ---
+    /// Blackmap UV scales [scale_x, scale_z, pad, pad].
+    pub blackmap_uv_scales: [f32; 4],
 }
 
 impl Default for LightingParams {
@@ -208,6 +216,12 @@ impl Default for LightingParams {
 
             // Local lights: none by default
             local_light_params: [0.0, 16.0, 0.0, 0.0], // 0 lights, spec_power=16
+
+            // Bump fadeout: reasonable defaults (fade from 200 to 500 units)
+            fadeout_params: [200.0, 500.0, 50.0, 0.0],
+
+            // Blackmap UV scales: default 1/terrain_extent
+            blackmap_uv_scales: [1.0 / 1024.0, 1.0 / 1024.0, 0.0, 0.0],
         }
     }
 }

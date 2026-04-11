@@ -134,6 +134,10 @@ struct LightingParams {
     blackmap_params2: vec4<f32>,    // x = pad, yz = bounds_hi_xz, w = bounds_falloff
     // Local light params
     local_light_params: vec4<f32>,  // x = num_lights, y = spec_power
+    // Bump fadeout params (HWDE cb4[35])
+    fadeout_params: vec4<f32>,      // x = fadeout_min, y = fadeout_max, z = fadeout_bias
+    // Blackmap world-position UV scales (HWDE cb4[33-34])
+    blackmap_uv_scales: vec4<f32>,  // x = scale_x (cb4[34].x), y = scale_z (cb4[33].w)
 };
 @group(1) @binding(15)
 var<uniform> lighting: LightingParams;
@@ -165,6 +169,10 @@ struct VertexInput {
     @location(1) patch_index: u32,
 };
 
+// Light texture (L8 luminance from XTD, pre-baked per-vertex lighting)
+@group(1) @binding(21)
+var t_light: texture_2d<f32>;
+
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) normal: vec3<f32>,
@@ -173,6 +181,8 @@ struct VertexOutput {
     @location(3) tangent: vec3<f32>,
     @location(4) binormal: vec3<f32>,
     @location(5) fog_densities: vec2<f32>,  // x = radial, y = planar
+    @location(6) light_color: vec3<f32>,    // pre-baked light texture (HWDE v8.xyz)
+    @location(7) @interpolate(linear) bump_fadeout: f32, // normal map distance fadeout (HWDE v8.w)
 };
 
 // Decode packed R10G10B10A2 position
@@ -253,8 +263,22 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let z_fog_density = compute_radial_fog_density(world_pos, lighting.world_camera_pos.xyz, lighting.fog_params.x, lighting.fog_params.y);
     var planar_fog_density = 1.0;
     if lighting.planar_fog_params.x > 0.5 {
-        planar_fog_density = compute_planar_fog_density(world_pos.y, lighting.planar_fog_params.y, lighting.planar_fog_params.z);
+        planar_fog_density = compute_planar_fog_density(world_pos, lighting.world_camera_pos.xyz, lighting.planar_fog_params.y, lighting.planar_fog_params.z);
     }
+
+    // Sample light texture (HWDE: t2 = gVertSampler_light_Texture)
+    // Luminance (L8) sampled at grid UV, passed to PS as v8.xyz
+    let light_sample = textureSampleLevel(t_light, s_terrain, vec2<f32>(global_u, global_v), 0.0).r;
+    let light_rgb = vec3<f32>(light_sample, light_sample, light_sample);
+
+    // Compute bump fadeout factor (HWDE VS lines 208-215)
+    // fadeout = 1.0 - saturate((dist - fadeout_min) / (fadeout_max - fadeout_min + fadeout_bias))
+    // fadeout_min = cb4[35].x, fadeout_range = cb4[35].y - cb4[35].x + cb4[35].z
+    let cam_vec = world_pos - lighting.world_camera_pos.xyz;
+    let cam_dist = length(cam_vec);
+    let fadeout_min = lighting.fadeout_params.x;
+    let fadeout_range = lighting.fadeout_params.y - lighting.fadeout_params.x + lighting.fadeout_params.z;
+    let fadeout = 1.0 - saturate((cam_dist - fadeout_min) / fadeout_range);
 
     out.clip_position = camera.view_proj * vec4<f32>(world_pos, 1.0);
     out.normal = normal;
@@ -266,6 +290,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.tangent = tbn[0];
     out.binormal = tbn[1];
     out.fog_densities = vec2<f32>(z_fog_density, planar_fog_density);
+    out.light_color = light_rgb;
+    out.bump_fadeout = fadeout;
 
     return out;
 }
@@ -436,11 +462,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         tangent_normal = mix(tangent_normal, n, alphas_hi.b);
     }
 
-    // Apply bump power scaling
+    // Apply bump power scaling (HWDE: gBumpPower = cb4[30].z)
     tangent_normal.x = tangent_normal.x * params.bump_power;
     tangent_normal.y = tangent_normal.y * params.bump_power;
     tangent_normal.z = sqrt(max(0.0, 1.0 - tangent_normal.x * tangent_normal.x - tangent_normal.y * tangent_normal.y));
     tangent_normal = normalize(tangent_normal);
+
+    // Apply distance-based bump fadeout (HWDE PS lines 404-405)
+    // Blends bumped normal toward flat (0,0,1) as distance increases.
+    // fadeout=1 at close range (full bump), fadeout=0 at far range (flat normal).
+    tangent_normal = mix(vec3<f32>(0.0, 0.0, 1.0), tangent_normal, in.bump_fadeout);
 
     // Build TBN matrix from interpolated vertex tangent/binormal/normal
     // (matches original GiveTBNFromNormal computed per-vertex)
@@ -452,7 +483,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Sample AO texture (XTD-decoded, uses xtd_uv)
     let ao = textureSample(t_ao, s_terrain, xtd_uv).r;
     let ao_intensity = lighting.ao_params.x;
-    let ao_factor = mix(1.0, ao, ao_intensity);
 
     // === Lighting pipeline (matches original shFillLighting.inc + dirLighting.inc) ===
 
@@ -513,15 +543,25 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         local_spec += result.w;
     }
 
-    // Combine: (ambient * ao + directional + local) * albedo + specular
-    let ambient_sum = sh_ambient * ao_factor;
-    var lit_color = (ambient_sum + dir_diffuse + local_diffuse) * color;
-    // Specular: directional + local (terrain uses AO as specular mask)
-    lit_color += (dir_spec * 0.15 + local_spec) * ao_factor;
+    // === Combine lighting (HWDE PS lines 493-507) ===
+    // HWDE formula:
+    //   light = dir_diffuse * shadow + lightmap * 2.0
+    //   ao_blend = mix(light, light * ao, ao_intensity)  // cb4[36].w
+    //   final = (sh_ambient * ao + ao_blend) * albedo + specular
+    var dir_light = dir_diffuse + in.light_color * 2.0 + local_diffuse;
+    let ao_blended = mix(dir_light, dir_light * ao, ao_intensity);
+    let ambient_sum = sh_ambient * ao;
+    var lit_color = (ambient_sum + ao_blended) * color;
+    // Specular: directional + local
+    lit_color += (dir_spec * 0.15 + local_spec);
 
     // === Blackmap (fog-of-war) ===
+    // HWDE uses world-position-derived UVs with separate X/Z scales (cb4[33-34])
     if lighting.blackmap_params1.w > 0.5 {
-        let blackmap_uv = sample_uv; // Use terrain UV for blackmap lookup
+        let blackmap_uv = vec2<f32>(
+            in.world_pos.x * lighting.blackmap_uv_scales.x,
+            in.world_pos.z * lighting.blackmap_uv_scales.y,
+        );
         let vis_factor = textureSample(t_blackmap, s_terrain, blackmap_uv).a;
         let unexplored_sample = textureSample(t_unexplored, s_terrain, blackmap_uv);
         lit_color = apply_blackmap(

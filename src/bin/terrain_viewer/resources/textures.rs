@@ -522,6 +522,95 @@ impl TerrainViewer {
         });
         (texture, view)
     }
+
+    /// Creates the decal alpha atlas texture.
+    /// Same layout as the splat alpha atlas: 256 slices of 64×64 RGBA.
+    /// R=decal layer 0, G=layer 1, B=layer 2, A=layer 3.
+    pub(crate) fn create_decal_alpha_atlas(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
+        let scene = self.scene.as_ref().expect("scene must be loaded");
+        let chunk_decal_data = &scene.chunk_decal_data;
+        const CHUNK_SIZE: u32 = 64;
+        const NUM_CHUNKS: u32 = 256;
+
+        let slice_bytes = (CHUNK_SIZE * CHUNK_SIZE * 4) as usize;
+        let mut array_data = vec![0u8; slice_bytes * NUM_CHUNKS as usize];
+
+        if !chunk_decal_data.is_empty() {
+            log::info!(
+                "Creating decal alpha atlas from {} chunks with decals",
+                chunk_decal_data.len()
+            );
+
+            for chunk in chunk_decal_data {
+                let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
+                if chunk_idx >= NUM_CHUNKS as usize {
+                    continue;
+                }
+                let slice_offset = chunk_idx * slice_bytes;
+
+                for y in 0..CHUNK_SIZE {
+                    for x in 0..CHUNK_SIZE {
+                        // Same transpose as splat alpha atlas
+                        let src_idx = (x * CHUNK_SIZE + y) as usize;
+                        let dst_idx = slice_offset + (y * CHUNK_SIZE + x) as usize * 4;
+
+                        for ch in 0..4usize {
+                            if chunk.alpha_maps.len() > ch && src_idx < chunk.alpha_maps[ch].len() {
+                                array_data[dst_idx + ch] = chunk.alpha_maps[ch][src_idx];
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            log::info!("No decal data, using empty decal alpha atlas");
+        }
+
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Decal Alpha Atlas"),
+            size: wgpu::Extent3d {
+                width: CHUNK_SIZE,
+                height: CHUNK_SIZE,
+                depth_or_array_layers: NUM_CHUNKS,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &array_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * CHUNK_SIZE),
+                rows_per_image: Some(CHUNK_SIZE),
+            },
+            wgpu::Extent3d {
+                width: CHUNK_SIZE,
+                height: CHUNK_SIZE,
+                depth_or_array_layers: NUM_CHUNKS,
+            },
+        );
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        (texture, view)
+    }
 }
 
 impl TerrainViewer {
