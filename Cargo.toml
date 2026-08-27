@@ -56,7 +56,7 @@ env_logger = "0.11"
 
 # Binary parsing (useful for game formats)
 byteorder = "1.5"
-binrw = "0.14"
+binrw = "0.15"
 bytemuck = { version = "1.19", features = ["derive"] }
 
 # XML parsing
