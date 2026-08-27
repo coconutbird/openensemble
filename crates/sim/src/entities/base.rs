@@ -1,6 +1,6 @@
 //! Base entity type with common fields.
 //!
-//! Based on BEntity from the original source.
+//! Based on `BEntity` from the original source.
 
 use crate::entity_id::EntityId;
 use crate::player::PlayerId;
@@ -8,12 +8,12 @@ use glam::Vec3;
 
 /// Base entity data shared by all entity types.
 ///
-/// Based on BEntity fields from entity.h:
-/// - mPosition (BVector) - 16 bytes
-/// - mForward (BVector) - 16 bytes
-/// - mVelocity (BVector) - 16 bytes
-/// - mID (BEntityID) - 4 bytes
-/// - mPlayerID (BPlayerID) - 4 bytes
+/// Based on `BEntity` fields from entity.h:
+/// - mPosition (`BVector`) - 16 bytes
+/// - mForward (`BVector`) - 16 bytes
+/// - mVelocity (`BVector`) - 16 bytes
+/// - mID (`BEntityID`) - 4 bytes
+/// - mPlayerID (`BPlayerID`) - 4 bytes
 #[derive(Debug, Clone)]
 pub struct BaseEntity {
     /// Entity ID.
@@ -45,6 +45,7 @@ impl Default for BaseEntity {
 
 impl BaseEntity {
     /// Create a new base entity with the given ID and player.
+    #[must_use]
     pub fn new(id: EntityId, player_id: PlayerId) -> Self {
         Self {
             id,
@@ -75,6 +76,7 @@ impl BaseEntity {
     }
 
     /// Check if entity is alive.
+    #[must_use]
     pub fn is_alive(&self) -> bool {
         self.alive
     }

@@ -27,6 +27,7 @@ pub struct NetClient {
 
 impl NetClient {
     /// Create a new client.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             transport: Transport::new(),
@@ -36,9 +37,15 @@ impl NetClient {
     }
 
     /// Connect to a host.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if binding the client socket or sending the connection request fails.
     pub async fn connect(&mut self, host: SocketAddr) -> Result<(), ClientError> {
         // Bind to any available port
-        self.transport.bind("0.0.0.0:0".parse().unwrap()).await?;
+        self.transport
+            .bind(SocketAddr::from(([0, 0, 0, 0], 0)))
+            .await?;
 
         self.host_addr = Some(host);
 
@@ -58,6 +65,10 @@ impl NetClient {
     }
 
     /// Disconnect from the host.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the disconnect packet cannot be sent.
     pub async fn disconnect(&mut self) -> Result<(), ClientError> {
         if let (Some(conn), Some(host)) = (&mut self.connection, self.host_addr) {
             let packet = NetPacket::new(PacketType::Disconnect, conn.next_sequence());
@@ -71,7 +82,11 @@ impl NetClient {
     }
 
     /// Process incoming packets.
-    pub async fn poll(&mut self) -> Result<Vec<NetPacket>, ClientError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a packet is invalid or the connection times out.
+    pub fn poll(&mut self) -> Result<Vec<NetPacket>, ClientError> {
         let mut received = Vec::new();
 
         loop {
@@ -106,6 +121,10 @@ impl NetClient {
     }
 
     /// Send a packet to the host.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the client is disconnected or the transport cannot send the packet.
     pub async fn send(&mut self, mut packet: NetPacket) -> Result<(), ClientError> {
         let conn = self.connection.as_mut().ok_or(ClientError::NotConnected)?;
         let host = self.host_addr.ok_or(ClientError::NotConnected)?;
@@ -123,19 +142,21 @@ impl NetClient {
     pub fn is_connected(&self) -> bool {
         self.connection
             .as_ref()
-            .map(|c| c.state == ConnectionState::Connected)
-            .unwrap_or(false)
+            .is_some_and(|c| c.state == ConnectionState::Connected)
     }
 
     /// Get the connection state.
     pub fn state(&self) -> ConnectionState {
         self.connection
             .as_ref()
-            .map(|c| c.state)
-            .unwrap_or(ConnectionState::Disconnected)
+            .map_or(ConnectionState::Disconnected, |c| c.state)
     }
 
     /// Get the local address.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the client transport has not been bound.
     pub fn local_addr(&self) -> Result<SocketAddr, ClientError> {
         Ok(self.transport.local_addr()?)
     }

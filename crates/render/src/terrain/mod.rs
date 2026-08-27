@@ -6,7 +6,7 @@
 //! - Mesh: Terrain mesh generation and data structures
 //! - Texture: Mipmap generation and texture utilities
 //! - Shaders: WGSL shader code for terrain rendering
-//! - Uniforms: GPU uniform structs (TerrainParams, GpuTessParams)
+//! - Uniforms: GPU uniform structs (`TerrainParams`, `GpuTessParams`)
 //! - Types: Data types for terrain textures, decals, and foliage
 //! - Loading: Functions to load textures and extract data from XTT
 

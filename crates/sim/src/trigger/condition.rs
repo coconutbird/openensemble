@@ -210,11 +210,20 @@ pub enum ConditionType {
 
 impl ConditionType {
     /// Try to convert from a raw u16 value.
+    #[must_use]
     pub fn from_u16(value: u16) -> Option<Self> {
-        // Only validate known values
-        match value {
-            2
-            | 4
+        if is_known_condition_value_low(value) || is_known_condition_value_high(value) {
+            Some(unsafe { std::mem::transmute::<u16, ConditionType>(value) })
+        } else {
+            None
+        }
+    }
+}
+
+fn is_known_condition_value_low(value: u16) -> bool {
+    matches!(
+        value,
+        2 | 4
             | 5
             | 7..=9
             | 14..=17
@@ -281,7 +290,13 @@ impl ConditionType {
             | 524
             | 527
             | 528
-            | 546..=548
+    )
+}
+
+fn is_known_condition_value_high(value: u16) -> bool {
+    matches!(
+        value,
+        546..=548
             | 552
             | 558
             | 563
@@ -357,10 +372,8 @@ impl ConditionType {
             | 1028
             | 1053
             | 1056
-            | 1059 => Some(unsafe { std::mem::transmute::<u16, ConditionType>(value) }),
-            _ => None,
-        }
-    }
+            | 1059
+    )
 }
 
 /// A condition that can be evaluated against game state.
@@ -377,7 +390,7 @@ pub struct Condition {
     /// The type of condition to evaluate.
     pub condition_type: ConditionType,
 
-    /// Input variable references (indices into TriggerScript's variable list).
+    /// Input variable references (indices into `TriggerScript`'s variable list).
     pub inputs: Vec<VarId>,
 
     /// Output variable references (for conditions that produce values).
@@ -395,6 +408,7 @@ pub struct Condition {
 
 impl Condition {
     /// Create a new condition.
+    #[must_use]
     pub fn new(id: i32, condition_type: ConditionType) -> Self {
         Self {
             id,
@@ -408,24 +422,28 @@ impl Condition {
     }
 
     /// Add an input variable reference.
+    #[must_use]
     pub fn with_input(mut self, var_id: VarId) -> Self {
         self.inputs.push(var_id);
         self
     }
 
     /// Add an output variable reference.
+    #[must_use]
     pub fn with_output(mut self, var_id: VarId) -> Self {
         self.outputs.push(var_id);
         self
     }
 
     /// Set as async condition.
+    #[must_use]
     pub fn async_condition(mut self) -> Self {
         self.is_async = true;
         self
     }
 
     /// Set as inverted.
+    #[must_use]
     pub fn inverted(mut self) -> Self {
         self.invert = true;
         self

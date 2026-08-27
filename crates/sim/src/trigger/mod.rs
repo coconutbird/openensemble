@@ -22,7 +22,7 @@ pub use effect::{Effect, EffectType};
 pub use engine::TriggerEngine;
 pub use loader::{LoadError, LoadResult, VanillaLoader};
 pub use script::{ScriptType, TriggerScript, TriggerVar};
-pub use trigger::Trigger;
+pub use trigger::{ConditionMode, Trigger};
 pub use value::TriggerValue;
 pub use var_type::VarType;
 
@@ -36,7 +36,7 @@ pub type TriggerScriptId = u32;
 pub type VarId = u32;
 
 /// Invalid trigger ID constant.
-pub const INVALID_TRIGGER_ID: TriggerId = 0xFFFFFFFF;
+pub const INVALID_TRIGGER_ID: TriggerId = 0xFFFF_FFFF;
 
 /// Invalid trigger script ID constant.
-pub const INVALID_TRIGGER_SCRIPT_ID: TriggerScriptId = 0xFFFFFFFF;
+pub const INVALID_TRIGGER_SCRIPT_ID: TriggerScriptId = 0xFFFF_FFFF;

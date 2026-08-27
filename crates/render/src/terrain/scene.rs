@@ -1,4 +1,4 @@
-//! TerrainScene — all decoded terrain assets bundled into a single struct.
+//! `TerrainScene` — all decoded terrain assets bundled into a single struct.
 //!
 //! `TerrainScene::load` extracts data from XTD/XTT files and loads textures
 //! from the ERA asset source in parallel, replacing the scattered extract/load
@@ -11,7 +11,11 @@ use pipeline::xtt::XttFile;
 use super::TerrainMesh;
 use super::loading;
 use super::mesh::TessellationMode;
-use super::types::*;
+use super::types::{
+    AlbedoData, AlphaTextureData, AoTextureData, ChunkDecalData, ChunkSplatData, DecalInstance,
+    DecalTexture, FoliageQNChunk, FoliageSet, LightingTextureData, NormalMapTexture, RawXtdData,
+    RoadChunkData, TerrainTexture,
+};
 
 /// All decoded terrain data needed for rendering.
 ///
@@ -61,6 +65,10 @@ impl TerrainScene {
     /// 1. Decodes XTD mesh, tessellation data, and raw GPU data
     /// 2. If XTT is present: decodes albedo, extracts splat/decal/foliage/road
     ///    data, and loads textures from the asset source in parallel
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the XTD vertex data cannot be decoded.
     pub fn load(
         xtd: &XtdFile,
         xtt: Option<&XttFile>,
@@ -73,13 +81,18 @@ impl TerrainScene {
         let mesh = Self::build_mesh(xtd, tessellation_mode, tessellation_data.as_ref())?;
 
         // Decode lighting data (L8 luminance at full resolution)
-        let lighting_data = xtd.decode_lighting().ok().map(|ld| {
-            log::info!("Lighting texture: {}x{} ({} bytes)", ld.width, ld.height, ld.values.len());
-            LightingTextureData {
+        let lighting_data = xtd.decode_lighting().ok().and_then(|ld| {
+            log::info!(
+                "Lighting texture: {}x{} ({} bytes)",
+                ld.width,
+                ld.height,
+                ld.values.len()
+            );
+            Some(LightingTextureData {
                 values: ld.values,
-                width: ld.width as u32,
-                height: ld.height as u32,
-            }
+                width: u32::try_from(ld.width).ok()?,
+                height: u32::try_from(ld.height).ok()?,
+            })
         });
 
         // -- XTT processing --
@@ -122,16 +135,20 @@ impl TerrainScene {
     fn extract_raw_xtd(xtd: &XtdFile) -> Option<RawXtdData> {
         let raw = xtd.extract_raw_data().ok()?;
 
-        let ao_data = xtd.decode_ao().ok().map(|ao| AoTextureData {
-            values: ao.values,
-            width: ao.width as u32,
-            height: ao.height as u32,
+        let ao_data = xtd.decode_ao().ok().and_then(|ao| {
+            Some(AoTextureData {
+                values: ao.values,
+                width: u32::try_from(ao.width).ok()?,
+                height: u32::try_from(ao.height).ok()?,
+            })
         });
 
-        let alpha_data = xtd.decode_alpha().ok().map(|alpha| AlphaTextureData {
-            values: alpha.values,
-            width: alpha.width as u32,
-            height: alpha.height as u32,
+        let alpha_data = xtd.decode_alpha().ok().and_then(|alpha| {
+            Some(AlphaTextureData {
+                values: alpha.values,
+                width: u32::try_from(alpha.width).ok()?,
+                height: u32::try_from(alpha.height).ok()?,
+            })
         });
 
         Some(RawXtdData {
@@ -154,7 +171,7 @@ impl TerrainScene {
     ) -> Result<TerrainMesh, String> {
         let vertices = xtd
             .decode_vertices()
-            .map_err(|e| format!("Failed to decode vertices: {}", e))?;
+            .map_err(|e| format!("Failed to decode vertices: {e}"))?;
 
         let (positions, normals, uvs, indices) = match mode {
             TessellationMode::Cpu => {
@@ -203,7 +220,7 @@ impl TerrainScene {
     #[allow(clippy::type_complexity)]
     fn process_xtt(
         xtt: &XttFile,
-        mut source: Option<&mut AssetSource<StdFileProvider>>,
+        source: Option<&mut AssetSource<StdFileProvider>>,
     ) -> (
         Option<AlbedoData>,
         Vec<TerrainTexture>,
@@ -240,7 +257,7 @@ impl TerrainScene {
 
         // Load textures from ERA (requires asset source)
         let (terrain_textures, normal_textures, decal_textures, foliage_sets) =
-            if let Some(src) = source.as_deref_mut() {
+            if let Some(src) = source {
                 let (tex, nrm) = loading::load_terrain_textures(src, &xtt.active_textures);
                 let dec = loading::load_decal_textures(src, &xtt.active_decals);
                 let fol = loading::load_foliage_sets(src, &xtt.foliage.sets);

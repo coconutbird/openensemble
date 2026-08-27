@@ -1,4 +1,4 @@
-//! Thin wrapper over `ensemble-assets` pipeline for OpenEnsemble game data.
+//! Thin wrapper over `ensemble-assets` pipeline for `OpenEnsemble` game data.
 //!
 //! This crate re-exports types from the [`pipeline`] crate and adds
 //! OpenEnsemble-specific convenience (game directory discovery, etc.).
@@ -39,12 +39,14 @@ pub use paths::{GAME_DIR_ENV_VAR, game_dir, game_file, is_valid_game_dir};
 ///
 /// Uses [`paths::game_dir()`] to locate the installation, then loads
 /// ERAs in the engine's confirmed load order via [`pipeline::hw1::loader`].
+#[must_use]
 pub fn load_game_assets() -> AssetSource<StdFileProvider> {
     let dir = paths::game_dir();
     loader::load_game_dir(&dir.to_string_lossy())
 }
 
 /// Create an [`AssetSource`] with a scenario ERA layered on top.
+#[must_use]
 pub fn load_scenario_assets(scenario_era: &str) -> AssetSource<StdFileProvider> {
     let dir = paths::game_dir();
     loader::load_with_scenario(&dir.to_string_lossy(), scenario_era)

@@ -12,8 +12,9 @@
 /// assert_eq!(mip_level_count(512, 512), 10); // 512 -> 256 -> ... -> 1
 /// assert_eq!(mip_level_count(256, 128), 9);  // max(256,128) = 256 -> ... -> 1
 /// ```
+#[must_use]
 pub fn mip_level_count(width: u32, height: u32) -> u32 {
-    ((width.max(height) as f32).log2().floor() as u32) + 1
+    (u32::BITS - width.max(height).leading_zeros()).max(1)
 }
 
 /// Generate mipmaps for an RGBA image on CPU.
@@ -28,7 +29,8 @@ pub fn mip_level_count(width: u32, height: u32) -> u32 {
 /// * `height` - Image height in pixels
 ///
 /// # Returns
-/// Vector of mip levels, each as Vec<u8> of RGBA data.
+/// Vector of mip levels, each as `Vec<u8>` of RGBA data.
+#[must_use]
 pub fn generate_mipmaps(pixels: &[u8], width: u32, height: u32) -> Vec<Vec<u8>> {
     let mut mips = Vec::new();
 
@@ -43,7 +45,18 @@ pub fn generate_mipmaps(pixels: &[u8], width: u32, height: u32) -> Vec<Vec<u8>> 
     while current_width > 1 || current_height > 1 {
         let new_width = (current_width / 2).max(1);
         let new_height = (current_height / 2).max(1);
-        let mut new_pixels = vec![0u8; (new_width * new_height * 4) as usize];
+        let Some(pixel_count) = usize::try_from(new_width)
+            .ok()
+            .and_then(|width| {
+                usize::try_from(new_height)
+                    .ok()
+                    .and_then(|height| width.checked_mul(height))
+            })
+            .and_then(|pixels| pixels.checked_mul(4))
+        else {
+            return mips;
+        };
+        let mut new_pixels = vec![0u8; pixel_count];
 
         // Box filter: average 2x2 blocks
         for y in 0..new_height {
@@ -62,23 +75,32 @@ pub fn generate_mipmaps(pixels: &[u8], width: u32, height: u32) -> Vec<Vec<u8>> 
                     for dx in 0..2 {
                         let sx = (src_x + dx).min(current_width - 1);
                         let sy = (src_y + dy).min(current_height - 1);
-                        let idx = ((sy * current_width + sx) * 4) as usize;
+                        let idx = usize::try_from(
+                            (u64::from(sy) * u64::from(current_width) + u64::from(sx)) * 4,
+                        )
+                        .unwrap_or(usize::MAX);
                         if idx + 3 < current_pixels.len() {
-                            r += current_pixels[idx] as u32;
-                            g += current_pixels[idx + 1] as u32;
-                            b += current_pixels[idx + 2] as u32;
-                            a += current_pixels[idx + 3] as u32;
+                            r += u32::from(current_pixels[idx]);
+                            g += u32::from(current_pixels[idx + 1]);
+                            b += u32::from(current_pixels[idx + 2]);
+                            a += u32::from(current_pixels[idx + 3]);
                             count += 1;
                         }
                     }
                 }
 
-                if count > 0 {
-                    let dst_idx = ((y * new_width + x) * 4) as usize;
-                    new_pixels[dst_idx] = (r / count) as u8;
-                    new_pixels[dst_idx + 1] = (g / count) as u8;
-                    new_pixels[dst_idx + 2] = (b / count) as u8;
-                    new_pixels[dst_idx + 3] = (a / count) as u8;
+                let [Some(r), Some(g), Some(b), Some(a)] = [r, g, b, a].map(|channel| {
+                    channel
+                        .checked_div(count)
+                        .and_then(|value| u8::try_from(value).ok())
+                }) else {
+                    continue;
+                };
+                let dst_idx =
+                    usize::try_from((u64::from(y) * u64::from(new_width) + u64::from(x)) * 4)
+                        .unwrap_or(usize::MAX);
+                if let Some(pixel) = new_pixels.get_mut(dst_idx..dst_idx + 4) {
+                    pixel.copy_from_slice(&[r, g, b, a]);
                 }
             }
         }
@@ -101,6 +123,7 @@ pub fn generate_mipmaps(pixels: &[u8], width: u32, height: u32) -> Vec<Vec<u8>> 
 ///
 /// # Returns
 /// (width, height) at the specified mip level
+#[must_use]
 pub fn mip_dimensions(base_width: u32, base_height: u32, mip_level: u32) -> (u32, u32) {
     let width = (base_width >> mip_level).max(1);
     let height = (base_height >> mip_level).max(1);

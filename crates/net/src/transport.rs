@@ -27,6 +27,7 @@ pub struct Transport {
 
 impl Transport {
     /// Create a new transport (not yet bound).
+    #[must_use]
     pub fn new() -> Self {
         Self {
             socket: None,
@@ -35,6 +36,10 @@ impl Transport {
     }
 
     /// Bind to a local address.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the UDP socket cannot bind to the address.
     pub async fn bind(&mut self, addr: SocketAddr) -> Result<(), TransportError> {
         let socket = UdpSocket::bind(addr).await?;
         self.socket = Some(socket);
@@ -42,6 +47,10 @@ impl Transport {
     }
 
     /// Get the local address.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transport is unbound or the socket address cannot be read.
     pub fn local_addr(&self) -> Result<SocketAddr, TransportError> {
         self.socket
             .as_ref()
@@ -51,6 +60,10 @@ impl Transport {
     }
 
     /// Send a packet to a remote address.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transport is unbound, the packet is too large, or sending fails.
     pub async fn send_to(
         &self,
         packet: &NetPacket,
@@ -71,6 +84,10 @@ impl Transport {
     }
 
     /// Receive a packet.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transport is unbound or receiving or decoding the packet fails.
     pub async fn recv_from(&mut self) -> Result<(NetPacket, SocketAddr), TransportError> {
         let socket = self.socket.as_ref().ok_or(TransportError::NotBound)?;
         let (len, addr) = socket.recv_from(&mut self.recv_buffer).await?;
@@ -79,6 +96,10 @@ impl Transport {
     }
 
     /// Try to receive a packet without blocking.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transport is unbound or receiving or decoding the packet fails.
     pub fn try_recv_from(&mut self) -> Result<Option<(NetPacket, SocketAddr)>, TransportError> {
         let socket = self.socket.as_ref().ok_or(TransportError::NotBound)?;
         match socket.try_recv_from(&mut self.recv_buffer) {

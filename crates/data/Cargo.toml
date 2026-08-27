@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 description = "Thin wrapper over ensemble-assets pipeline for OpenEnsemble game data"
 
+[lints]
+workspace = true
+
 [dependencies]
 pipeline = { workspace = true }
 log = { workspace = true }

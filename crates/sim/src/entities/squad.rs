@@ -1,6 +1,6 @@
 //! Squad entity - the primary controllable unit.
 //!
-//! Based on BSquad from the original source.
+//! Based on `BSquad` from the original source.
 //! A squad is a group of units that move and act together.
 
 use super::BaseEntity;
@@ -55,6 +55,7 @@ impl Default for Squad {
 
 impl Squad {
     /// Create a new squad with the given ID and player.
+    #[must_use]
     pub fn new(id: EntityId, player_id: PlayerId) -> Self {
         Self {
             base: BaseEntity::new(id, player_id),
@@ -68,6 +69,7 @@ impl Squad {
     }
 
     /// Get the squad's position.
+    #[must_use]
     pub fn position(&self) -> Vec3 {
         self.base.position
     }
@@ -88,6 +90,7 @@ impl Squad {
     }
 
     /// Check if the squad is moving.
+    #[must_use]
     pub fn is_moving(&self) -> bool {
         self.state == SquadState::Moving
     }
@@ -96,15 +99,14 @@ impl Squad {
     ///
     /// Returns true if the squad reached its destination.
     pub fn update_movement(&mut self, dt: f32) -> bool {
+        const ARRIVAL_THRESHOLD: f32 = 0.5;
+
         let Some(target) = self.move_target else {
             return false;
         };
 
         let to_target = target - self.base.position;
         let distance = to_target.length();
-
-        // Arrival threshold
-        const ARRIVAL_THRESHOLD: f32 = 0.5;
 
         if distance < ARRIVAL_THRESHOLD {
             // Arrived at destination

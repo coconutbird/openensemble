@@ -6,28 +6,19 @@
 use std::num::Wrapping;
 
 /// CRC-32 polynomial (IEEE 802.3).
-const CRC32_POLYNOMIAL: u32 = 0xEDB88320;
+const CRC32_POLYNOMIAL: u32 = 0xEDB8_8320;
 
-/// Precomputed CRC-32 lookup table.
-static CRC32_TABLE: [u32; 256] = {
-    let mut table = [0u32; 256];
-    let mut i = 0;
-    while i < 256 {
-        let mut crc = i as u32;
-        let mut j = 0;
-        while j < 8 {
-            if crc & 1 != 0 {
-                crc = (crc >> 1) ^ CRC32_POLYNOMIAL;
-            } else {
-                crc >>= 1;
-            }
-            j += 1;
-        }
-        table[i] = crc;
-        i += 1;
+fn update_crc32(mut crc: u32, byte: u8) -> u32 {
+    crc ^= u32::from(byte);
+    for _ in 0..8 {
+        crc = if crc & 1 == 0 {
+            crc >> 1
+        } else {
+            (crc >> 1) ^ CRC32_POLYNOMIAL
+        };
     }
-    table
-};
+    crc
+}
 
 /// Sync checksum state for detecting OOS.
 #[derive(Debug, Clone, Default)]
@@ -42,9 +33,10 @@ pub struct SyncChecksum {
 
 impl SyncChecksum {
     /// Create a new sync checksum.
+    #[must_use]
     pub fn new() -> Self {
         Self {
-            crc: 0xFFFFFFFF,
+            crc: 0xFFFF_FFFF,
             count: 0,
             last_update: 0,
         }
@@ -52,16 +44,18 @@ impl SyncChecksum {
 
     /// Reset the checksum state.
     pub fn reset(&mut self) {
-        self.crc = 0xFFFFFFFF;
+        self.crc = 0xFFFF_FFFF;
         self.count = 0;
     }
 
     /// Get the current checksum value.
+    #[must_use]
     pub fn value(&self) -> u32 {
-        self.crc ^ 0xFFFFFFFF
+        self.crc ^ 0xFFFF_FFFF
     }
 
     /// Get the number of values hashed.
+    #[must_use]
     pub fn count(&self) -> u64 {
         self.count
     }
@@ -70,15 +64,14 @@ impl SyncChecksum {
     pub fn hash_u32(&mut self, value: u32) {
         let bytes = value.to_le_bytes();
         for byte in bytes {
-            let idx = ((self.crc ^ byte as u32) & 0xFF) as usize;
-            self.crc = (self.crc >> 8) ^ CRC32_TABLE[idx];
+            self.crc = update_crc32(self.crc, byte);
         }
         self.count += 1;
     }
 
     /// Hash an i32 value.
     pub fn hash_i32(&mut self, value: i32) {
-        self.hash_u32(value as u32);
+        self.hash_u32(value.cast_unsigned());
     }
 
     /// Hash a f32 value.
@@ -89,8 +82,7 @@ impl SyncChecksum {
     /// Hash a slice of bytes.
     pub fn hash_bytes(&mut self, data: &[u8]) {
         for &byte in data {
-            let idx = ((self.crc ^ byte as u32) & 0xFF) as usize;
-            self.crc = (self.crc >> 8) ^ CRC32_TABLE[idx];
+            self.crc = update_crc32(self.crc, byte);
         }
         self.count += 1;
     }
@@ -108,6 +100,7 @@ impl SyncChecksum {
     }
 
     /// Get the last update number.
+    #[must_use]
     pub fn last_update(&self) -> u32 {
         self.last_update
     }
@@ -121,6 +114,7 @@ pub struct SimpleChecksum {
 }
 
 impl SimpleChecksum {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -130,6 +124,7 @@ impl SimpleChecksum {
         self.count = 0;
     }
 
+    #[must_use]
     pub fn value(&self) -> u32 {
         self.sum.0
     }

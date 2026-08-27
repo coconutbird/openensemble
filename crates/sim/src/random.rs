@@ -5,6 +5,8 @@
 
 use std::num::Wrapping;
 
+use num_traits::ToPrimitive;
+
 /// Deterministic RNG matching vanilla `Random` class.
 ///
 /// Uses KISS (Keep It Simple Stupid) + SWB (Subtract With Borrow) generators.
@@ -35,12 +37,12 @@ pub struct Random {
 impl Default for Random {
     fn default() -> Self {
         let mut rng = Self {
-            z: Wrapping(362436069),
-            w: Wrapping(521288629),
-            jsr: Wrapping(123456789),
-            jcong: Wrapping(380116160),
-            a: Wrapping(224466889),
-            b: Wrapping(7584631),
+            z: Wrapping(362_436_069),
+            w: Wrapping(521_288_629),
+            jsr: Wrapping(123_456_789),
+            jcong: Wrapping(380_116_160),
+            a: Wrapping(224_466_889),
+            b: Wrapping(7_584_631),
             table: [Wrapping(0); 256],
             x: Wrapping(0),
             y: Wrapping(0),
@@ -49,7 +51,7 @@ impl Default for Random {
             prev_gaussian: 0.0,
             use_prev_gaussian: false,
         };
-        rng.set_seed_full(12345, 65435, 34221, 12345, 9983651, 95746118);
+        rng.set_seed_full(12345, 65435, 34221, 12345, 9_983_651, 95_746_118);
         rng
     }
 }
@@ -58,6 +60,7 @@ impl Random {
     pub const U_RAND_MAX: u32 = u32::MAX;
 
     /// Create a new RNG with the default seed.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -94,7 +97,7 @@ impl Random {
     /// CONG: Congruential generator
     #[inline]
     fn cong(&mut self) -> Wrapping<u32> {
-        self.jcong = Wrapping(69069) * self.jcong + Wrapping(1234567);
+        self.jcong = Wrapping(69069) * self.jcong + Wrapping(1_234_567);
         self.jcong
     }
 
@@ -148,7 +151,7 @@ impl Random {
         }
         loop {
             let r = self.u_rand();
-            let d = l + (h - l) * (r as f64 / 4294967296.0);
+            let d = l + (h - l) * (f64::from(r) / 4_294_967_296.0);
             if d >= l && d < h {
                 return d;
             }
@@ -162,7 +165,10 @@ impl Random {
         }
         loop {
             let r = self.u_rand();
-            let f = l + (h - l) * (r as f64 / 4294967296.0) as f32;
+            let unit = (f64::from(r) / 4_294_967_296.0)
+                .to_f32()
+                .unwrap_or_default();
+            let f = l + (h - l) * unit;
             if f >= l && f < h {
                 return f;
             }
@@ -173,7 +179,10 @@ impl Random {
     pub fn i_rand(&mut self, l: i32, h: i32) -> i32 {
         debug_assert!(l < h);
         loop {
-            let r = l + ((h - l) as f64 * self.d_rand(0.0, 1.0)) as i32;
+            let offset = (f64::from(h - l) * self.d_rand(0.0, 1.0))
+                .to_i32()
+                .unwrap_or_default();
+            let r = l + offset;
             if r >= l && r < h {
                 return r;
             }
@@ -218,8 +227,8 @@ impl Random {
 
     /// Set seed from a u64.
     pub fn set_seed64(&mut self, seed: u64) {
-        self.jcong = Wrapping(seed as u32);
-        self.jsr = Wrapping(((seed >> 32) as u32) ^ self.jcong.0);
+        self.jcong = Wrapping(u32::try_from(seed & u64::from(u32::MAX)).unwrap_or_default());
+        self.jsr = Wrapping(u32::try_from(seed >> 32).unwrap_or_default() ^ self.jcong.0);
         if self.jsr.0 == 0 {
             self.jsr = Wrapping(1);
         }

@@ -39,12 +39,13 @@ pub struct LoadedScenario {
 
 impl LoadedScenario {
     /// Get entity ID from scenario object ID.
+    #[must_use]
     pub fn get_entity_id(&self, scenario_id: i32) -> Option<EntityId> {
         self.scenario_id_to_entity_id.get(&scenario_id).copied()
     }
 }
 
-/// Load a scenario into a new World, creating players and entities.
+/// Load a scenario into a new [`World`], creating players and entities.
 ///
 /// Returns a [`LoadedScenario`] containing the populated world and
 /// a mapping from scenario object IDs to entity IDs.
@@ -61,6 +62,7 @@ impl LoadedScenario {
 /// let loaded = load_scenario_into_world(&scenario, &db);
 /// println!("Created {} players", loaded.world.player_count());
 /// ```
+#[must_use]
 pub fn load_scenario_into_world(scenario: &ScenarioData, db: &Database) -> LoadedScenario {
     let mut world = World::new();
     let mut scenario_id_to_entity_id = HashMap::new();
@@ -70,30 +72,31 @@ pub fn load_scenario_into_world(scenario: &ScenarioData, db: &Database) -> Loade
 
     // Initialize players
     // Player 0 is always Gaia (created by init_players)
-    let player_count = players.len() as u8;
+    let player_count =
+        u8::try_from(players.len().min(crate::world::MAX_PLAYERS)).unwrap_or(u8::MAX);
     world.init_players(player_count);
 
     // Configure players from scenario data
-    for (i, scenario_player) in players.iter().enumerate() {
-        let player_id = (i + 1) as u8; // +1 because Gaia is 0
+    for (i, scenario_player) in players.iter().take(crate::world::MAX_PLAYERS).enumerate() {
+        let player_id = u8::try_from(i + 1).unwrap_or(u8::MAX); // +1 because Gaia is 0
         if let Some(player) = world.get_player_mut(player_id) {
-            player.name = scenario_player.name.clone();
+            player.name.clone_from(&scenario_player.name);
 
             // Resolve civ/leader names to IDs via database (0-based, parse order)
             player.civ_id = db
                 .civs
                 .iter()
                 .position(|c| c.name == scenario_player.civ)
-                .map(|id| id as i32)
+                .and_then(|id| i32::try_from(id).ok())
                 .unwrap_or(-1);
             player.leader_id = db
                 .leaders
                 .iter()
                 .position(|l| l.name == scenario_player.leader1)
-                .map(|id| id as i32)
+                .and_then(|id| i32::try_from(id).ok())
                 .unwrap_or(-1);
 
-            player.team_id = scenario_player.team as u8;
+            player.team_id = u8::try_from(scenario_player.team).unwrap_or_default();
             player.player_type = if scenario_player.controllable {
                 PlayerType::Human
             } else {
@@ -116,7 +119,8 @@ pub fn load_scenario_into_world(scenario: &ScenarioData, db: &Database) -> Loade
             let position = glam::Vec3::new(pos[0], pos[1], pos[2]);
 
             // Create squad
-            let entity_id = world.create_squad_at(obj.player as u8, position);
+            let entity_id =
+                world.create_squad_at(u8::try_from(obj.player).unwrap_or_default(), position);
 
             // Set forward direction
             if let Some(squad) = world.get_squad_mut(entity_id) {

@@ -1,6 +1,6 @@
 //! Network packet types matching vanilla Halo Wars wire format.
 //!
-//! BChannelPacket is the base for all game commands sent over the network.
+//! `BChannelPacket` is the base for all game commands sent over the network.
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{self, Read, Write};
@@ -14,7 +14,7 @@ pub enum PacketError {
     InvalidType(u8),
 }
 
-/// Channel packet header matching vanilla BChannelPacket.
+/// Channel packet header matching vanilla `BChannelPacket`.
 ///
 /// Wire format (6 bytes):
 /// - mTimeOffset: u16 (offset from base time)
@@ -38,6 +38,10 @@ impl ChannelPacketHeader {
     pub const SIZE: usize = 6;
 
     /// Serialize the header to the wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the writer cannot accept all header bytes.
     pub fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), PacketError> {
         writer.write_u16::<LittleEndian>(self.time_offset)?;
         writer.write_u16::<LittleEndian>(self.packet_id)?;
@@ -47,6 +51,10 @@ impl ChannelPacketHeader {
     }
 
     /// Deserialize the header from the wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the reader does not contain a complete header.
     pub fn deserialize<R: Read>(reader: &mut R) -> Result<Self, PacketError> {
         Ok(Self {
             time_offset: reader.read_u16::<LittleEndian>()?,
@@ -57,14 +65,17 @@ impl ChannelPacketHeader {
     }
 
     /// Read header fields from raw bytes without consuming.
+    #[must_use]
     pub fn peek_type(data: &[u8]) -> Option<u8> {
         data.get(4).copied()
     }
 
+    #[must_use]
     pub fn peek_channel(data: &[u8]) -> Option<u8> {
         data.get(5).copied()
     }
 
+    #[must_use]
     pub fn peek_packet_id(data: &[u8]) -> Option<u16> {
         if data.len() >= 4 {
             Some(u16::from_le_bytes([data[2], data[3]]))
@@ -73,6 +84,7 @@ impl ChannelPacketHeader {
         }
     }
 
+    #[must_use]
     pub fn peek_time_offset(data: &[u8]) -> Option<u16> {
         if data.len() >= 2 {
             Some(u16::from_le_bytes([data[0], data[1]]))

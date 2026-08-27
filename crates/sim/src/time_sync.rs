@@ -6,16 +6,16 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{self, Read, Write};
 
-/// Constants matching vanilla BTimeSync.
+/// Constants matching vanilla `BTimeSync`.
 pub mod constants {
     /// Default update interval in milliseconds.
     pub const DEFAULT_UPDATE_INTERVAL: u32 = 100;
     /// Default timeout for game start.
-    pub const DEFAULT_TIMEOUT_VALUE: u32 = 10000;
+    pub const DEFAULT_TIMEOUT_VALUE: u32 = 10_000;
     /// Initial send time offset.
-    pub const INITIAL_SEND_TIME: u32 = 1000;
+    pub const INITIAL_SEND_TIME: u32 = 1_000;
     /// Maximum update interval.
-    pub const MAX_UPDATE_INTERVAL: u32 = 5000;
+    pub const MAX_UPDATE_INTERVAL: u32 = 5_000;
     /// Minimum service interval.
     pub const MIN_SERVICE_INTERVAL: u32 = 10;
     /// Divisor for ping-based update interval.
@@ -38,12 +38,22 @@ pub struct TimingRecord {
 }
 
 impl TimingRecord {
+    /// Serialize this timing record.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if the writer cannot accept the record.
     pub fn serialize<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         writer.write_u8(self.timing)?;
         writer.write_u32::<LittleEndian>(self.send_time)?;
         Ok(())
     }
 
+    /// Deserialize a timing record.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if the reader does not contain a complete record.
     pub fn deserialize<R: Read>(reader: &mut R) -> io::Result<Self> {
         Ok(Self {
             timing: reader.read_u8()?,
@@ -68,18 +78,19 @@ pub struct ClientTimeHistory {
 }
 
 impl ClientTimeHistory {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Add a time interval to the history.
     pub fn add_interval(&mut self, interval: u8) {
-        self.add_time(self.last_time + interval as u32);
+        self.add_time(self.last_time + u32::from(interval));
     }
 
     /// Add an absolute time to the history.
     pub fn add_time(&mut self, time: u32) {
-        let idx = (self.insert_index as usize) % self.times.len();
+        let idx = usize::try_from(self.insert_index).unwrap_or_default() % self.times.len();
         self.times[idx] = time;
         self.last_time = time;
         self.insert_index = self.insert_index.wrapping_add(1);
@@ -87,7 +98,7 @@ impl ClientTimeHistory {
         // Update earliest if needed
         if self.earliest_time == 0 || time < self.earliest_time {
             self.earliest_time = time;
-            self.earliest_index = idx as u32;
+            self.earliest_index = u32::try_from(idx).unwrap_or_default();
         }
     }
 

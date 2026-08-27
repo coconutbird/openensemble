@@ -28,7 +28,7 @@ pipeline = { path = "../ensemble-assets/crates/pipeline" }
 # Windowing and Graphics (pure Rust)
 winit = "0.30"
 wgpu = "24.0"
-pollster = "0.4"  # For blocking on async wgpu calls
+pollster = "0.4" # For blocking on async wgpu calls
 
 # Immediate mode GUI
 egui = "0.31"
@@ -40,6 +40,7 @@ rodio = "0.20"
 
 # Math and linear algebra
 glam = "0.29"
+num-traits = "0.2"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -66,6 +67,9 @@ name = "openensemble"
 version.workspace = true
 edition.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 xcore = { workspace = true }
 render = { workspace = true }
@@ -77,6 +81,7 @@ log = { workspace = true }
 env_logger = { workspace = true }
 anyhow = { workspace = true }
 glam = { workspace = true }
+num-traits = { workspace = true }
 egui = { workspace = true }
 bytemuck = { workspace = true }
 dotenvy = "0.15"
@@ -95,3 +100,21 @@ name = "terrain_viewer"
 path = "src/bin/terrain_viewer/main.rs"
 
 [dev-dependencies]
+
+[workspace.lints.rust]
+warnings = { level = "deny", priority = -2 }
+unused = { level = "deny", priority = -1 }
+nonstandard_style = { level = "deny", priority = -1 }
+rust_2018_idioms = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[workspace.lints.clippy]
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+style = { level = "deny", priority = -1 }
+complexity = { level = "deny", priority = -1 }
+perf = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+
+[workspace.lints.rustdoc]
+all = { level = "deny", priority = -1 }

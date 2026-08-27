@@ -19,38 +19,50 @@ pub struct RoadResources {
     pub texture_bind_group: wgpu::BindGroup,
 }
 
-/// Create road GPU resources.
-#[allow(clippy::too_many_arguments)]
-pub fn create_road_resources(
+/// Inputs used to create road GPU resources.
+pub struct RoadResourceInput<'a> {
+    pub camera_bind_group_layout: &'a wgpu::BindGroupLayout,
+    pub surface_format: wgpu::TextureFormat,
+    pub positions: &'a [[f32; 3]],
+    pub uvs: &'a [[f32; 2]],
+    pub albedo_pixels: &'a [u8],
+    pub texture_size: [u32; 2],
+}
+
+fn create_road_vertex_buffer(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    camera_bind_group_layout: &wgpu::BindGroupLayout,
-    surface_format: wgpu::TextureFormat,
     positions: &[[f32; 3]],
     uvs: &[[f32; 2]],
-    albedo_pixels: &[u8],
-    tex_width: u32,
-    tex_height: u32,
-) -> RoadResources {
-    // Interleave vertex data: [pos.x, pos.y, pos.z, uv.x, uv.y]
+) -> wgpu::Buffer {
+    assert_eq!(
+        positions.len(),
+        uvs.len(),
+        "road positions and UVs must align"
+    );
     let mut vertex_data = Vec::with_capacity(positions.len() * 5);
-    for i in 0..positions.len() {
-        vertex_data.extend_from_slice(&positions[i]);
-        vertex_data.extend_from_slice(&uvs[i]);
+    for (position, uv) in positions.iter().zip(uvs) {
+        vertex_data.extend_from_slice(position);
+        vertex_data.extend_from_slice(uv);
     }
-
-    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Road Vertex Buffer"),
         contents: bytemuck::cast_slice(&vertex_data),
         usage: wgpu::BufferUsages::VERTEX,
-    });
+    })
+}
 
-    // Create road albedo texture
+fn create_road_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+) -> (wgpu::TextureView, wgpu::Sampler) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Road Albedo"),
         size: wgpu::Extent3d {
-            width: tex_width,
-            height: tex_height,
+            width,
+            height,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
@@ -67,95 +79,101 @@ pub fn create_road_resources(
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
-        albedo_pixels,
+        pixels,
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(tex_width * 4),
+            bytes_per_row: Some(width * 4),
             rows_per_image: None,
         },
         wgpu::Extent3d {
-            width: tex_width,
-            height: tex_height,
+            width,
+            height,
             depth_or_array_layers: 1,
         },
     );
-    let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("Road Sampler"),
         mag_filter: wgpu::FilterMode::Linear,
         min_filter: wgpu::FilterMode::Linear,
         ..Default::default()
     });
+    (view, sampler)
+}
 
-    // Texture bind group layout
-    let texture_bind_group_layout =
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Road Texture BGL"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-
-    let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Road Texture BG"),
-        layout: &texture_bind_group_layout,
+fn create_road_texture_bindings(
+    device: &wgpu::Device,
+    texture_view: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Road Texture BGL"),
         entries: &[
-            wgpu::BindGroupEntry {
+            wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&texture_view),
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
             },
-            wgpu::BindGroupEntry {
+            wgpu::BindGroupLayoutEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
             },
         ],
     });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Road Texture BG"),
+        layout: &layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(texture_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    });
+    (layout, bind_group)
+}
 
-    // Simple road shader (just textured triangles)
-    let shader_source = ROAD_SIMPLE_SHADER;
+fn create_road_pipeline(
+    device: &wgpu::Device,
+    camera_layout: &wgpu::BindGroupLayout,
+    texture_layout: &wgpu::BindGroupLayout,
+    surface_format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Road Shader"),
-        source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+        source: wgpu::ShaderSource::Wgsl(ROAD_SIMPLE_SHADER.into()),
     });
-
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Road Pipeline Layout"),
-        bind_group_layouts: &[camera_bind_group_layout, &texture_bind_group_layout],
+        bind_group_layouts: &[camera_layout, texture_layout],
         push_constant_ranges: &[],
     });
-
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Road Pipeline"),
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
             module: &shader,
             entry_point: Some("vs_main"),
             buffers: &[wgpu::VertexBufferLayout {
-                array_stride: (5 * std::mem::size_of::<f32>()) as u64,
+                array_stride: 20,
                 step_mode: wgpu::VertexStepMode::Vertex,
                 attributes: &[
-                    // position
                     wgpu::VertexAttribute {
                         format: wgpu::VertexFormat::Float32x3,
                         offset: 0,
                         shader_location: 0,
                     },
-                    // uv
                     wgpu::VertexAttribute {
                         format: wgpu::VertexFormat::Float32x2,
                         offset: 12,
@@ -163,7 +181,7 @@ pub fn create_road_resources(
                     },
                 ],
             }],
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
         },
         fragment: Some(wgpu::FragmentState {
             module: &shader,
@@ -173,40 +191,63 @@ pub fn create_road_resources(
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
         }),
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: None, // Roads can be seen from both sides
+            cull_mode: None,
             ..Default::default()
         },
         depth_stencil: Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
             depth_write_enabled: true,
             depth_compare: wgpu::CompareFunction::LessEqual,
-            stencil: Default::default(),
+            stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState {
-                constant: -2, // Slight depth bias to render on top of terrain
+                constant: -2,
                 slope_scale: -1.0,
                 clamp: 0.0,
             },
         }),
-        multisample: Default::default(),
+        multisample: wgpu::MultisampleState::default(),
         multiview: None,
         cache: None,
-    });
+    })
+}
 
+/// Create road GPU resources.
+pub fn create_road_resources(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    input: &RoadResourceInput<'_>,
+) -> RoadResources {
+    let [texture_width, texture_height] = input.texture_size;
+    let vertex_buffer = create_road_vertex_buffer(device, input.positions, input.uvs);
+    let (texture_view, sampler) = create_road_texture(
+        device,
+        queue,
+        input.albedo_pixels,
+        texture_width,
+        texture_height,
+    );
+    let (texture_layout, texture_bind_group) =
+        create_road_texture_bindings(device, &texture_view, &sampler);
+    let pipeline = create_road_pipeline(
+        device,
+        input.camera_bind_group_layout,
+        &texture_layout,
+        input.surface_format,
+    );
+    let vertex_count =
+        u32::try_from(input.positions.len()).expect("road vertex count must fit u32");
     log::info!(
-        "Created road resources: {} vertices, {}x{} texture",
-        positions.len(),
-        tex_width,
-        tex_height
+        "Created road resources: {vertex_count} vertices, {texture_width}x{texture_height} texture"
     );
 
     RoadResources {
         pipeline,
         vertex_buffer,
-        vertex_count: positions.len() as u32,
+        vertex_count,
         texture_bind_group,
     }
 }
@@ -225,7 +266,7 @@ pub fn render_roads(
 }
 
 /// Simple road shader: textured triangles with camera transform.
-const ROAD_SIMPLE_SHADER: &str = r#"
+const ROAD_SIMPLE_SHADER: &str = r"
 struct CameraUniform {
     view_proj: mat4x4<f32>,
 };
@@ -262,4 +303,4 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     return color;
 }
-"#;
+";

@@ -8,6 +8,7 @@
 //! we use a staging buffer large enough for ALL 256 chunks and use dynamic
 //! offsets so each draw reads from a different slot.
 
+use num_traits::ToPrimitive;
 use wgpu;
 
 /// LOD level configuration for distance-based compositing quality.
@@ -27,6 +28,7 @@ impl Default for LodConfig {
 }
 
 impl LodConfig {
+    #[must_use]
     pub fn with_distances(d0: f32, d1: f32, d2: f32) -> Self {
         Self {
             distance_thresholds: [d0, d1, d2, f32::MAX],
@@ -34,10 +36,11 @@ impl LodConfig {
         }
     }
 
+    #[must_use]
     pub fn lod_for_distance(&self, distance: f32) -> u8 {
         for (i, &threshold) in self.distance_thresholds.iter().enumerate() {
             if distance < threshold {
-                return i as u8;
+                return u8::try_from(i).unwrap_or(3);
             }
         }
         3
@@ -67,6 +70,7 @@ impl Default for CompositingConfig {
 }
 
 impl CompositingConfig {
+    #[must_use]
     pub fn total_chunks(&self) -> u32 {
         self.chunks_x * self.chunks_z
     }
@@ -85,6 +89,58 @@ pub struct CompositeParams {
 /// Aligned params slot (256 bytes to satisfy wgpu dynamic offset alignment).
 const PARAMS_ALIGN: u64 = 256;
 
+fn sampled_texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2Array,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+fn storage_buffer_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+fn filtering_sampler_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        count: None,
+    }
+}
+
+fn create_albedo_atlas(device: &wgpu::Device, config: &CompositingConfig) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Composited Albedo Atlas"),
+        size: wgpu::Extent3d {
+            width: config.atlas_width,
+            height: config.atlas_height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    })
+}
+
 /// GPU resources for terrain texture compositing.
 pub struct CompositorResources {
     #[allow(dead_code)] // Kept alive to back albedo_atlas_view
@@ -92,7 +148,7 @@ pub struct CompositorResources {
     albedo_atlas_view: wgpu::TextureView,
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
-    /// Single buffer holding 256 aligned CompositeParams slots.
+    /// Single buffer holding 256 aligned `CompositeParams` slots.
     params_buffer: wgpu::Buffer,
     pub config: CompositingConfig,
     dirty_chunks: Vec<bool>,
@@ -100,30 +156,18 @@ pub struct CompositorResources {
 }
 
 impl CompositorResources {
+    #[must_use]
     pub fn new(device: &wgpu::Device, config: CompositingConfig) -> Self {
         use super::shaders::COMPOSITE_SHADER;
 
-        let albedo_atlas = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Composited Albedo Atlas"),
-            size: wgpu::Extent3d {
-                width: config.atlas_width,
-                height: config.atlas_height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
+        let albedo_atlas = create_albedo_atlas(device, &config);
         let albedo_atlas_view = albedo_atlas.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Params buffer: 256 slots × 256 bytes each = 64 KiB
         let total_chunks = config.total_chunks();
         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Composite Params Buffer"),
-            size: total_chunks as u64 * PARAMS_ALIGN,
+            size: u64::from(total_chunks) * PARAMS_ALIGN,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -139,124 +183,23 @@ impl CompositorResources {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: true,
                         min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<CompositeParams>() as u64,
+                            u64::try_from(std::mem::size_of::<CompositeParams>())
+                                .unwrap_or_default(),
                         ),
                     },
                     count: None,
                 },
-                // binding 1: terrain texture array
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 2: alpha texture array
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 3: chunk layers storage
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 4: texture scales storage
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 5: terrain sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // binding 6: alpha sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // binding 7: high alpha texture array (overflow layers 5-7)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 8: decal alpha atlas (per-chunk decal alpha maps)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 8,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 9: chunk decal layers storage (per-chunk decal instance IDs)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 9,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 10: decal instances storage (rotation, center, hdr_scale per instance)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 10,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 11: decal UV scales storage (per-instance u_scale, v_scale)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 11,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                sampled_texture_entry(1),
+                sampled_texture_entry(2),
+                storage_buffer_entry(3),
+                storage_buffer_entry(4),
+                filtering_sampler_entry(5),
+                filtering_sampler_entry(6),
+                sampled_texture_entry(7),
+                sampled_texture_entry(8),
+                storage_buffer_entry(9),
+                storage_buffer_entry(10),
+                storage_buffer_entry(11),
             ],
         });
 
@@ -301,7 +244,7 @@ impl CompositorResources {
             cache: None,
         });
 
-        let n = total_chunks as usize;
+        let n = usize::try_from(total_chunks).unwrap_or_default();
         Self {
             albedo_atlas,
             albedo_atlas_view,
@@ -315,6 +258,7 @@ impl CompositorResources {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[must_use]
     pub fn create_bind_group(
         &self,
         device: &wgpu::Device,
@@ -339,7 +283,10 @@ impl CompositorResources {
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &self.params_buffer,
                         offset: 0,
-                        size: wgpu::BufferSize::new(std::mem::size_of::<CompositeParams>() as u64),
+                        size: wgpu::BufferSize::new(
+                            u64::try_from(std::mem::size_of::<CompositeParams>())
+                                .unwrap_or_default(),
+                        ),
                     }),
                 },
                 wgpu::BindGroupEntry {
@@ -397,7 +344,6 @@ impl CompositorResources {
     /// we use dynamic buffer offsets.
     pub fn composite_all_dirty(
         &mut self,
-        _encoder: &mut wgpu::CommandEncoder,
         bind_group: &wgpu::BindGroup,
         queue: &wgpu::Queue,
         chunk_layer_counts: &[u32],
@@ -435,7 +381,7 @@ impl CompositorResources {
                 num_decal_layers,
             };
 
-            let offset = chunk_idx as u64 * PARAMS_ALIGN;
+            let offset = u64::from(chunk_idx) * PARAMS_ALIGN;
             queue.write_buffer(&self.params_buffer, offset, bytemuck::bytes_of(&params));
         }
 
@@ -457,7 +403,8 @@ impl CompositorResources {
             let viewport_x = grid_z * chunk_size;
             let viewport_y = grid_x * chunk_size;
 
-            let dynamic_offset = (chunk_idx as u64 * PARAMS_ALIGN) as u32;
+            let dynamic_offset =
+                u32::try_from(u64::from(chunk_idx) * PARAMS_ALIGN).unwrap_or_default();
 
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -476,10 +423,10 @@ impl CompositorResources {
                 });
 
                 pass.set_viewport(
-                    viewport_x as f32,
-                    viewport_y as f32,
-                    chunk_size as f32,
-                    chunk_size as f32,
+                    viewport_x.to_f32().unwrap_or_default(),
+                    viewport_y.to_f32().unwrap_or_default(),
+                    chunk_size.to_f32().unwrap_or_default(),
+                    chunk_size.to_f32().unwrap_or_default(),
                     0.0,
                     1.0,
                 );
@@ -508,6 +455,7 @@ impl CompositorResources {
         }
     }
 
+    #[must_use]
     pub fn albedo_atlas_view(&self) -> &wgpu::TextureView {
         &self.albedo_atlas_view
     }
@@ -519,9 +467,11 @@ impl CompositorResources {
         lod_config: &LodConfig,
     ) -> bool {
         let mut any_changed = false;
-        let num_chunks = self.config.total_chunks().min(chunk_centers.len() as u32);
+        let num_chunks = usize::try_from(self.config.total_chunks())
+            .unwrap_or(usize::MAX)
+            .min(chunk_centers.len());
 
-        for (chunk_idx, center) in chunk_centers.iter().enumerate().take(num_chunks as usize) {
+        for (chunk_idx, center) in chunk_centers.iter().enumerate().take(num_chunks) {
             let dx = camera_pos[0] - center[0];
             let dy = camera_pos[1] - center[1];
             let dz = camera_pos[2] - center[2];
@@ -539,6 +489,7 @@ impl CompositorResources {
         any_changed
     }
 
+    #[must_use]
     pub fn dirty_chunk_count(&self) -> usize {
         self.dirty_chunks.iter().filter(|&&d| d).count()
     }

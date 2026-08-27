@@ -12,7 +12,7 @@ const SHADOW_MAP_SIZE: u32 = 2048;
 /// GPU resources for the shadow pass.
 #[allow(dead_code)]
 pub struct ShadowResources {
-    /// The shadow map color texture (Rg16Float for VSM: depth + depth²).
+    /// The shadow map color texture (`Rg16Float` for VSM: depth + depth²).
     pub shadow_texture: wgpu::Texture,
     /// View for sampling the shadow map in the main pass.
     pub shadow_view: wgpu::TextureView,
@@ -34,7 +34,7 @@ pub struct ShadowResources {
     pub light_vp: Mat4,
 }
 
-/// Shadow params uniform (must match shadow_depth.wesl ShadowParams).
+/// Shadow params uniform (must match `shadow_depth.wesl` `ShadowParams`).
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ShadowParamsUniform {
@@ -43,160 +43,190 @@ pub struct ShadowParamsUniform {
     pub range: [f32; 4],
 }
 
+struct ShadowTargets {
+    color_texture: wgpu::Texture,
+    color_view: wgpu::TextureView,
+    depth_texture: wgpu::Texture,
+    depth_view: wgpu::TextureView,
+}
+
+fn create_shadow_targets(device: &wgpu::Device) -> ShadowTargets {
+    let color_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Shadow Map"),
+        size: wgpu::Extent3d {
+            width: SHADOW_MAP_SIZE,
+            height: SHADOW_MAP_SIZE,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rg16Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Shadow Depth"),
+        size: wgpu::Extent3d {
+            width: SHADOW_MAP_SIZE,
+            height: SHADOW_MAP_SIZE,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    ShadowTargets {
+        color_texture,
+        color_view,
+        depth_texture,
+        depth_view,
+    }
+}
+
+fn create_shadow_camera(
+    device: &wgpu::Device,
+    camera_layout: &wgpu::BindGroupLayout,
+) -> (wgpu::Buffer, wgpu::BindGroup) {
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Shadow Light VP"),
+        size: 64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Shadow Camera Bind Group"),
+        layout: camera_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: buffer.as_entire_binding(),
+        }],
+    });
+    (buffer, bind_group)
+}
+
+fn create_shadow_params(device: &wgpu::Device) -> (wgpu::BindGroupLayout, wgpu::Buffer) {
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Shadow Params Layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+        ],
+    });
+    let size = u64::try_from(std::mem::size_of::<ShadowParamsUniform>())
+        .expect("shadow params size must fit u64");
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Shadow Params"),
+        size,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    (layout, buffer)
+}
+
+fn create_shadow_pipeline(
+    device: &wgpu::Device,
+    camera_layout: &wgpu::BindGroupLayout,
+    params_layout: &wgpu::BindGroupLayout,
+    vertex_layout: &[wgpu::VertexBufferLayout<'_>],
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Shadow Depth Shader"),
+        source: wgpu::ShaderSource::Wgsl(render::terrain::SHADOW_DEPTH_SHADER.into()),
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Shadow Pipeline Layout"),
+        bind_group_layouts: &[camera_layout, params_layout],
+        push_constant_ranges: &[],
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Shadow Depth Pipeline"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: vertex_layout,
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rg16Float,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState {
+                constant: 2,
+                slope_scale: 2.0,
+                clamp: 0.0,
+            },
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    })
+}
+
 impl ShadowResources {
     /// Create shadow map resources.
     pub fn new(
         device: &wgpu::Device,
         camera_bind_group_layout: &wgpu::BindGroupLayout,
-        vertex_buffer_layout: &[wgpu::VertexBufferLayout],
+        vertex_buffer_layout: &[wgpu::VertexBufferLayout<'_>],
     ) -> Self {
-        // Shadow map color texture (Rg16Float for VSM - filterable)
-        let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Shadow Map"),
-            size: wgpu::Extent3d {
-                width: SHADOW_MAP_SIZE,
-                height: SHADOW_MAP_SIZE,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rg16Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let shadow_view = shadow_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        // Depth buffer for shadow pass
-        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Shadow Depth"),
-            size: wgpu::Extent3d {
-                width: SHADOW_MAP_SIZE,
-                height: SHADOW_MAP_SIZE,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        // Light VP buffer
-        let light_vp_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Shadow Light VP"),
-            size: 64, // mat4x4
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // Camera bind group for shadow pass (reuse layout from main pass)
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Shadow Camera Bind Group"),
-            layout: camera_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: light_vp_buffer.as_entire_binding(),
-            }],
-        });
-
-        // Shadow params layout
-        let params_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Shadow Params Layout"),
-                entries: &[
-                    // ShadowParams uniform
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // Position texture (Uint, not filterable)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Uint,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-
-        let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Shadow Params"),
-            size: std::mem::size_of::<ShadowParamsUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // Create shadow depth pipeline
-        let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Shadow Depth Shader"),
-            source: wgpu::ShaderSource::Wgsl(render::terrain::SHADOW_DEPTH_SHADER.into()),
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Shadow Pipeline Layout"),
-            bind_group_layouts: &[camera_bind_group_layout, &params_bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Shadow Depth Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader_module,
-                entry_point: Some("vs_main"),
-                buffers: vertex_buffer_layout,
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader_module,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rg16Float,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None, // No culling for shadow pass
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState {
-                    constant: 2, // Small bias to reduce shadow acne
-                    slope_scale: 2.0,
-                    clamp: 0.0,
-                },
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        let targets = create_shadow_targets(device);
+        let (light_vp_buffer, camera_bind_group) =
+            create_shadow_camera(device, camera_bind_group_layout);
+        let (params_bind_group_layout, params_buffer) = create_shadow_params(device);
+        let pipeline = create_shadow_pipeline(
+            device,
+            camera_bind_group_layout,
+            &params_bind_group_layout,
+            vertex_buffer_layout,
+        );
 
         Self {
-            shadow_texture,
-            shadow_view,
-            depth_texture,
-            depth_view,
+            shadow_texture: targets.color_texture,
+            shadow_view: targets.color_view,
+            depth_texture: targets.depth_texture,
+            depth_view: targets.depth_view,
             pipeline,
             light_vp_buffer,
             camera_bind_group,

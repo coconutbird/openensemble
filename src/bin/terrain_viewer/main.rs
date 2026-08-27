@@ -13,7 +13,7 @@
 //!
 //! Terrain features:
 //! - [ ] Alpha chunk (0xDDDD) - terrain holes/transparency, same compression as AO
-//! - [ ] Lighting chunk (0xBBBB) - baked lightmap (empty on blood_gulch)
+//! - [ ] Lighting chunk (0xBBBB) - baked lightmap (empty on `blood_gulch`)
 //! - [ ] Decals - road marks, scorch marks from XTT linker decal data
 //!
 //! Visual effects:
@@ -47,14 +47,17 @@ fn main() -> Result<()> {
 
     let viewer = if args.len() > 1 {
         let arg = &args[1];
-        if arg.ends_with(".xtd") {
+        if std::path::Path::new(arg)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("xtd"))
+        {
             // File path mode: load from local XTD file
-            log::info!("Loading terrain from file: {}", arg);
+            log::info!("Loading terrain from file: {arg}");
             TerrainViewer::new(Some(PathBuf::from(arg)))
         } else {
             // Scenario name mode: load from ERA archive
-            log::info!("Loading scenario: {}", arg);
-            TerrainViewer::from_scenario(arg.to_string())
+            log::info!("Loading scenario: {arg}");
+            TerrainViewer::from_scenario(arg.clone())
         }
     } else {
         // Default to blood_gulch scenario

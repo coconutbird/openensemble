@@ -2,9 +2,17 @@
 //!
 //! Creates GPU storage and uniform buffers for chunk layer data and texture scales.
 
+use num_traits::ToPrimitive;
 use render::wgpu;
 
 use crate::viewer::TerrainViewer;
+
+fn chunk_index(grid_x: i32, grid_z: i32) -> Option<usize> {
+    grid_x
+        .checked_mul(16)
+        .and_then(|value| value.checked_add(grid_z))
+        .and_then(|value| usize::try_from(value).ok())
+}
 
 impl TerrainViewer {
     pub(crate) fn create_chunk_layers_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
@@ -17,11 +25,13 @@ impl TerrainViewer {
 
         for chunk in chunk_splat_data {
             // X-major indexing (game convention): gridX * 16 + gridZ
-            let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
+            let Some(chunk_idx) = chunk_index(chunk.grid_x, chunk.grid_z) else {
+                continue;
+            };
             let base = chunk_idx * 8;
 
             for (i, &layer_id) in chunk.layer_texture_ids.iter().enumerate().take(8) {
-                layer_data[base + i] = layer_id as u32;
+                layer_data[base + i] = layer_id.cast_unsigned();
             }
         }
 
@@ -33,13 +43,15 @@ impl TerrainViewer {
         // Log first few chunks for debugging
         log::info!("=== First 5 chunk layer IDs in buffer ===");
         for chunk in chunk_splat_data.iter().take(5) {
-            let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
+            let Some(chunk_idx) = chunk_index(chunk.grid_x, chunk.grid_z) else {
+                continue;
+            };
             log::info!(
                 "  Chunk ({}, {}) idx={}: layers={:?}",
                 chunk.grid_x,
                 chunk.grid_z,
                 chunk_idx,
-                &chunk.layer_texture_ids
+                chunk.layer_texture_ids
             );
         }
 
@@ -50,7 +62,7 @@ impl TerrainViewer {
         })
     }
 
-    /// Creates the texture scales storage buffer (per-texture u_scale/v_scale values).
+    /// Creates the texture scales storage buffer (per-texture `u_scale/v_scale` values).
     /// The game uses these to control how many times each texture tiles across the terrain.
     pub(crate) fn create_texture_scales_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
         use wgpu::util::DeviceExt;
@@ -67,8 +79,8 @@ impl TerrainViewer {
         for (i, tex) in terrain_textures.iter().enumerate() {
             // Game stores scale as i32, but shader needs f32
             // Scale values are typically 1, 2, 4, etc.
-            scale_data[i * 2] = tex.u_scale as f32;
-            scale_data[i * 2 + 1] = tex.v_scale as f32;
+            scale_data[i * 2] = tex.u_scale.to_f32().unwrap_or_default();
+            scale_data[i * 2 + 1] = tex.v_scale.to_f32().unwrap_or_default();
             log::info!(
                 "Texture[{}] {} scale: ({}, {})",
                 i,
@@ -96,13 +108,15 @@ impl TerrainViewer {
         let mut layer_data = vec![0u32; 256 * 8];
 
         for chunk in &scene.chunk_decal_data {
-            let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
+            let Some(chunk_idx) = chunk_index(chunk.grid_x, chunk.grid_z) else {
+                continue;
+            };
             if chunk_idx >= 256 {
                 continue;
             }
             let base = chunk_idx * 8;
             for (i, &decal_id) in chunk.decal_layer_ids.iter().enumerate().take(8) {
-                layer_data[base + i] = decal_id as u32;
+                layer_data[base + i] = decal_id.cast_unsigned();
             }
         }
 
@@ -119,7 +133,7 @@ impl TerrainViewer {
     }
 
     /// Creates the decal instances buffer.
-    /// Each instance is a vec4<f32>: (rotation, center_u, center_v, hdr_scale).
+    /// Each instance is a `vec4<f32>`: (rotation, `center_u`, `center_v`, `hdr_scale`).
     pub(crate) fn create_decal_instances_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
         use wgpu::util::DeviceExt;
         let scene = self.scene.as_ref().expect("scene must be loaded");
@@ -145,7 +159,7 @@ impl TerrainViewer {
     }
 
     /// Creates the decal UV scales buffer.
-    /// Each entry is a vec2<f32>: (u_scale, v_scale) per decal instance.
+    /// Each entry is a `vec2<f32>`: (`u_scale`, `v_scale`) per decal instance.
     pub(crate) fn create_decal_uv_scales_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
         use wgpu::util::DeviceExt;
         let scene = self.scene.as_ref().expect("scene must be loaded");

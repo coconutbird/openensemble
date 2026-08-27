@@ -3,6 +3,9 @@ name = "render"
 version.workspace = true
 edition.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 pipeline = { workspace = true }
 xcore = { workspace = true }
@@ -10,6 +13,7 @@ winit = { workspace = true }
 wgpu = { workspace = true }
 pollster = { workspace = true }
 glam.workspace = true
+num-traits = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }

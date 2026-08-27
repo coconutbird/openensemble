@@ -9,7 +9,7 @@
 //! - 5 = Platoon
 //! - 6 = Army
 
-/// Entity class encoded in the high 4 bits of an EntityId.
+/// Entity class encoded in the high 4 bits of an `EntityId`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum EntityClass {
@@ -23,6 +23,7 @@ pub enum EntityClass {
 }
 
 impl EntityClass {
+    #[must_use]
     pub fn from_raw(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::Object),
@@ -37,7 +38,7 @@ impl EntityClass {
     }
 }
 
-/// A 32-bit entity identifier matching vanilla BEntityID.
+/// A 32-bit entity identifier matching vanilla `BEntityID`.
 ///
 /// Format: High 4 bits = class, low 28 bits = index.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -46,33 +47,39 @@ pub struct EntityId(pub u32);
 impl EntityId {
     pub const INVALID: EntityId = EntityId(u32::MAX);
 
-    /// Create a new EntityId from class and index.
+    /// Create a new `EntityId` from class and index.
+    #[must_use]
     pub fn new(class: EntityClass, index: u32) -> Self {
         debug_assert!(index < 0x0FFF_FFFF, "Index too large for EntityId");
         Self(((class as u32) << 28) | (index & 0x0FFF_FFFF))
     }
 
     /// Get the entity class from the high 4 bits.
+    #[must_use]
     pub fn class(self) -> Option<EntityClass> {
         EntityClass::from_raw((self.0 >> 28) as u8)
     }
 
     /// Get the index from the low 28 bits.
+    #[must_use]
     pub fn index(self) -> u32 {
         self.0 & 0x0FFF_FFFF
     }
 
     /// Get the raw u32 value (for serialization).
+    #[must_use]
     pub fn as_u32(self) -> u32 {
         self.0
     }
 
     /// Create from raw u32 (for deserialization).
+    #[must_use]
     pub fn from_u32(value: u32) -> Self {
         Self(value)
     }
 
     /// Check if this is an invalid/unset ID.
+    #[must_use]
     pub fn is_invalid(self) -> bool {
         self == Self::INVALID
     }

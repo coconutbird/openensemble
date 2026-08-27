@@ -44,6 +44,10 @@ impl CommandDispatcher {
     /// Dispatch a raw packet to the appropriate command type.
     ///
     /// The packet should include the channel packet header followed by command data.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the header or command payload is invalid or incomplete.
     pub fn dispatch(
         data: &[u8],
     ) -> Result<(ChannelPacketHeader, DispatchedCommand), DispatchError> {
@@ -59,6 +63,10 @@ impl CommandDispatcher {
     }
 
     /// Dispatch based on packet type, reading from the provided reader.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the packet type is unknown or its payload is invalid.
     pub fn dispatch_by_type<R: Read>(
         packet_type: u8,
         reader: &mut R,
@@ -97,6 +105,7 @@ impl CommandDispatcher {
     }
 
     /// Get the command type from a packet type byte.
+    #[must_use]
     pub fn packet_type_to_command_type(packet_type: u8) -> Option<CommandType> {
         match packet_type {
             channel_packet_type::COMMAND_WORK => Some(CommandType::Work),
@@ -111,6 +120,7 @@ impl CommandDispatcher {
     }
 
     /// Get the packet type byte for a command type.
+    #[must_use]
     pub fn command_type_to_packet_type(cmd_type: CommandType) -> u8 {
         match cmd_type {
             CommandType::Work => channel_packet_type::COMMAND_WORK,

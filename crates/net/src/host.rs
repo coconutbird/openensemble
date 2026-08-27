@@ -28,6 +28,7 @@ pub struct NetHost {
 
 impl NetHost {
     /// Create a new host.
+    #[must_use]
     pub fn new(max_clients: usize) -> Self {
         Self {
             transport: Transport::new(),
@@ -39,6 +40,10 @@ impl NetHost {
     }
 
     /// Start hosting on the given address.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the UDP socket cannot bind to the address.
     pub async fn start(&mut self, addr: SocketAddr) -> Result<(), HostError> {
         self.transport.bind(addr).await?;
         tracing::info!("Host started on {}", addr);
@@ -46,11 +51,19 @@ impl NetHost {
     }
 
     /// Get the local address.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the host transport has not been bound.
     pub fn local_addr(&self) -> Result<SocketAddr, HostError> {
         Ok(self.transport.local_addr()?)
     }
 
     /// Process incoming packets.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if receiving or handling an incoming packet fails.
     pub async fn poll(&mut self) -> Result<Vec<(u64, NetPacket)>, HostError> {
         let mut received = Vec::new();
 
@@ -133,6 +146,10 @@ impl NetHost {
     }
 
     /// Send a packet to a specific client.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the client is unknown or the packet cannot be sent.
     pub async fn send_to(&mut self, client_id: u64, packet: NetPacket) -> Result<(), HostError> {
         let conn = self
             .connections
@@ -144,6 +161,10 @@ impl NetHost {
     }
 
     /// Broadcast a packet to all clients.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the packet cannot be sent to any connected client.
     pub async fn broadcast(&mut self, packet: NetPacket) -> Result<(), HostError> {
         let addrs: Vec<_> = self.connections.values().map(|c| c.addr).collect();
         for addr in addrs {

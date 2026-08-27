@@ -32,6 +32,7 @@ pub enum PacketType {
 }
 
 impl PacketType {
+    #[must_use]
     pub fn from_u8(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::Connect),
@@ -70,6 +71,7 @@ impl NetPacket {
     pub const HEADER_SIZE: usize = 13;
 
     /// Create a new packet.
+    #[must_use]
     pub fn new(packet_type: PacketType, sequence: u32) -> Self {
         Self {
             packet_type,
@@ -81,6 +83,7 @@ impl NetPacket {
     }
 
     /// Create a packet with payload.
+    #[must_use]
     pub fn with_payload(packet_type: PacketType, sequence: u32, payload: Vec<u8>) -> Self {
         Self {
             packet_type,
@@ -92,6 +95,10 @@ impl NetPacket {
     }
 
     /// Serialize the packet to bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if writing the packet fields fails.
     pub fn serialize(&self) -> io::Result<Vec<u8>> {
         let mut buf = Vec::with_capacity(Self::HEADER_SIZE + self.payload.len());
         buf.write_u8(self.packet_type as u8)?;
@@ -103,6 +110,10 @@ impl NetPacket {
     }
 
     /// Deserialize a packet from bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if the packet is truncated or has an invalid type tag.
     pub fn deserialize(data: &[u8]) -> io::Result<Self> {
         if data.len() < Self::HEADER_SIZE {
             return Err(io::Error::new(

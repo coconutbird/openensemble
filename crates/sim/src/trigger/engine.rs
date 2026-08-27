@@ -1,4 +1,4 @@
-//! TriggerEngine - deterministic execution of trigger scripts.
+//! `TriggerEngine` - deterministic execution of trigger scripts.
 
 use std::collections::BTreeMap;
 
@@ -21,7 +21,7 @@ pub enum ConditionResult {
 /// in the same order.
 #[derive(Debug, Default)]
 pub struct TriggerEngine {
-    /// Active trigger scripts (BTreeMap for deterministic iteration).
+    /// Active trigger scripts (`BTreeMap` for deterministic iteration).
     scripts: BTreeMap<TriggerScriptId, TriggerScript>,
 
     /// Next script ID to assign.
@@ -40,6 +40,7 @@ pub struct TriggerEngine {
 
 impl TriggerEngine {
     /// Create a new trigger engine.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             scripts: BTreeMap::new(),
@@ -71,6 +72,7 @@ impl TriggerEngine {
     }
 
     /// Get a script by ID.
+    #[must_use]
     pub fn get_script(&self, id: TriggerScriptId) -> Option<&TriggerScript> {
         self.scripts.get(&id)
     }

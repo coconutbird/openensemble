@@ -1,6 +1,6 @@
-//! OpenEnsemble Core
+//! `OpenEnsemble` Core
 //!
-//! Core types, traits, and utilities for the OpenEnsemble engine.
+//! Core types, traits, and utilities for the `OpenEnsemble` engine.
 //! This crate provides foundational abstractions used across all other engine crates.
 
 pub mod app;

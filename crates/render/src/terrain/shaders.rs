@@ -42,7 +42,7 @@ pub const GPU_TESS_SHADER: &str = include_wesl!("terrain_gpu");
 /// logic as the runtime shader.
 ///
 /// Original game uses multi-pass with hardware alpha blending (one layer per
-/// pass). We use single-pass with manual mix() which is mathematically
+/// pass). We use single-pass with manual `mix()` which is mathematically
 /// equivalent.
 pub const COMPOSITE_SHADER: &str = include_wesl!("terrain_composite");
 
@@ -85,7 +85,7 @@ pub const ROADS_SHADER: &str = include_wesl!("terrain_roads");
 /// Shadow depth shader for rendering terrain from the light's perspective.
 ///
 /// Features:
-/// - Minimal vertex shader reusing gpu_tess vertex format
+/// - Minimal vertex shader reusing `gpu_tess` vertex format
 /// - Packed position decoding (R10G10B10A2)
 /// - Outputs depth + depth² for VSM filtering
 /// - No lighting, fog, or texturing (depth only)

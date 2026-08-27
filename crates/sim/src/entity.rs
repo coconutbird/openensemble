@@ -25,10 +25,10 @@ pub trait Entity {
 
 /// Entity manager with deterministic iteration order.
 ///
-/// Uses BTreeMap to ensure entities are always iterated in ID order.
+/// Uses `BTreeMap` to ensure entities are always iterated in ID order.
 #[derive(Debug)]
 pub struct EntityManager<T> {
-    /// Entities stored by ID (BTreeMap for deterministic order).
+    /// Entities stored by ID (`BTreeMap` for deterministic order).
     entities: BTreeMap<u32, T>,
     /// Next available index for each entity class.
     next_index: [u32; 7],
@@ -44,6 +44,7 @@ impl<T> Default for EntityManager<T> {
 
 impl<T> EntityManager<T> {
     /// Create a new entity manager for the given class.
+    #[must_use]
     pub fn new(entity_class: EntityClass) -> Self {
         Self {
             entities: BTreeMap::new(),
@@ -78,6 +79,7 @@ impl<T> EntityManager<T> {
     }
 
     /// Get an entity by ID.
+    #[must_use]
     pub fn get(&self, id: EntityId) -> Option<&T> {
         self.entities.get(&id.as_u32())
     }
@@ -88,16 +90,19 @@ impl<T> EntityManager<T> {
     }
 
     /// Check if an entity exists.
+    #[must_use]
     pub fn contains(&self, id: EntityId) -> bool {
         self.entities.contains_key(&id.as_u32())
     }
 
     /// Get the number of entities.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.entities.len()
     }
 
     /// Check if empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entities.is_empty()
     }

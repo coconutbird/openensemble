@@ -120,6 +120,7 @@ pub enum VarType {
 
 impl VarType {
     /// Try to convert from a raw u8 value.
+    #[must_use]
     pub fn from_u8(value: u8) -> Option<Self> {
         if value <= 109 {
             // SAFETY: All values 0-109 are valid enum variants

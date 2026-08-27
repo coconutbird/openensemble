@@ -1,4 +1,4 @@
-//! Error types for OpenEnsemble
+//! Error types for `OpenEnsemble`
 
 use thiserror::Error;
 

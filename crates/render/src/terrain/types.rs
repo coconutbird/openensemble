@@ -14,7 +14,7 @@ pub struct AlbedoData {
 /// A single terrain texture loaded from ERA.
 #[derive(Clone)]
 pub struct TerrainTexture {
-    /// Texture name (e.g., "grass_01").
+    /// Texture name (e.g., "`grass_01`").
     pub name: String,
     /// Width in pixels.
     pub width: u32,
@@ -31,7 +31,7 @@ pub struct TerrainTexture {
 /// A normal map texture loaded from ERA (_nm.ddx files).
 #[derive(Clone)]
 pub struct NormalMapTexture {
-    /// Texture name (e.g., "grass_01").
+    /// Texture name (e.g., "`grass_01`").
     pub name: String,
     /// Width in pixels.
     pub width: u32,
@@ -48,7 +48,7 @@ pub struct ChunkSplatData {
     pub grid_x: i32,
     /// Grid Z position (0-15 for 16x16 grid).
     pub grid_z: i32,
-    /// Indices into terrain_textures for this chunk's layers.
+    /// Indices into `terrain_textures` for this chunk's layers.
     pub layer_texture_ids: Vec<i32>,
     /// Alpha maps for layers 1..n (layer 0 has no alpha, it's the base).
     /// Each is 64x64 = 4096 bytes.
@@ -59,7 +59,7 @@ pub struct ChunkSplatData {
 /// Decals have separate diffuse (_df) and opacity (_op) textures.
 #[derive(Clone)]
 pub struct DecalTexture {
-    /// Decal name (e.g., "road_01").
+    /// Decal name (e.g., "`road_01`").
     pub name: String,
     /// Width in pixels.
     pub width: u32,
@@ -72,10 +72,10 @@ pub struct DecalTexture {
 }
 
 /// A decal instance to be rendered on the terrain.
-/// This corresponds to XTT's ActiveDecalInstance.
+/// This corresponds to XTT's `ActiveDecalInstance`.
 #[derive(Clone, Debug)]
 pub struct DecalInstance {
-    /// Index into the decal_textures array.
+    /// Index into the `decal_textures` array.
     pub decal_index: i32,
     /// Rotation angle in radians.
     pub rotation: f32,
@@ -96,7 +96,7 @@ pub struct ChunkDecalData {
     pub grid_x: i32,
     /// Grid Z position (0-15 for 16x16 grid).
     pub grid_z: i32,
-    /// Indices into decal_instances for this chunk's decals.
+    /// Indices into `decal_instances` for this chunk's decals.
     pub decal_layer_ids: Vec<i32>,
     /// Alpha maps for decal layers (if any).
     /// Each is 64x64 = 4096 bytes.
@@ -120,10 +120,10 @@ pub struct FoliageBladeVertex {
 }
 
 /// A foliage set containing textures and blade geometry.
-/// Corresponds to BTerrainFoliageSet in the original.
+/// Corresponds to `BTerrainFoliageSet` in the original.
 #[derive(Clone)]
 pub struct FoliageSet {
-    /// Set name (e.g., "foliage\\bg_grass_02").
+    /// Set name (e.g., "foliage\\`bg_grass_02`").
     pub name: String,
     /// Backside shadow scalar for lighting.
     pub backside_shadow_scalar: f32,
@@ -180,7 +180,7 @@ impl Default for FoliageSet {
 }
 
 /// Per quad-node foliage chunk data.
-/// Corresponds to BTerrainFoliageQNChunk in the original.
+/// Corresponds to `BTerrainFoliageQNChunk` in the original.
 #[derive(Clone)]
 pub struct FoliageQNChunk {
     /// Parent quad-node index (into terrain grid).
@@ -189,7 +189,7 @@ pub struct FoliageQNChunk {
     pub num_sets: u32,
     /// Indices into the foliage sets array.
     pub set_indices: Vec<i32>,
-    /// Polygon count for each set (for DrawIndexedPrimitive).
+    /// Polygon count for each set (for `DrawIndexedPrimitive`).
     pub set_poly_counts: Vec<i32>,
     /// Raw index buffer data for each set.
     /// These are 32-bit indices used with triangle strips.
@@ -203,7 +203,7 @@ pub struct FoliageQNChunk {
 /// Decoded road data ready for rendering.
 #[derive(Clone, Debug)]
 pub struct RoadChunkData {
-    /// Road texture name (e.g., "roads\\road_01").
+    /// Road texture name (e.g., "roads\\`road_01`").
     pub texture_name: String,
     /// All road vertices (position + UV), flattened from all QN chunks.
     pub positions: Vec<[f32; 3]>,

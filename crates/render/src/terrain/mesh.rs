@@ -26,6 +26,7 @@ pub struct TerrainMesh {
 
 impl TerrainMesh {
     /// Create a new terrain mesh from raw vertex data.
+    #[must_use]
     pub fn new(
         positions: Vec<[f32; 3]>,
         normals: Vec<[f32; 3]>,
@@ -47,15 +48,17 @@ impl TerrainMesh {
     }
 
     /// Get the center of the terrain in world space.
+    #[must_use]
     pub fn center(&self) -> Vec3 {
         Vec3::new(
-            (self.world_min[0] + self.world_max[0]) / 2.0,
-            (self.world_min[1] + self.world_max[1]) / 2.0,
-            (self.world_min[2] + self.world_max[2]) / 2.0,
+            f32::midpoint(self.world_min[0], self.world_max[0]),
+            f32::midpoint(self.world_min[1], self.world_max[1]),
+            f32::midpoint(self.world_min[2], self.world_max[2]),
         )
     }
 
     /// Get the size of the terrain in world space.
+    #[must_use]
     pub fn size(&self) -> Vec3 {
         Vec3::new(
             self.world_max[0] - self.world_min[0],
@@ -65,11 +68,13 @@ impl TerrainMesh {
     }
 
     /// Get the number of vertices.
+    #[must_use]
     pub fn vertex_count(&self) -> usize {
         self.positions.len()
     }
 
     /// Get the number of triangles.
+    #[must_use]
     pub fn triangle_count(&self) -> usize {
         self.indices.len() / 3
     }
@@ -89,6 +94,7 @@ pub enum TessellationMode {
 
 impl TessellationMode {
     /// Cycle to the next tessellation mode.
+    #[must_use]
     pub fn next(self) -> Self {
         match self {
             TessellationMode::None => TessellationMode::Gpu,
@@ -98,6 +104,7 @@ impl TessellationMode {
     }
 
     /// Get the display name for this mode.
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             TessellationMode::None => "None",

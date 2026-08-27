@@ -2,11 +2,323 @@
 //!
 //! Creates GPU texture arrays and atlases from loaded terrain data.
 
-use render::terrain::{generate_mipmaps, mip_level_count};
+use render::terrain::{NormalMapTexture, TerrainTexture, generate_mipmaps, mip_level_count};
 use render::wgpu;
 
 use crate::types::AlbedoData;
 use crate::viewer::TerrainViewer;
+
+const ALPHA_CHUNK_SIZE: u32 = 64;
+const ALPHA_CHUNK_SIZE_USIZE: usize = 64;
+const ALPHA_CHUNK_COUNT: u32 = 256;
+const ALPHA_CHUNK_COUNT_USIZE: usize = 256;
+const ALPHA_CHANNEL_COUNT: usize = 4;
+const ALPHA_CHANNEL_COUNT_U32: u32 = 4;
+const ALPHA_SLICE_BYTES: usize =
+    ALPHA_CHUNK_SIZE_USIZE * ALPHA_CHUNK_SIZE_USIZE * ALPHA_CHANNEL_COUNT;
+
+fn create_array_texture(
+    device: &wgpu::Device,
+    label: &str,
+    width: u32,
+    height: u32,
+    layers: u32,
+    mip_levels: u32,
+    format: wgpu::TextureFormat,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: layers,
+        },
+        mip_level_count: mip_levels,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    })
+}
+
+fn array_view(texture: &wgpu::Texture) -> wgpu::TextureView {
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    })
+}
+
+fn upload_texture(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    layer: u32,
+    mip_level: u32,
+) {
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level,
+            origin: wgpu::Origin3d {
+                x: 0,
+                y: 0,
+                z: layer,
+            },
+            aspect: wgpu::TextureAspect::All,
+        },
+        pixels,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4 * width),
+            rows_per_image: Some(height),
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+}
+
+fn upload_mip_chain(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    layer: u32,
+) {
+    let mips = generate_mipmaps(pixels, width, height);
+    let mut mip_width = width;
+    let mut mip_height = height;
+
+    for (mip_level, mip_data) in mips.iter().enumerate() {
+        let mip_level = u32::try_from(mip_level).expect("mipmap count must fit in u32");
+        upload_texture(
+            queue, texture, mip_data, mip_width, mip_height, layer, mip_level,
+        );
+        mip_width = (mip_width / 2).max(1);
+        mip_height = (mip_height / 2).max(1);
+    }
+}
+
+fn create_terrain_array_from_layers(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    textures: &[TerrainTexture],
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let width = textures[0].width;
+    let height = textures[0].height;
+    let layers = u32::try_from(textures.len()).expect("terrain texture count must fit in u32");
+    let mip_levels = mip_level_count(width, height);
+    log::info!(
+        "Creating terrain texture array: {width}x{height} x {layers} layers with {mip_levels} mip levels"
+    );
+
+    let texture = create_array_texture(
+        device,
+        "Terrain Texture Array",
+        width,
+        height,
+        layers,
+        mip_levels,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    );
+    for (layer, terrain_texture) in textures.iter().enumerate() {
+        let layer = u32::try_from(layer).expect("terrain texture index must fit in u32");
+        upload_mip_chain(
+            queue,
+            &texture,
+            &terrain_texture.pixels,
+            width,
+            height,
+            layer,
+        );
+    }
+
+    let view = array_view(&texture);
+    (texture, view)
+}
+
+fn create_single_terrain_array(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    albedo: Option<&AlbedoData>,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let (label, width, height, pixels): (&str, u32, u32, &[u8]) = albedo.map_or_else(
+        || {
+            log::info!("Using white fallback terrain texture");
+            ("Terrain Texture Array (White)", 1, 1, &[255_u8; 4][..])
+        },
+        |value| {
+            log::info!(
+                "Using XTT albedo as terrain array fallback: {}x{}",
+                value.width,
+                value.height
+            );
+            (
+                "Terrain Texture Array (Fallback)",
+                value.width,
+                value.height,
+                value.pixels.as_slice(),
+            )
+        },
+    );
+    let texture = create_array_texture(
+        device,
+        label,
+        width,
+        height,
+        1,
+        1,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    );
+    upload_texture(queue, &texture, pixels, width, height, 0, 0);
+    let view = array_view(&texture);
+    (texture, view)
+}
+
+fn create_normal_array_from_layers(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    textures: &[NormalMapTexture],
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let width = textures[0].width;
+    let height = textures[0].height;
+    let layers = u32::try_from(textures.len()).expect("normal texture count must fit in u32");
+    let mip_levels = mip_level_count(width, height);
+    log::info!(
+        "Creating normal map array: {width}x{height} x {layers} layers with {mip_levels} mip levels"
+    );
+
+    let texture = create_array_texture(
+        device,
+        "Normal Map Array",
+        width,
+        height,
+        layers,
+        mip_levels,
+        wgpu::TextureFormat::Rgba8Unorm,
+    );
+    for (layer, normal_texture) in textures.iter().enumerate() {
+        let layer = u32::try_from(layer).expect("normal texture index must fit in u32");
+        upload_mip_chain(
+            queue,
+            &texture,
+            &normal_texture.pixels,
+            width,
+            height,
+            layer,
+        );
+    }
+
+    let view = array_view(&texture);
+    (texture, view)
+}
+
+fn create_flat_normal_array(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    log::info!("Using flat normal fallback texture");
+    let texture = create_array_texture(
+        device,
+        "Normal Map Array (Fallback)",
+        1,
+        1,
+        1,
+        1,
+        wgpu::TextureFormat::Rgba8Unorm,
+    );
+    upload_texture(queue, &texture, &[128, 128, 255, 255], 1, 1, 0, 0);
+    let view = array_view(&texture);
+    (texture, view)
+}
+
+fn alpha_chunk_index(grid_x: i32, grid_z: i32) -> Option<usize> {
+    let grid_x = usize::try_from(grid_x).ok()?;
+    let grid_z = usize::try_from(grid_z).ok()?;
+    grid_x
+        .checked_mul(16)?
+        .checked_add(grid_z)
+        .filter(|&index| index < ALPHA_CHUNK_COUNT_USIZE)
+}
+
+fn empty_alpha_array() -> Vec<u8> {
+    vec![0; ALPHA_SLICE_BYTES * ALPHA_CHUNK_COUNT_USIZE]
+}
+
+fn populate_alpha_data<'a>(
+    array_data: &mut [u8],
+    chunks: impl IntoIterator<Item = (i32, i32, &'a [Vec<u8>])>,
+    first_map: usize,
+    channel_count: usize,
+) {
+    for (grid_x, grid_z, alpha_maps) in chunks {
+        let Some(chunk_index) = alpha_chunk_index(grid_x, grid_z) else {
+            continue;
+        };
+        let slice_offset = chunk_index * ALPHA_SLICE_BYTES;
+
+        for row in 0..ALPHA_CHUNK_SIZE_USIZE {
+            for column in 0..ALPHA_CHUNK_SIZE_USIZE {
+                // XTT stores x=Z and y=X, so transpose while building the texture.
+                let source_index = column * ALPHA_CHUNK_SIZE_USIZE + row;
+                let target_index =
+                    slice_offset + (row * ALPHA_CHUNK_SIZE_USIZE + column) * ALPHA_CHANNEL_COUNT;
+                for channel in 0..channel_count {
+                    let map_index = first_map + channel;
+                    if let Some(alpha_map) = alpha_maps.get(map_index)
+                        && let Some(&alpha) = alpha_map.get(source_index)
+                    {
+                        array_data[target_index + channel] = alpha;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn create_alpha_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    array_data: &[u8],
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = create_array_texture(
+        device,
+        label,
+        ALPHA_CHUNK_SIZE,
+        ALPHA_CHUNK_SIZE,
+        ALPHA_CHUNK_COUNT,
+        1,
+        wgpu::TextureFormat::Rgba8Unorm,
+    );
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        array_data,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(ALPHA_CHANNEL_COUNT_U32 * ALPHA_CHUNK_SIZE),
+            rows_per_image: Some(ALPHA_CHUNK_SIZE),
+        },
+        wgpu::Extent3d {
+            width: ALPHA_CHUNK_SIZE,
+            height: ALPHA_CHUNK_SIZE,
+            depth_or_array_layers: ALPHA_CHUNK_COUNT,
+        },
+    );
+    let view = array_view(&texture);
+    (texture, view)
+}
 
 impl TerrainViewer {
     /// Creates a 2D texture array from loaded terrain textures.
@@ -14,178 +326,13 @@ impl TerrainViewer {
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        albedo: &Option<AlbedoData>,
+        albedo: Option<&AlbedoData>,
     ) -> (wgpu::Texture, wgpu::TextureView) {
         let scene = self.scene.as_ref().expect("scene must be loaded");
-        let terrain_textures = &scene.terrain_textures;
-        // Use terrain textures if available, otherwise fall back to albedo or white
-        if !terrain_textures.is_empty() {
-            // All textures should be same size (e.g., 1024x1024)
-            let tex_width = terrain_textures[0].width;
-            let tex_height = terrain_textures[0].height;
-            let layer_count = terrain_textures.len() as u32;
-            let num_mips = mip_level_count(tex_width, tex_height);
-
-            log::info!(
-                "Creating terrain texture array: {}x{} x {} layers with {} mip levels",
-                tex_width,
-                tex_height,
-                layer_count,
-                num_mips
-            );
-
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("Terrain Texture Array"),
-                size: wgpu::Extent3d {
-                    width: tex_width,
-                    height: tex_height,
-                    depth_or_array_layers: layer_count,
-                },
-                mip_level_count: num_mips,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-
-            // Upload each layer with mipmaps
-            for (i, tex) in terrain_textures.iter().enumerate() {
-                // Generate mipmaps for this texture
-                let mips = generate_mipmaps(&tex.pixels, tex_width, tex_height);
-
-                // Upload each mip level
-                let mut mip_width = tex_width;
-                let mut mip_height = tex_height;
-                for (mip_level, mip_data) in mips.iter().enumerate() {
-                    queue.write_texture(
-                        wgpu::TexelCopyTextureInfo {
-                            texture: &texture,
-                            mip_level: mip_level as u32,
-                            origin: wgpu::Origin3d {
-                                x: 0,
-                                y: 0,
-                                z: i as u32,
-                            },
-                            aspect: wgpu::TextureAspect::All,
-                        },
-                        mip_data,
-                        wgpu::TexelCopyBufferLayout {
-                            offset: 0,
-                            bytes_per_row: Some(4 * mip_width),
-                            rows_per_image: Some(mip_height),
-                        },
-                        wgpu::Extent3d {
-                            width: mip_width,
-                            height: mip_height,
-                            depth_or_array_layers: 1,
-                        },
-                    );
-                    mip_width = (mip_width / 2).max(1);
-                    mip_height = (mip_height / 2).max(1);
-                }
-            }
-
-            let view = texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            });
-
-            (texture, view)
-        } else if let Some(a) = albedo {
-            // Fallback to albedo texture
-            log::info!(
-                "Using XTT albedo as terrain array fallback: {}x{}",
-                a.width,
-                a.height
-            );
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("Terrain Texture Array (Fallback)"),
-                size: wgpu::Extent3d {
-                    width: a.width,
-                    height: a.height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &a.pixels,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4 * a.width),
-                    rows_per_image: Some(a.height),
-                },
-                wgpu::Extent3d {
-                    width: a.width,
-                    height: a.height,
-                    depth_or_array_layers: 1,
-                },
-            );
-
-            let view = texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            });
-
-            (texture, view)
+        if scene.terrain_textures.is_empty() {
+            create_single_terrain_array(device, queue, albedo)
         } else {
-            // White fallback
-            log::info!("Using white fallback terrain texture");
-            let white = vec![255u8; 4];
-
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("Terrain Texture Array (White)"),
-                size: wgpu::Extent3d {
-                    width: 1,
-                    height: 1,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &white,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4),
-                    rows_per_image: Some(1),
-                },
-                wgpu::Extent3d {
-                    width: 1,
-                    height: 1,
-                    depth_or_array_layers: 1,
-                },
-            );
-
-            let view = texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            });
-
-            (texture, view)
+            create_terrain_array_from_layers(device, queue, &scene.terrain_textures)
         }
     }
 
@@ -196,475 +343,141 @@ impl TerrainViewer {
         queue: &wgpu::Queue,
     ) -> (wgpu::Texture, wgpu::TextureView) {
         let scene = self.scene.as_ref().expect("scene must be loaded");
-        let normal_textures = &scene.normal_textures;
-        if !normal_textures.is_empty() {
-            // All normal maps should be same size as terrain textures
-            let tex_width = normal_textures[0].width;
-            let tex_height = normal_textures[0].height;
-            let layer_count = normal_textures.len() as u32;
-            let num_mips = mip_level_count(tex_width, tex_height);
-
-            log::info!(
-                "Creating normal map array: {}x{} x {} layers with {} mip levels",
-                tex_width,
-                tex_height,
-                layer_count,
-                num_mips
-            );
-
-            // Normal maps should NOT be sRGB - they contain linear data
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("Normal Map Array"),
-                size: wgpu::Extent3d {
-                    width: tex_width,
-                    height: tex_height,
-                    depth_or_array_layers: layer_count,
-                },
-                mip_level_count: num_mips,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm, // NOT sRGB for normal maps
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-
-            // Upload each layer with mipmaps
-            for (i, tex) in normal_textures.iter().enumerate() {
-                // Generate mipmaps for this texture
-                let mips = generate_mipmaps(&tex.pixels, tex_width, tex_height);
-
-                // Upload each mip level
-                let mut mip_width = tex_width;
-                let mut mip_height = tex_height;
-                for (mip_level, mip_data) in mips.iter().enumerate() {
-                    queue.write_texture(
-                        wgpu::TexelCopyTextureInfo {
-                            texture: &texture,
-                            mip_level: mip_level as u32,
-                            origin: wgpu::Origin3d {
-                                x: 0,
-                                y: 0,
-                                z: i as u32,
-                            },
-                            aspect: wgpu::TextureAspect::All,
-                        },
-                        mip_data,
-                        wgpu::TexelCopyBufferLayout {
-                            offset: 0,
-                            bytes_per_row: Some(4 * mip_width),
-                            rows_per_image: Some(mip_height),
-                        },
-                        wgpu::Extent3d {
-                            width: mip_width,
-                            height: mip_height,
-                            depth_or_array_layers: 1,
-                        },
-                    );
-                    mip_width = (mip_width / 2).max(1);
-                    mip_height = (mip_height / 2).max(1);
-                }
-            }
-
-            let view = texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            });
-
-            (texture, view)
+        if scene.normal_textures.is_empty() {
+            create_flat_normal_array(device, queue)
         } else {
-            // Fallback: flat normal (pointing up)
-            log::info!("Using flat normal fallback texture");
-            // Normal map flat = (0.5, 0.5, 1.0) in tangent space = (128, 128, 255) in 0-255
-            let flat_normal = vec![128u8, 128, 255, 255];
-
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("Normal Map Array (Fallback)"),
-                size: wgpu::Extent3d {
-                    width: 1,
-                    height: 1,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &flat_normal,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4),
-                    rows_per_image: Some(1),
-                },
-                wgpu::Extent3d {
-                    width: 1,
-                    height: 1,
-                    depth_or_array_layers: 1,
-                },
-            );
-
-            let view = texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            });
-
-            (texture, view)
+            create_normal_array_from_layers(device, queue, &scene.normal_textures)
         }
     }
 
-    /// Creates the alpha atlas texture (1024x1024 RGBA, each chunk is 64x64).
+    /// Creates the alpha atlas texture (256 slices of 64x64 RGBA pixels).
     pub(crate) fn create_alpha_atlas(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> (wgpu::Texture, wgpu::TextureView) {
-        let scene = self.scene.as_ref().expect("scene must be loaded");
-        let chunk_splat_data = &scene.chunk_splat_data;
-        // Per-chunk alpha texture array: 256 slices of 64×64 RGBA
-        // Matches original Halo Wars approach where each chunk has its own alpha texture.
-        // Each pixel's RGBA channels hold alpha weights for layers 1-4.
-        const CHUNK_SIZE: u32 = 64;
-        const NUM_CHUNKS: u32 = 256;
-
-        // Each slice is 64×64×4 bytes (RGBA)
-        let slice_bytes = (CHUNK_SIZE * CHUNK_SIZE * 4) as usize;
-        let mut array_data = vec![0u8; slice_bytes * NUM_CHUNKS as usize];
-
-        if !chunk_splat_data.is_empty() {
-            log::info!(
-                "Creating alpha texture array from {} chunks",
-                chunk_splat_data.len()
-            );
-
-            for (i, chunk) in chunk_splat_data.iter().take(5).enumerate() {
-                let non_zero: usize = chunk
+        let chunks = &self
+            .scene
+            .as_ref()
+            .expect("scene must be loaded")
+            .chunk_splat_data;
+        if chunks.is_empty() {
+            log::info!("No splat data, using empty alpha texture array");
+        } else {
+            log::info!("Creating alpha texture array from {} chunks", chunks.len());
+            for (index, chunk) in chunks.iter().take(5).enumerate() {
+                let non_zero = chunk
                     .alpha_maps
                     .iter()
-                    .flat_map(|m| m.iter())
-                    .filter(|&&v| v > 0)
+                    .flatten()
+                    .filter(|&&value| value > 0)
                     .count();
                 log::info!(
-                    "  Chunk {}: grid=({},{}), {} alpha maps, {} non-zero values",
-                    i,
+                    "  Chunk {index}: grid=({},{}), {} alpha maps, {non_zero} non-zero values",
                     chunk.grid_x,
                     chunk.grid_z,
-                    chunk.alpha_maps.len(),
-                    non_zero
+                    chunk.alpha_maps.len()
                 );
             }
-
-            for chunk in chunk_splat_data {
-                // X-major chunk indexing (game convention): gridX * numZChunks + gridZ
-                let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
-                if chunk_idx >= NUM_CHUNKS as usize {
-                    continue;
-                }
-                let slice_offset = chunk_idx * slice_bytes;
-
-                for y in 0..CHUNK_SIZE {
-                    for x in 0..CHUNK_SIZE {
-                        // Decoded alpha has x=Z, y=X (XTT convention). Transpose so that
-                        // texture columns=X, rows=Z — matching sample_uv = (X→U, Z→V).
-                        let src_idx = (x * CHUNK_SIZE + y) as usize; // transpose: swap x↔y
-                        let dst_idx = slice_offset + (y * CHUNK_SIZE + x) as usize * 4;
-
-                        // R = alpha for layer 1, G = layer 2, B = layer 3, A = layer 4
-                        // Unused layers get 0 alpha (not 255!) so they don't blend.
-                        for ch in 0..4usize {
-                            if chunk.alpha_maps.len() > ch && src_idx < chunk.alpha_maps[ch].len() {
-                                array_data[dst_idx + ch] = chunk.alpha_maps[ch][src_idx];
-                            }
-                            // else: already 0 from vec initialization
-                        }
-                    }
-                }
-            }
-        } else {
-            log::info!("No splat data, using empty alpha texture array");
         }
 
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Alpha Texture Array"),
-            size: wgpu::Extent3d {
-                width: CHUNK_SIZE,
-                height: CHUNK_SIZE,
-                depth_or_array_layers: NUM_CHUNKS,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &array_data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * CHUNK_SIZE),
-                rows_per_image: Some(CHUNK_SIZE),
-            },
-            wgpu::Extent3d {
-                width: CHUNK_SIZE,
-                height: CHUNK_SIZE,
-                depth_or_array_layers: NUM_CHUNKS,
-            },
+        let mut data = empty_alpha_array();
+        populate_alpha_data(
+            &mut data,
+            chunks
+                .iter()
+                .map(|chunk| (chunk.grid_x, chunk.grid_z, chunk.alpha_maps.as_slice())),
+            0,
+            4,
         );
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
-        (texture, view)
+        create_alpha_texture(device, queue, "Alpha Texture Array", &data)
     }
 
-    /// Creates the high alpha atlas texture for layers 5-7 (overflow layers).
-    /// Same format as create_alpha_atlas but stores alpha maps [4], [5], [6] in R, G, B.
+    /// Creates the high alpha atlas for overflow layers 5 through 7.
     pub(crate) fn create_alpha_atlas_hi(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> (wgpu::Texture, wgpu::TextureView) {
-        let scene = self.scene.as_ref().expect("scene must be loaded");
-        let chunk_splat_data = &scene.chunk_splat_data;
-        const CHUNK_SIZE: u32 = 64;
-        const NUM_CHUNKS: u32 = 256;
-
-        let slice_bytes = (CHUNK_SIZE * CHUNK_SIZE * 4) as usize;
-        let mut array_data = vec![0u8; slice_bytes * NUM_CHUNKS as usize];
-
-        if !chunk_splat_data.is_empty() {
-            for chunk in chunk_splat_data {
-                let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
-                if chunk_idx >= NUM_CHUNKS as usize {
-                    continue;
-                }
-                let slice_offset = chunk_idx * slice_bytes;
-
-                // Only process chunks that have > 4 alpha maps
-                if chunk.alpha_maps.len() <= 4 {
-                    continue;
-                }
-
-                for y in 0..CHUNK_SIZE {
-                    for x in 0..CHUNK_SIZE {
-                        let src_idx = (x * CHUNK_SIZE + y) as usize; // transpose
-                        let dst_idx = slice_offset + (y * CHUNK_SIZE + x) as usize * 4;
-
-                        // R = alpha for layer 5, G = layer 6, B = layer 7, A = unused
-                        for ch in 0..3usize {
-                            let map_idx = 4 + ch;
-                            if chunk.alpha_maps.len() > map_idx
-                                && src_idx < chunk.alpha_maps[map_idx].len()
-                            {
-                                array_data[dst_idx + ch] = chunk.alpha_maps[map_idx][src_idx];
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Alpha Texture Array Hi"),
-            size: wgpu::Extent3d {
-                width: CHUNK_SIZE,
-                height: CHUNK_SIZE,
-                depth_or_array_layers: NUM_CHUNKS,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &array_data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * CHUNK_SIZE),
-                rows_per_image: Some(CHUNK_SIZE),
-            },
-            wgpu::Extent3d {
-                width: CHUNK_SIZE,
-                height: CHUNK_SIZE,
-                depth_or_array_layers: NUM_CHUNKS,
-            },
+        let chunks = &self
+            .scene
+            .as_ref()
+            .expect("scene must be loaded")
+            .chunk_splat_data;
+        let mut data = empty_alpha_array();
+        populate_alpha_data(
+            &mut data,
+            chunks
+                .iter()
+                .map(|chunk| (chunk.grid_x, chunk.grid_z, chunk.alpha_maps.as_slice())),
+            4,
+            3,
         );
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
-        (texture, view)
+        create_alpha_texture(device, queue, "Alpha Texture Array Hi", &data)
     }
 
     /// Creates the decal alpha atlas texture.
-    /// Same layout as the splat alpha atlas: 256 slices of 64×64 RGBA.
-    /// R=decal layer 0, G=layer 1, B=layer 2, A=layer 3.
     pub(crate) fn create_decal_alpha_atlas(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> (wgpu::Texture, wgpu::TextureView) {
-        let scene = self.scene.as_ref().expect("scene must be loaded");
-        let chunk_decal_data = &scene.chunk_decal_data;
-        const CHUNK_SIZE: u32 = 64;
-        const NUM_CHUNKS: u32 = 256;
-
-        let slice_bytes = (CHUNK_SIZE * CHUNK_SIZE * 4) as usize;
-        let mut array_data = vec![0u8; slice_bytes * NUM_CHUNKS as usize];
-
-        if !chunk_decal_data.is_empty() {
+        let chunks = &self
+            .scene
+            .as_ref()
+            .expect("scene must be loaded")
+            .chunk_decal_data;
+        if chunks.is_empty() {
+            log::info!("No decal data, using empty decal alpha atlas");
+        } else {
             log::info!(
                 "Creating decal alpha atlas from {} chunks with decals",
-                chunk_decal_data.len()
+                chunks.len()
             );
-
-            for chunk in chunk_decal_data {
-                let chunk_idx = (chunk.grid_x * 16 + chunk.grid_z) as usize;
-                if chunk_idx >= NUM_CHUNKS as usize {
-                    continue;
-                }
-                let slice_offset = chunk_idx * slice_bytes;
-
-                for y in 0..CHUNK_SIZE {
-                    for x in 0..CHUNK_SIZE {
-                        // Same transpose as splat alpha atlas
-                        let src_idx = (x * CHUNK_SIZE + y) as usize;
-                        let dst_idx = slice_offset + (y * CHUNK_SIZE + x) as usize * 4;
-
-                        for ch in 0..4usize {
-                            if chunk.alpha_maps.len() > ch && src_idx < chunk.alpha_maps[ch].len() {
-                                array_data[dst_idx + ch] = chunk.alpha_maps[ch][src_idx];
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            log::info!("No decal data, using empty decal alpha atlas");
         }
 
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Decal Alpha Atlas"),
-            size: wgpu::Extent3d {
-                width: CHUNK_SIZE,
-                height: CHUNK_SIZE,
-                depth_or_array_layers: NUM_CHUNKS,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &array_data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * CHUNK_SIZE),
-                rows_per_image: Some(CHUNK_SIZE),
-            },
-            wgpu::Extent3d {
-                width: CHUNK_SIZE,
-                height: CHUNK_SIZE,
-                depth_or_array_layers: NUM_CHUNKS,
-            },
+        let mut data = empty_alpha_array();
+        populate_alpha_data(
+            &mut data,
+            chunks
+                .iter()
+                .map(|chunk| (chunk.grid_x, chunk.grid_z, chunk.alpha_maps.as_slice())),
+            0,
+            4,
         );
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
-        (texture, view)
+        create_alpha_texture(device, queue, "Decal Alpha Atlas", &data)
     }
-}
 
-impl TerrainViewer {
-    /// Creates the XTT albedo texture (original pre-composited from game export).
-    /// This is the unique texture that the game's export tools created with proper blending.
+    /// Creates the original pre-composited XTT albedo texture.
     pub(crate) fn create_xtt_albedo_texture(
-        &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        albedo: &Option<AlbedoData>,
+        albedo: Option<&AlbedoData>,
     ) -> (wgpu::Texture, wgpu::TextureView) {
-        let (tex_width, tex_height, tex_data) = if let Some(a) = albedo {
-            log::info!("Creating XTT albedo texture: {}x{}", a.width, a.height);
-            (a.width, a.height, a.pixels.clone())
-        } else {
-            log::info!("No XTT albedo, using gray fallback");
-            (1, 1, vec![128u8, 128, 128, 255])
-        };
-
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("XTT Albedo Texture"),
-            size: wgpu::Extent3d {
-                width: tex_width,
-                height: tex_height,
-                depth_or_array_layers: 1,
+        let (width, height, pixels): (u32, u32, &[u8]) = albedo.map_or_else(
+            || {
+                log::info!("No XTT albedo, using gray fallback");
+                (1, 1, &[128_u8, 128, 128, 255][..])
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &tex_data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * tex_width),
-                rows_per_image: Some(tex_height),
-            },
-            wgpu::Extent3d {
-                width: tex_width,
-                height: tex_height,
-                depth_or_array_layers: 1,
+            |value| {
+                log::info!(
+                    "Creating XTT albedo texture: {}x{}",
+                    value.width,
+                    value.height
+                );
+                (value.width, value.height, value.pixels.as_slice())
             },
         );
-
+        let texture = create_array_texture(
+            device,
+            "XTT Albedo Texture",
+            width,
+            height,
+            1,
+            1,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+        );
+        upload_texture(queue, &texture, pixels, width, height, 0, 0);
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         (texture, view)
     }

@@ -20,8 +20,8 @@ use rayon::prelude::*;
 /// Load terrain textures (diffuse and normal maps) from an asset source.
 ///
 /// Uses parallel loading for both ERA decompression and DDX decoding.
-/// Returns a tuple of (terrain_textures, normal_textures).
-/// Textures are loaded in the same order as active_textures to maintain index alignment.
+/// Returns a tuple of (`terrain_textures`, `normal_textures`).
+/// Textures are loaded in the same order as `active_textures` to maintain index alignment.
 pub fn load_terrain_textures(
     source: &mut AssetSource<StdFileProvider>,
     active_textures: &[ActiveTextureInfo],
@@ -49,7 +49,7 @@ pub fn load_terrain_textures(
     let all_paths: Vec<&str> = diffuse_paths
         .iter()
         .chain(normal_paths.iter())
-        .map(|s| s.as_str())
+        .map(std::string::String::as_str)
         .collect();
 
     // Load all files sequentially (AssetSource requires &mut self)
@@ -142,7 +142,7 @@ fn create_placeholder_texture(name: &str) -> TerrainTexture {
         pixels[i * 4 + 3] = 255; // A
     }
     TerrainTexture {
-        name: format!("placeholder_{}", name),
+        name: format!("placeholder_{name}"),
         width: placeholder_size,
         height: placeholder_size,
         pixels,
@@ -182,7 +182,7 @@ pub fn load_decal_textures(
     let all_paths: Vec<&str> = diffuse_paths
         .iter()
         .chain(opacity_paths.iter())
-        .map(|s| s.as_str())
+        .map(std::string::String::as_str)
         .collect();
 
     // Load all files sequentially (AssetSource requires &mut self)
@@ -280,14 +280,14 @@ pub fn load_foliage_sets(
     for set_info in foliage_sets {
         let base_path = format!("art/{}", set_info.filename.replace('\\', "/"));
         let paths = [
-            format!("{}_df.ddx", base_path),
-            format!("{}_op.ddx", base_path),
-            format!("{}_nm.ddx", base_path),
-            format!("{}_sp.ddx", base_path),
-            format!("{}.xml", base_path),
+            format!("{base_path}_df.ddx"),
+            format!("{base_path}_op.ddx"),
+            format!("{base_path}_nm.ddx"),
+            format!("{base_path}_sp.ddx"),
+            format!("{base_path}.xml"),
         ];
         for p in &paths {
-            log::info!("  Foliage asset path: {}", p);
+            log::info!("  Foliage asset path: {p}");
         }
         all_paths.extend(paths);
     }
@@ -300,7 +300,7 @@ pub fn load_foliage_sets(
     for (i, path) in all_paths.iter().enumerate() {
         match &all_data[i] {
             Some(data) => log::info!("  Found: {} ({} bytes)", path, data.len()),
-            None => log::warn!("  MISSING: {}", path),
+            None => log::warn!("  MISSING: {path}"),
         }
     }
 
@@ -308,88 +308,11 @@ pub fn load_foliage_sets(
     let loaded_sets: Vec<FoliageSet> = (0..foliage_sets.len())
         .into_par_iter()
         .map(|i| {
-            let set_info = &foliage_sets[i];
             let base_idx = i * files_per_set;
-
-            let mut foliage_set = FoliageSet {
-                name: set_info.filename.clone(),
-                ..Default::default()
-            };
-
-            // Decode albedo (_df)
-            if let Some(data) = &all_data[base_idx] {
-                log::info!(
-                    "  Decoding foliage albedo DDX for '{}' ({} bytes)",
-                    set_info.filename,
-                    data.len()
-                );
-                match DdxTexture::from_bytes(data) {
-                    Ok(ddx) => match ddx.decode_to_rgba() {
-                        Ok(decoded) => {
-                            log::info!(
-                                "    Decoded albedo: {}x{}, {} bytes",
-                                decoded.width,
-                                decoded.height,
-                                decoded.pixels.len()
-                            );
-                            foliage_set.albedo_width = decoded.width;
-                            foliage_set.albedo_height = decoded.height;
-                            foliage_set.albedo_pixels = decoded.pixels;
-                        }
-                        Err(e) => log::error!("    Failed to decode albedo DDX: {}", e),
-                    },
-                    Err(e) => log::error!("    Failed to parse albedo DDX: {}", e),
-                }
-            } else {
-                log::warn!("  No albedo data found for '{}'", set_info.filename);
-            }
-
-            // Decode opacity (_op)
-            if let Some(data) = &all_data[base_idx + 1]
-                && let Ok(ddx) = DdxTexture::from_bytes(data)
-                && let Ok(decoded) = ddx.decode_to_rgba()
-            {
-                log::info!(
-                    "  Loaded foliage opacity: {} ({}x{})",
-                    set_info.filename,
-                    decoded.width,
-                    decoded.height
-                );
-                foliage_set.opacity_width = decoded.width;
-                foliage_set.opacity_height = decoded.height;
-                foliage_set.opacity_pixels = decoded.pixels;
-            } else {
-                log::warn!("  No foliage opacity texture for: {}", set_info.filename);
-            }
-
-            // Decode normal (_nm)
-            if let Some(data) = &all_data[base_idx + 2]
-                && let Ok(ddx) = DdxTexture::from_bytes(data)
-                && let Ok(decoded) = ddx.decode_to_rgba()
-            {
-                foliage_set.normal_width = decoded.width;
-                foliage_set.normal_height = decoded.height;
-                foliage_set.normal_pixels = decoded.pixels;
-            }
-
-            // Decode specular (_sp)
-            if let Some(data) = &all_data[base_idx + 3]
-                && let Ok(ddx) = DdxTexture::from_bytes(data)
-                && let Ok(decoded) = ddx.decode_to_rgba()
-            {
-                foliage_set.specular_width = decoded.width;
-                foliage_set.specular_height = decoded.height;
-                foliage_set.specular_pixels = decoded.pixels;
-            }
-
-            // Parse blade geometry from XML (.xml.xmb)
-            if let Some(xml_data) = &all_data[base_idx + 4] {
-                parse_foliage_blade_xml(xml_data, &mut foliage_set);
-            } else {
-                log::warn!("  No foliage blade XML for: {}", set_info.filename);
-            }
-
-            foliage_set
+            load_foliage_set(
+                &foliage_sets[i],
+                &all_data[base_idx..base_idx + files_per_set],
+            )
         })
         .collect();
 
@@ -405,7 +328,85 @@ pub fn load_foliage_sets(
     loaded_sets
 }
 
+fn load_foliage_set(set_info: &FoliageSetInfo, data: &[Option<Vec<u8>>]) -> FoliageSet {
+    let mut foliage_set = FoliageSet {
+        name: set_info.filename.clone(),
+        ..Default::default()
+    };
+
+    if let Some(bytes) = &data[0] {
+        log::info!(
+            "  Decoding foliage albedo DDX for '{}' ({} bytes)",
+            set_info.filename,
+            bytes.len()
+        );
+        match DdxTexture::from_bytes(bytes) {
+            Ok(ddx) => match ddx.decode_to_rgba() {
+                Ok(decoded) => {
+                    log::info!(
+                        "    Decoded albedo: {}x{}, {} bytes",
+                        decoded.width,
+                        decoded.height,
+                        decoded.pixels.len()
+                    );
+                    foliage_set.albedo_width = decoded.width;
+                    foliage_set.albedo_height = decoded.height;
+                    foliage_set.albedo_pixels = decoded.pixels;
+                }
+                Err(error) => log::error!("    Failed to decode albedo DDX: {error}"),
+            },
+            Err(error) => log::error!("    Failed to parse albedo DDX: {error}"),
+        }
+    } else {
+        log::warn!("  No albedo data found for '{}'", set_info.filename);
+    }
+
+    if let Some(bytes) = &data[1]
+        && let Ok(ddx) = DdxTexture::from_bytes(bytes)
+        && let Ok(decoded) = ddx.decode_to_rgba()
+    {
+        log::info!(
+            "  Loaded foliage opacity: {} ({}x{})",
+            set_info.filename,
+            decoded.width,
+            decoded.height
+        );
+        foliage_set.opacity_width = decoded.width;
+        foliage_set.opacity_height = decoded.height;
+        foliage_set.opacity_pixels = decoded.pixels;
+    } else {
+        log::warn!("  No foliage opacity texture for: {}", set_info.filename);
+    }
+
+    if let Some(bytes) = &data[2]
+        && let Ok(ddx) = DdxTexture::from_bytes(bytes)
+        && let Ok(decoded) = ddx.decode_to_rgba()
+    {
+        foliage_set.normal_width = decoded.width;
+        foliage_set.normal_height = decoded.height;
+        foliage_set.normal_pixels = decoded.pixels;
+    }
+
+    if let Some(bytes) = &data[3]
+        && let Ok(ddx) = DdxTexture::from_bytes(bytes)
+        && let Ok(decoded) = ddx.decode_to_rgba()
+    {
+        foliage_set.specular_width = decoded.width;
+        foliage_set.specular_height = decoded.height;
+        foliage_set.specular_pixels = decoded.pixels;
+    }
+
+    if let Some(xml_data) = &data[4] {
+        parse_foliage_blade_xml(xml_data, &mut foliage_set);
+    } else {
+        log::warn!("  No foliage blade XML for: {}", set_info.filename);
+    }
+
+    foliage_set
+}
+
 /// Extract chunk splat data from XTT linkers.
+#[must_use]
 pub fn extract_chunk_splat_data(xtt: &XttFile) -> Vec<ChunkSplatData> {
     let mut chunk_splat_data = Vec::new();
 
@@ -437,6 +438,7 @@ pub fn extract_chunk_splat_data(xtt: &XttFile) -> Vec<ChunkSplatData> {
 }
 
 /// Extract decal instances and chunk decal data from XTT.
+#[must_use]
 pub fn extract_decal_data(xtt: &XttFile) -> (Vec<DecalInstance>, Vec<ChunkDecalData>) {
     let mut decal_instances = Vec::new();
     let mut chunk_decal_data = Vec::new();
@@ -488,6 +490,7 @@ pub fn extract_decal_data(xtt: &XttFile) -> (Vec<DecalInstance>, Vec<ChunkDecalD
 }
 
 /// Extract foliage QN chunks from XTT.
+#[must_use]
 pub fn extract_foliage_chunks(xtt: &XttFile) -> Vec<FoliageQNChunk> {
     let mut foliage_chunks = Vec::new();
 
@@ -507,6 +510,7 @@ pub fn extract_foliage_chunks(xtt: &XttFile) -> Vec<FoliageQNChunk> {
 
 /// Extract road data from XTT file.
 /// Returns a list of road chunks (one per road in the scenario).
+#[must_use]
 pub fn extract_road_data(xtt: &XttFile) -> Vec<RoadChunkData> {
     match xtt.decode_road() {
         Ok(Some(road)) => {
@@ -540,23 +544,23 @@ pub fn extract_road_data(xtt: &XttFile) -> Vec<RoadChunkData> {
             Vec::new()
         }
         Err(e) => {
-            log::warn!("Failed to decode road data: {}", e);
+            log::warn!("Failed to decode road data: {e}");
             Vec::new()
         }
     }
 }
 
 /// Load road textures (albedo, normal, specular) from an asset source.
-/// Returns (albedo_pixels, normal_pixels, specular_pixels, width, height) or None.
+/// Returns (`albedo_pixels`, `normal_pixels`, `specular_pixels`, width, height) or None.
 pub fn load_road_textures(
     source: &mut AssetSource<StdFileProvider>,
     texture_name: &str,
 ) -> Option<RoadTextures> {
     let base = format!("art/{}", texture_name.replace('\\', "/"));
     let paths = [
-        format!("{}_df.ddx", base),
-        format!("{}_nm.ddx", base),
-        format!("{}_sp.ddx", base),
+        format!("{base}_df.ddx"),
+        format!("{base}_nm.ddx"),
+        format!("{base}_sp.ddx"),
     ];
 
     let file_data: Vec<Option<Vec<u8>>> = paths.iter().map(|p| source.resolve_exact(p)).collect();
@@ -593,14 +597,12 @@ pub fn load_road_textures(
             height,
             albedo_pixels: albedo_tex.pixels,
             normal_pixels: normal
-                .map(|t| t.pixels)
-                .unwrap_or_else(|| vec![128u8; (width * height * 4) as usize]),
+                .map_or_else(|| vec![128u8; (width * height * 4) as usize], |t| t.pixels),
             specular_pixels: specular
-                .map(|t| t.pixels)
-                .unwrap_or_else(|| vec![0u8; (width * height * 4) as usize]),
+                .map_or_else(|| vec![0u8; (width * height * 4) as usize], |t| t.pixels),
         })
     } else {
-        log::warn!("Failed to load road albedo texture: {}_df.ddx", base);
+        log::warn!("Failed to load road albedo texture: {base}_df.ddx");
         None
     }
 }
@@ -637,33 +639,29 @@ fn parse_foliage_blade_xml(xml_data: &[u8], foliage_set: &mut FoliageSet) {
     use pipeline::xmb::{Document as XmbDocument, Reader as XmbReader};
 
     // Try XMB binary first, then fall back to raw XML text
-    let xmb = match XmbReader::read(xml_data) {
-        Ok(xmb) => xmb,
-        Err(_) => {
-            // Try as raw XML text
-            let xml_str = match std::str::from_utf8(xml_data) {
-                Ok(s) => s,
-                Err(e) => {
-                    log::warn!("  Foliage XML is not valid UTF-8: {}", e);
-                    return;
-                }
-            };
-            match XmbDocument::from_xml(xml_str) {
-                Ok(xmb) => xmb,
-                Err(e) => {
-                    log::warn!("  Failed to parse foliage XML: {}", e);
-                    return;
-                }
+    let xmb = if let Ok(xmb) = XmbReader::read(xml_data) {
+        xmb
+    } else {
+        // Try as raw XML text
+        let xml_str = match std::str::from_utf8(xml_data) {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("  Foliage XML is not valid UTF-8: {e}");
+                return;
+            }
+        };
+        match XmbDocument::from_xml(xml_str) {
+            Ok(xmb) => xmb,
+            Err(e) => {
+                log::warn!("  Failed to parse foliage XML: {e}");
+                return;
             }
         }
     };
 
-    let root = match xmb.root() {
-        Some(r) => r,
-        None => {
-            log::warn!("  Foliage XMB has no root node");
-            return;
-        }
+    let Some(root) = xmb.root() else {
+        log::warn!("  Foliage XMB has no root node");
+        return;
     };
 
     // Read attributes from root <foliageset> node
@@ -682,24 +680,20 @@ fn parse_foliage_blade_xml(xml_data: &[u8], foliage_set: &mut FoliageSet) {
 
     if num_blade_types == 0 || num_verts_per_type == 0 {
         log::warn!(
-            "  Foliage XMB has invalid blade counts: types={}, verts={}",
-            num_blade_types,
-            num_verts_per_type
+            "  Foliage XMB has invalid blade counts: types={num_blade_types}, verts={num_verts_per_type}"
         );
         return;
     }
 
-    let total_verts = (num_blade_types * num_verts_per_type) as usize;
+    let total_verts = usize::try_from(u64::from(num_blade_types) * u64::from(num_verts_per_type))
+        .unwrap_or_default();
     let mut positions: Vec<[f32; 4]> = Vec::with_capacity(total_verts);
     let mut normals: Vec<[f32; 4]> = Vec::with_capacity(total_verts);
 
     // Find <setElements> node
-    let set_elements = match root.children.iter().find(|n| n.name == "setElements") {
-        Some(n) => n,
-        None => {
-            log::warn!("  Foliage XMB missing <setElements>");
-            return;
-        }
+    let Some(set_elements) = root.children.iter().find(|node| node.name == "setElements") else {
+        log::warn!("  Foliage XMB missing <setElements>");
+        return;
     };
 
     // Iterate <setElement> → <elementVerts> → <vert>

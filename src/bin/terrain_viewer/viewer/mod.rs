@@ -1,4 +1,4 @@
-//! TerrainViewer struct and implementation.
+//! `TerrainViewer` struct and implementation.
 //!
 //! Split into sub-modules:
 //! - `input` — keyboard/mouse handling, debug mode switching, UI
@@ -106,16 +106,16 @@ impl TerrainViewer {
 
     fn load_terrain(&mut self) {
         // Determine which loading path to use
-        let (xtd_file, xtt_file, asset_source_opt) =
+        let (terrain_file, texture_file, asset_source_opt) =
             if let Some(scenario_name) = &self.scenario_name {
-                log::info!("Loading scenario via pipeline::World: {}", scenario_name);
+                log::info!("Loading scenario via pipeline::World: {scenario_name}");
                 let dir = data::paths::game_dir();
                 let dir_str = dir.to_string_lossy();
 
                 let (mut world, mut src) = match hw1::World::load(&dir_str) {
                     Ok(ws) => ws,
                     Err(e) => {
-                        self.load_error = Some(format!("Failed to load World: {}", e));
+                        self.load_error = Some(format!("Failed to load World: {e}"));
                         log::error!("{}", self.load_error.as_ref().unwrap());
                         return;
                     }
@@ -124,8 +124,7 @@ impl TerrainViewer {
 
                 let Some(xtd) = world.terrain_data else {
                     self.load_error = Some(format!(
-                        "World loaded but no XTD terrain data for scenario '{}'",
-                        scenario_name
+                        "World loaded but no XTD terrain data for scenario '{scenario_name}'"
                     ));
                     log::error!("{}", self.load_error.as_ref().unwrap());
                     return;
@@ -149,13 +148,13 @@ impl TerrainViewer {
                             (xtd, xtt, None)
                         }
                         Err(e) => {
-                            self.load_error = Some(format!("Failed to parse XTD: {}", e));
+                            self.load_error = Some(format!("Failed to parse XTD: {e}"));
                             log::error!("{}", self.load_error.as_ref().unwrap());
                             return;
                         }
                     },
                     Err(e) => {
-                        self.load_error = Some(format!("Failed to read file: {}", e));
+                        self.load_error = Some(format!("Failed to read file: {e}"));
                         log::error!("{}", self.load_error.as_ref().unwrap());
                         return;
                     }
@@ -171,8 +170,8 @@ impl TerrainViewer {
         // Load entire terrain scene in one call
         let first_load = self.scene.is_none();
         match TerrainScene::load(
-            &xtd_file,
-            xtt_file.as_ref(),
+            &terrain_file,
+            texture_file.as_ref(),
             self.asset_source.as_mut(),
             self.tessellation_mode,
         ) {
@@ -185,7 +184,7 @@ impl TerrainViewer {
             }
             Err(e) => {
                 self.load_error = Some(e.clone());
-                log::error!("{}", e);
+                log::error!("{e}");
             }
         }
     }
