@@ -41,6 +41,19 @@ pub struct NormalMapTexture {
     pub pixels: Vec<u8>,
 }
 
+/// A specular map texture loaded from ERA (`_sp.ddx` files).
+#[derive(Clone)]
+pub struct SpecularMapTexture {
+    /// Texture name (for example, `grass_01`).
+    pub name: String,
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// RGBA pixel data. RGB stores the colored specular response.
+    pub pixels: Vec<u8>,
+}
+
 /// Splat data for a single terrain chunk.
 #[derive(Clone)]
 pub struct ChunkSplatData {

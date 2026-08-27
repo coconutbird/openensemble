@@ -1,23 +1,12 @@
 //! WGSL shader source code for terrain rendering.
 //!
-//! Contains shader code for both CPU-tessellated and GPU-tessellated terrain rendering,
-//! as well as the compositing shader for pre-baking terrain textures.
+//! Contains packed GPU terrain and compositor shader sources.
 //!
 //! Shaders using shared code (lighting, fog, TBN) are authored as `.wesl` files
 //! with `import` statements and compiled to WGSL at build time via the `wesl` crate.
 //! Plain WGSL shaders are loaded directly with `include_str!`.
 
 use wesl::include_wesl;
-
-/// Basic terrain shader for CPU-tessellated mesh (compiled from WESL).
-///
-/// Features:
-/// - Texture array splatting with up to 8 textures
-/// - Alpha blending between terrain layers
-/// - Normal mapping with BC5/DXN support
-/// - Multiple debug visualization modes (0-17)
-/// - Per-texture UV scaling
-pub const TERRAIN_SHADER: &str = include_wesl!("terrain");
 
 /// GPU terrain rendering shader using instanced patches (compiled from WESL).
 ///

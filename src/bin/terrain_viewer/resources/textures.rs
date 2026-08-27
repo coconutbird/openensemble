@@ -2,7 +2,10 @@
 //!
 //! Creates GPU texture arrays and atlases from loaded terrain data.
 
-use render::terrain::{NormalMapTexture, TerrainTexture, generate_mipmaps, mip_level_count};
+use render::terrain::{
+    DecalTexture, NormalMapTexture, SpecularMapTexture, TerrainTexture, generate_mipmaps,
+    mip_level_count,
+};
 use render::wgpu;
 
 use crate::types::AlbedoData;
@@ -238,6 +241,142 @@ fn create_flat_normal_array(
     (texture, view)
 }
 
+fn create_specular_array_from_layers(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    textures: &[SpecularMapTexture],
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let width = textures[0].width;
+    let height = textures[0].height;
+    let layers = u32::try_from(textures.len()).expect("specular texture count must fit in u32");
+    let mip_levels = mip_level_count(width, height);
+    log::info!(
+        "Creating specular map array: {width}x{height} x {layers} layers with {mip_levels} mip levels"
+    );
+
+    let texture = create_array_texture(
+        device,
+        "Specular Map Array",
+        width,
+        height,
+        layers,
+        mip_levels,
+        wgpu::TextureFormat::Rgba8Unorm,
+    );
+    for (layer, specular_texture) in textures.iter().enumerate() {
+        let layer = u32::try_from(layer).expect("specular texture index must fit in u32");
+        upload_mip_chain(
+            queue,
+            &texture,
+            &specular_texture.pixels,
+            width,
+            height,
+            layer,
+        );
+    }
+
+    let view = array_view(&texture);
+    (texture, view)
+}
+
+fn create_black_specular_array(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    log::info!("Using black specular fallback texture");
+    let texture = create_array_texture(
+        device,
+        "Specular Map Array (Fallback)",
+        1,
+        1,
+        1,
+        1,
+        wgpu::TextureFormat::Rgba8Unorm,
+    );
+    upload_texture(queue, &texture, &[0, 0, 0, 255], 1, 1, 0, 0);
+    let view = array_view(&texture);
+    (texture, view)
+}
+
+fn resize_rgba_nearest(
+    pixels: &[u8],
+    source_width: u32,
+    source_height: u32,
+    target_width: u32,
+    target_height: u32,
+) -> Vec<u8> {
+    if source_width == target_width && source_height == target_height {
+        return pixels.to_vec();
+    }
+    let target_texels = target_width
+        .checked_mul(target_height)
+        .and_then(|count| usize::try_from(count).ok())
+        .expect("resized texture dimensions must fit usize");
+    let mut resized = vec![0_u8; target_texels * 4];
+    for target_y in 0..target_height {
+        let source_y = target_y * source_height / target_height;
+        for target_x in 0..target_width {
+            let source_x = target_x * source_width / target_width;
+            let source_index = usize::try_from((source_y * source_width + source_x) * 4)
+                .expect("source texel offset must fit usize");
+            let target_index = usize::try_from((target_y * target_width + target_x) * 4)
+                .expect("target texel offset must fit usize");
+            resized[target_index..target_index + 4]
+                .copy_from_slice(&pixels[source_index..source_index + 4]);
+        }
+    }
+    resized
+}
+
+fn create_decal_array(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    textures: &[DecalTexture],
+    opacity: bool,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let width = textures
+        .iter()
+        .map(|texture| texture.width)
+        .max()
+        .unwrap_or(1);
+    let height = textures
+        .iter()
+        .map(|texture| texture.height)
+        .max()
+        .unwrap_or(1);
+    let layers = u32::try_from(textures.len().max(1)).expect("decal count must fit u32");
+    let mip_levels = mip_level_count(width, height);
+    let (label, format) = if opacity {
+        ("Decal Opacity Array", wgpu::TextureFormat::Rgba8Unorm)
+    } else {
+        ("Decal Diffuse Array", wgpu::TextureFormat::Rgba8UnormSrgb)
+    };
+    let texture = create_array_texture(device, label, width, height, layers, mip_levels, format);
+    if textures.is_empty() {
+        let fallback = [0_u8, 0, 0, 255];
+        upload_texture(queue, &texture, &fallback, 1, 1, 0, 0);
+    } else {
+        for (layer, decal) in textures.iter().enumerate() {
+            let source = if opacity {
+                &decal.opacity_pixels
+            } else {
+                &decal.diffuse_pixels
+            };
+            let pixels = resize_rgba_nearest(source, decal.width, decal.height, width, height);
+            upload_mip_chain(
+                queue,
+                &texture,
+                &pixels,
+                width,
+                height,
+                u32::try_from(layer).expect("decal layer index must fit u32"),
+            );
+        }
+    }
+    let view = array_view(&texture);
+    (texture, view)
+}
+
 fn alpha_chunk_index(grid_x: i32, grid_z: i32) -> Option<usize> {
     let grid_x = usize::try_from(grid_x).ok()?;
     let grid_z = usize::try_from(grid_z).ok()?;
@@ -350,6 +489,20 @@ impl TerrainViewer {
         }
     }
 
+    /// Creates a 2D texture array from loaded specular map textures.
+    pub(crate) fn create_specular_map_array(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
+        let scene = self.scene.as_ref().expect("scene must be loaded");
+        if scene.specular_textures.is_empty() {
+            create_black_specular_array(device, queue)
+        } else {
+            create_specular_array_from_layers(device, queue, &scene.specular_textures)
+        }
+    }
+
     /// Creates the alpha atlas texture (256 slices of 64x64 RGBA pixels).
     pub(crate) fn create_alpha_atlas(
         &self,
@@ -448,37 +601,42 @@ impl TerrainViewer {
         create_alpha_texture(device, queue, "Decal Alpha Atlas", &data)
     }
 
-    /// Creates the original pre-composited XTT albedo texture.
-    pub(crate) fn create_xtt_albedo_texture(
+    /// Creates the high decal alpha atlas for decal layers 4 through 7.
+    pub(crate) fn create_decal_alpha_atlas_hi(
+        &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        albedo: Option<&AlbedoData>,
     ) -> (wgpu::Texture, wgpu::TextureView) {
-        let (width, height, pixels): (u32, u32, &[u8]) = albedo.map_or_else(
-            || {
-                log::info!("No XTT albedo, using gray fallback");
-                (1, 1, &[128_u8, 128, 128, 255][..])
-            },
-            |value| {
-                log::info!(
-                    "Creating XTT albedo texture: {}x{}",
-                    value.width,
-                    value.height
-                );
-                (value.width, value.height, value.pixels.as_slice())
-            },
+        let chunks = &self
+            .scene
+            .as_ref()
+            .expect("scene must be loaded")
+            .chunk_decal_data;
+        let mut data = empty_alpha_array();
+        populate_alpha_data(
+            &mut data,
+            chunks
+                .iter()
+                .map(|chunk| (chunk.grid_x, chunk.grid_z, chunk.alpha_maps.as_slice())),
+            4,
+            4,
         );
-        let texture = create_array_texture(
-            device,
-            "XTT Albedo Texture",
-            width,
-            height,
-            1,
-            1,
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-        );
-        upload_texture(queue, &texture, pixels, width, height, 0, 0);
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        (texture, view)
+        create_alpha_texture(device, queue, "Decal Alpha Atlas Hi", &data)
+    }
+
+    /// Uploads the actual decal diffuse and opacity resources as aligned arrays.
+    pub(crate) fn create_decal_texture_arrays(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> (wgpu::TextureView, wgpu::TextureView) {
+        let decals = &self
+            .scene
+            .as_ref()
+            .expect("scene must be loaded")
+            .decal_textures;
+        let (_, diffuse) = create_decal_array(device, queue, decals, false);
+        let (_, opacity) = create_decal_array(device, queue, decals, true);
+        (diffuse, opacity)
     }
 }

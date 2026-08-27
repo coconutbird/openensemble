@@ -3,12 +3,11 @@
 //! Implements the `Application3D` trait: GPU initialization, resize, and render pass.
 
 use num_traits::ToPrimitive;
-use render::terrain::{LightingParams, RawXtdData, TerrainParams, TessellationMode};
+use render::terrain::{LightingParams, RawXtdData, TerrainParams};
 use render::{Application3D, RenderContext, wgpu};
 
 use super::TerrainViewer;
 use crate::gpu::create_depth_texture;
-use crate::types::CpuTerrainData;
 
 fn chunk_grid_index(grid_x: i32, grid_z: i32) -> Option<usize> {
     let grid_x = usize::try_from(grid_x).ok()?;
@@ -26,51 +25,27 @@ impl TerrainViewer {
         }
 
         let scene = self.scene.as_mut().expect("scene was checked above");
-        if self.tessellation_mode == TessellationMode::Gpu
-            && let Some(raw_data) = &scene.raw_xtd_data
-        {
-            let raw_data = RawXtdData {
-                packed_positions: raw_data.packed_positions.clone(),
-                packed_normals: raw_data.packed_normals.clone(),
-                num_verts_per_axis: raw_data.num_verts_per_axis,
-                mid: raw_data.mid,
-                range: raw_data.range,
-                tile_scale: raw_data.tile_scale,
-                ao_data: raw_data.ao_data.clone(),
-                alpha_data: raw_data.alpha_data.clone(),
-            };
-            let albedo = scene.albedo.take();
-            self.create_gpu_tessellation_resources(
-                ctx.device,
-                ctx.queue,
-                &raw_data,
-                albedo.as_ref(),
-                [ctx.size.0, ctx.size.1],
-            );
+        let Some(raw_data) = &scene.raw_xtd_data else {
+            log::error!("Packed XTD terrain data is required by the GPU terrain renderer");
             return;
-        }
-
-        if self.tessellation_mode == TessellationMode::Gpu {
-            log::warn!(
-                "GPU tessellation requested but no raw XTD data available, falling back to regular rendering"
-            );
-        }
-        let positions = scene.mesh.positions.clone();
-        let normals = scene.mesh.normals.clone();
-        let uvs = scene.mesh.uvs.clone();
-        let indices = scene.mesh.indices.clone();
+        };
+        let raw_data = RawXtdData {
+            packed_positions: raw_data.packed_positions.clone(),
+            packed_normals: raw_data.packed_normals.clone(),
+            num_verts_per_axis: raw_data.num_verts_per_axis,
+            mid: raw_data.mid,
+            range: raw_data.range,
+            tile_scale: raw_data.tile_scale,
+            ao_data: raw_data.ao_data.clone(),
+            alpha_data: raw_data.alpha_data.clone(),
+        };
         let albedo = scene.albedo.take();
-        self.create_gpu_resources_from_data(
+        self.create_gpu_tessellation_resources(
             ctx.device,
             ctx.queue,
-            &CpuTerrainData {
-                positions: &positions,
-                normals: &normals,
-                uvs: &uvs,
-                indices: &indices,
-                albedo: albedo.as_ref(),
-                surface_size: [ctx.size.0, ctx.size.1],
-            },
+            &raw_data,
+            albedo.as_ref(),
+            [ctx.size.0, ctx.size.1],
         );
     }
 
@@ -114,43 +89,32 @@ impl TerrainViewer {
             shadow_enabled = 1.0;
         }
 
+        let mut params = LightingParams {
+            world_camera_pos: [
+                self.camera.position.x,
+                self.camera.position.y,
+                self.camera.position.z,
+                0.0,
+            ],
+            ..Default::default()
+        };
+        params.shadow_vp_col0 = shadow_columns[0];
+        params.shadow_vp_col1 = shadow_columns[1];
+        params.shadow_vp_col2 = shadow_columns[2];
+        params.shadow_vp_col3 = shadow_columns[3];
+        params.shadow_params[2] = shadow_enabled;
         if let Some(lighting_buffer) = &gpu.lighting_buffer {
-            let mut params = LightingParams {
-                world_camera_pos: [
-                    self.camera.position.x,
-                    self.camera.position.y,
-                    self.camera.position.z,
-                    0.0,
-                ],
-                ..Default::default()
-            };
-            params.shadow_vp_col0 = shadow_columns[0];
-            params.shadow_vp_col1 = shadow_columns[1];
-            params.shadow_vp_col2 = shadow_columns[2];
-            params.shadow_vp_col3 = shadow_columns[3];
-            params.shadow_params[2] = shadow_enabled;
             queue.write_buffer(lighting_buffer, 0, bytemuck::bytes_of(&params));
         }
-    }
-
-    fn update_foliage_camera(&self, queue: &wgpu::Queue) {
-        if let Some(foliage) = &self.foliage_resources {
-            foliage.update_camera(
-                queue,
-                [
-                    self.camera.position.x,
-                    self.camera.position.y,
-                    self.camera.position.z,
-                ],
-                0.0,
-            );
+        if let Some(foliage) = &mut self.foliage_resources {
+            foliage.update_frame(queue, &params, 0.0);
+        }
+        if let Some(roads) = &mut self.road_resources {
+            roads.update_frame(queue, &params, self.bump_power);
         }
     }
 
     fn composite_dirty_chunks(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        if !self.use_gpu_compositing {
-            return;
-        }
         let (Some(compositor), Some(bind_group), Some(scene)) = (
             &mut self.compositor,
             &self.compositor_bind_group,
@@ -188,14 +152,15 @@ impl TerrainViewer {
         let (Some(gpu), Some(shadow)) = (&self.gpu, &self.shadow_resources) else {
             return;
         };
-        if gpu.use_gpu_tessellation {
-            shadow.render(
-                encoder,
-                &gpu.vertex_buffer,
-                &gpu.index_buffer,
-                gpu.index_count,
-                gpu.num_patch_instances,
-            );
+        shadow.render(
+            encoder,
+            &gpu.vertex_buffer,
+            &gpu.index_buffer,
+            gpu.index_count,
+            gpu.num_patch_instances,
+        );
+        if let Some(foliage) = &self.foliage_resources {
+            crate::foliage::render_foliage_shadow(encoder, foliage, shadow);
         }
     }
 
@@ -226,13 +191,8 @@ impl TerrainViewer {
         render_pass.set_bind_group(0, &gpu.camera_bind_group, &[]);
         render_pass.set_bind_group(1, &gpu.texture_bind_group, &[]);
         render_pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
-        if gpu.use_gpu_tessellation {
-            render_pass.set_vertex_buffer(1, gpu.index_buffer.slice(..));
-            render_pass.draw(0..gpu.index_count, 0..gpu.num_patch_instances);
-        } else {
-            render_pass.set_index_buffer(gpu.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..gpu.index_count, 0, 0..1);
-        }
+        render_pass.set_vertex_buffer(1, gpu.index_buffer.slice(..));
+        render_pass.draw(0..gpu.index_count, 0..gpu.num_patch_instances);
 
         if let Some(foliage) = &self.foliage_resources {
             crate::foliage::render_foliage(
@@ -278,7 +238,6 @@ impl Application3D for TerrainViewer {
         }
         self.update_terrain_uniforms(ctx.queue, ctx.size);
         self.update_lighting(ctx.queue);
-        self.update_foliage_camera(ctx.queue);
         self.composite_dirty_chunks(ctx.device, ctx.queue);
         self.render_shadow_pass(ctx.encoder);
         self.render_terrain_pass(ctx);

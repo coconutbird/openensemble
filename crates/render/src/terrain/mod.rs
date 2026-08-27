@@ -21,22 +21,24 @@ pub mod types;
 mod uniforms;
 
 pub use camera::Camera;
-pub use compositing::{CompositeParams, CompositingConfig, CompositorResources, LodConfig};
+pub use compositing::{
+    CompositeBindings, CompositeParams, CompositingConfig, CompositorResources, LodConfig,
+};
 pub use loading::{
     RoadTextures, extract_chunk_splat_data, extract_decal_data, extract_foliage_chunks,
     extract_road_data, load_decal_textures, load_foliage_sets, load_road_textures,
     load_terrain_textures,
 };
-pub use mesh::{TerrainMesh, TessellationMode};
+pub use mesh::TerrainMesh;
 pub use scene::TerrainScene;
 pub use shaders::{
     COMPOSITE_SHADER, FOLIAGE_SHADER, GPU_TESS_SHADER, HEIGHTFIELD_SHADER, ROADS_SHADER,
-    SHADOW_DEPTH_SHADER, TERRAIN_SHADER,
+    SHADOW_DEPTH_SHADER,
 };
 pub use texture::{generate_mipmaps, mip_dimensions, mip_level_count};
 pub use types::{
     AlbedoData, AlphaTextureData, AoTextureData, ChunkDecalData, ChunkSplatData, DecalInstance,
     DecalTexture, FoliageBladeVertex, FoliageQNChunk, FoliageSet, NormalMapTexture, RawXtdData,
-    RoadChunkData, TerrainTexture,
+    RoadChunkData, SpecularMapTexture, TerrainTexture,
 };
 pub use uniforms::{CameraUniform, GpuTessParams, LightingParams, TerrainParams};

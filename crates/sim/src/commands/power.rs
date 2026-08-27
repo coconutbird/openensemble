@@ -31,10 +31,9 @@ impl PowerCommandType {
     }
 }
 
-/// Power command flag bits.
-#[allow(dead_code)]
+/// Power command flag bits in the base command flag set.
 pub mod command_flags {
-    pub const GENERIC_0: usize = 8; // cNumberCommandFlags
+    pub const GENERIC_0: usize = 8;
     pub const GENERIC_1: usize = 9;
     pub const NO_COST: usize = 10;
 }

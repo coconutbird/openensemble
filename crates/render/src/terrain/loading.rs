@@ -10,24 +10,154 @@
 
 use super::types::{
     ChunkDecalData, ChunkSplatData, DecalInstance, DecalTexture, FoliageQNChunk, FoliageSet,
-    NormalMapTexture, RoadChunkData, TerrainTexture,
+    NormalMapTexture, RoadChunkData, SpecularMapTexture, TerrainTexture,
 };
 use pipeline::ddx::DdxTexture;
 use pipeline::source::{AssetSource, StdFileProvider};
 use pipeline::xtt::{ActiveDecalInfo, ActiveTextureInfo, FoliageSetInfo, XttFile};
 use rayon::prelude::*;
 
-/// Load terrain textures (diffuse and normal maps) from an asset source.
+fn decode_terrain_texture(
+    index: usize,
+    data: Option<&[u8]>,
+    texture: &ActiveTextureInfo,
+) -> TerrainTexture {
+    if let Some(bytes) = data
+        && let Ok(ddx) = DdxTexture::from_bytes(bytes)
+        && let Ok(image) = ddx.decode_to_rgba()
+    {
+        log::info!(
+            "Loaded terrain texture [{index}]: {} ({}x{})",
+            texture.filename,
+            image.width,
+            image.height
+        );
+        return TerrainTexture {
+            name: texture.filename.clone(),
+            width: image.width,
+            height: image.height,
+            pixels: image.pixels,
+            u_scale: texture.u_scale,
+            v_scale: texture.v_scale,
+        };
+    }
+
+    log::warn!(
+        "Failed to load texture [{index}]: {} - using placeholder",
+        texture.filename
+    );
+    create_placeholder_texture(&texture.filename)
+}
+
+fn fallback_texel_count(diffuse: &TerrainTexture, map_kind: &str) -> usize {
+    diffuse
+        .width
+        .checked_mul(diffuse.height)
+        .and_then(|count| usize::try_from(count).ok())
+        .unwrap_or_else(|| panic!("{map_kind} dimensions must fit usize"))
+}
+
+fn decode_normal_map(
+    index: usize,
+    data: Option<&[u8]>,
+    texture: &ActiveTextureInfo,
+    diffuse: &TerrainTexture,
+) -> NormalMapTexture {
+    let decoded = data.and_then(|bytes| {
+        DdxTexture::from_bytes(bytes).ok().and_then(|ddx| {
+            ddx.decode_to_rgba().ok().map(|image| {
+                log::info!(
+                    "Loaded normal map: {} ({}x{})",
+                    texture.filename,
+                    image.width,
+                    image.height
+                );
+                NormalMapTexture {
+                    name: texture.filename.clone(),
+                    width: image.width,
+                    height: image.height,
+                    pixels: image.pixels,
+                }
+            })
+        })
+    });
+    decoded.unwrap_or_else(|| {
+        log::warn!(
+            "Failed to load normal map [{}]: {} - using a flat normal",
+            index,
+            texture.filename,
+        );
+        let texel_count = fallback_texel_count(diffuse, "normal-map");
+        NormalMapTexture {
+            name: texture.filename.clone(),
+            width: diffuse.width,
+            height: diffuse.height,
+            pixels: [128_u8, 128, 255, 255].repeat(texel_count),
+        }
+    })
+}
+
+fn decode_specular_map(
+    index: usize,
+    data: Option<&[u8]>,
+    texture: &ActiveTextureInfo,
+    diffuse: &TerrainTexture,
+) -> SpecularMapTexture {
+    let decoded = data.and_then(|bytes| {
+        DdxTexture::from_bytes(bytes).ok().and_then(|ddx| {
+            ddx.decode_to_rgba().ok().map(|image| {
+                log::info!(
+                    "Loaded specular map: {} ({}x{})",
+                    texture.filename,
+                    image.width,
+                    image.height
+                );
+                SpecularMapTexture {
+                    name: texture.filename.clone(),
+                    width: image.width,
+                    height: image.height,
+                    pixels: image.pixels,
+                }
+            })
+        })
+    });
+    decoded.unwrap_or_else(|| {
+        log::warn!(
+            "Failed to load specular map [{index}]: {} - disabling specular for this layer",
+            texture.filename,
+        );
+        let texel_count = fallback_texel_count(diffuse, "specular-map");
+        SpecularMapTexture {
+            name: texture.filename.clone(),
+            width: diffuse.width,
+            height: diffuse.height,
+            pixels: [0_u8, 0, 0, 255].repeat(texel_count),
+        }
+    })
+}
+
+fn terrain_texture_path(texture: &ActiveTextureInfo, suffix: &str) -> String {
+    format!(
+        "art/terrain/{}_{suffix}.ddx",
+        texture.filename.replace('\\', "/")
+    )
+}
+
+/// Load terrain diffuse, normal, and specular maps from an asset source.
 ///
 /// Uses parallel loading for both ERA decompression and DDX decoding.
-/// Returns a tuple of (`terrain_textures`, `normal_textures`).
+/// Returns (`terrain_textures`, `normal_textures`, `specular_textures`).
 /// Textures are loaded in the same order as `active_textures` to maintain index alignment.
 pub fn load_terrain_textures(
     source: &mut AssetSource<StdFileProvider>,
     active_textures: &[ActiveTextureInfo],
-) -> (Vec<TerrainTexture>, Vec<NormalMapTexture>) {
+) -> (
+    Vec<TerrainTexture>,
+    Vec<NormalMapTexture>,
+    Vec<SpecularMapTexture>,
+) {
     if active_textures.is_empty() {
-        return (Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new());
     }
 
     log::info!(
@@ -35,100 +165,61 @@ pub fn load_terrain_textures(
         active_textures.len()
     );
 
-    // Build all paths (diffuse + normal for each texture)
     let diffuse_paths: Vec<String> = active_textures
         .iter()
-        .map(|t| format!("art/terrain/{}_df.ddx", t.filename.replace('\\', "/")))
+        .map(|texture| terrain_texture_path(texture, "df"))
         .collect();
     let normal_paths: Vec<String> = active_textures
         .iter()
-        .map(|t| format!("art/terrain/{}_nm.ddx", t.filename.replace('\\', "/")))
+        .map(|texture| terrain_texture_path(texture, "nm"))
+        .collect();
+    let specular_paths: Vec<String> = active_textures
+        .iter()
+        .map(|texture| terrain_texture_path(texture, "sp"))
         .collect();
 
-    // Combine all paths for a single parallel read
     let all_paths: Vec<&str> = diffuse_paths
         .iter()
         .chain(normal_paths.iter())
+        .chain(specular_paths.iter())
         .map(std::string::String::as_str)
         .collect();
-
-    // Load all files sequentially (AssetSource requires &mut self)
     let all_data: Vec<Option<Vec<u8>>> =
         all_paths.iter().map(|p| source.resolve_exact(p)).collect();
+    let (diffuse_data, remaining_data) = all_data.split_at(active_textures.len());
+    let (normal_data, specular_data) = remaining_data.split_at(active_textures.len());
 
-    // Split results back into diffuse and normal
-    let (diffuse_data, normal_data) = all_data.split_at(active_textures.len());
-
-    // Decode diffuse textures in parallel
     let terrain_textures: Vec<TerrainTexture> = diffuse_data
         .par_iter()
         .zip(active_textures.par_iter())
         .enumerate()
-        .map(|(idx, (data_opt, tex_info))| {
-            if let Some(data) = data_opt
-                && let Ok(ddx) = DdxTexture::from_bytes(data)
-                && let Ok(decoded) = ddx.decode_to_rgba()
-            {
-                log::info!(
-                    "Loaded terrain texture [{}]: {} ({}x{})",
-                    idx,
-                    tex_info.filename,
-                    decoded.width,
-                    decoded.height
-                );
-                return TerrainTexture {
-                    name: tex_info.filename.clone(),
-                    width: decoded.width,
-                    height: decoded.height,
-                    pixels: decoded.pixels,
-                    u_scale: tex_info.u_scale,
-                    v_scale: tex_info.v_scale,
-                };
-            }
-
-            // Placeholder for failed loads
-            log::warn!(
-                "Failed to load texture [{}]: {} - using placeholder",
-                idx,
-                tex_info.filename
-            );
-            create_placeholder_texture(&tex_info.filename)
-        })
+        .map(|(index, (data, texture))| decode_terrain_texture(index, data.as_deref(), texture))
         .collect();
-
-    // Decode normal maps in parallel
     let normal_textures: Vec<NormalMapTexture> = normal_data
         .par_iter()
         .zip(active_textures.par_iter())
-        .filter_map(|(data_opt, tex_info)| {
-            data_opt.as_ref().and_then(|data| {
-                DdxTexture::from_bytes(data).ok().and_then(|ddx| {
-                    ddx.decode_to_rgba().ok().map(|decoded| {
-                        log::info!(
-                            "Loaded normal map: {} ({}x{})",
-                            tex_info.filename,
-                            decoded.width,
-                            decoded.height
-                        );
-                        NormalMapTexture {
-                            name: tex_info.filename.clone(),
-                            width: decoded.width,
-                            height: decoded.height,
-                            pixels: decoded.pixels,
-                        }
-                    })
-                })
-            })
+        .enumerate()
+        .map(|(index, (data, texture))| {
+            decode_normal_map(index, data.as_deref(), texture, &terrain_textures[index])
+        })
+        .collect();
+    let specular_textures: Vec<SpecularMapTexture> = specular_data
+        .par_iter()
+        .zip(active_textures.par_iter())
+        .enumerate()
+        .map(|(index, (data, texture))| {
+            decode_specular_map(index, data.as_deref(), texture, &terrain_textures[index])
         })
         .collect();
 
     log::info!(
-        "Loaded {} terrain textures, {} normal maps",
+        "Loaded {} terrain textures, {} normal maps, {} specular maps",
         terrain_textures.len(),
-        normal_textures.len()
+        normal_textures.len(),
+        specular_textures.len()
     );
 
-    (terrain_textures, normal_textures)
+    (terrain_textures, normal_textures, specular_textures)
 }
 
 /// Create a magenta placeholder texture for missing textures.

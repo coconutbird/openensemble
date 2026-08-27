@@ -2,8 +2,9 @@ import package::shared::lighting::compute_sh_fill_lighting;
 import package::shared::fog::compute_radial_fog_density;
 import package::shared::fog::compute_fog;
 import package::shared::fog::compute_planar_fog_density;
-import package::shared::shadows::vsm_shadow;
+import package::shared::shadows::compute_dir_shadow;
 import package::shared::blackmap::apply_blackmap;
+import package::shared::local_lights::evaluate_spot_diffuse;
 
 // Foliage shader - WGSL implementation of terrainFoliage.fx
 //
@@ -37,9 +38,9 @@ struct FoliageParams {
     time: f32,
     // Directional light
     dir_light_vec: vec3<f32>,
-    backside_shadow_scalar: f32,
+    _dir_light_pad: f32,
     dir_light_color: vec3<f32>,
-    _pad2: f32,
+    dir_shadow_darkness: f32,
     // Fog
     fog_params: vec4<f32>,       // x = density^2, y = start^2, z/w unused
     fog_color: vec4<f32>,
@@ -63,6 +64,8 @@ struct FoliageParams {
     blackmap_params0: vec4<f32>,    // rgb = bg_color, w = fog_scalar
     blackmap_params1: vec4<f32>,    // x = unexplored_scalar, yz = bounds_lo_xz, w = enabled
     blackmap_params2: vec4<f32>,    // x = pad, yz = bounds_hi_xz, w = bounds_falloff
+    local_light_params: vec4<f32>,  // x = number of local lights
+    blackmap_uv_scales: vec4<f32>,  // x = visibility scale, y = unexplored scale
 };
 
 @group(0) @binding(0)
@@ -90,7 +93,7 @@ var s_heightmap: sampler;
 
 // Shadow and blackmap textures
 @group(1) @binding(4)
-var t_shadow_map: texture_2d<f32>;
+var t_shadow_map: texture_2d_array<f32>;
 @group(1) @binding(5)
 var t_blackmap: texture_2d<f32>;
 @group(1) @binding(6)
@@ -100,6 +103,9 @@ var t_unexplored: texture_2d<f32>;
 // Indexed by blade_data_offset + instance_index.
 @group(1) @binding(7)
 var t_blade_map: texture_2d<u32>;
+
+@group(1) @binding(8)
+var<storage, read> local_lights: array<vec4<f32>>;
 
 // Per-set material textures + blade geometry
 @group(2) @binding(0)
@@ -121,6 +127,13 @@ var t_blade_normals: texture_2d<f32>;
 @group(2) @binding(5)
 var s_blade: sampler;
 
+struct FoliageMaterialParams {
+    values: vec4<f32>,
+};
+
+@group(2) @binding(6)
+var<uniform> material: FoliageMaterialParams;
+
 struct VertexInput {
     @builtin(vertex_index) vertex_index: u32,
     @builtin(instance_index) instance_index: u32,
@@ -129,12 +142,10 @@ struct VertexInput {
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) uv: vec2<f32>,
-    @location(1) dir_diffuse: vec3<f32>,    // directional diffuse (clamped, pre-shadow)
-    @location(2) ambient_sum: vec3<f32>,    // SH ambient (never shadowed)
-    @location(3) fog_densities: vec2<f32>,  // x = radial, y = planar
-    @location(4) alpha_fade: f32,
-    @location(5) world_pos: vec3<f32>,
-    @location(6) n_dot_l: f32,             // for conditional shadow
+    @location(1) normal: vec3<f32>,
+    @location(2) fog_densities: vec2<f32>,  // x = radial, y = planar
+    @location(3) alpha_fade: f32,
+    @location(4) world_pos: vec3<f32>,
 };
 
 // Deterministic pseudo-random function (matching original shader)
@@ -159,12 +170,10 @@ fn rotate_2d(input: vec2<f32>, theta: f32) -> vec2<f32> {
 // Sample terrain displacement at given UV position.
 // Game samples full XYZ displacement from position texture (getTerrainDataAtPos).
 // Our heightmap stores the same XYZ in an Rgba32Float texture.
-// Note: The original HLSL swaps UV because the Xbox 360 texture is stored transposed.
-// Our heightmap is created from the same data as the terrain position texture,
-// which is indexed as (x, z) — no swap needed.
 fn get_terrain_offset(uv: vec2<f32>) -> vec3<f32> {
     let clamped_uv = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
-    let sample = textureSampleLevel(t_heightmap, s_heightmap, clamped_uv, 0.0);
+    // terrainFoliage VS #0/#2 samples the position texture at .yx.
+    let sample = textureSampleLevel(t_heightmap, s_heightmap, clamped_uv.yx, 0.0);
     return sample.xyz;
 }
 
@@ -238,28 +247,6 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let terrain_offset = get_terrain_offset(terrain_uv);
     pos += terrain_offset;
 
-    // Flip normal toward camera for two-sided lighting
-    let to_camera = normalize(params.camera_pos - pos);
-    if dot(to_camera, normal) < 0.0 {
-        normal = -normal;
-    }
-
-    // Directional diffuse lighting (diffuse only, no specular for foliage)
-    let n_dot_l = max(dot(normal, params.dir_light_vec), 0.0);
-    var dir_diffuse = params.dir_light_color * n_dot_l;
-
-    // Clamp by backside shadow scalar (prevents fully black backfaces)
-    // Game does this BEFORE adding ambient, so ambient is never clamped
-    dir_diffuse = clamp(dir_diffuse, vec3<f32>(1.0 - params.backside_shadow_scalar), vec3<f32>(1.0));
-
-    // SH ambient fill lighting (separate — never shadowed, per game bytecode)
-    let ambient_sum = compute_sh_fill_lighting(
-        normal,
-        params.sh_fill_ar, params.sh_fill_ag, params.sh_fill_ab,
-        params.sh_fill_br, params.sh_fill_bg, params.sh_fill_bb,
-        params.sh_fill_c,
-    );
-
     // Fog densities
     let z_fog = compute_radial_fog_density(pos, params.camera_pos, params.fog_params.x, params.fog_params.y);
     var p_fog = 1.0;
@@ -276,12 +263,10 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     // Output
     out.clip_position = camera.view_proj * vec4<f32>(pos, 1.0);
     out.uv = blade_uv;
-    out.dir_diffuse = dir_diffuse;
-    out.ambient_sum = ambient_sum;
+    out.normal = normal;
     out.fog_densities = vec2<f32>(z_fog, p_fog);
     out.alpha_fade = alpha_fade;
     out.world_pos = pos;
-    out.n_dot_l = n_dot_l;
 
     return out;
 }
@@ -301,12 +286,47 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    // Lighting: shadow applied to directional ONLY, ambient never shadowed
-    // (matches game bytecode: diffuseSum *= shadowFactor, then diffuseSum += ambientSum)
-    var dir_diffuse = in.dir_diffuse;
+    // Pixel-lit terrainFoliage shader #3. Normal flipping, directional light,
+    // SH, local spots, and the shadow are deliberately evaluated together in
+    // this stage; the old implementation mixed vertex-lit #0 with pixel-lit #3.
+    var world_normal = normalize(in.normal);
+    let to_camera = normalize(params.camera_pos - in.world_pos);
+    if dot(to_camera, world_normal) < 0.0 {
+        world_normal = -world_normal;
+    }
+    let n_dot_l = max(dot(world_normal, params.dir_light_vec), 0.0);
+    var direct_lighting = params.dir_light_color * n_dot_l;
+
+    var local_diffuse = vec3<f32>(0.0);
+    let light_count = select(
+        0u,
+        min(u32(params.local_light_params.x), 20u),
+        params.local_light_params.w > 0.5,
+    );
+    for (var light_index = 0u; light_index < light_count; light_index++) {
+        let base = light_index * 8u;
+        local_diffuse += evaluate_spot_diffuse(
+            local_lights[base].xyz,
+            local_lights[base + 1u].xyz,
+            local_lights[base].w,
+            local_lights[base + 1u].w,
+            local_lights[base + 2u].x,
+            local_lights[base + 2u].y,
+            local_lights[base + 2u].z,
+            local_lights[base + 3u].xyz,
+            in.world_pos,
+            world_normal,
+        );
+    }
+    direct_lighting += local_diffuse;
+    direct_lighting = clamp(
+        direct_lighting,
+        vec3<f32>(1.0 - material.values.x),
+        vec3<f32>(1.0),
+    );
 
     // === Shadows (VSM) — only when nDotL > 0, matching game ===
-    if params.shadow_params.z > 0.5 && in.n_dot_l > 0.0 {
+    if params.shadow_params.z > 0.5 && n_dot_l > 0.0 {
         let shadow_vp = mat4x4<f32>(
             params.shadow_vp_col0,
             params.shadow_vp_col1,
@@ -315,23 +335,35 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         );
         let shadow_pos = shadow_vp * vec4<f32>(in.world_pos, 1.0);
         let shadow_ndc = shadow_pos.xyz / shadow_pos.w;
-        let shadow_uv = vec2<f32>(shadow_ndc.x * 0.5 + 0.5, shadow_ndc.y * -0.5 + 0.5);
-        let shadow_z = clamp(shadow_ndc.z, 0.0, 1.0);
-        let shadow_factor = vsm_shadow(shadow_uv, shadow_z, 0.3, t_shadow_map, s_foliage);
-        dir_diffuse *= shadow_factor;
+        let shadow_factor = compute_dir_shadow(
+            shadow_ndc,
+            params.dir_shadow_darkness,
+            params.shadow_params.x,
+            params.shadow_params.y,
+            t_shadow_map,
+            s_foliage,
+        );
+        direct_lighting *= shadow_factor;
     }
 
-    // Combine: shadowed directional + unshadowed ambient
-    let diffuse = dir_diffuse + in.ambient_sum;
+    let ambient = compute_sh_fill_lighting(
+        world_normal,
+        params.sh_fill_ar, params.sh_fill_ag, params.sh_fill_ab,
+        params.sh_fill_br, params.sh_fill_bg, params.sh_fill_bb,
+        params.sh_fill_c,
+    );
+    let diffuse = direct_lighting + ambient;
     var lit_color = diffuse * albedo.rgb;
 
     // === Blackmap (fog-of-war) ===
     if params.blackmap_params1.w > 0.5 {
-        // Use world XZ scaled to terrain UV for blackmap lookup
-        let terrain_size = (params.terrain_info.x - 1.0) * params.terrain_info.y;
-        let bm_uv = clamp(in.world_pos.xz / terrain_size, vec2<f32>(0.0), vec2<f32>(1.0));
-        let vis_factor = textureSample(t_blackmap, s_foliage, bm_uv).a;
-        let unexplored_sample = textureSample(t_unexplored, s_foliage, bm_uv);
+        let visibility_uv = vec2<f32>(
+            in.world_pos.x * params.blackmap_uv_scales.x,
+            -in.world_pos.z * params.blackmap_uv_scales.x + 1.0,
+        );
+        let unexplored_uv = in.world_pos.xz * params.blackmap_uv_scales.y;
+        let vis_factor = textureSample(t_blackmap, s_foliage, visibility_uv).a;
+        let unexplored_sample = textureSample(t_unexplored, s_foliage, unexplored_uv);
         lit_color = apply_blackmap(
             lit_color, in.world_pos, vis_factor, unexplored_sample,
             params.blackmap_params0.xyz,
@@ -349,4 +381,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Game outputs opacity * alphaDistScalar as alpha, uses alpha blending
     // The discard at 0.6666 culls fully transparent pixels; remaining are blended
     return vec4<f32>(lit_color, final_alpha);
+}
+
+// terrainFoliage shader #7: alpha-tested VSM caster with the derivative depth
+// bias used by the original shader.
+@fragment
+fn fs_shadow(in: VertexOutput) -> @location(0) vec2<f32> {
+    let opacity = textureSample(t_opacity, s_foliage, in.uv).r * in.alpha_fade;
+    if opacity < 0.5 {
+        discard;
+    }
+    let slope = clamp(max(dpdyCoarse(in.clip_position.z), dpdxCoarse(in.clip_position.z)), 0.0, 0.004);
+    return vec2<f32>(in.clip_position.z + slope * 1.2 + 0.0005, 0.0);
 }

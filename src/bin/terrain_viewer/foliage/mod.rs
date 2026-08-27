@@ -23,11 +23,8 @@
 mod rendering;
 mod resources;
 
-pub use rendering::render_foliage;
-pub use resources::FoliageResources;
-
-#[allow(unused_imports)]
-use crate::types::{FoliageQNChunk, FoliageSet};
+pub use rendering::{render_foliage, render_foliage_shadow};
+pub use resources::{FoliageResources, FoliageWorldBindings};
 
 /// Configuration for foliage rendering.
 #[derive(Clone, Debug)]
@@ -52,11 +49,3 @@ impl Default for FoliageConfig {
         }
     }
 }
-
-/// Number of blades per foliage node (64x64 grid = 4096 positions).
-#[allow(dead_code)]
-pub const NUM_BLADES_PER_NODE: u32 = 64;
-
-/// Number of vertices per foliage blade (from original shader).
-#[allow(dead_code)]
-pub const NUM_VERTS_PER_BLADE: u32 = 10;

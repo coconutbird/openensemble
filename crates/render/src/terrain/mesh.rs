@@ -5,7 +5,7 @@ use glam::Vec3;
 /// Terrain mesh data for rendering.
 ///
 /// Contains vertex data (positions, normals, UVs) and indices for rendering.
-/// Can be created from XTD data with different tessellation levels.
+/// The packed GPU path uses this decoded mesh for bounds and diagnostics.
 #[derive(Clone)]
 pub struct TerrainMesh {
     /// Vertex positions in world space.
@@ -77,39 +77,5 @@ impl TerrainMesh {
     #[must_use]
     pub fn triangle_count(&self) -> usize {
         self.indices.len() / 3
-    }
-}
-
-/// Tessellation mode for terrain rendering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum TessellationMode {
-    /// No tessellation - use raw XTD mesh.
-    None,
-    /// CPU tessellation - subdivide mesh on CPU (slow but accurate).
-    Cpu,
-    /// GPU tessellation - use instanced patches with vertex shader displacement (fast).
-    #[default]
-    Gpu,
-}
-
-impl TessellationMode {
-    /// Cycle to the next tessellation mode.
-    #[must_use]
-    pub fn next(self) -> Self {
-        match self {
-            TessellationMode::None => TessellationMode::Gpu,
-            TessellationMode::Gpu => TessellationMode::Cpu,
-            TessellationMode::Cpu => TessellationMode::None,
-        }
-    }
-
-    /// Get the display name for this mode.
-    #[must_use]
-    pub fn name(self) -> &'static str {
-        match self {
-            TessellationMode::None => "None",
-            TessellationMode::Gpu => "GPU",
-            TessellationMode::Cpu => "CPU",
-        }
     }
 }

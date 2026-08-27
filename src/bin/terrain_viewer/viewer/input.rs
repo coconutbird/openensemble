@@ -2,7 +2,6 @@
 //!
 //! Implements the `Application` trait: update (keyboard/mouse), UI (egui), and clear color.
 
-use render::terrain::TessellationMode;
 use xcore::app::{Application, FrameContext, Input, KeyCode};
 use xcore::prelude::*;
 
@@ -28,7 +27,7 @@ fn debug_mode_name(mode: u32) -> &'static str {
         14 => "14: Layer 1 ID",
         15 => "15: Layer 1 Only",
         16 => "16: Rock",
-        17 => "17: CPU Blend",
+        17 => "17: Reserved",
         _ => "Unknown",
     }
 }
@@ -66,7 +65,7 @@ impl TerrainViewer {
 
     fn update_debug_keys(&mut self, input: &Input) {
         let bindings = [
-            (KeyCode::Q, 0, "runtime splatting - HWDE ground truth"),
+            (KeyCode::Q, 0, "oracle unique-map material"),
             (KeyCode::Key1, 1, "alpha values"),
             (KeyCode::Key2, 2, "in-chunk UVs"),
             (KeyCode::Key3, 3, "raw atlas"),
@@ -96,21 +95,6 @@ impl TerrainViewer {
     }
 
     fn update_compositor_controls(&mut self, input: &Input) {
-        if input.is_key_pressed(KeyCode::C) {
-            self.use_gpu_compositing = !self.use_gpu_compositing;
-            if self.use_gpu_compositing
-                && let Some(compositor) = &mut self.compositor
-            {
-                compositor.mark_all_dirty();
-            }
-            let state = if self.use_gpu_compositing {
-                "ON"
-            } else {
-                "OFF"
-            };
-            log::info!("GPU compositing: {state}");
-        }
-
         if input.is_key_pressed(KeyCode::V) {
             self.compositor_debug_mode = (self.compositor_debug_mode + 1) % 6;
             let mode_name = match self.compositor_debug_mode {
@@ -143,39 +127,8 @@ impl TerrainViewer {
         }
     }
 
-    fn update_tessellation_mode(&mut self, input: &Input) {
-        if !input.is_key_pressed(KeyCode::T) {
-            return;
-        }
-
-        let saved_position = self.camera.position;
-        let saved_yaw = self.camera.yaw;
-        let saved_pitch = self.camera.pitch;
-        self.tessellation_mode = match self.tessellation_mode {
-            TessellationMode::Gpu => TessellationMode::None,
-            TessellationMode::None | TessellationMode::Cpu => TessellationMode::Gpu,
-        };
-        log::info!(
-            "Tessellation mode: {} (reloading terrain...)",
-            self.tessellation_mode.name()
-        );
-        self.gpu = None;
-        self.load_terrain();
-        self.camera.position = saved_position;
-        self.camera.yaw = saved_yaw;
-        self.camera.pitch = saved_pitch;
-
-        if let Some(scene) = &self.scene {
-            log::info!(
-                "Terrain reloaded: {} vertices, {} triangles",
-                scene.mesh.positions.len(),
-                scene.mesh.indices.len() / 3
-            );
-        }
-    }
-
     fn update_compositor_lod(&mut self) {
-        if !self.use_gpu_compositing || self.chunk_centers.is_empty() {
+        if self.chunk_centers.is_empty() {
             return;
         }
         let Some(compositor) = &mut self.compositor else {
@@ -229,13 +182,8 @@ impl TerrainViewer {
                 "World Size: {:.0} x {:.0} x {:.0}",
                 size.x, size.y, size.z
             ));
-            ui.label(format!("Tessellation: {}", self.tessellation_mode.name()));
-            let compositor_state = if self.use_gpu_compositing {
-                "ON"
-            } else {
-                "OFF"
-            };
-            ui.label(format!("GPU Compositing: {compositor_state} (C to toggle)"));
+            ui.label("Terrain path: packed GPU patches");
+            ui.label("Material: oracle unique-map compositor");
         }
         if let Some(error) = &self.load_error {
             ui.separator();
@@ -276,11 +224,7 @@ impl TerrainViewer {
             &mut self.debug_mode,
             &[("13: L0 Only", 13), ("14: L1 ID", 14), ("15: L1 Only", 15)],
         );
-        debug_button_row(
-            ui,
-            &mut self.debug_mode,
-            &[("16: Rock", 16), ("17: CPU Blend", 17)],
-        );
+        debug_button_row(ui, &mut self.debug_mode, &[("16: Rock", 16)]);
     }
 
     fn draw_controls(ui: &mut egui::Ui) {
@@ -293,7 +237,6 @@ impl TerrainViewer {
             "  Shift - Fast",
             "  Tab - Toggle info",
             "  F - Toggle wireframe",
-            "  T - Toggle tessellation",
             "  Escape - Quit",
         ] {
             ui.label(control);
@@ -325,7 +268,6 @@ impl Application for TerrainViewer {
         self.update_debug_keys(input);
         self.update_compositor_controls(input);
         self.update_bump_power(input);
-        self.update_tessellation_mode(input);
         self.camera.update(input, ctx.delta_time);
         self.update_compositor_lod();
         true

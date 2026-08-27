@@ -21,11 +21,10 @@ mod flags {
     pub const OVERRIDE_RANGE: u16 = 1024;
 }
 
-/// Work command flag bits (in the base command flags).
-#[allow(dead_code)]
+/// Work command flag bits in the base command flag set.
 pub mod command_flags {
-    /// Attack move flag (extends base command flags).
-    pub const ATTACK_MOVE: usize = 8; // cNumberCommandFlags
+    /// Attack-move flag (extends the base command flags).
+    pub const ATTACK_MOVE: usize = 8;
 }
 
 /// Work command matching vanilla `BWorkCommand`.

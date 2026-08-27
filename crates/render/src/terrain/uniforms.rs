@@ -24,7 +24,7 @@ pub struct TerrainParams {
     pub debug_mode: f32,
     /// Normal map intensity (1.0 = default).
     pub bump_power: f32,
-    /// Padding for 16-byte alignment.
+    /// Padding required by the WGSL uniform layout.
     pub padding: f32,
 }
 
@@ -168,7 +168,7 @@ pub struct LightingParams {
     pub blackmap_params2: [f32; 4],
 
     // --- Local light params ---
-    /// Local light params [`num_lights`, `spec_power`, pad, pad].
+    /// Local light params [`num_lights`, `spec_power`, shadows enabled, lights enabled].
     pub local_light_params: [f32; 4],
 
     // --- Bump fadeout params (HWDE cb4[35]) ---
@@ -178,6 +178,20 @@ pub struct LightingParams {
     // --- Blackmap UV scales (HWDE cb4[33-34]) ---
     /// Blackmap UV scales [`scale_x`, `scale_z`, pad, pad].
     pub blackmap_uv_scales: [f32; 4],
+
+    /// Secondary specular direction and power (HWDE cb4[37]).
+    pub fill_spec_direction_power: [f32; 4],
+    /// Secondary specular RGB and directional-shadow influence (HWDE cb4[38]).
+    pub fill_spec_color_shadow: [f32; 4],
+
+    /// Light-volume params [enabled, pad, pad, pad] (HWDE cb4[39]).
+    pub light_volume_params: [f32; 4],
+    /// World-to-light-volume transform row 0 (HWDE cb4[40]).
+    pub light_volume_row0: [f32; 4],
+    /// World-to-light-volume transform row 1 (HWDE cb4[41]).
+    pub light_volume_row1: [f32; 4],
+    /// World-to-light-volume transform row 2 (HWDE cb4[42]).
+    pub light_volume_row2: [f32; 4],
 }
 
 impl Default for LightingParams {
@@ -207,7 +221,7 @@ impl Default for LightingParams {
             shadow_vp_col1: [0.0, 1.0, 0.0, 0.0],
             shadow_vp_col2: [0.0, 0.0, 1.0, 0.0],
             shadow_vp_col3: [0.0, 0.0, 0.0, 1.0],
-            shadow_params: [1.0, 1.0, 0.0, 0.0], // csm_scale=1, num_passes=1, enabled=0
+            shadow_params: [8.0, 3.0, 0.0, 0.0], // scale=8, max cascade index=3
 
             // Blackmap: disabled by default
             blackmap_params0: [0.0, 0.0, 0.0, 0.5], // bg=black, fog_scalar=0.5
@@ -215,13 +229,23 @@ impl Default for LightingParams {
             blackmap_params2: [0.0, 1024.0, 1024.0, 0.01], // bounds_hi=(1024,1024), falloff=0.01
 
             // Local lights: none by default
-            local_light_params: [0.0, 16.0, 0.0, 0.0], // 0 lights, spec_power=16
+            local_light_params: [0.0, 16.0, 0.0, 0.0], // no local-light payload
 
             // Bump fadeout: reasonable defaults (fade from 200 to 500 units)
             fadeout_params: [200.0, 500.0, 50.0, 0.0],
 
             // Blackmap UV scales: default 1/terrain_extent
             blackmap_uv_scales: [1.0 / 1024.0, 1.0 / 1024.0, 0.0, 0.0],
+
+            // Secondary directional highlight is data-driven and absent by default.
+            fill_spec_direction_power: [0.4, 0.8, 0.3, 16.0],
+            fill_spec_color_shadow: [0.0; 4],
+
+            // Light volumes are disabled until a scene supplies both 3D buffers.
+            light_volume_params: [0.0; 4],
+            light_volume_row0: [1.0, 0.0, 0.0, 0.0],
+            light_volume_row1: [0.0, 1.0, 0.0, 0.0],
+            light_volume_row2: [0.0, 0.0, 1.0, 0.0],
         }
     }
 }

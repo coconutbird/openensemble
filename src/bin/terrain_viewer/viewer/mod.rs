@@ -14,7 +14,7 @@ use pipeline::hw1;
 use pipeline::source::{AssetSource, StdFileProvider};
 use pipeline::xtd;
 use pipeline::xtt;
-use render::terrain::{Camera, CompositorResources, LodConfig, TerrainScene, TessellationMode};
+use render::terrain::{Camera, CompositorResources, LodConfig, TerrainScene};
 use render::wgpu;
 
 use crate::types::GpuResources;
@@ -36,16 +36,12 @@ pub struct TerrainViewer {
     pub surface_format: wgpu::TextureFormat,
     /// Debug mode: 0=normal, 1=alpha values, 2=in-chunk UV, 3=raw atlas, 4=terrain UV
     pub debug_mode: u32,
-    /// Tessellation mode: None, CPU, or GPU.
-    pub tessellation_mode: TessellationMode,
     /// Normal map strength (gBumpPower in game, scales XY components).
     pub bump_power: f32,
     /// GPU terrain texture compositor (for pre-baked chunk textures).
     pub compositor: Option<CompositorResources>,
     /// Bind group for compositor (separate from main texture bind group).
     pub compositor_bind_group: Option<wgpu::BindGroup>,
-    /// Whether to use GPU compositing (vs runtime splatting).
-    pub use_gpu_compositing: bool,
     /// Debug mode for compositor: 0=normal, 1=UV, 2=chunk ID, 3=alpha, 4=layer0.
     pub compositor_debug_mode: u32,
     /// LOD configuration for distance-based compositing quality.
@@ -73,12 +69,10 @@ impl TerrainViewer {
             load_error: None,
             gpu: None,
             surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
-            debug_mode: 12,
-            tessellation_mode: TessellationMode::Gpu,
+            debug_mode: 0,
             bump_power: 1.0,
             compositor: None,
             compositor_bind_group: None,
-            use_gpu_compositing: true,
             compositor_debug_mode: 0,
             lod_config: LodConfig::default(),
             chunk_centers: Vec::new(),
@@ -173,7 +167,6 @@ impl TerrainViewer {
             &terrain_file,
             texture_file.as_ref(),
             self.asset_source.as_mut(),
-            self.tessellation_mode,
         ) {
             Ok(scene) => {
                 if first_load {

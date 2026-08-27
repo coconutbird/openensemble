@@ -1092,22 +1092,4 @@ impl Renderer {
 
         Ok(())
     }
-
-    /// Get the wgpu device
-    #[allow(dead_code)]
-    pub fn device(&self) -> &wgpu::Device {
-        &self.device
-    }
-
-    /// Get the wgpu queue
-    #[allow(dead_code)]
-    pub fn queue(&self) -> &wgpu::Queue {
-        &self.queue
-    }
-
-    /// Get the surface format
-    #[allow(dead_code)]
-    pub fn format(&self) -> wgpu::TextureFormat {
-        self.config.format
-    }
 }

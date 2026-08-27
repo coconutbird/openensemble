@@ -3,17 +3,17 @@ import package::shared::fog::compute_radial_fog_density;
 import package::shared::fog::compute_fog;
 import package::shared::fog::compute_planar_fog_density;
 import package::shared::normal::compute_tbn;
-import package::shared::specular::compute_blinn_phong_specular;
-import package::shared::shadows::vsm_shadow;
+import package::shared::shadows::compute_dir_shadow;
 import package::shared::blackmap::apply_blackmap;
-import package::shared::local_lights::evaluate_omni_specular;
+import package::shared::local_lights::evaluate_light_volume;
+import package::shared::local_lights::evaluate_spot_specular_shadowed;
+import package::shared::specular::specular_schlick;
 
 // GPU tessellation shader - aligned with original Halo Wars gpuTerrainXbox.fx
 //
 // This shader implements the terrain rendering pipeline:
 // - Instanced patch rendering with vertex displacement from textures
-// - Runtime texture splatting (mode 9) or GPU-composited atlas (mode 12)
-// - Normal map blending across splat layers
+// - Precomposited unique albedo, normal, and specular maps
 // - Ambient occlusion and terrain holes (alpha)
 //
 // Original Halo Wars approach:
@@ -21,9 +21,7 @@ import package::shared::local_lights::evaluate_omni_specular;
 // - Samples UniqueAlbedoSampler for composited color
 // - Applies lighting, AO, and fog
 //
-// Our implementation supports both:
-// - Mode 9: Runtime splatting (blend textures per-pixel like compositor)
-// - Mode 12: GPU-composited atlas (sample pre-blended texture like original)
+// Source layers are composited before this shader runs, as in the oracle.
 
 struct CameraUniform {
     view_proj: mat4x4<f32>,
@@ -33,7 +31,7 @@ var<uniform> camera: CameraUniform;
 
 // Tessellation parameters for decoding packed positions
 struct TessParams {
-    mid: vec4<f32>,           // x, y, z, pad
+    mid: vec4<f32>,           // xyz = decode minimum, w = normalized Y offset
     range: vec4<f32>,         // x, y, z, pad
     terrain_info: vec4<f32>,  // num_verts, tile_scale, num_patches_x, num_patches_z
     world_min: vec4<f32>,     // x, y, z, pad
@@ -50,9 +48,6 @@ var t_positions: texture_2d<u32>;
 @group(1) @binding(2)
 var t_normals: texture_2d<u32>;
 
-// XTT albedo texture for coloring
-@group(1) @binding(3)
-var t_xtt_albedo: texture_2d<f32>;
 @group(1) @binding(4)
 var s_terrain: sampler;
 
@@ -63,7 +58,7 @@ struct TerrainParams {
     texture_tile_scale: f32,
     debug_mode: f32,
     bump_power: f32,
-    _pad3: f32,
+    _padding: f32,
 };
 @group(1) @binding(5)
 var<uniform> params: TerrainParams;
@@ -75,31 +70,6 @@ var t_ao: texture_2d<f32>;
 // Alpha texture (R8Unorm - 255=opaque, 0=transparent/hole)
 @group(1) @binding(7)
 var t_alpha: texture_2d<f32>;
-
-// Normal map texture array (tangent-space normals)
-@group(1) @binding(8)
-var t_normal_array: texture_2d_array<f32>;
-
-// Terrain texture array (diffuse textures for splatting)
-@group(1) @binding(9)
-var t_terrain_array: texture_2d_array<f32>;
-
-// Alpha texture array: one 64×64 RGBA slice per chunk (256 slices)
-// Matches original Halo Wars per-chunk alpha texture approach
-@group(1) @binding(10)
-var t_alpha_atlas: texture_2d_array<f32>;
-
-// Per-chunk layer data (256 chunks * 8 layer IDs = 2048 u32s)
-@group(1) @binding(11)
-var<storage, read> chunk_layers: array<u32>;
-
-// Alpha sampler (nearest filtering to avoid chunk boundary bleeding)
-@group(1) @binding(12)
-var s_alpha: sampler;
-
-// Per-texture UV scales (8 textures * vec2<f32> = 16 floats)
-@group(1) @binding(13)
-var<storage, read> texture_scales: array<vec2<f32>>;
 
 // GPU-composited albedo atlas (from compositor, 8K×8K for 256 chunks)
 @group(1) @binding(14)
@@ -133,18 +103,26 @@ struct LightingParams {
     blackmap_params1: vec4<f32>,    // x = unexplored_scalar, yz = bounds_lo_xz, w = enabled
     blackmap_params2: vec4<f32>,    // x = pad, yz = bounds_hi_xz, w = bounds_falloff
     // Local light params
-    local_light_params: vec4<f32>,  // x = num_lights, y = spec_power
+    local_light_params: vec4<f32>,  // x = count, y = spec power, z = shadows, w = enabled
     // Bump fadeout params (HWDE cb4[35])
     fadeout_params: vec4<f32>,      // x = fadeout_min, y = fadeout_max, z = fadeout_bias
     // Blackmap world-position UV scales (HWDE cb4[33-34])
     blackmap_uv_scales: vec4<f32>,  // x = scale_x (cb4[34].x), y = scale_z (cb4[33].w)
+    // Secondary directional specular (HWDE cb4[37-38])
+    fill_spec_direction_power: vec4<f32>,
+    fill_spec_color_shadow: vec4<f32>,
+    // 3D local-light volume (HWDE cb4[39-42])
+    light_volume_params: vec4<f32>, // x = enabled
+    light_volume_row0: vec4<f32>,
+    light_volume_row1: vec4<f32>,
+    light_volume_row2: vec4<f32>,
 };
 @group(1) @binding(15)
 var<uniform> lighting: LightingParams;
 
 // Shadow map texture (depth values from light's perspective)
 @group(1) @binding(16)
-var t_shadow_map: texture_2d<f32>;
+var t_shadow_map: texture_2d_array<f32>;
 
 // Blackmap visibility texture (alpha = visibility factor)
 @group(1) @binding(17)
@@ -158,9 +136,8 @@ var t_unexplored: texture_2d<f32>;
 @group(1) @binding(19)
 var<storage, read> local_lights: array<vec4<f32>>;
 
-// High alpha texture array: overflow layers 5-7 (R=layer5, G=layer6, B=layer7)
 @group(1) @binding(20)
-var t_alpha_atlas_hi: texture_2d_array<f32>;
+var s_lighting: sampler;
 
 struct VertexInput {
     // Per-vertex: local UV within patch [0, 1]
@@ -172,6 +149,26 @@ struct VertexInput {
 // Light texture (L8 luminance from XTD, pre-baked per-vertex lighting)
 @group(1) @binding(21)
 var t_light: texture_2d<f32>;
+
+// Dynamic terrain visibility mask. Each R32Uint texel stores 32 X-axis bits.
+// A set bit keeps the corresponding terrain sample; a clear bit cuts a hole.
+@group(1) @binding(22)
+var t_dynamic_alpha: texture_2d<u32>;
+
+@group(1) @binding(23)
+var t_gpu_composited_normal: texture_2d<f32>;
+
+@group(1) @binding(24)
+var t_gpu_composited_specular: texture_2d<f32>;
+
+@group(1) @binding(25)
+var t_local_shadow_map: texture_2d_array<f32>;
+
+@group(1) @binding(26)
+var t_light_volume_color: texture_3d<f32>;
+
+@group(1) @binding(27)
+var t_light_volume_vector: texture_3d<f32>;
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -186,18 +183,33 @@ struct VertexOutput {
 };
 
 // Decode packed R10G10B10A2 position
-fn unpack_position(packed: u32, mid: vec3<f32>, range: vec3<f32>) -> vec3<f32> {
+fn unpack_position(
+    packed: u32,
+    mid: vec3<f32>,
+    range: vec3<f32>,
+    normalized_y_offset: f32,
+) -> vec3<f32> {
     let x_bits = packed & 0x3FFu;
     let y_bits = (packed >> 10u) & 0x3FFu;
     let z_bits = (packed >> 20u) & 0x3FFu;
 
+    // The sampled R10G10B10 value is consumed as .zyx by the oracle.
+    // Consequently the high ten bits are world X and the low ten bits are Z.
     let norm = vec3<f32>(
-        f32(x_bits) / 1023.0,
+        f32(z_bits) / 1023.0,
         f32(y_bits) / 1023.0,
-        f32(z_bits) / 1023.0
+        f32(x_bits) / 1023.0
     );
 
-    return norm * range - mid;
+    return vec3<f32>(norm.x, norm.y - normalized_y_offset, norm.z) * range - mid;
+}
+
+fn dynamic_alpha_enabled(grid_coord: vec2<u32>) -> bool {
+    let dimensions = textureDimensions(t_dynamic_alpha);
+    let word_x = min(grid_coord.x >> 5u, dimensions.x - 1u);
+    let row = min(grid_coord.y, dimensions.y - 1u);
+    let word = textureLoad(t_dynamic_alpha, vec2<u32>(word_x, row), 0).r;
+    return (word & (1u << (grid_coord.x & 31u))) != 0u;
 }
 
 // Decode packed normal (x=bits 22-31, y=bits 11-20, z=bits 0-9)
@@ -222,31 +234,32 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let num_verts = u32(tess_params.terrain_info.x);
     let tile_scale = tess_params.terrain_info.y;
     let num_patches_x = u32(tess_params.terrain_info.z);
-    let num_patches_z = u32(tess_params.terrain_info.w);
 
     let patch_x = in.patch_index % num_patches_x;
     let patch_z = in.patch_index / num_patches_x;
 
-    let verts_per_patch_f = f32(num_verts - 1u) / f32(num_patches_x);
+    // The oracle advances 16 logical cells per patch.  Packed texture width is
+    // the cell count, not the vertex count: the final edge vertex is at
+    // `num_verts` and samples the last packed texel through clamping.
+    let cell_x = min(patch_x * 16u + u32(round(in.local_uv.x * 16.0)), num_verts);
+    let cell_z = min(patch_z * 16u + u32(round(in.local_uv.y * 16.0)), num_verts);
+    let global_u = f32(cell_x) / f32(num_verts);
+    let global_v = f32(cell_z) / f32(num_verts);
+    let tex_x = min(cell_x, num_verts - 1u);
+    let tex_z = min(cell_z, num_verts - 1u);
 
-    // Global UV across entire terrain [0, 1]
-    let raw_u = (f32(patch_x) + in.local_uv.x) / f32(num_patches_x);
-    let raw_v = (f32(patch_z) + in.local_uv.y) / f32(num_patches_z);
-    let uv_steps = f32(num_verts - 1u);
-    let global_u = round(raw_u * uv_steps) / uv_steps;
-    let global_v = round(raw_v * uv_steps) / uv_steps;
+    // Position and basis samplers use .yx coordinates in every oracle VS/DS.
+    let packed_pos = textureLoad(t_positions, vec2<u32>(tex_z, tex_x), 0).r;
+    let packed_norm = textureLoad(t_normals, vec2<u32>(tex_z, tex_x), 0).r;
 
-    let tex_x = u32(global_u * f32(num_verts - 1u));
-    let tex_z = u32(global_v * f32(num_verts - 1u));
-    let clamped_x = min(tex_x, num_verts - 1u);
-    let clamped_z = min(tex_z, num_verts - 1u);
-
-    let packed_pos = textureLoad(t_positions, vec2<i32>(i32(clamped_x), i32(clamped_z)), 0).r;
-    let packed_norm = textureLoad(t_normals, vec2<i32>(i32(clamped_x), i32(clamped_z)), 0).r;
-
-    let local_pos = unpack_position(packed_pos, tess_params.mid.xyz, tess_params.range.xyz);
-    let grid_x = global_u * f32(num_verts - 1u);
-    let grid_z = global_v * f32(num_verts - 1u);
+    let local_pos = unpack_position(
+        packed_pos,
+        tess_params.mid.xyz,
+        tess_params.range.xyz,
+        tess_params.mid.w,
+    );
+    let grid_x = f32(cell_x);
+    let grid_z = f32(cell_z);
 
     let world_pos = vec3<f32>(
         grid_x * tile_scale + local_pos.x,
@@ -311,161 +324,41 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let sample_uv = vec2<f32>(in.uv.y, in.uv.x);
 
     let num_verts = u32(tess_params.terrain_info.x);
-    let tile_scale = tess_params.terrain_info.y;
-    let terrain_extent = f32(num_verts - 1u) * tile_scale;
     // XTD/unique texture UV: same grid-based UV.
     let xtd_uv = sample_uv;
 
     // Sample alpha texture for terrain holes/transparency (XTD-decoded)
     let alpha = textureSample(t_alpha, s_terrain, xtd_uv).r;
-    if alpha < 0.5 {
+    let alpha_grid = vec2<u32>(
+        min(u32(saturate(xtd_uv.x) * f32(num_verts - 1u)), num_verts - 1u),
+        min(u32(saturate(xtd_uv.y) * f32(num_verts - 1u)), num_verts - 1u),
+    );
+    let combined_alpha = select(0.0, alpha, dynamic_alpha_enabled(alpha_grid));
+    if combined_alpha < 0.66666 {
         discard;
     }
 
     let vertex_normal = normalize(in.normal);
 
-    // ==========================================================================
-    // TEXTURE SPLATTING - Matches original gpuTerrainComposite.fx exactly
-    // ==========================================================================
-    // UV convention: U = world X, V = world Z (HWDE: uvCoord0 = gPos/64 = (X,Z)/64)
-    // XTT data uses grid_x→Z, grid_z→X (misleading names). Rust indexes as grid_x*16+grid_z = Z*16+X.
-    // So shader must also produce chunk_idx = Z*16+X: grid_z_shader * 16 + grid_x_shader
-    // where grid_x_shader = X direction (from UV.x), grid_z_shader = Z direction (from UV.y).
+    // Chunk coordinates are retained only for resource-free debug views.
     let chunk_count = vec2<f32>(params.chunk_count.x, params.chunk_count.y);
     let chunk_uv = sample_uv * chunk_count;
-    let grid_x = u32(clamp(floor(chunk_uv.x), 0.0, chunk_count.x - 1.0));  // UV.x = X
-    let grid_z = u32(clamp(floor(chunk_uv.y), 0.0, chunk_count.y - 1.0));  // UV.y = Z
-    let chunk_idx = grid_z * u32(chunk_count.x) + grid_x;  // Z*16+X (matches Rust XTT layout)
-
-    // UV within the chunk (0-1), equivalent to original's TexCoord0/TexCoord1
+    let grid_x = u32(clamp(floor(chunk_uv.x), 0.0, chunk_count.x - 1.0));
+    let grid_z = u32(clamp(floor(chunk_uv.y), 0.0, chunk_count.y - 1.0));
     let in_chunk_uv = fract(chunk_uv);
+    let color = textureSample(t_gpu_composited, s_terrain, sample_uv).rgb;
+    let unique_xy = textureSample(t_gpu_composited_normal, s_terrain, sample_uv).rg * 2.0 - 1.0;
+    var tangent_normal = vec3<f32>(
+        unique_xy,
+        sqrt(abs(1.0 - dot(unique_xy, unique_xy))),
+    );
+    let specular_map = textureSample(t_gpu_composited_specular, s_terrain, sample_uv).rgb
+        * in.bump_fadeout;
 
-    // Sample alpha from per-chunk texture array
-    // Original compositor uses gutter (1/64 to 63/64) because each chunk is pre-baked
-    // independently. For runtime splatting, we sample the full [0,1] range with
-    // half-pixel inset (0.5/64 to 63.5/64) so edge pixels align between adjacent chunks.
-    // Sampler uses ClampToEdge, so no bleed risk from the texture array.
-    let half_pixel = 0.5 / 64.0;
-    let alpha_uv = mix(vec2<f32>(half_pixel), vec2<f32>(1.0 - half_pixel), in_chunk_uv);
-    let alphas = textureSample(t_alpha_atlas, s_alpha, alpha_uv, chunk_idx);
-    let alphas_hi = textureSample(t_alpha_atlas_hi, s_alpha, alpha_uv, chunk_idx);
-
-    // Get layer texture indices for this chunk (up to 8 layers)
-    // Equivalent to original's g_LayerData[].x (layer index)
-    let layer_base = chunk_idx * 8u;
-    let layer0 = chunk_layers[layer_base];
-    let layer1 = chunk_layers[layer_base + 1u];
-    let layer2 = chunk_layers[layer_base + 2u];
-    let layer3 = chunk_layers[layer_base + 3u];
-    let layer4 = chunk_layers[layer_base + 4u];
-    let layer5 = chunk_layers[layer_base + 5u];
-    let layer6 = chunk_layers[layer_base + 6u];
-    let layer7 = chunk_layers[layer_base + 7u];
-
-    // Calculate tiled UVs with per-texture scaling
-    // Original HWDE: gPos = (Z, X), TexCoord0 = gPos/64, targetUVs = TexCoord0 * layerScale
-    // Terrain textures are sampled with U=Z, V=X in the original shader.
-    // sample_uv = (X, Z), so we swap to (Z, X) to match original convention.
-    let tiling_uv = (sample_uv * chunk_count).yx;  // (Z, X) to match HWDE
-    let uv0 = tiling_uv * texture_scales[layer0];
-    let uv1 = tiling_uv * texture_scales[layer1];
-    let uv2 = tiling_uv * texture_scales[layer2];
-    let uv3 = tiling_uv * texture_scales[layer3];
-
-    // Runtime texture splatting - same blending as compositor
-    // Original uses hardware alpha blending (SrcAlpha/OneMinusSrcAlpha)
-    // We use mix() which is mathematically equivalent:
-    //   mix(a, b, t) = a * (1-t) + b * t
-
-    // Layer 0: base layer (always 100% coverage)
-    var color = textureSampleLevel(t_terrain_array, s_terrain, uv0, layer0, 0.0).rgb;
-
-    // Layers 1-3: blend using alphas RGBA (lo atlas)
-    // Only check alpha > 0 — texture ID 0 is valid for overlays.
-    // Unused layer slots have alpha = 0 in the texture, so they're naturally skipped.
-    if alphas.r > 0.0 {
-        let c = textureSampleLevel(t_terrain_array, s_terrain, uv1, layer1, 0.0).rgb;
-        color = mix(color, c, alphas.r);
-    }
-    if alphas.g > 0.0 {
-        let c = textureSampleLevel(t_terrain_array, s_terrain, uv2, layer2, 0.0).rgb;
-        color = mix(color, c, alphas.g);
-    }
-    if alphas.b > 0.0 {
-        let c = textureSampleLevel(t_terrain_array, s_terrain, uv3, layer3, 0.0).rgb;
-        color = mix(color, c, alphas.b);
-    }
-    // Layer 4: blend using alphas.a (lo atlas A channel)
-    if alphas.a > 0.0 {
-        let uv4 = tiling_uv * texture_scales[layer4];
-        let c = textureSampleLevel(t_terrain_array, s_terrain, uv4, layer4, 0.0).rgb;
-        color = mix(color, c, alphas.a);
-    }
-    // Layers 5-7: blend using alphas_hi RGB (hi atlas)
-    if alphas_hi.r > 0.0 {
-        let uv5 = tiling_uv * texture_scales[layer5];
-        let c = textureSampleLevel(t_terrain_array, s_terrain, uv5, layer5, 0.0).rgb;
-        color = mix(color, c, alphas_hi.r);
-    }
-    if alphas_hi.g > 0.0 {
-        let uv6 = tiling_uv * texture_scales[layer6];
-        let c = textureSampleLevel(t_terrain_array, s_terrain, uv6, layer6, 0.0).rgb;
-        color = mix(color, c, alphas_hi.g);
-    }
-    if alphas_hi.b > 0.0 {
-        let uv7 = tiling_uv * texture_scales[layer7];
-        let c = textureSampleLevel(t_terrain_array, s_terrain, uv7, layer7, 0.0).rgb;
-        color = mix(color, c, alphas_hi.b);
-    }
-
-    // Blend normal maps from individual textures (all 8 layers)
-    let nm0 = textureSampleLevel(t_normal_array, s_terrain, uv0, layer0, 0.0).rg * 2.0 - 1.0;
-    var tangent_normal = vec3<f32>(nm0.x, nm0.y, sqrt(max(0.0, 1.0 - nm0.x * nm0.x - nm0.y * nm0.y)));
-
-    if alphas.r > 0.0 {
-        let nm = textureSampleLevel(t_normal_array, s_terrain, uv1, layer1, 0.0).rg * 2.0 - 1.0;
-        let n = vec3<f32>(nm.x, nm.y, sqrt(max(0.0, 1.0 - nm.x * nm.x - nm.y * nm.y)));
-        tangent_normal = mix(tangent_normal, n, alphas.r);
-    }
-    if alphas.g > 0.0 {
-        let nm = textureSampleLevel(t_normal_array, s_terrain, uv2, layer2, 0.0).rg * 2.0 - 1.0;
-        let n = vec3<f32>(nm.x, nm.y, sqrt(max(0.0, 1.0 - nm.x * nm.x - nm.y * nm.y)));
-        tangent_normal = mix(tangent_normal, n, alphas.g);
-    }
-    if alphas.b > 0.0 {
-        let nm = textureSampleLevel(t_normal_array, s_terrain, uv3, layer3, 0.0).rg * 2.0 - 1.0;
-        let n = vec3<f32>(nm.x, nm.y, sqrt(max(0.0, 1.0 - nm.x * nm.x - nm.y * nm.y)));
-        tangent_normal = mix(tangent_normal, n, alphas.b);
-    }
-    if alphas.a > 0.0 {
-        let uv4 = tiling_uv * texture_scales[layer4];
-        let nm = textureSampleLevel(t_normal_array, s_terrain, uv4, layer4, 0.0).rg * 2.0 - 1.0;
-        let n = vec3<f32>(nm.x, nm.y, sqrt(max(0.0, 1.0 - nm.x * nm.x - nm.y * nm.y)));
-        tangent_normal = mix(tangent_normal, n, alphas.a);
-    }
-    if alphas_hi.r > 0.0 {
-        let uv5 = tiling_uv * texture_scales[layer5];
-        let nm = textureSampleLevel(t_normal_array, s_terrain, uv5, layer5, 0.0).rg * 2.0 - 1.0;
-        let n = vec3<f32>(nm.x, nm.y, sqrt(max(0.0, 1.0 - nm.x * nm.x - nm.y * nm.y)));
-        tangent_normal = mix(tangent_normal, n, alphas_hi.r);
-    }
-    if alphas_hi.g > 0.0 {
-        let uv6 = tiling_uv * texture_scales[layer6];
-        let nm = textureSampleLevel(t_normal_array, s_terrain, uv6, layer6, 0.0).rg * 2.0 - 1.0;
-        let n = vec3<f32>(nm.x, nm.y, sqrt(max(0.0, 1.0 - nm.x * nm.x - nm.y * nm.y)));
-        tangent_normal = mix(tangent_normal, n, alphas_hi.g);
-    }
-    if alphas_hi.b > 0.0 {
-        let uv7 = tiling_uv * texture_scales[layer7];
-        let nm = textureSampleLevel(t_normal_array, s_terrain, uv7, layer7, 0.0).rg * 2.0 - 1.0;
-        let n = vec3<f32>(nm.x, nm.y, sqrt(max(0.0, 1.0 - nm.x * nm.x - nm.y * nm.y)));
-        tangent_normal = mix(tangent_normal, n, alphas_hi.b);
-    }
-
-    // Apply bump power scaling (HWDE: gBumpPower = cb4[30].z)
+    // The oracle reconstructs Z before applying bump power, then normalizes the
+    // scaled XY together with that original Z value.
     tangent_normal.x = tangent_normal.x * params.bump_power;
     tangent_normal.y = tangent_normal.y * params.bump_power;
-    tangent_normal.z = sqrt(max(0.0, 1.0 - tangent_normal.x * tangent_normal.x - tangent_normal.y * tangent_normal.y));
     tangent_normal = normalize(tangent_normal);
 
     // Apply distance-based bump fadeout (HWDE PS lines 404-405)
@@ -506,41 +399,75 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         );
         let shadow_pos = shadow_vp * vec4<f32>(in.world_pos, 1.0);
         let shadow_ndc = shadow_pos.xyz / shadow_pos.w;
-        let shadow_uv = vec2<f32>(shadow_ndc.x * 0.5 + 0.5, shadow_ndc.y * -0.5 + 0.5);
-        let shadow_z = clamp(shadow_ndc.z, 0.0, 1.0);
-
-        shadow_factor = vsm_shadow(shadow_uv, shadow_z, lighting.dir_light_color.a, t_shadow_map, s_terrain);
+        shadow_factor = compute_dir_shadow(
+            shadow_ndc,
+            lighting.dir_light_color.a,
+            lighting.shadow_params.x,
+            lighting.shadow_params.y,
+            t_shadow_map,
+            s_lighting,
+        );
     }
     dir_diffuse *= shadow_factor;
 
-    // Specular (Blinn-Phong, matching heightfield/roads shaders)
     let view_dir = normalize(lighting.world_camera_pos.xyz - in.world_pos);
-    let spec_power = 16.0; // Default terrain specular power
-    let spec_intensity = compute_blinn_phong_specular(world_normal, light_dir, view_dir, spec_power);
-    let dir_spec = lighting.dir_light_color.rgb * spec_intensity * shadow_factor;
+    let world_reflect = reflect(-view_dir, world_normal);
+    let local_spec_power = lighting.local_light_params.y;
+    let directional_reflection = max(dot(world_reflect, light_dir), 0.0);
+    let directional_specular = dir_diffuse
+        * specular_schlick(directional_reflection, local_spec_power);
+
+    let fill_direction = normalize(lighting.fill_spec_direction_power.xyz);
+    let fill_reflection = max(dot(world_reflect, fill_direction), 0.0);
+    let fill_shadow = 1.0
+        + lighting.fill_spec_color_shadow.w * (shadow_factor - 1.0);
+    let fill_specular = lighting.fill_spec_color_shadow.rgb
+        * specular_schlick(fill_reflection, lighting.fill_spec_direction_power.w)
+        * fill_shadow;
 
     // === Local/point lights ===
     var local_diffuse = vec3<f32>(0.0);
-    var local_spec = 0.0;
-    let num_lights = u32(lighting.local_light_params.x);
-    let local_spec_power = lighting.local_light_params.y;
-    let world_reflect = reflect(-view_dir, world_normal);
+    var local_specular = vec3<f32>(0.0);
+    let num_lights = select(0u, u32(lighting.local_light_params.x), lighting.local_light_params.w > 0.5);
 
     for (var i = 0u; i < num_lights && i < 20u; i++) {
         let base = i * 8u;
-        let light_pos = local_lights[base].xyz;
-        let omni_mul = local_lights[base].w;
-        let light_color = local_lights[base + 1u].xyz;
-        let omni_add = local_lights[base + 1u].w;
-        let decay_dist = local_lights[base + 2u].x;
-        let spec_int = local_lights[base + 3u].w;
-
-        let result = evaluate_omni_specular(
-            light_pos, light_color, omni_mul, omni_add, decay_dist, spec_int,
-            in.world_pos, world_normal, world_reflect, local_spec_power,
+        let result = evaluate_spot_specular_shadowed(
+            local_lights[base],
+            local_lights[base + 1u],
+            local_lights[base + 2u],
+            local_lights[base + 3u],
+            local_lights[base + 4u],
+            local_lights[base + 5u],
+            local_lights[base + 6u],
+            local_lights[base + 7u],
+            in.world_pos,
+            world_normal,
+            world_reflect,
+            local_spec_power,
+            lighting.local_light_params.z > 0.5,
+            t_local_shadow_map,
+            s_lighting,
         );
-        local_diffuse += result.xyz;
-        local_spec += result.w;
+        local_diffuse += result.diffuse;
+        local_specular += result.specular;
+    }
+
+    if lighting.light_volume_params.x > 0.5 {
+        let volume = evaluate_light_volume(
+            in.world_pos,
+            world_normal,
+            world_reflect,
+            local_spec_power,
+            lighting.light_volume_row0,
+            lighting.light_volume_row1,
+            lighting.light_volume_row2,
+            t_light_volume_color,
+            t_light_volume_vector,
+            s_lighting,
+        );
+        local_diffuse += volume.diffuse;
+        local_specular += volume.specular;
     }
 
     // === Combine lighting (HWDE PS lines 493-507) ===
@@ -551,19 +478,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var dir_light = dir_diffuse + in.light_color * 2.0 + local_diffuse;
     let ao_blended = mix(dir_light, dir_light * ao, ao_intensity);
     let ambient_sum = sh_ambient * ao;
-    var lit_color = (ambient_sum + ao_blended) * color;
-    // Specular: directional + local
-    lit_color += (dir_spec * 0.15 + local_spec);
+    var lit_color = (ambient_sum + ao_blended) * color
+        + specular_map * (directional_specular + fill_specular + local_specular) * 3.14;
 
     // === Blackmap (fog-of-war) ===
     // HWDE uses world-position-derived UVs with separate X/Z scales (cb4[33-34])
     if lighting.blackmap_params1.w > 0.5 {
-        let blackmap_uv = vec2<f32>(
+        let visibility_uv = vec2<f32>(
             in.world_pos.x * lighting.blackmap_uv_scales.x,
-            in.world_pos.z * lighting.blackmap_uv_scales.y,
+            -in.world_pos.z * lighting.blackmap_uv_scales.x + 1.0,
         );
-        let vis_factor = textureSample(t_blackmap, s_terrain, blackmap_uv).a;
-        let unexplored_sample = textureSample(t_unexplored, s_terrain, blackmap_uv);
+        let unexplored_uv = in.world_pos.xz * lighting.blackmap_uv_scales.y;
+        let vis_factor = textureSample(t_blackmap, s_terrain, visibility_uv).a;
+        let unexplored_sample = textureSample(t_unexplored, s_terrain, unexplored_uv);
         lit_color = apply_blackmap(
             lit_color, in.world_pos, vis_factor, unexplored_sample,
             lighting.blackmap_params0.xyz,  // bg_color
@@ -579,16 +506,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let final_color = compute_fog(lit_color, in.fog_densities.x, in.fog_densities.y, lighting.fog_color.xyz, lighting.planar_fog_color.xyz);
 
     // Debug modes
-    if params.debug_mode > 14.5 && params.debug_mode < 15.5 {
-        // Debug mode 15: Raw alpha visualization per chunk
-        // R = layer 1 alpha, G = layer 2 alpha, B = layer 3 alpha
-        return vec4<f32>(alphas.r, alphas.g, alphas.b, 1.0);
-    }
-    if params.debug_mode > 13.5 && params.debug_mode < 14.5 {
-        // Debug mode 14: Show layer0 texture ID per chunk (visualize layer buffer lookup)
-        // This helps verify if the layer buffer indexing matches screen position
-        return vec4<f32>(f32(layer0) / 8.0, 0.0, 0.0, 1.0);
-    }
     if params.debug_mode > 12.5 && params.debug_mode < 13.5 {
         // Debug mode 13: Chunk grid visualization with corner markers
         // Corner markers (2x2 chunk areas):
@@ -628,12 +545,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(ao, ao, ao, 1.0);
     }
     if params.debug_mode > 8.5 && params.debug_mode < 9.5 {
-        let xtt_color = textureSample(t_xtt_albedo, s_terrain, xtd_uv);
-        return vec4<f32>(xtt_color.rgb * 0.7, 1.0);
+        return vec4<f32>(specular_map, 1.0);
     }
     if params.debug_mode > 6.5 && params.debug_mode < 7.5 {
-        let xtt_color = textureSample(t_xtt_albedo, s_terrain, xtd_uv);
-        return vec4<f32>(xtt_color.rgb, 1.0);
+        return vec4<f32>(unique_xy * 0.5 + 0.5, 1.0, 1.0);
     }
     if params.debug_mode > 0.5 && params.debug_mode < 1.5 {
         let edge_threshold = 0.02;
@@ -644,5 +559,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    return vec4<f32>(final_color, 1.0);
+    return vec4<f32>(final_color, combined_alpha);
 }

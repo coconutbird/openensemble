@@ -4,9 +4,9 @@ import package::shared::fog::compute_fog;
 import package::shared::fog::compute_planar_fog_density;
 import package::shared::normal::compute_tbn;
 import package::shared::normal::unpack_dxn_normal;
-import package::shared::shadows::vsm_shadow;
+import package::shared::shadows::compute_dir_shadow;
 import package::shared::blackmap::apply_blackmap;
-import package::shared::local_lights::evaluate_omni_specular;
+import package::shared::local_lights::evaluate_spot_specular;
 
 // Heightfield/Decal patch shader - WGSL implementation of terrainHeightField.fx
 //
@@ -68,7 +68,7 @@ var s_heightfield: sampler;
 
 // Shadow, blackmap, and local light resources
 @group(1) @binding(3)
-var t_shadow_map: texture_2d<f32>;
+var t_shadow_map: texture_2d_array<f32>;
 @group(1) @binding(4)
 var t_blackmap: texture_2d<f32>;
 @group(1) @binding(5)
@@ -241,9 +241,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         );
         let shadow_pos = shadow_vp * vec4<f32>(in.world_pos, 1.0);
         let shadow_ndc = shadow_pos.xyz / shadow_pos.w;
-        let shadow_uv = vec2<f32>(shadow_ndc.x * 0.5 + 0.5, shadow_ndc.y * -0.5 + 0.5);
-        let shadow_z = clamp(shadow_ndc.z, 0.0, 1.0);
-        shadow_factor = vsm_shadow(shadow_uv, shadow_z, params.dir_light_color.a, t_shadow_map, s_diffuse);
+        shadow_factor = compute_dir_shadow(
+            shadow_ndc,
+            params.dir_light_color.a,
+            params.shadow_params.x,
+            params.shadow_params.y,
+            t_shadow_map,
+            s_diffuse,
+        );
     }
     diffuse_sum *= shadow_factor;
     spec_sum *= shadow_factor;
@@ -253,7 +258,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // === Local lights ===
     var local_diffuse = vec3<f32>(0.0);
-    var local_spec = 0.0;
+    var local_spec = vec3<f32>(0.0);
     let num_lights = u32(params.local_light_params.x);
     let local_spec_power = params.local_light_params.y;
     let world_reflect = reflect(-view_dir, world_normal);
@@ -265,18 +270,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let omni_add = local_lights[base + 1u].w;
         let decay_dist = local_lights[base + 2u].x;
         let spec_int = local_lights[base + 3u].w;
-        let result = evaluate_omni_specular(
-            light_pos, light_color, omni_mul, omni_add, decay_dist, spec_int,
+        let result = evaluate_spot_specular(
+            light_pos, light_color, omni_mul, omni_add, decay_dist,
+            local_lights[base + 2u].y, local_lights[base + 2u].z,
+            local_lights[base + 3u].xyz, spec_int,
             in.world_pos, world_normal, world_reflect, local_spec_power,
         );
-        local_diffuse += result.xyz;
-        local_spec += result.w;
+        local_diffuse += result.diffuse;
+        local_spec += result.specular;
     }
 
     // Combine lighting
     diffuse_sum += ambient_sum + local_diffuse;
     var lit_color = diffuse_sum * albedo;
-    lit_color += (spec_sum * spec_map + vec3<f32>(local_spec)) * SPEC_TO_DIFFUSE_RATIO;
+    lit_color += (spec_sum * spec_map + local_spec) * SPEC_TO_DIFFUSE_RATIO;
 
     // === Blackmap (fog-of-war) ===
     if params.blackmap_params1.w > 0.5 {

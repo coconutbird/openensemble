@@ -3,8 +3,9 @@
 use super::FoliageConfig;
 use crate::types::FoliageSet;
 use num_traits::ToPrimitive;
-use render::terrain::FOLIAGE_SHADER;
+use render::terrain::{FOLIAGE_SHADER, LightingParams};
 use render::wgpu;
+use render::wgpu::util::DeviceExt;
 
 /// A single foliage draw call (one per QN chunk × set pair).
 pub struct FoliageDrawCall {
@@ -22,6 +23,8 @@ pub struct FoliageDrawCall {
 pub struct FoliageResources {
     /// Render pipeline for foliage.
     pub pipeline: wgpu::RenderPipeline,
+    /// Oracle-compatible alpha-tested VSM caster pipeline.
+    pub shadow_pipeline: wgpu::RenderPipeline,
     /// Uniform buffer for foliage parameters (global — lighting, fog, etc).
     pub params_buffer: wgpu::Buffer,
     /// Dynamic uniform buffer for per-chunk data (chunk offsets).
@@ -34,6 +37,9 @@ pub struct FoliageResources {
     pub set_resources: Vec<FoliageSetResources>,
     /// Params bind group (terrain textures + dynamic chunk info).
     pub params_bind_group: Option<wgpu::BindGroup>,
+    /// Caster params bind group, with a dummy shadow texture to avoid sampling
+    /// the cascaded shadow map while it is attached as a render target.
+    pub shadow_params_bind_group: Option<wgpu::BindGroup>,
     /// Pre-built draw calls from QN chunk data.
     pub draw_calls: Vec<FoliageDrawCall>,
     /// Minimum uniform buffer offset alignment (for dynamic uniform).
@@ -45,6 +51,7 @@ pub struct FoliageResources {
     /// Draw calls index into this via `blade_data_offset` in `ChunkInfo`.
     pub blade_map_texture: Option<wgpu::Texture>,
     pub blade_map_view: Option<wgpu::TextureView>,
+    params: Option<FoliageParamsUniform>,
 }
 
 /// Per-foliage-set GPU resources.
@@ -63,6 +70,7 @@ pub struct FoliageSetResources {
     pub _blade_normals_view: wgpu::TextureView,
     /// Material bind group.
     pub material_bind_group: wgpu::BindGroup,
+    pub _material_params_buffer: wgpu::Buffer,
     /// Number of blade types in this set.
     pub num_blade_types: u32,
     /// Number of vertices per blade.
@@ -113,6 +121,17 @@ pub struct FoliageParamsUniform {
     pub blackmap_params0: [f32; 4], // rgb = bg_color, w = fog_scalar
     pub blackmap_params1: [f32; 4], // x = unexplored_scalar, yz = bounds_lo_xz, w = enabled
     pub blackmap_params2: [f32; 4], // x = pad, yz = bounds_hi_xz, w = bounds_falloff
+    /// Packed local-light controls: count, specular power, shadows, enabled.
+    pub local_light_params: [f32; 4],
+    /// Visibility and unexplored-map world-coordinate scales.
+    pub blackmap_uv_scales: [f32; 4],
+}
+
+pub struct FoliageWorldBindings<'a> {
+    pub shadow: &'a wgpu::TextureView,
+    pub blackmap: &'a wgpu::TextureView,
+    pub unexplored: &'a wgpu::TextureView,
+    pub local_lights: &'a wgpu::Buffer,
 }
 
 /// Per-chunk uniform data (must match shader `ChunkInfo` struct).
@@ -157,14 +176,31 @@ fn texture_layout_entry(
     binding: u32,
     visibility: wgpu::ShaderStages,
     sample_type: wgpu::TextureSampleType,
+    view_dimension: wgpu::TextureViewDimension,
 ) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility,
         ty: wgpu::BindingType::Texture {
             sample_type,
-            view_dimension: wgpu::TextureViewDimension::D2,
+            view_dimension,
             multisampled: false,
+        },
+        count: None,
+    }
+}
+
+fn storage_layout_entry(
+    binding: u32,
+    visibility: wgpu::ShaderStages,
+) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
         },
         count: None,
     }
@@ -205,23 +241,55 @@ fn create_foliage_bind_group_layouts(
                 2,
                 wgpu::ShaderStages::VERTEX,
                 wgpu::TextureSampleType::Float { filterable: false },
+                wgpu::TextureViewDimension::D2,
             ),
             sampler_layout_entry(
                 3,
                 wgpu::ShaderStages::VERTEX,
                 wgpu::SamplerBindingType::NonFiltering,
             ),
-            texture_layout_entry(4, wgpu::ShaderStages::FRAGMENT, float_filterable),
-            texture_layout_entry(5, wgpu::ShaderStages::FRAGMENT, float_filterable),
-            texture_layout_entry(6, wgpu::ShaderStages::FRAGMENT, float_filterable),
-            texture_layout_entry(7, wgpu::ShaderStages::VERTEX, wgpu::TextureSampleType::Uint),
+            texture_layout_entry(
+                4,
+                wgpu::ShaderStages::FRAGMENT,
+                float_filterable,
+                wgpu::TextureViewDimension::D2Array,
+            ),
+            texture_layout_entry(
+                5,
+                wgpu::ShaderStages::FRAGMENT,
+                float_filterable,
+                wgpu::TextureViewDimension::D2,
+            ),
+            texture_layout_entry(
+                6,
+                wgpu::ShaderStages::FRAGMENT,
+                float_filterable,
+                wgpu::TextureViewDimension::D2,
+            ),
+            texture_layout_entry(
+                7,
+                wgpu::ShaderStages::VERTEX,
+                wgpu::TextureSampleType::Uint,
+                wgpu::TextureViewDimension::D2,
+            ),
+            storage_layout_entry(8, wgpu::ShaderStages::FRAGMENT),
         ],
     });
     let material = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("Foliage Material Bind Group Layout"),
         entries: &[
-            texture_layout_entry(0, wgpu::ShaderStages::FRAGMENT, float_filterable),
-            texture_layout_entry(1, wgpu::ShaderStages::FRAGMENT, float_filterable),
+            texture_layout_entry(
+                0,
+                wgpu::ShaderStages::FRAGMENT,
+                float_filterable,
+                wgpu::TextureViewDimension::D2,
+            ),
+            texture_layout_entry(
+                1,
+                wgpu::ShaderStages::FRAGMENT,
+                float_filterable,
+                wgpu::TextureViewDimension::D2,
+            ),
             sampler_layout_entry(
                 2,
                 wgpu::ShaderStages::FRAGMENT,
@@ -231,12 +299,15 @@ fn create_foliage_bind_group_layouts(
                 3,
                 wgpu::ShaderStages::VERTEX,
                 wgpu::TextureSampleType::Float { filterable: false },
+                wgpu::TextureViewDimension::D2,
             ),
             texture_layout_entry(
                 4,
                 wgpu::ShaderStages::VERTEX,
                 wgpu::TextureSampleType::Float { filterable: false },
+                wgpu::TextureViewDimension::D2,
             ),
+            uniform_layout_entry(6, wgpu::ShaderStages::FRAGMENT, false, None),
             sampler_layout_entry(
                 5,
                 wgpu::ShaderStages::VERTEX,
@@ -278,6 +349,62 @@ fn create_foliage_pipeline(
             targets: &[Some(wgpu::ColorTargetState {
                 format: surface_format,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            unclipped_depth: false,
+            conservative: false,
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    })
+}
+
+fn create_foliage_shadow_pipeline(
+    device: &wgpu::Device,
+    camera_layout: &wgpu::BindGroupLayout,
+    params_layout: &wgpu::BindGroupLayout,
+    material_layout: &wgpu::BindGroupLayout,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Foliage Shadow Shader"),
+        source: wgpu::ShaderSource::Wgsl(FOLIAGE_SHADER.into()),
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Foliage Shadow Pipeline Layout"),
+        bind_group_layouts: &[camera_layout, params_layout, material_layout],
+        push_constant_ranges: &[],
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Foliage Shadow Pipeline"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_shadow"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rg16Float,
+                blend: None,
                 write_mask: wgpu::ColorWrites::ALL,
             })],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -405,6 +532,7 @@ struct FoliageMaterialBindings<'a> {
     blade_positions: &'a wgpu::TextureView,
     blade_normals: &'a wgpu::TextureView,
     blade_sampler: &'a wgpu::Sampler,
+    material_params: &'a wgpu::Buffer,
 }
 
 fn create_foliage_material_bind_group(
@@ -440,6 +568,10 @@ fn create_foliage_material_bind_group(
             wgpu::BindGroupEntry {
                 binding: 5,
                 resource: wgpu::BindingResource::Sampler(bindings.blade_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: bindings.material_params.as_entire_binding(),
             },
         ],
     })
@@ -499,10 +631,12 @@ fn initial_foliage_params(
         shadow_vp_col1: [0.0, 1.0, 0.0, 0.0],
         shadow_vp_col2: [0.0, 0.0, 1.0, 0.0],
         shadow_vp_col3: [0.0, 0.0, 0.0, 1.0],
-        shadow_params: [1.0, 1.0, 0.0, 0.0],
+        shadow_params: [8.0, 3.0, 0.0, 0.0],
         blackmap_params0: [0.0, 0.0, 0.0, 0.5],
         blackmap_params1: [0.3, 0.0, 0.0, 0.0],
         blackmap_params2: [0.0, 1024.0, 1024.0, 0.01],
+        local_light_params: [0.0; 4],
+        blackmap_uv_scales: [1.0 / 1024.0, 1.0 / 1024.0, 0.0, 0.0],
     }
 }
 
@@ -515,6 +649,7 @@ struct FoliageParamsBindings<'a> {
     blackmap: &'a wgpu::TextureView,
     unexplored: &'a wgpu::TextureView,
     blade_map: &'a wgpu::TextureView,
+    local_lights: &'a wgpu::Buffer,
 }
 
 fn create_foliage_params_bind_group(
@@ -566,6 +701,10 @@ fn create_foliage_params_bind_group(
                 binding: 7,
                 resource: wgpu::BindingResource::TextureView(bindings.blade_map),
             },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: bindings.local_lights.as_entire_binding(),
+            },
         ],
     })
 }
@@ -595,20 +734,29 @@ impl FoliageResources {
             &params_bind_group_layout,
             &material_bind_group_layout,
         );
+        let shadow_pipeline = create_foliage_shadow_pipeline(
+            device,
+            camera_bind_group_layout,
+            &params_bind_group_layout,
+            &material_bind_group_layout,
+        );
 
         Self {
             pipeline,
+            shadow_pipeline,
             params_buffer,
             chunk_info_buffer: None,
             params_bind_group_layout,
             material_bind_group_layout,
             set_resources: Vec::new(),
             params_bind_group: None,
+            shadow_params_bind_group: None,
             draw_calls: Vec::new(),
             min_offset_alignment,
             config: FoliageConfig::default(),
             blade_map_texture: None,
             blade_map_view: None,
+            params: None,
         }
     }
 
@@ -688,6 +836,11 @@ impl FoliageResources {
         let blade_normals_view =
             blade_normals_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let (material_sampler, blade_sampler) = create_foliage_samplers(device);
+        let material_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("Foliage Material Params: {}", set.name)),
+            contents: bytemuck::cast_slice(&[set.backside_shadow_scalar, 0.0, 0.0, 0.0]),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
         let material_bind_group = create_foliage_material_bind_group(
             device,
             &self.material_bind_group_layout,
@@ -699,6 +852,7 @@ impl FoliageResources {
                 blade_positions: &blade_positions_view,
                 blade_normals: &blade_normals_view,
                 blade_sampler: &blade_sampler,
+                material_params: &material_params_buffer,
             },
         );
 
@@ -712,6 +866,7 @@ impl FoliageResources {
             _blade_normals_texture: blade_normals_texture,
             _blade_normals_view: blade_normals_view,
             material_bind_group,
+            _material_params_buffer: material_params_buffer,
             num_blade_types,
             num_verts_per_blade: num_verts,
         })
@@ -900,6 +1055,7 @@ impl FoliageResources {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         terrain_data: &crate::types::RawXtdData,
+        world: Option<&FoliageWorldBindings<'_>>,
     ) {
         let Some(first_set) = self.set_resources.first() else {
             log::warn!("Cannot create params bind group: no foliage sets loaded");
@@ -908,6 +1064,7 @@ impl FoliageResources {
         let num_verts_per_blade = first_set.num_verts_per_blade;
         let params = initial_foliage_params(terrain_data, first_set, &self.config);
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
+        self.params = Some(params);
 
         let num_verts = terrain_data.num_verts_per_axis;
         let heightmap_texture =
@@ -925,12 +1082,56 @@ impl FoliageResources {
         self.ensure_chunk_info_buffer(device, queue, num_verts_per_blade);
         self.ensure_blade_map(device, queue);
 
-        let shadow_texture =
-            Self::create_dummy_texture(device, queue, "Shadow", [255, 255, 255, 255]);
-        let shadow_view = shadow_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let blackmap_texture = Self::create_dummy_texture(device, queue, "Blackmap", [0, 0, 0, 0]);
-        let blackmap_view = blackmap_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let unexplored_view = blackmap_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let fallback_shadow = world
+            .is_none()
+            .then(|| Self::create_dummy_shadow_view(device, queue));
+        let fallback_blackmap = world.is_none().then(|| {
+            let texture = Self::create_dummy_texture(device, queue, "Blackmap", [0, 0, 0, 0]);
+            texture.create_view(&wgpu::TextureViewDescriptor::default())
+        });
+        let fallback_unexplored = world.is_none().then(|| {
+            let texture = Self::create_dummy_texture(device, queue, "Unexplored", [0, 0, 0, 0]);
+            texture.create_view(&wgpu::TextureViewDescriptor::default())
+        });
+        let fallback_lights = world.is_none().then(|| {
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Foliage Empty Local Lights"),
+                contents: &[0; 20 * 8 * 16],
+                usage: wgpu::BufferUsages::STORAGE,
+            })
+        });
+        let shadow = world.map_or_else(
+            || {
+                fallback_shadow
+                    .as_ref()
+                    .expect("fallback shadow was created")
+            },
+            |bindings| bindings.shadow,
+        );
+        let blackmap = world.map_or_else(
+            || {
+                fallback_blackmap
+                    .as_ref()
+                    .expect("fallback blackmap was created")
+            },
+            |bindings| bindings.blackmap,
+        );
+        let unexplored = world.map_or_else(
+            || {
+                fallback_unexplored
+                    .as_ref()
+                    .expect("fallback unexplored map was created")
+            },
+            |bindings| bindings.unexplored,
+        );
+        let local_lights = world.map_or_else(
+            || {
+                fallback_lights
+                    .as_ref()
+                    .expect("fallback lights were created")
+            },
+            |bindings| bindings.local_lights,
+        );
         let chunk_buffer = self
             .chunk_info_buffer
             .as_ref()
@@ -947,10 +1148,27 @@ impl FoliageResources {
                 chunk_buffer,
                 heightmap: &heightmap_view,
                 heightmap_sampler: &heightmap_sampler,
-                shadow: &shadow_view,
-                blackmap: &blackmap_view,
-                unexplored: &unexplored_view,
+                shadow,
+                blackmap,
+                unexplored,
                 blade_map,
+                local_lights,
+            },
+        ));
+        let caster_shadow = Self::create_dummy_shadow_view(device, queue);
+        self.shadow_params_bind_group = Some(create_foliage_params_bind_group(
+            device,
+            &self.params_bind_group_layout,
+            &FoliageParamsBindings {
+                params_buffer: &self.params_buffer,
+                chunk_buffer,
+                heightmap: &heightmap_view,
+                heightmap_sampler: &heightmap_sampler,
+                shadow: &caster_shadow,
+                blackmap,
+                unexplored,
+                blade_map,
+                local_lights,
             },
         ));
         log::info!("Created foliage params bind group with {num_verts}x{num_verts} heightmap");
@@ -997,6 +1215,32 @@ impl FoliageResources {
             },
         );
         tex
+    }
+
+    fn create_dummy_shadow_view(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView {
+        let texture = device.create_texture_with_data(
+            queue,
+            &wgpu::TextureDescriptor {
+                label: Some("Foliage Dummy Shadow Array"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &[255, 0, 0, 255],
+        );
+        texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        })
     }
 
     /// Align `value` up to the next multiple of `alignment`.
@@ -1283,16 +1527,41 @@ impl FoliageResources {
         );
     }
 
-    /// Update camera position in foliage params (call each frame).
-    pub fn update_camera(&self, queue: &wgpu::Queue, camera_pos: [f32; 3], time: f32) {
-        // Update only the camera_pos_time field (5th vec4 in struct)
-        // camera_pos_time is at offset 64 (4 × vec4 before it)
-        let camera_pos_time = [camera_pos[0], camera_pos[1], camera_pos[2], time];
-        queue.write_buffer(
-            &self.params_buffer,
-            64, // offset to camera_pos_time field
-            bytemuck::bytes_of(&camera_pos_time),
-        );
+    /// Synchronizes foliage with the shared lighting constants for this frame.
+    pub fn update_frame(&mut self, queue: &wgpu::Queue, lighting: &LightingParams, time: f32) {
+        let Some(params) = &mut self.params else {
+            return;
+        };
+        params.camera_pos_time = [
+            lighting.world_camera_pos[0],
+            lighting.world_camera_pos[1],
+            lighting.world_camera_pos[2],
+            time,
+        ];
+        params.dir_light_vec = lighting.dir_light_vec;
+        params.dir_light_color = lighting.dir_light_color;
+        params.fog_params = lighting.fog_params;
+        params.fog_color = lighting.fog_color;
+        params.planar_fog_params = lighting.planar_fog_params;
+        params.planar_fog_color = lighting.planar_fog_color;
+        params.sh_fill_ar = lighting.sh_fill_ar;
+        params.sh_fill_ag = lighting.sh_fill_ag;
+        params.sh_fill_ab = lighting.sh_fill_ab;
+        params.sh_fill_br = lighting.sh_fill_br;
+        params.sh_fill_bg = lighting.sh_fill_bg;
+        params.sh_fill_bb = lighting.sh_fill_bb;
+        params.sh_fill_c = lighting.sh_fill_c;
+        params.shadow_vp_col0 = lighting.shadow_vp_col0;
+        params.shadow_vp_col1 = lighting.shadow_vp_col1;
+        params.shadow_vp_col2 = lighting.shadow_vp_col2;
+        params.shadow_vp_col3 = lighting.shadow_vp_col3;
+        params.shadow_params = lighting.shadow_params;
+        params.blackmap_params0 = lighting.blackmap_params0;
+        params.blackmap_params1 = lighting.blackmap_params1;
+        params.blackmap_params2 = lighting.blackmap_params2;
+        params.local_light_params = lighting.local_light_params;
+        params.blackmap_uv_scales = lighting.blackmap_uv_scales;
+        queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(params));
     }
 
     /// Create a heightmap texture from terrain position data.
@@ -1335,9 +1604,10 @@ impl FoliageResources {
                 / 1023.0;
 
             // Decode to world displacement: norm * range - mid (matches game bytecode)
-            let x = x_raw * range[0] - mid[0];
+            // The oracle consumes the sampled position as .zyx.
+            let x = z_raw * range[0] - mid[0];
             let y = y_raw * range[1] - mid[1];
-            let z = z_raw * range[2] - mid[2];
+            let z = x_raw * range[2] - mid[2];
 
             min_height = min_height.min(y);
             max_height = max_height.max(y);

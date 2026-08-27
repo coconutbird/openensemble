@@ -133,7 +133,7 @@ impl TerrainViewer {
     }
 
     /// Creates the decal instances buffer.
-    /// Each instance is a `vec4<f32>`: (rotation, `center_u`, `center_v`, `hdr_scale`).
+    /// Each instance is a `vec4<f32>`: rotation, center U/V, and bitcast decal index.
     pub(crate) fn create_decal_instances_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
         use wgpu::util::DeviceExt;
         let scene = self.scene.as_ref().expect("scene must be loaded");
@@ -143,7 +143,12 @@ impl TerrainViewer {
         let mut data = vec![[0.0f32; 4]; num];
 
         for (i, inst) in scene.decal_instances.iter().enumerate() {
-            data[i] = [inst.rotation, inst.tile_center_x, inst.tile_center_y, 1.0];
+            data[i] = [
+                inst.rotation,
+                inst.tile_center_x,
+                inst.tile_center_y,
+                f32::from_bits(inst.decal_index.cast_unsigned()),
+            ];
         }
 
         log::info!(

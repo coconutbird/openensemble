@@ -6,14 +6,14 @@
 use glam::Vec3;
 use num_traits::ToPrimitive;
 use render::terrain::{
-    CompositingConfig, CompositorResources, GPU_TESS_SHADER, GpuTessParams, LightingParams,
-    TERRAIN_SHADER, TerrainParams,
+    CompositeBindings, CompositingConfig, CompositorResources, GPU_TESS_SHADER, GpuTessParams,
+    LightingParams, TerrainParams,
 };
 use render::wgpu;
 use wgpu::util::DeviceExt;
 
 use crate::gpu::create_depth_texture;
-use crate::types::{AlbedoData, CpuTerrainData, GpuResources, RawXtdData};
+use crate::types::{AlbedoData, GpuResources, RawXtdData};
 use crate::viewer::TerrainViewer;
 
 struct CameraResources {
@@ -25,10 +25,13 @@ struct CameraResources {
 struct TerrainSamplers {
     terrain: wgpu::Sampler,
     alpha: wgpu::Sampler,
+    lighting: wgpu::Sampler,
 }
 
 struct CompositorInputs<'a> {
     terrain_array: &'a wgpu::TextureView,
+    normal_array: &'a wgpu::TextureView,
+    specular_array: &'a wgpu::TextureView,
     alpha_atlas: &'a wgpu::TextureView,
     alpha_atlas_hi: &'a wgpu::TextureView,
     chunk_layers: &'a wgpu::Buffer,
@@ -166,169 +169,21 @@ fn create_terrain_samplers(device: &wgpu::Device) -> TerrainSamplers {
         mipmap_filter: wgpu::FilterMode::Nearest,
         ..Default::default()
     });
-    TerrainSamplers { terrain, alpha }
-}
-
-fn create_cpu_texture_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-    let fragment = wgpu::ShaderStages::FRAGMENT;
-    let filterable = wgpu::TextureSampleType::Float { filterable: true };
-    let storage = wgpu::BufferBindingType::Storage { read_only: true };
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Texture Bind Group Layout"),
-        entries: &[
-            texture_layout_entry(0, fragment, wgpu::TextureViewDimension::D2Array, filterable),
-            sampler_layout_entry(1, fragment),
-            texture_layout_entry(2, fragment, wgpu::TextureViewDimension::D2Array, filterable),
-            buffer_layout_entry(3, fragment, storage),
-            buffer_layout_entry(4, fragment, wgpu::BufferBindingType::Uniform),
-            sampler_layout_entry(5, fragment),
-            texture_layout_entry(6, fragment, wgpu::TextureViewDimension::D2, filterable),
-            buffer_layout_entry(7, fragment, storage),
-        ],
-    })
-}
-
-struct CpuTextureBindings<'a> {
-    terrain_array: &'a wgpu::TextureView,
-    terrain_sampler: &'a wgpu::Sampler,
-    alpha_atlas: &'a wgpu::TextureView,
-    chunk_layers: &'a wgpu::Buffer,
-    params: &'a wgpu::Buffer,
-    alpha_sampler: &'a wgpu::Sampler,
-    xtt_albedo: &'a wgpu::TextureView,
-    texture_scales: &'a wgpu::Buffer,
-}
-
-struct CpuTerrainTextures {
-    terrain_array: wgpu::TextureView,
-    alpha_atlas: wgpu::TextureView,
-    alpha_atlas_hi: wgpu::TextureView,
-    xtt_albedo: wgpu::TextureView,
-    chunk_layers: wgpu::Buffer,
-    texture_scales: wgpu::Buffer,
-    samplers: TerrainSamplers,
-}
-
-fn create_cpu_texture_bind_group(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    bindings: &CpuTextureBindings<'_>,
-) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Texture Bind Group"),
-        layout,
-        entries: &[
-            texture_entry(0, bindings.terrain_array),
-            sampler_entry(1, bindings.terrain_sampler),
-            texture_entry(2, bindings.alpha_atlas),
-            buffer_entry(3, bindings.chunk_layers),
-            buffer_entry(4, bindings.params),
-            sampler_entry(5, bindings.alpha_sampler),
-            texture_entry(6, bindings.xtt_albedo),
-            buffer_entry(7, bindings.texture_scales),
-        ],
-    })
-}
-
-fn create_cpu_geometry_buffers(
-    device: &wgpu::Device,
-    data: &CpuTerrainData<'_>,
-) -> (wgpu::Buffer, wgpu::Buffer) {
-    assert_eq!(data.positions.len(), data.normals.len());
-    assert_eq!(data.positions.len(), data.uvs.len());
-    let mut vertices = Vec::with_capacity(data.positions.len() * 8);
-    for ((position, normal), uv) in data.positions.iter().zip(data.normals).zip(data.uvs) {
-        vertices.extend_from_slice(position);
-        vertices.extend_from_slice(normal);
-        vertices.extend_from_slice(uv);
+    let lighting = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("Terrain Lighting Sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::FilterMode::Nearest,
+        ..Default::default()
+    });
+    TerrainSamplers {
+        terrain,
+        alpha,
+        lighting,
     }
-    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Terrain Vertex Buffer"),
-        contents: bytemuck::cast_slice(&vertices),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
-    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Terrain Index Buffer"),
-        contents: bytemuck::cast_slice(data.indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
-    (vertex_buffer, index_buffer)
-}
-
-fn create_cpu_pipeline(
-    device: &wgpu::Device,
-    surface_format: wgpu::TextureFormat,
-    camera_layout: &wgpu::BindGroupLayout,
-    texture_layout: &wgpu::BindGroupLayout,
-) -> wgpu::RenderPipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("Terrain Shader"),
-        source: wgpu::ShaderSource::Wgsl(TERRAIN_SHADER.into()),
-    });
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("Terrain Pipeline Layout"),
-        bind_group_layouts: &[camera_layout, texture_layout],
-        push_constant_ranges: &[],
-    });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("Terrain Pipeline"),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            buffers: &[wgpu::VertexBufferLayout {
-                array_stride: 32,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &[
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 0,
-                        shader_location: 0,
-                    },
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 12,
-                        shader_location: 1,
-                    },
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x2,
-                        offset: 24,
-                        shader_location: 2,
-                    },
-                ],
-            }],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: surface_format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            strip_index_format: None,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: Some(wgpu::Face::Back),
-            unclipped_depth: false,
-            polygon_mode: wgpu::PolygonMode::Fill,
-            conservative: false,
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth32Float,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Less,
-            stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState::default(),
-        }),
-        multisample: wgpu::MultisampleState::default(),
-        multiview: None,
-        cache: None,
-    })
 }
 
 impl TerrainViewer {
@@ -347,22 +202,32 @@ impl TerrainViewer {
         );
         let compositor = CompositorResources::new(device, config);
         let (_, decal_alpha_view) = self.create_decal_alpha_atlas(device, queue);
+        let (_, decal_alpha_hi_view) = self.create_decal_alpha_atlas_hi(device, queue);
+        let (decal_diffuse_view, decal_opacity_view) =
+            self.create_decal_texture_arrays(device, queue);
         let decal_layers = self.create_chunk_decal_layers_buffer(device);
         let decal_instances = self.create_decal_instances_buffer(device);
         let decal_scales = self.create_decal_uv_scales_buffer(device);
         let bind_group = compositor.create_bind_group(
             device,
-            inputs.terrain_array,
-            inputs.alpha_atlas,
-            inputs.alpha_atlas_hi,
-            inputs.chunk_layers,
-            inputs.texture_scales,
-            inputs.terrain_sampler,
-            inputs.alpha_sampler,
-            &decal_alpha_view,
-            &decal_layers,
-            &decal_instances,
-            &decal_scales,
+            &CompositeBindings {
+                terrain_array: inputs.terrain_array,
+                alpha_atlas: inputs.alpha_atlas,
+                chunk_layers: inputs.chunk_layers,
+                texture_scales: inputs.texture_scales,
+                terrain_sampler: inputs.terrain_sampler,
+                alpha_sampler: inputs.alpha_sampler,
+                alpha_atlas_hi: inputs.alpha_atlas_hi,
+                decal_alpha_atlas: &decal_alpha_view,
+                chunk_decal_layers: &decal_layers,
+                decal_instances: &decal_instances,
+                decal_uv_scales: &decal_scales,
+                normal_array: inputs.normal_array,
+                decal_alpha_atlas_hi: &decal_alpha_hi_view,
+                decal_diffuse_array: &decal_diffuse_view,
+                decal_opacity_array: &decal_opacity_view,
+                specular_array: inputs.specular_array,
+            },
         );
         self.compositor = Some(compositor);
         self.compositor_bind_group = Some(bind_group);
@@ -407,7 +272,12 @@ impl TerrainViewer {
     }
 
     /// Initialize foliage GPU resources for rendering grass/vegetation.
-    pub(crate) fn init_foliage_resources(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    pub(crate) fn init_foliage_resources(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        world: Option<&crate::foliage::FoliageWorldBindings<'_>>,
+    ) {
         let Some(scene) = &self.scene else { return };
 
         if scene.foliage_sets.is_empty() {
@@ -453,7 +323,7 @@ impl TerrainViewer {
                     &scene.foliage_qn_chunks,
                     raw_data.num_verts_per_axis,
                 );
-                foliage_resources.create_params_bind_group(device, queue, raw_data);
+                foliage_resources.create_params_bind_group(device, queue, raw_data, world);
             } else {
                 log::warn!("Cannot create foliage params bind group: no terrain data");
             }
@@ -465,47 +335,69 @@ impl TerrainViewer {
     /// Initialize road GPU resources for rendering roads on terrain.
     pub(crate) fn init_road_resources(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let Some(scene) = &self.scene else { return };
-
         if scene.road_chunks.is_empty() {
             log::info!("No road data to render");
             return;
         }
-
         let Some(gpu) = &self.gpu else {
             log::warn!("Cannot initialize roads: GPU resources not available");
             return;
         };
-
-        let road = &scene.road_chunks[0];
-        if road.positions.is_empty() {
-            log::warn!("Road '{}' has no vertices", road.texture_name);
-            return;
-        }
-
-        // Load road textures (take source temporarily since we need &mut)
+        let camera_layout = gpu.camera_bind_group_layout.clone();
+        let road_chunks = scene.road_chunks.clone();
         let Some(mut source) = self.asset_source.take() else {
             log::warn!("Cannot load road textures: no asset source");
             return;
         };
-
-        let textures = render::terrain::load_road_textures(&mut source, &road.texture_name);
+        let loaded: Vec<_> = road_chunks
+            .into_iter()
+            .filter_map(|road| {
+                if road.positions.is_empty() {
+                    log::warn!("Road '{}' has no vertices", road.texture_name);
+                    return None;
+                }
+                render::terrain::load_road_textures(&mut source, &road.texture_name)
+                    .map(|textures| (road, textures))
+            })
+            .collect();
         self.asset_source = Some(source);
-        let Some(textures) = textures else {
-            log::warn!("Failed to load road textures for '{}'", road.texture_name);
+        if loaded.is_empty() {
+            log::warn!("No road material textures could be loaded");
+            return;
+        }
+        let batch_inputs: Vec<_> = loaded
+            .iter()
+            .map(|(road, textures)| crate::roads::RoadBatchInput {
+                positions: &road.positions,
+                uvs: &road.uvs,
+                albedo_pixels: &textures.albedo_pixels,
+                normal_pixels: &textures.normal_pixels,
+                specular_pixels: &textures.specular_pixels,
+                texture_size: [textures.width, textures.height],
+            })
+            .collect();
+        let Some(raw_terrain) = self
+            .scene
+            .as_ref()
+            .and_then(|loaded_scene| loaded_scene.raw_xtd_data.as_ref())
+        else {
+            log::warn!("Cannot conform roads without raw terrain position data");
             return;
         };
-
-        let camera_bgl = &gpu.camera_bind_group_layout;
+        let shadow_view = self
+            .shadow_resources
+            .as_ref()
+            .map(|shadow| shadow.shadow_view.clone());
         self.road_resources = Some(crate::roads::create_road_resources(
             device,
             queue,
             &crate::roads::RoadResourceInput {
-                camera_bind_group_layout: camera_bgl,
+                camera_bind_group_layout: &camera_layout,
                 surface_format: self.surface_format,
-                positions: &road.positions,
-                uvs: &road.uvs,
-                albedo_pixels: &textures.albedo_pixels,
-                texture_size: [textures.width, textures.height],
+                raw_terrain,
+                shadow_view: shadow_view.as_ref(),
+                batches: &batch_inputs,
+                bump_power: self.bump_power,
             },
         ));
     }
@@ -529,11 +421,12 @@ struct TessellationTextures {
     normal: wgpu::TextureView,
     ao: wgpu::TextureView,
     alpha: wgpu::TextureView,
-    xtt_albedo: wgpu::TextureView,
     normal_map_array: wgpu::TextureView,
+    specular_map_array: wgpu::TextureView,
     terrain_array: wgpu::TextureView,
     alpha_atlas: wgpu::TextureView,
     alpha_atlas_hi: wgpu::TextureView,
+    dynamic_alpha: wgpu::TextureView,
     chunk_layers: wgpu::Buffer,
     samplers: TerrainSamplers,
 }
@@ -551,7 +444,6 @@ struct TessellationStageTwo {
     camera: CameraResources,
     terrain_size: Vec3,
     texture_layout: wgpu::BindGroupLayout,
-    texture_scales: wgpu::Buffer,
     lighting_buffer: wgpu::Buffer,
 }
 
@@ -561,6 +453,9 @@ struct TessellationAuxiliary {
     unexplored: wgpu::TextureView,
     light: wgpu::TextureView,
     local_lights: wgpu::Buffer,
+    local_shadow: wgpu::TextureView,
+    light_volume_color: wgpu::TextureView,
+    light_volume_vector: wgpu::TextureView,
 }
 
 fn create_patch_mesh(vertices_per_axis: u32) -> PatchMesh {
@@ -716,6 +611,53 @@ fn create_mask_texture(
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
+fn create_dynamic_alpha_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    num_verts: u32,
+) -> wgpu::TextureView {
+    let width = num_verts.div_ceil(32);
+    let texel_count = width
+        .checked_mul(num_verts)
+        .and_then(|count| usize::try_from(count).ok())
+        .expect("dynamic alpha texture size must fit usize");
+    let words = vec![u32::MAX; texel_count];
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Dynamic Terrain Alpha Bitmask"),
+        size: wgpu::Extent3d {
+            width,
+            height: num_verts,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R32Uint,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        bytemuck::cast_slice(&words),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(width * 4),
+            rows_per_image: Some(num_verts),
+        },
+        wgpu::Extent3d {
+            width,
+            height: num_verts,
+            depth_or_array_layers: 1,
+        },
+    );
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
 fn create_gpu_texture_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     let vertex = wgpu::ShaderStages::VERTEX;
     let fragment = wgpu::ShaderStages::FRAGMENT;
@@ -738,35 +680,39 @@ fn create_gpu_texture_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
                 wgpu::TextureViewDimension::D2,
                 wgpu::TextureSampleType::Uint,
             ),
-            texture_layout_entry(3, fragment, wgpu::TextureViewDimension::D2, filterable),
             sampler_layout_entry(4, both),
             buffer_layout_entry(5, fragment, wgpu::BufferBindingType::Uniform),
             texture_layout_entry(6, fragment, wgpu::TextureViewDimension::D2, filterable),
             texture_layout_entry(7, fragment, wgpu::TextureViewDimension::D2, filterable),
-            texture_layout_entry(8, fragment, wgpu::TextureViewDimension::D2Array, filterable),
-            texture_layout_entry(9, fragment, wgpu::TextureViewDimension::D2Array, filterable),
+            texture_layout_entry(14, fragment, wgpu::TextureViewDimension::D2, filterable),
+            buffer_layout_entry(15, both, wgpu::BufferBindingType::Uniform),
             texture_layout_entry(
-                10,
+                16,
                 fragment,
                 wgpu::TextureViewDimension::D2Array,
                 filterable,
             ),
-            buffer_layout_entry(11, fragment, storage),
-            sampler_layout_entry(12, fragment),
-            buffer_layout_entry(13, fragment, storage),
-            texture_layout_entry(14, fragment, wgpu::TextureViewDimension::D2, filterable),
-            buffer_layout_entry(15, both, wgpu::BufferBindingType::Uniform),
-            texture_layout_entry(16, fragment, wgpu::TextureViewDimension::D2, filterable),
             texture_layout_entry(17, fragment, wgpu::TextureViewDimension::D2, filterable),
             texture_layout_entry(18, fragment, wgpu::TextureViewDimension::D2, filterable),
             buffer_layout_entry(19, fragment, storage),
+            sampler_layout_entry(20, fragment),
+            texture_layout_entry(21, vertex, wgpu::TextureViewDimension::D2, filterable),
             texture_layout_entry(
-                20,
+                22,
+                fragment,
+                wgpu::TextureViewDimension::D2,
+                wgpu::TextureSampleType::Uint,
+            ),
+            texture_layout_entry(23, fragment, wgpu::TextureViewDimension::D2, filterable),
+            texture_layout_entry(24, fragment, wgpu::TextureViewDimension::D2, filterable),
+            texture_layout_entry(
+                25,
                 fragment,
                 wgpu::TextureViewDimension::D2Array,
                 filterable,
             ),
-            texture_layout_entry(21, vertex, wgpu::TextureViewDimension::D2, filterable),
+            texture_layout_entry(26, fragment, wgpu::TextureViewDimension::D3, filterable),
+            texture_layout_entry(27, fragment, wgpu::TextureViewDimension::D3, filterable),
         ],
     })
 }
@@ -874,6 +820,68 @@ fn create_placeholder_view(
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
+fn create_placeholder_array_view(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    layers: u32,
+    pixel: [u8; 4],
+) -> wgpu::TextureView {
+    let layer_count = usize::try_from(layers).expect("placeholder layer count must fit usize");
+    let pixels = pixel.repeat(layer_count);
+    let texture = device.create_texture_with_data(
+        queue,
+        &wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: layers,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+        wgpu::util::TextureDataOrder::LayerMajor,
+        &pixels,
+    );
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    })
+}
+
+fn create_placeholder_volume_view(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    pixel: [u8; 4],
+) -> wgpu::TextureView {
+    let texture = device.create_texture_with_data(
+        queue,
+        &wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D3,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+        wgpu::util::TextureDataOrder::LayerMajor,
+        &pixel,
+    );
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
 fn create_light_view(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -922,18 +930,25 @@ fn create_light_view(
 fn create_local_lights_buffer(device: &wgpu::Device) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Local Lights Buffer"),
-        contents: &[0; 64],
+        contents: &[0; 20 * 8 * 16],
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
     })
+}
+
+struct ShadowResourceBindings<'a> {
+    position: &'a wgpu::TextureView,
+    alpha: &'a wgpu::TextureView,
+    alpha_sampler: &'a wgpu::Sampler,
+    dynamic_alpha: &'a wgpu::TextureView,
+    camera_layout: &'a wgpu::BindGroupLayout,
+    num_patches: u32,
 }
 
 fn create_shadow_resources(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     raw_data: &RawXtdData,
-    position_view: &wgpu::TextureView,
-    camera_layout: &wgpu::BindGroupLayout,
-    num_patches: u32,
+    bindings: &ShadowResourceBindings<'_>,
 ) -> crate::shadow::ShadowResources {
     let vertex_layouts = [
         wgpu::VertexBufferLayout {
@@ -955,25 +970,32 @@ fn create_shadow_resources(
             }],
         },
     ];
-    let mut shadow = crate::shadow::ShadowResources::new(device, camera_layout, &vertex_layouts);
-    let patch_count = num_patches
+    let mut shadow =
+        crate::shadow::ShadowResources::new(device, bindings.camera_layout, &vertex_layouts);
+    let patch_count = bindings
+        .num_patches
         .to_f32()
         .expect("tessellation patch count must fit f32");
     shadow.setup_params(
         device,
         queue,
-        position_view,
-        [
-            raw_data
-                .num_verts_per_axis
-                .to_f32()
-                .expect("terrain vertex count must fit f32"),
-            raw_data.tile_scale,
-            patch_count,
-            patch_count,
-        ],
-        raw_data.mid,
-        raw_data.range,
+        &crate::shadow::ShadowSetup {
+            position_texture_view: bindings.position,
+            alpha_texture_view: bindings.alpha,
+            alpha_sampler: bindings.alpha_sampler,
+            dynamic_alpha_view: bindings.dynamic_alpha,
+            terrain_info: [
+                raw_data
+                    .num_verts_per_axis
+                    .to_f32()
+                    .expect("terrain vertex count must fit f32"),
+                raw_data.tile_scale,
+                patch_count,
+                patch_count,
+            ],
+            mid: raw_data.mid,
+            range: raw_data.range,
+        },
     );
     shadow
 }
@@ -982,25 +1004,24 @@ struct GpuTessBindings<'a> {
     tess_params: &'a wgpu::Buffer,
     position: &'a wgpu::TextureView,
     normal: &'a wgpu::TextureView,
-    xtt_albedo: &'a wgpu::TextureView,
     terrain_sampler: &'a wgpu::Sampler,
     params: &'a wgpu::Buffer,
     ao: &'a wgpu::TextureView,
     alpha: &'a wgpu::TextureView,
-    normal_map_array: &'a wgpu::TextureView,
-    terrain_array: &'a wgpu::TextureView,
-    alpha_atlas: &'a wgpu::TextureView,
-    chunk_layers: &'a wgpu::Buffer,
-    alpha_sampler: &'a wgpu::Sampler,
-    texture_scales: &'a wgpu::Buffer,
     composited_albedo: &'a wgpu::TextureView,
     lighting: &'a wgpu::Buffer,
     shadow: &'a wgpu::TextureView,
     blackmap: &'a wgpu::TextureView,
     unexplored: &'a wgpu::TextureView,
     local_lights: &'a wgpu::Buffer,
-    alpha_atlas_hi: &'a wgpu::TextureView,
+    lighting_sampler: &'a wgpu::Sampler,
     light: &'a wgpu::TextureView,
+    dynamic_alpha: &'a wgpu::TextureView,
+    composited_normal: &'a wgpu::TextureView,
+    composited_specular: &'a wgpu::TextureView,
+    local_shadow: &'a wgpu::TextureView,
+    light_volume_color: &'a wgpu::TextureView,
+    light_volume_vector: &'a wgpu::TextureView,
 }
 
 fn create_gpu_texture_bind_group(
@@ -1015,25 +1036,24 @@ fn create_gpu_texture_bind_group(
             buffer_entry(0, bindings.tess_params),
             texture_entry(1, bindings.position),
             texture_entry(2, bindings.normal),
-            texture_entry(3, bindings.xtt_albedo),
             sampler_entry(4, bindings.terrain_sampler),
             buffer_entry(5, bindings.params),
             texture_entry(6, bindings.ao),
             texture_entry(7, bindings.alpha),
-            texture_entry(8, bindings.normal_map_array),
-            texture_entry(9, bindings.terrain_array),
-            texture_entry(10, bindings.alpha_atlas),
-            buffer_entry(11, bindings.chunk_layers),
-            sampler_entry(12, bindings.alpha_sampler),
-            buffer_entry(13, bindings.texture_scales),
             texture_entry(14, bindings.composited_albedo),
             buffer_entry(15, bindings.lighting),
             texture_entry(16, bindings.shadow),
             texture_entry(17, bindings.blackmap),
             texture_entry(18, bindings.unexplored),
             buffer_entry(19, bindings.local_lights),
-            texture_entry(20, bindings.alpha_atlas_hi),
+            sampler_entry(20, bindings.lighting_sampler),
             texture_entry(21, bindings.light),
+            texture_entry(22, bindings.dynamic_alpha),
+            texture_entry(23, bindings.composited_normal),
+            texture_entry(24, bindings.composited_specular),
+            texture_entry(25, bindings.local_shadow),
+            texture_entry(26, bindings.light_volume_color),
+            texture_entry(27, bindings.light_volume_vector),
         ],
     })
 }
@@ -1047,120 +1067,31 @@ fn expand_patch_mesh(mesh: &PatchMesh) -> Vec<[f32; 2]> {
         .collect()
 }
 
-impl TerrainViewer {
-    fn create_cpu_terrain_textures(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        albedo: Option<&AlbedoData>,
-    ) -> CpuTerrainTextures {
-        let (_, terrain_array) = self.create_terrain_texture_array(device, queue, albedo);
-        let (_, alpha_atlas) = self.create_alpha_atlas(device, queue);
-        let (_, alpha_atlas_hi) = self.create_alpha_atlas_hi(device, queue);
-        let (_, xtt_albedo) = Self::create_xtt_albedo_texture(device, queue, albedo);
-        CpuTerrainTextures {
-            terrain_array,
-            alpha_atlas,
-            alpha_atlas_hi,
-            xtt_albedo,
-            chunk_layers: self.create_chunk_layers_buffer(device),
-            texture_scales: self.create_texture_scales_buffer(device),
-            samplers: create_terrain_samplers(device),
-        }
-    }
+fn create_expanded_patch_buffer(
+    device: &wgpu::Device,
+    patch_mesh: &PatchMesh,
+) -> (wgpu::Buffer, u32, usize) {
+    let vertices = expand_patch_mesh(patch_mesh);
+    let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Tess Expanded Vertex Buffer"),
+        contents: bytemuck::cast_slice(&vertices),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+    let count =
+        u32::try_from(vertices.len()).expect("expanded tessellation vertex count must fit u32");
+    (buffer, count, vertices.len())
+}
 
-    fn terrain_metrics(&self) -> (Vec3, f32) {
-        self.scene
-            .as_ref()
-            .map_or((Vec3::new(1024.0, 100.0, 1024.0), 1.0), |scene| {
-                (scene.mesh.size(), scene.mesh.tile_scale)
-            })
-    }
-
-    /// Create GPU resources for regular terrain rendering (CPU tessellation mode).
-    pub(crate) fn create_gpu_resources_from_data(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        data: &CpuTerrainData<'_>,
-    ) {
-        let (vertex_buffer, index_buffer) = create_cpu_geometry_buffers(device, data);
-        let camera = create_camera_resources(device);
-        let textures = self.create_cpu_terrain_textures(device, queue, data.albedo);
-        let (terrain_size, tile_scale) = self.terrain_metrics();
-        let params = TerrainParams {
-            terrain_size: [terrain_size.x, terrain_size.z],
-            chunk_count: [16.0, 16.0],
-            texture_tile_scale: tile_scale,
-            debug_mode: self.debug_mode.to_f32().expect("debug mode must fit f32"),
-            bump_power: self.bump_power,
-            padding: 0.0,
-        };
-        let params_buffer = create_uniform_buffer(device, "Terrain Params Buffer", &params);
-        let texture_layout = create_cpu_texture_layout(device);
-        self.init_compositor(
-            device,
-            queue,
-            &CompositorInputs {
-                terrain_array: &textures.terrain_array,
-                alpha_atlas: &textures.alpha_atlas,
-                alpha_atlas_hi: &textures.alpha_atlas_hi,
-                chunk_layers: &textures.chunk_layers,
-                texture_scales: &textures.texture_scales,
-                terrain_sampler: &textures.samplers.terrain,
-                alpha_sampler: &textures.samplers.alpha,
-            },
-        );
-        self.calculate_chunk_centers();
-        let texture_bind_group = create_cpu_texture_bind_group(
-            device,
-            &texture_layout,
-            &CpuTextureBindings {
-                terrain_array: &textures.terrain_array,
-                terrain_sampler: &textures.samplers.terrain,
-                alpha_atlas: &textures.alpha_atlas,
-                chunk_layers: &textures.chunk_layers,
-                params: &params_buffer,
-                alpha_sampler: &textures.samplers.alpha,
-                xtt_albedo: &textures.xtt_albedo,
-                texture_scales: &textures.texture_scales,
-            },
-        );
-        let pipeline =
-            create_cpu_pipeline(device, self.surface_format, &camera.layout, &texture_layout);
-        let [width, height] = data.surface_size;
-        let (depth_texture, depth_view) = create_depth_texture(device, width, height);
-        let index_count =
-            u32::try_from(data.indices.len()).expect("terrain index count must fit u32");
-        self.gpu = Some(GpuResources {
-            pipeline,
-            vertex_buffer,
-            index_buffer,
-            index_count,
-            camera_buffer: camera.buffer,
-            camera_bind_group_layout: camera.layout,
-            camera_bind_group: camera.bind_group,
-            texture_bind_group,
-            depth_texture,
-            depth_view,
-            params_buffer,
-            lighting_buffer: None,
-            terrain_size: [terrain_size.x, terrain_size.z],
-            tile_scale,
-            use_gpu_tessellation: false,
-            num_patch_instances: 0,
-        });
-        log::info!(
-            "GPU resources created: {} vertices, {} indices, {} terrain textures",
-            data.positions.len(),
-            data.indices.len(),
-            self.scene
-                .as_ref()
-                .map_or(0, |scene| scene.terrain_textures.len())
-        );
-        self.init_foliage_resources(device, queue);
-        self.init_road_resources(device, queue);
-    }
+fn log_tessellation_resources(config: TessellationBuildConfig, vertices_per_patch: usize) {
+    let triangle_count = (vertices_per_patch / 3)
+        .checked_mul(
+            usize::try_from(config.total_patches).expect("tessellation patch count must fit usize"),
+        )
+        .expect("tessellation triangle count must fit usize");
+    log::info!(
+        "GPU tessellation resources created: {} patches, {vertices_per_patch} vertices per patch, {triangle_count} total triangles",
+        config.total_patches,
+    );
 }
 
 impl TerrainViewer {
@@ -1212,22 +1143,24 @@ impl TerrainViewer {
                 .as_ref()
                 .map(|data| (data.values.as_slice(), data.width, data.height)),
         );
-        let (_, xtt_albedo) = Self::create_xtt_albedo_texture(device, queue, albedo);
         let (_, normal_map_array) = self.create_normal_map_array(device, queue);
+        let (_, specular_map_array) = self.create_specular_map_array(device, queue);
         let (_, terrain_array) = self.create_terrain_texture_array(device, queue, albedo);
         let (_, alpha_atlas) = self.create_alpha_atlas(device, queue);
         let (_, alpha_atlas_hi) = self.create_alpha_atlas_hi(device, queue);
+        let dynamic_alpha = create_dynamic_alpha_texture(device, queue, num_verts);
         TessellationTextures {
             position,
             position_for_shadow,
             normal,
             ao,
             alpha,
-            xtt_albedo,
             normal_map_array,
+            specular_map_array,
             terrain_array,
             alpha_atlas,
             alpha_atlas_hi,
+            dynamic_alpha,
             chunk_layers: self.create_chunk_layers_buffer(device),
             samplers: create_terrain_samplers(device),
         }
@@ -1243,17 +1176,25 @@ impl TerrainViewer {
         albedo: Option<&AlbedoData>,
         surface_size: [u32; 2],
     ) {
-        const PATCHES_PER_AXIS: u32 = 64;
-        const VERTICES_PER_PATCH: u32 = 16;
-        log::info!(
-            "Creating GPU tessellation resources: {PATCHES_PER_AXIS}x{PATCHES_PER_AXIS} patches, {VERTICES_PER_PATCH}x{VERTICES_PER_PATCH} verts per patch"
+        const CELLS_PER_PATCH: u32 = 16;
+        const VERTICES_PER_PATCH: u32 = CELLS_PER_PATCH + 1;
+        assert!(
+            raw_data.num_verts_per_axis > 0,
+            "terrain must contain at least one packed sample",
         );
-        let total_patches = PATCHES_PER_AXIS
-            .checked_mul(PATCHES_PER_AXIS)
+        // The oracle treats the packed texture width as the logical cell count.
+        // A 1024-wide terrain is therefore 64 patches of 16 cells.  The 1025th
+        // edge vertex samples UV 1.0, which clamps back to packed texel 1023.
+        let patches_per_axis = raw_data.num_verts_per_axis.div_ceil(CELLS_PER_PATCH);
+        log::info!(
+            "Creating GPU tessellation resources: {patches_per_axis}x{patches_per_axis} patches, {VERTICES_PER_PATCH}x{VERTICES_PER_PATCH} verts per patch"
+        );
+        let total_patches = patches_per_axis
+            .checked_mul(patches_per_axis)
             .expect("tessellation patch count must fit u32");
         let config = TessellationBuildConfig {
             surface_size,
-            num_patches: PATCHES_PER_AXIS,
+            num_patches: patches_per_axis,
             total_patches,
         };
         let first = TessellationStageOne {
@@ -1313,6 +1254,8 @@ impl TerrainViewer {
             queue,
             &CompositorInputs {
                 terrain_array: &first.textures.terrain_array,
+                normal_array: &first.textures.normal_map_array,
+                specular_array: &first.textures.specular_map_array,
                 alpha_atlas: &first.textures.alpha_atlas,
                 alpha_atlas_hi: &first.textures.alpha_atlas_hi,
                 chunk_layers: &first.textures.chunk_layers,
@@ -1331,7 +1274,6 @@ impl TerrainViewer {
             camera,
             terrain_size,
             texture_layout,
-            texture_scales,
             lighting_buffer,
         };
         self.create_gpu_tessellation_resources_part3(device, queue, raw_data, config, second);
@@ -1342,18 +1284,9 @@ impl TerrainViewer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         raw_data: &RawXtdData,
-        position_for_shadow: &wgpu::TextureView,
-        camera_layout: &wgpu::BindGroupLayout,
-        num_patches: u32,
+        shadow_bindings: &ShadowResourceBindings<'_>,
     ) -> TessellationAuxiliary {
-        let shadow = create_shadow_resources(
-            device,
-            queue,
-            raw_data,
-            position_for_shadow,
-            camera_layout,
-            num_patches,
-        );
+        let shadow = create_shadow_resources(device, queue, raw_data, shadow_bindings);
         log::info!("Shadow resources initialized");
         let blackmap = create_placeholder_view(device, queue, "Placeholder Blackmap", [0, 0, 0, 0]);
         let unexplored =
@@ -1369,6 +1302,25 @@ impl TerrainViewer {
             unexplored,
             light: create_light_view(device, queue, lighting_source),
             local_lights: create_local_lights_buffer(device),
+            local_shadow: create_placeholder_array_view(
+                device,
+                queue,
+                "Placeholder Local Shadow Map",
+                5,
+                [255; 4],
+            ),
+            light_volume_color: create_placeholder_volume_view(
+                device,
+                queue,
+                "Placeholder Light Volume Color",
+                [0, 0, 0, 0],
+            ),
+            light_volume_vector: create_placeholder_volume_view(
+                device,
+                queue,
+                "Placeholder Light Volume Vector",
+                [128, 128, 128, 255],
+            ),
         }
     }
 
@@ -1387,7 +1339,6 @@ impl TerrainViewer {
             camera,
             terrain_size,
             texture_layout,
-            texture_scales,
             lighting_buffer,
         } = second;
         let TessellationStageOne {
@@ -1399,15 +1350,22 @@ impl TerrainViewer {
             device,
             queue,
             raw_data,
-            &textures.position_for_shadow,
-            &camera.layout,
-            config.num_patches,
+            &ShadowResourceBindings {
+                position: &textures.position_for_shadow,
+                alpha: &textures.alpha,
+                alpha_sampler: &textures.samplers.alpha,
+                dynamic_alpha: &textures.dynamic_alpha,
+                camera_layout: &camera.layout,
+                num_patches: config.num_patches,
+            },
         );
-        let composited_albedo = self
+        let compositor = self
             .compositor
             .as_ref()
-            .expect("compositor was initialized in tessellation stage two")
-            .albedo_atlas_view();
+            .expect("compositor was initialized in tessellation stage two");
+        let composited_albedo = compositor.albedo_atlas_view();
+        let composited_normal = compositor.normal_atlas_view();
+        let composited_specular = compositor.specular_atlas_view();
         let texture_bind_group = create_gpu_texture_bind_group(
             device,
             &texture_layout,
@@ -1415,39 +1373,32 @@ impl TerrainViewer {
                 tess_params: &tess_params_buffer,
                 position: &textures.position,
                 normal: &textures.normal,
-                xtt_albedo: &textures.xtt_albedo,
                 terrain_sampler: &textures.samplers.terrain,
                 params: &params_buffer,
                 ao: &textures.ao,
                 alpha: &textures.alpha,
-                normal_map_array: &textures.normal_map_array,
-                terrain_array: &textures.terrain_array,
-                alpha_atlas: &textures.alpha_atlas,
-                chunk_layers: &textures.chunk_layers,
-                alpha_sampler: &textures.samplers.alpha,
-                texture_scales: &texture_scales,
                 composited_albedo,
                 lighting: &lighting_buffer,
                 shadow: &auxiliary.shadow.shadow_view,
                 blackmap: &auxiliary.blackmap,
                 unexplored: &auxiliary.unexplored,
                 local_lights: &auxiliary.local_lights,
-                alpha_atlas_hi: &textures.alpha_atlas_hi,
+                lighting_sampler: &textures.samplers.lighting,
                 light: &auxiliary.light,
+                dynamic_alpha: &textures.dynamic_alpha,
+                composited_normal,
+                composited_specular,
+                local_shadow: &auxiliary.local_shadow,
+                light_volume_color: &auxiliary.light_volume_color,
+                light_volume_vector: &auxiliary.light_volume_vector,
             },
         );
         let pipeline =
             create_gpu_pipeline(device, self.surface_format, &camera.layout, &texture_layout);
         let [width, height] = config.surface_size;
         let (depth_texture, depth_view) = create_depth_texture(device, width, height);
-        let expanded_vertices = expand_patch_mesh(&patch_mesh);
-        let expanded_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Tess Expanded Vertex Buffer"),
-            contents: bytemuck::cast_slice(&expanded_vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let vertex_count = u32::try_from(expanded_vertices.len())
-            .expect("expanded tessellation vertex count must fit u32");
+        let (expanded_vertex_buffer, vertex_count, expanded_vertex_count) =
+            create_expanded_patch_buffer(device, &patch_mesh);
         self.shadow_resources = Some(auxiliary.shadow);
         self.gpu = Some(GpuResources {
             pipeline,
@@ -1464,21 +1415,22 @@ impl TerrainViewer {
             lighting_buffer: Some(lighting_buffer),
             terrain_size: [terrain_size.x, terrain_size.z],
             tile_scale: raw_data.tile_scale,
-            use_gpu_tessellation: true,
             num_patch_instances: config.total_patches,
         });
-        let triangle_count = (expanded_vertices.len() / 3)
-            .checked_mul(
-                usize::try_from(config.total_patches)
-                    .expect("tessellation patch count must fit usize"),
-            )
-            .expect("tessellation triangle count must fit usize");
-        log::info!(
-            "GPU tessellation resources created: {} patches, {} vertices per patch, {triangle_count} total triangles",
-            config.total_patches,
-            expanded_vertices.len(),
-        );
-        self.init_foliage_resources(device, queue);
+        log_tessellation_resources(config, expanded_vertex_count);
+        let foliage_shadow = self
+            .shadow_resources
+            .as_ref()
+            .expect("shadow resources were stored above")
+            .shadow_view
+            .clone();
+        let foliage_world = crate::foliage::FoliageWorldBindings {
+            shadow: &foliage_shadow,
+            blackmap: &auxiliary.blackmap,
+            unexplored: &auxiliary.unexplored,
+            local_lights: &auxiliary.local_lights,
+        };
+        self.init_foliage_resources(device, queue, Some(&foliage_world));
         self.init_road_resources(device, queue);
     }
 }
