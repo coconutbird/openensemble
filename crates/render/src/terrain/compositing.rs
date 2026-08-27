@@ -7,6 +7,11 @@
 use num_traits::ToPrimitive;
 use wgpu;
 
+use crate::gpu::{
+    buffer_entry, buffer_layout_entry, filtering_sampler_layout_entry, texture_entry,
+    texture_layout_entry,
+};
+
 #[derive(Debug, Clone)]
 pub struct LodConfig {
     pub distance_thresholds: [f32; 4],
@@ -109,53 +114,25 @@ pub struct CompositeBindings<'a> {
 
 const PARAMS_ALIGN: u64 = 256;
 
-fn texture_entry(binding: u32, view: &wgpu::TextureView) -> wgpu::BindGroupEntry<'_> {
-    wgpu::BindGroupEntry {
-        binding,
-        resource: wgpu::BindingResource::TextureView(view),
-    }
-}
-
-fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
-    wgpu::BindGroupEntry {
-        binding,
-        resource: buffer.as_entire_binding(),
-    }
-}
-
 fn sampled_array_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
+    texture_layout_entry(
         binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            view_dimension: wgpu::TextureViewDimension::D2Array,
-            multisampled: false,
-        },
-        count: None,
-    }
+        wgpu::ShaderStages::FRAGMENT,
+        wgpu::TextureSampleType::Float { filterable: true },
+        wgpu::TextureViewDimension::D2Array,
+    )
 }
 
 fn storage_buffer_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
+    buffer_layout_entry(
         binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage { read_only: true },
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        count: None,
-    }
+        wgpu::ShaderStages::FRAGMENT,
+        wgpu::BufferBindingType::Storage { read_only: true },
+    )
 }
 
 fn filtering_sampler_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-        count: None,
-    }
+    filtering_sampler_layout_entry(binding, wgpu::ShaderStages::FRAGMENT)
 }
 
 fn create_atlas(

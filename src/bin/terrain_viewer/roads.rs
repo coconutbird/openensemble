@@ -269,16 +269,12 @@ fn texture_layout_entry(
     visibility: wgpu::ShaderStages,
     dimension: wgpu::TextureViewDimension,
 ) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
+    render::gpu::texture_layout_entry(
         binding,
         visibility,
-        ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            view_dimension: dimension,
-            multisampled: false,
-        },
-        count: None,
-    }
+        wgpu::TextureSampleType::Float { filterable: true },
+        dimension,
+    )
 }
 
 fn create_world_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
