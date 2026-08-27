@@ -2,7 +2,7 @@
 
 use glam::{Mat4, Vec3};
 use render::terrain::NORMALIZED_TERRAIN_Y_OFFSET;
-use render::wgpu;
+use render::{RenderPhase, WorldRenderer, wgpu};
 
 const SHADOW_MAP_SIZE: u32 = 2048;
 pub const SHADOW_CASCADE_COUNT: u32 = 4;
@@ -24,6 +24,14 @@ pub struct ShadowResources {
     pub params_bind_group: Option<wgpu::BindGroup>,
     light_vps: Vec<Mat4>,
     base_light_vp: Mat4,
+    terrain_geometry: Option<TerrainShadowGeometry>,
+}
+
+struct TerrainShadowGeometry {
+    vertex_buffer: wgpu::Buffer,
+    instance_buffer: wgpu::Buffer,
+    vertex_count: u32,
+    instance_count: u32,
 }
 
 /// Shadow params uniform; mirrored by `shadow_depth.wesl`.
@@ -290,7 +298,18 @@ impl ShadowResources {
             params_bind_group: None,
             light_vps: vec![Mat4::IDENTITY; SHADOW_CASCADE_COUNT as usize],
             base_light_vp: Mat4::IDENTITY,
+            terrain_geometry: None,
         }
+    }
+
+    pub fn set_terrain_geometry(&mut self, geometry: (&wgpu::Buffer, &wgpu::Buffer, u32, u32)) {
+        let (vertex_buffer, instance_buffer, vertex_count, instance_count) = geometry;
+        self.terrain_geometry = Some(TerrainShadowGeometry {
+            vertex_buffer: vertex_buffer.clone(),
+            instance_buffer: instance_buffer.clone(),
+            vertex_count,
+            instance_count,
+        });
     }
 
     pub fn setup_params(
@@ -407,51 +426,31 @@ impl ShadowResources {
         &self.camera_bind_groups[cascade]
     }
 
-    pub fn render(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        vertex_buffer: &wgpu::Buffer,
-        instance_buffer: &wgpu::Buffer,
-        vertex_count: u32,
-        instance_count: u32,
-    ) {
+    #[must_use]
+    pub fn cascade_count(&self) -> usize {
+        self.cascade_shadow_views.len()
+    }
+}
+
+impl WorldRenderer for ShadowResources {
+    fn render_phase<'pass>(&'pass self, phase: RenderPhase, pass: &mut wgpu::RenderPass<'pass>) {
+        let RenderPhase::Shadow { cascade } = phase else {
+            return;
+        };
         let Some(params_bind_group) = &self.params_bind_group else {
             return;
         };
-
-        for cascade in 0..self.cascade_shadow_views.len() {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Terrain Shadow Cascade"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.cascade_shadow_views[cascade],
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 1.0,
-                            g: 0.0,
-                            b: 0.0,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.cascade_depth_views[cascade],
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.camera_bind_groups[cascade], &[]);
-            pass.set_bind_group(1, params_bind_group, &[]);
-            pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-            pass.set_vertex_buffer(1, instance_buffer.slice(..));
-            pass.draw(0..vertex_count, 0..instance_count);
-        }
+        let Some(camera) = self.camera_bind_groups.get(cascade) else {
+            return;
+        };
+        let Some(geometry) = &self.terrain_geometry else {
+            return;
+        };
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, camera, &[]);
+        pass.set_bind_group(1, params_bind_group, &[]);
+        pass.set_vertex_buffer(0, geometry.vertex_buffer.slice(..));
+        pass.set_vertex_buffer(1, geometry.instance_buffer.slice(..));
+        pass.draw(0..geometry.vertex_count, 0..geometry.instance_count);
     }
 }

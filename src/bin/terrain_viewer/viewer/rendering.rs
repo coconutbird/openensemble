@@ -5,7 +5,8 @@
 use num_traits::ToPrimitive;
 use render::postprocess::{ToneMapResources, ToneMapSettings};
 use render::terrain::{LightingParams, RawXtdData, TerrainParams};
-use render::{Application3D, RenderContext, wgpu};
+use render::ugx::RendererResources;
+use render::{Application3D, RenderContext, RenderPhase, WorldRenderer, wgpu};
 
 use super::TerrainViewer;
 use crate::capture::{
@@ -17,6 +18,15 @@ use crate::gpu::create_depth_texture;
 use crate::types::terrain_chunk_index;
 
 impl TerrainViewer {
+    fn render_units<'pass>(&'pass self, phase: RenderPhase, pass: &mut wgpu::RenderPass<'pass>) {
+        if let Some(renderer) = &self.ugx_renderer {
+            renderer.render_phase(phase, pass);
+        }
+        if let Some(renderer) = &self.ugx_scene_renderer {
+            renderer.render_phase(phase, pass);
+        }
+    }
+
     fn initialize_gpu_resources(&mut self, ctx: &RenderContext<'_>) {
         if self.gpu.is_some() || self.scene.is_none() {
             return;
@@ -84,33 +94,32 @@ impl TerrainViewer {
             local_lights: self.gpu.as_ref().map(|gpu| &gpu.local_lights),
             ..Default::default()
         };
+        let ugx_resources =
+            RendererResources::new_with_world(ctx.device, ctx.queue, self.scene_format, world);
         if let Some(sky) = &self.sky_unit {
-            self.sky_renderer = Some(render::ugx::UnitRenderer::new_with_environment(
+            self.sky_renderer = Some(render::ugx::UnitRenderer::new_with_resources(
                 ctx.device,
                 ctx.queue,
-                self.scene_format,
                 sky,
                 glam::Mat4::IDENTITY,
-                self.environment.as_ref(),
+                &ugx_resources,
             ));
         }
         if let Some(unit) = &self.ugx_unit {
-            self.ugx_renderer = Some(render::ugx::UnitRenderer::new_with_world(
+            self.ugx_renderer = Some(render::ugx::UnitRenderer::new_with_resources(
                 ctx.device,
                 ctx.queue,
-                self.scene_format,
                 unit,
                 self.ugx_transform,
-                world,
+                &ugx_resources,
             ));
         }
         if let Some(scene) = &self.ugx_scene {
-            let renderer = render::ugx::UnitSceneRenderer::new_with_world(
+            let renderer = render::ugx::UnitSceneRenderer::new_with_resources(
                 ctx.device,
                 ctx.queue,
-                self.scene_format,
                 scene,
-                world,
+                &ugx_resources,
             );
             log::info!(
                 "Uploaded {} scenario UGX placements",
@@ -328,39 +337,29 @@ impl TerrainViewer {
         {
             return;
         }
-        let (Some(gpu), Some(shadow)) = (&self.gpu, &self.shadow_resources) else {
+        let Some(shadow) = &self.shadow_resources else {
             return;
         };
-        shadow.render(
-            encoder,
-            &gpu.vertex_buffer,
-            &gpu.index_buffer,
-            gpu.index_count,
-            gpu.num_patch_instances,
-        );
-        if let Some(foliage) = &self.foliage_resources {
-            crate::foliage::render_foliage_shadow(encoder, foliage, shadow);
-        }
-        if self.ugx_renderer.is_none() && self.ugx_scene_renderer.is_none() {
-            return;
-        }
-        let cascade_count = usize::try_from(crate::shadow::SHADOW_CASCADE_COUNT)
-            .expect("shadow cascade count must fit usize");
-        for cascade in 0..cascade_count {
+        for cascade in 0..shadow.cascade_count() {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("UGX Directional Shadow Cascade"),
+                label: Some("World Directional Shadow Cascade"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: shadow.cascade_shadow_view(cascade),
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 1.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 1.0,
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: shadow.cascade_depth_view(cascade),
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
+                        load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
@@ -368,12 +367,12 @@ impl TerrainViewer {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
-            if let Some(renderer) = &self.ugx_renderer {
-                renderer.render_shadow(&mut pass, cascade);
+            let phase = RenderPhase::Shadow { cascade };
+            shadow.render_phase(phase, &mut pass);
+            if let Some(foliage) = &self.foliage_resources {
+                foliage.render_phase(phase, &mut pass);
             }
-            if let Some(renderer) = &self.ugx_scene_renderer {
-                renderer.render_shadow(&mut pass, cascade);
-            }
+            self.render_units(phase, &mut pass);
         }
     }
 
@@ -408,34 +407,17 @@ impl TerrainViewer {
             timestamp_writes: None,
         });
         if include_details && let Some(renderer) = &self.sky_renderer {
-            renderer.render_sky(&mut render_pass);
+            renderer.render_phase(RenderPhase::Sky, &mut render_pass);
         }
-        render_pass.set_pipeline(&gpu.pipeline);
-        render_pass.set_bind_group(0, &gpu.camera_bind_group, &[]);
-        render_pass.set_bind_group(1, &gpu.texture_bind_group, &[]);
-        render_pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
-        render_pass.set_vertex_buffer(1, gpu.index_buffer.slice(..));
-        render_pass.draw(0..gpu.index_count, 0..gpu.num_patch_instances);
+        gpu.render_phase(RenderPhase::World, &mut render_pass);
 
         if include_details {
-            if let Some(renderer) = &self.ugx_renderer {
-                renderer.render(&mut render_pass);
-            }
-            if let Some(renderer) = &self.ugx_scene_renderer {
-                renderer.render(&mut render_pass);
-            }
+            self.render_units(RenderPhase::World, &mut render_pass);
             if let Some(foliage) = &self.foliage_resources {
-                crate::foliage::render_foliage(
-                    &mut render_pass,
-                    foliage,
-                    &gpu.camera_bind_group,
-                    self.scene
-                        .as_ref()
-                        .map_or(&[], |scene| scene.foliage_qn_chunks.as_slice()),
-                );
+                foliage.render_phase(RenderPhase::World, &mut render_pass);
             }
             if let Some(roads) = &self.road_resources {
-                crate::roads::render_roads(&mut render_pass, roads, &gpu.camera_bind_group);
+                roads.render_phase(RenderPhase::World, &mut render_pass);
             }
         }
     }
@@ -469,12 +451,7 @@ impl TerrainViewer {
             timestamp_writes: None,
         });
         if include_details {
-            if let Some(renderer) = &self.ugx_renderer {
-                renderer.render_distortion(&mut render_pass);
-            }
-            if let Some(renderer) = &self.ugx_scene_renderer {
-                renderer.render_distortion(&mut render_pass);
-            }
+            self.render_units(RenderPhase::Distortion, &mut render_pass);
         }
     }
 

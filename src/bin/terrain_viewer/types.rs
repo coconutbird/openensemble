@@ -3,7 +3,7 @@
 //! This module contains GPU-specific types that remain in the viewer,
 //! and re-exports terrain types from the `render` crate.
 
-use render::wgpu;
+use render::{RenderPhase, WorldRenderer, wgpu};
 
 // Re-export terrain types from render crate
 pub use render::terrain::{AlbedoData, FoliageQNChunk, FoliageSet, RawXtdData};
@@ -57,6 +57,20 @@ pub struct GpuResources {
     pub tile_scale: f32,
     /// Number of patch instances to draw (64x64 = 4096).
     pub num_patch_instances: u32,
+}
+
+impl WorldRenderer for GpuResources {
+    fn render_phase<'pass>(&'pass self, phase: RenderPhase, pass: &mut wgpu::RenderPass<'pass>) {
+        if phase != RenderPhase::World {
+            return;
+        }
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.camera_bind_group, &[]);
+        pass.set_bind_group(1, &self.texture_bind_group, &[]);
+        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        pass.set_vertex_buffer(1, self.index_buffer.slice(..));
+        pass.draw(0..self.index_count, 0..self.num_patch_instances);
+    }
 }
 
 #[cfg(test)]

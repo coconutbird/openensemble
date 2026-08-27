@@ -13,7 +13,7 @@ mod unit;
 
 pub use crate::terrain::TerrainHeightfield;
 pub use model::{BlendMode, LoadError, Model};
-pub use renderer::{Renderer, WorldBindings};
+pub use renderer::{Renderer, RendererResources, WorldBindings};
 pub use scene::{
     UnitPlacement, UnitPlacementOrigin, UnitScene, UnitSceneIssue, UnitSceneRenderer,
     scenario_object_direction_to_world, scenario_object_position_to_world,

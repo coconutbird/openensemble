@@ -8,10 +8,12 @@ use pipeline::database::hw1::{ProtoObject, Visual};
 use pipeline::hw1::scenario::{ScenarioData, ScenarioObject, ScenarioPosition};
 use pipeline::source::{AssetSource, StdFileProvider};
 
-use super::renderer::{SharedResources, WorldBindings};
+use super::renderer::{RendererResources, WorldBindings};
+use super::unit::UnitAssetCache;
 use super::{Unit, UnitRenderer};
 use crate::environment::EnvironmentMap;
 use crate::terrain::LightingParams;
+use crate::{RenderPhase, WorldRenderer};
 
 /// Authored source of a decoded world placement.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -134,6 +136,17 @@ impl UnitScene {
         visuals: &HashMap<String, Visual>,
         proto_objects: &[ProtoObject],
     ) -> Self {
+        let mut cache = UnitAssetCache::default();
+        Self::load_with_cache(source, objects, visuals, proto_objects, &mut cache)
+    }
+
+    fn load_with_cache(
+        source: &mut AssetSource<StdFileProvider>,
+        objects: &[ScenarioObject],
+        visuals: &HashMap<String, Visual>,
+        proto_objects: &[ProtoObject],
+        asset_cache: &mut UnitAssetCache,
+    ) -> Self {
         let mut scene = Self {
             object_count: objects.len(),
             ..Self::default()
@@ -176,20 +189,24 @@ impl UnitScene {
             let unit = if let Some(cached) = units.get(&cache_key) {
                 cached.clone()
             } else {
-                let loaded =
-                    match Unit::load_variant(source, &visuals[visual_name], variation_index) {
-                        Ok(unit) => {
-                            scene.unique_visual_count += 1;
-                            Some(Arc::new(unit))
-                        }
-                        Err(error) => {
-                            scene.issues.push(UnitSceneIssue {
-                                proto_name: proto_name.clone(),
-                                reason: error.to_string(),
-                            });
-                            None
-                        }
-                    };
+                let loaded = match Unit::load_variant_with_cache(
+                    source,
+                    &visuals[visual_name],
+                    variation_index,
+                    asset_cache,
+                ) {
+                    Ok(unit) => {
+                        scene.unique_visual_count += 1;
+                        Some(Arc::new(unit))
+                    }
+                    Err(error) => {
+                        scene.issues.push(UnitSceneIssue {
+                            proto_name: proto_name.clone(),
+                            reason: error.to_string(),
+                        });
+                        None
+                    }
+                };
                 units.insert(cache_key, loaded.clone());
                 loaded
             };
@@ -225,9 +242,22 @@ impl UnitScene {
         proto_objects: &[ProtoObject],
         player_start_proto: &str,
     ) -> Self {
-        let mut scene = Self::load(source, scenario.objects(), visuals, proto_objects);
+        let mut cache = UnitAssetCache::default();
+        let mut scene = Self::load_with_cache(
+            source,
+            scenario.objects(),
+            visuals,
+            proto_objects,
+            &mut cache,
+        );
         scene.player_start_count = scenario.positions().len();
-        scene.append_player_starts(source, scenario.positions(), visuals, player_start_proto);
+        scene.append_player_starts(
+            source,
+            scenario.positions(),
+            visuals,
+            player_start_proto,
+            &mut cache,
+        );
         scene
     }
 
@@ -237,6 +267,7 @@ impl UnitScene {
         starts: &[ScenarioPosition],
         visuals: &HashMap<String, Visual>,
         proto_name: &str,
+        asset_cache: &mut UnitAssetCache,
     ) {
         if starts.is_empty() {
             return;
@@ -261,7 +292,7 @@ impl UnitScene {
                 });
                 return;
             };
-            match Unit::load(source, visual) {
+            match Unit::load_variant_with_cache(source, visual, None, asset_cache) {
                 Ok(unit) => {
                     self.unique_visual_count += 1;
                     Arc::new(unit)
@@ -535,7 +566,18 @@ impl UnitSceneRenderer {
         scene: &UnitScene,
         world: WorldBindings<'_>,
     ) -> Self {
-        let shared = Arc::new(SharedResources::new(device, queue, surface_format, world));
+        let resources = RendererResources::new_with_world(device, queue, surface_format, world);
+        Self::new_with_resources(device, queue, scene, &resources)
+    }
+
+    /// Uploads all placements using an existing scenario-global pipeline set.
+    #[must_use]
+    pub fn new_with_resources(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene: &UnitScene,
+        resources: &RendererResources,
+    ) -> Self {
         let placements = scene
             .placements
             .iter()
@@ -546,7 +588,7 @@ impl UnitSceneRenderer {
                     queue,
                     &placement.unit,
                     placement.transform,
-                    &shared,
+                    &resources.shared,
                 ),
             })
             .collect();
@@ -584,29 +626,34 @@ impl UnitSceneRenderer {
 
     /// Draws all placements and their recursive component graphs.
     pub fn render<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {
-        for placement in &self.placements {
-            placement.renderer.render(pass);
-        }
+        self.render_phase(RenderPhase::World, pass);
     }
 
     /// Draws authored screen-space distortion for all scenario placements.
     pub fn render_distortion<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {
-        for placement in &self.placements {
-            placement.renderer.render_distortion(pass);
-        }
+        self.render_phase(RenderPhase::Distortion, pass);
     }
 
     /// Draws every shadow-enabled scenario component into one cascade.
     pub fn render_shadow<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>, cascade: usize) {
-        for placement in &self.placements {
-            placement.renderer.render_shadow(pass, cascade);
-        }
+        self.render_phase(RenderPhase::Shadow { cascade }, pass);
     }
 
     /// Returns the number of uploaded scenario placements.
     #[must_use]
     pub fn placement_count(&self) -> usize {
         self.placements.len()
+    }
+}
+
+impl WorldRenderer for UnitSceneRenderer {
+    fn render_phase<'pass>(&'pass self, phase: RenderPhase, pass: &mut wgpu::RenderPass<'pass>) {
+        if phase == RenderPhase::Sky {
+            return;
+        }
+        for placement in &self.placements {
+            placement.renderer.render_phase(phase, pass);
+        }
     }
 }
 

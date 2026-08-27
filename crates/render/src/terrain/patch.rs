@@ -15,6 +15,8 @@ use pipeline::ddx::DdxTexture;
 use pipeline::source::{AssetSource, StdFileProvider};
 use wgpu::util::DeviceExt;
 
+use crate::{RenderPhase, WorldRenderer};
+
 use super::{CameraUniform, HEIGHTFIELD_SHADER, LightingParams, TerrainHeightfield};
 use crate::lighting::LocalLightBuffer;
 
@@ -380,6 +382,14 @@ impl TerrainPatchRenderer {
         pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
         pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         pass.draw_indexed(0..self.index_count, 0, 0..self.instance_count);
+    }
+}
+
+impl WorldRenderer for TerrainPatchRenderer {
+    fn render_phase<'pass>(&'pass self, phase: RenderPhase, pass: &mut wgpu::RenderPass<'pass>) {
+        if phase == RenderPhase::World {
+            self.render(pass);
+        }
     }
 }
 

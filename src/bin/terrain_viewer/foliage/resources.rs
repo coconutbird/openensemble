@@ -27,6 +27,10 @@ pub struct FoliageResources {
     pub pipeline: wgpu::RenderPipeline,
     /// Oracle-compatible alpha-tested VSM caster pipeline.
     pub shadow_pipeline: wgpu::RenderPipeline,
+    /// Main scene camera binding used by the world phase.
+    pub camera_bind_group: wgpu::BindGroup,
+    /// Light cameras indexed by directional shadow cascade.
+    pub shadow_camera_bind_groups: Vec<wgpu::BindGroup>,
     /// Uniform buffer for foliage parameters (global — lighting, fog, etc).
     pub params_buffer: wgpu::Buffer,
     /// Dynamic uniform buffer for per-chunk data (chunk offsets).
@@ -779,6 +783,8 @@ impl FoliageResources {
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
         camera_bind_group_layout: &wgpu::BindGroupLayout,
+        camera_bind_group: &wgpu::BindGroup,
+        shadow_camera_bind_groups: &[wgpu::BindGroup],
     ) -> Self {
         let min_offset_alignment = device.limits().min_uniform_buffer_offset_alignment;
         let (params_bind_group_layout, material_bind_group_layout) =
@@ -808,6 +814,8 @@ impl FoliageResources {
         Self {
             pipeline,
             shadow_pipeline,
+            camera_bind_group: camera_bind_group.clone(),
+            shadow_camera_bind_groups: shadow_camera_bind_groups.to_vec(),
             params_buffer,
             chunk_info_buffer: None,
             params_bind_group_layout,

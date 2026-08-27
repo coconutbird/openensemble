@@ -23,7 +23,6 @@
 mod rendering;
 mod resources;
 
-pub use rendering::{render_foliage, render_foliage_shadow};
 pub(crate) use resources::parse_foliage_index_buffer;
 pub use resources::{FoliageResources, FoliageWorldBindings};
 

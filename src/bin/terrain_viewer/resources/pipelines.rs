@@ -309,10 +309,22 @@ impl TerrainViewer {
             scene.foliage_qn_chunks.len()
         );
 
+        let shadow_camera_bind_groups = self
+            .shadow_resources
+            .as_ref()
+            .map(|shadow| {
+                (0..shadow.cascade_count())
+                    .map(|cascade| shadow.cascade_camera_bind_group(cascade).clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
         let mut foliage_resources = crate::foliage::FoliageResources::new(
             device,
             self.scene_format,
             &gpu.camera_bind_group_layout,
+            &gpu.camera_bind_group,
+            &shadow_camera_bind_groups,
         );
 
         for (i, set) in scene.foliage_sets.iter().enumerate() {
@@ -406,6 +418,7 @@ impl TerrainViewer {
             queue,
             &crate::roads::RoadResourceInput {
                 camera_bind_group_layout: &camera_layout,
+                camera_bind_group: &gpu.camera_bind_group,
                 surface_format: self.scene_format,
                 raw_terrain,
                 shadow_view: shadow_view.as_ref(),
@@ -1623,7 +1636,7 @@ impl TerrainViewer {
             instance_buffer,
             textures,
         } = first;
-        let auxiliary = self.create_tessellation_auxiliary(
+        let mut auxiliary = self.create_tessellation_auxiliary(
             device,
             queue,
             raw_data,
@@ -1678,6 +1691,9 @@ impl TerrainViewer {
         let (depth_texture, depth_view) = create_depth_texture(device, width, height);
         let (expanded_vertex_buffer, vertex_count, expanded_vertex_count) =
             create_expanded_patch_buffer(device, &patch_mesh);
+        let (sv, si) = (&expanded_vertex_buffer, &instance_buffer);
+        let shadow = &mut auxiliary.shadow;
+        shadow.set_terrain_geometry((sv, si, vertex_count, config.total_patches));
         self.shadow_resources = Some(auxiliary.shadow);
         self.gpu = Some(GpuResources {
             pipeline,

@@ -2,8 +2,8 @@
 
 use num_traits::ToPrimitive;
 use render::terrain::{LightingParams, ROADS_SHADER, RawXtdData};
-use render::wgpu;
 use render::wgpu::util::DeviceExt;
+use render::{RenderPhase, WorldRenderer, wgpu};
 
 use crate::gpu::xtd_packed_to_world;
 
@@ -17,6 +17,7 @@ pub struct RoadBatch {
 /// GPU resources shared by every road material.
 pub struct RoadResources {
     pipeline: wgpu::RenderPipeline,
+    camera_bind_group: wgpu::BindGroup,
     params_buffer: wgpu::Buffer,
     world_bind_group: wgpu::BindGroup,
     batches: Vec<RoadBatch>,
@@ -36,6 +37,7 @@ pub struct RoadBatchInput<'a> {
 /// Inputs used to create all road GPU resources.
 pub struct RoadResourceInput<'a> {
     pub camera_bind_group_layout: &'a wgpu::BindGroupLayout,
+    pub camera_bind_group: &'a wgpu::BindGroup,
     pub surface_format: wgpu::TextureFormat,
     pub raw_terrain: &'a RawXtdData,
     pub shadow_view: Option<&'a wgpu::TextureView>,
@@ -600,6 +602,7 @@ pub fn create_road_resources(
     );
     RoadResources {
         pipeline,
+        camera_bind_group: input.camera_bind_group.clone(),
         params_buffer,
         world_bind_group,
         batches,
@@ -620,18 +623,18 @@ impl RoadResources {
     }
 }
 
-/// Render every road material batch.
-pub fn render_roads(
-    render_pass: &mut wgpu::RenderPass<'_>,
-    roads: &RoadResources,
-    camera_bind_group: &wgpu::BindGroup,
-) {
-    render_pass.set_pipeline(&roads.pipeline);
-    render_pass.set_bind_group(0, camera_bind_group, &[]);
-    render_pass.set_bind_group(1, &roads.world_bind_group, &[]);
-    for batch in &roads.batches {
-        render_pass.set_bind_group(2, &batch.material_bind_group, &[]);
-        render_pass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
-        render_pass.draw(0..batch.vertex_count, 0..1);
+impl WorldRenderer for RoadResources {
+    fn render_phase<'pass>(&'pass self, phase: RenderPhase, pass: &mut wgpu::RenderPass<'pass>) {
+        if phase != RenderPhase::World {
+            return;
+        }
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.camera_bind_group, &[]);
+        pass.set_bind_group(1, &self.world_bind_group, &[]);
+        for batch in &self.batches {
+            pass.set_bind_group(2, &batch.material_bind_group, &[]);
+            pass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
+            pass.draw(0..batch.vertex_count, 0..1);
+        }
     }
 }

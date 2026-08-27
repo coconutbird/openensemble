@@ -10,6 +10,9 @@ pub mod postprocess;
 pub mod terrain;
 pub mod terrain_effect;
 pub mod ugx;
+mod world;
+
+pub use world::{RenderPhase, WorldRenderer};
 
 use egui_wgpu::ScreenDescriptor;
 use gilrs::{Axis, Button, Gilrs};

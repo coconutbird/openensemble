@@ -12,6 +12,7 @@ use crate::environment::EnvironmentMap;
 use crate::lighting::LocalLightBuffer;
 use crate::postprocess::DISTORTION_FORMAT;
 use crate::terrain::{LightingParams, TerrainHeightfield, generate_mipmaps, mip_level_count};
+use crate::{RenderPhase, WorldRenderer};
 
 const SHADER: &str = include_str!("shader.wgsl");
 const MATERIAL_FLAG_DIFFUSE: u32 = 1 << 0;
@@ -278,6 +279,30 @@ struct GpuMaterial {
     casts_shadows: bool,
 }
 
+struct GpuModel {
+    materials: Vec<GpuMaterial>,
+    sections: Vec<GpuSection>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum TextureIdentity {
+    Asset(String),
+    Fallback([u8; 4]),
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct TextureCacheKey {
+    identity: TextureIdentity,
+    format: wgpu::TextureFormat,
+}
+
+#[derive(Clone, Copy)]
+struct MaterialTextureSlot {
+    name: &'static str,
+    fallback: [u8; 4],
+    format: wgpu::TextureFormat,
+}
+
 struct MaterialTextureViews {
     diffuse: wgpu::TextureView,
     normal: wgpu::TextureView,
@@ -294,104 +319,113 @@ struct MaterialTextureViews {
 }
 
 impl MaterialTextureViews {
-    fn new(device: &wgpu::Device, queue: &wgpu::Queue, material: &Material) -> Self {
-        let texture = |map_name, image, fallback, format| {
-            create_material_texture_view(device, queue, material, map_name, image, fallback, format)
-        };
+    fn new(
+        shared: &SharedResources,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        material: &Material,
+    ) -> Self {
+        let texture =
+            |image, slot| shared.material_texture_view(device, queue, material, image, slot);
         Self {
             diffuse: texture(
-                "Diffuse",
                 material.diffuse.as_ref(),
-                [255; 4],
-                wgpu::TextureFormat::Rgba8UnormSrgb,
+                MaterialTextureSlot {
+                    name: "Diffuse",
+                    fallback: [255; 4],
+                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                },
             ),
             normal: texture(
-                "Normal",
                 material.normal.as_ref(),
-                [128, 128, 255, 255],
-                wgpu::TextureFormat::Rgba8Unorm,
+                MaterialTextureSlot {
+                    name: "Normal",
+                    fallback: [128, 128, 255, 255],
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                },
             ),
             gloss: texture(
-                "Gloss",
                 material.gloss.as_ref(),
-                [255; 4],
-                wgpu::TextureFormat::Rgba8Unorm,
+                MaterialTextureSlot {
+                    name: "Gloss",
+                    fallback: [255; 4],
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                },
             ),
             opacity: texture(
-                "Opacity",
                 material.opacity_map.as_ref(),
-                [255; 4],
-                wgpu::TextureFormat::Rgba8Unorm,
+                MaterialTextureSlot {
+                    name: "Opacity",
+                    fallback: [255; 4],
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                },
             ),
             xform: texture(
-                "XForm",
                 material.xform.as_ref(),
-                [0, 0, 0, 255],
-                wgpu::TextureFormat::Rgba8Unorm,
+                MaterialTextureSlot {
+                    name: "XForm",
+                    fallback: [0, 0, 0, 255],
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                },
             ),
             emissive: texture(
-                "Emissive",
                 material.emissive.as_ref(),
-                [0; 4],
-                wgpu::TextureFormat::Rgba8Unorm,
+                MaterialTextureSlot {
+                    name: "Emissive",
+                    fallback: [0; 4],
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                },
             ),
             ao: texture(
-                "AO",
                 material.ao.as_ref(),
-                [255; 4],
-                wgpu::TextureFormat::Rgba8Unorm,
+                MaterialTextureSlot {
+                    name: "AO",
+                    fallback: [255; 4],
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                },
             ),
             environment_mask: texture(
-                "Environment Mask",
                 material.environment_mask.as_ref(),
-                [255; 4],
-                wgpu::TextureFormat::Rgba8Unorm,
+                MaterialTextureSlot {
+                    name: "Environment Mask",
+                    fallback: [255; 4],
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                },
             ),
             emissive_xform: texture(
-                "Emissive XForm",
                 material.emissive_xform.as_ref(),
-                [0; 4],
-                wgpu::TextureFormat::Rgba8Unorm,
+                MaterialTextureSlot {
+                    name: "Emissive XForm",
+                    fallback: [0; 4],
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                },
             ),
             distortion: texture(
-                "Distortion",
                 material.distortion.as_ref(),
-                [128, 128, 0, 0],
-                wgpu::TextureFormat::Rgba8Unorm,
+                MaterialTextureSlot {
+                    name: "Distortion",
+                    fallback: [128, 128, 0, 0],
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                },
             ),
             highlight: texture(
-                "Highlight",
                 material.highlight.as_ref(),
-                [0; 4],
-                wgpu::TextureFormat::Rgba8Unorm,
+                MaterialTextureSlot {
+                    name: "Highlight",
+                    fallback: [0; 4],
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                },
             ),
             modulate: texture(
-                "Modulate",
                 material.modulate.as_ref(),
-                [255; 4],
-                wgpu::TextureFormat::Rgba8UnormSrgb,
+                MaterialTextureSlot {
+                    name: "Modulate",
+                    fallback: [255; 4],
+                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                },
             ),
         }
     }
-}
-
-fn create_material_texture_view(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    material: &Material,
-    map_name: &str,
-    image: Option<&Image>,
-    fallback: [u8; 4],
-    format: wgpu::TextureFormat,
-) -> wgpu::TextureView {
-    create_texture_view(
-        device,
-        queue,
-        &format!("UGX {map_name}: {}", material.name),
-        image,
-        fallback,
-        format,
-    )
 }
 
 struct GpuSection {
@@ -413,6 +447,8 @@ pub(super) struct SharedResources {
     environment_hdr_scale: f32,
     environment_available: bool,
     environment_views: Mutex<HashMap<String, wgpu::TextureView>>,
+    texture_views: Mutex<HashMap<TextureCacheKey, wgpu::TextureView>>,
+    models: Mutex<HashMap<String, Arc<GpuModel>>>,
     pipelines: Vec<wgpu::RenderPipeline>,
     sky_pipelines: Vec<wgpu::RenderPipeline>,
     distortion_pipelines: [wgpu::RenderPipeline; 2],
@@ -436,6 +472,30 @@ pub struct WorldBindings<'a> {
     pub light_volume_color: Option<&'a wgpu::TextureView>,
     /// Optional light-volume direction field.
     pub light_volume_vector: Option<&'a wgpu::TextureView>,
+}
+
+/// Scenario-global UGX pipelines and bindings shared by model and unit renderers.
+///
+/// Constructing the legacy material pipeline family is expensive. Create one
+/// resource set per device, target format, and world binding set, then use it to
+/// upload every model, unit, and scenario placement that shares those inputs.
+pub struct RendererResources {
+    pub(super) shared: Arc<SharedResources>,
+}
+
+impl RendererResources {
+    /// Creates the complete UGX pipeline family and scenario-global bindings.
+    #[must_use]
+    pub fn new_with_world(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        world: WorldBindings<'_>,
+    ) -> Self {
+        Self {
+            shared: Arc::new(SharedResources::new(device, queue, surface_format, world)),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -637,6 +697,8 @@ impl SharedResources {
             environment_hdr_scale: environment.hdr_scale,
             environment_available: environment.available,
             environment_views: Mutex::new(HashMap::new()),
+            texture_views: Mutex::new(HashMap::new()),
+            models: Mutex::new(HashMap::new()),
             pipelines,
             sky_pipelines,
             distortion_pipelines,
@@ -692,7 +754,7 @@ impl SharedResources {
             contents: bytemuck::bytes_of(&uniform),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        let textures = MaterialTextureViews::new(device, queue, material);
+        let textures = MaterialTextureViews::new(self, device, queue, material);
         let environment_view = self.environment_view_for(device, queue, explicit_environment);
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(&format!("UGX Material Bind Group: {}", material.name)),
@@ -726,6 +788,98 @@ impl SharedResources {
             ],
         })
     }
+
+    fn material_texture_view(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        material: &Material,
+        image: Option<&Image>,
+        slot: MaterialTextureSlot,
+    ) -> wgpu::TextureView {
+        let identity = image.map_or(TextureIdentity::Fallback(slot.fallback), |image| {
+            TextureIdentity::Asset(image.asset_path.to_ascii_lowercase())
+        });
+        let key = TextureCacheKey {
+            identity,
+            format: slot.format,
+        };
+        let mut views = self
+            .texture_views
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(view) = views.get(&key) {
+            return view.clone();
+        }
+        let view = create_texture_view(
+            device,
+            queue,
+            &format!("UGX {}: {}", slot.name, material.name),
+            image,
+            slot.fallback,
+            slot.format,
+        );
+        views.insert(key, view.clone());
+        view
+    }
+
+    fn gpu_model(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        model: &Model,
+    ) -> Arc<GpuModel> {
+        let mut models = self.models.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(model) = models.get(&model.asset_path) {
+            return Arc::clone(model);
+        }
+        let materials = model
+            .materials
+            .iter()
+            .map(|material| {
+                let bind_group = self.create_material_bind_group(device, queue, material);
+                GpuMaterial {
+                    bind_group,
+                    blend: material.blend,
+                    pipeline_index: pipeline_index(
+                        material.blend,
+                        material.has_feature(MaterialFeature::TWO_SIDED),
+                    ),
+                    two_sided_pipeline_index: usize::from(
+                        material.has_feature(MaterialFeature::TWO_SIDED),
+                    ),
+                    has_distortion: material.distortion.is_some(),
+                    casts_shadows: material.has_feature(MaterialFeature::CASTS_SHADOWS),
+                }
+            })
+            .collect::<Vec<_>>();
+        let mut sections = model
+            .sections
+            .iter()
+            .filter(|section| !section.vertices.is_empty() && !section.indices.is_empty())
+            .map(|section| GpuSection {
+                vertex_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("UGX Section Vertices"),
+                    contents: bytemuck::cast_slice(&section.vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                }),
+                index_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("UGX Section Indices"),
+                    contents: bytemuck::cast_slice(&section.indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                }),
+                index_count: section.index_count,
+                material_index: section.material_index,
+            })
+            .collect::<Vec<_>>();
+        sections.sort_by_key(|section| materials[section.material_index].blend.rank());
+        let gpu_model = Arc::new(GpuModel {
+            materials,
+            sections,
+        });
+        models.insert(model.asset_path.clone(), Arc::clone(&gpu_model));
+        gpu_model
+    }
 }
 
 /// GPU resources used to draw one decoded [`Model`].
@@ -734,8 +888,7 @@ pub struct Renderer {
     scene_buffer: wgpu::Buffer,
     scene_bind_group: wgpu::BindGroup,
     joint_buffer: wgpu::Buffer,
-    materials: Vec<GpuMaterial>,
-    sections: Vec<GpuSection>,
+    gpu_model: Arc<GpuModel>,
     model_transform: Mat4,
     joint_count: usize,
 }
@@ -818,8 +971,26 @@ impl Renderer {
         model_transform: Mat4,
         world: WorldBindings<'_>,
     ) -> Self {
-        let shared = Arc::new(SharedResources::new(device, queue, surface_format, world));
-        Self::new_with_shared(device, queue, model, model_transform, shared)
+        let resources = RendererResources::new_with_world(device, queue, surface_format, world);
+        Self::new_with_resources(device, queue, model, model_transform, &resources)
+    }
+
+    /// Uploads a model using an existing scenario-global pipeline set.
+    #[must_use]
+    pub fn new_with_resources(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        model: &Model,
+        model_transform: Mat4,
+        resources: &RendererResources,
+    ) -> Self {
+        Self::new_with_shared(
+            device,
+            queue,
+            model,
+            model_transform,
+            Arc::clone(&resources.shared),
+        )
     }
 
     pub(super) fn new_with_shared(
@@ -857,54 +1028,14 @@ impl Renderer {
             ],
         });
 
-        let materials: Vec<GpuMaterial> = model
-            .materials
-            .iter()
-            .map(|material| {
-                let bind_group = shared.create_material_bind_group(device, queue, material);
-                GpuMaterial {
-                    bind_group,
-                    blend: material.blend,
-                    pipeline_index: pipeline_index(
-                        material.blend,
-                        material.has_feature(MaterialFeature::TWO_SIDED),
-                    ),
-                    two_sided_pipeline_index: usize::from(
-                        material.has_feature(MaterialFeature::TWO_SIDED),
-                    ),
-                    has_distortion: material.distortion.is_some(),
-                    casts_shadows: material.has_feature(MaterialFeature::CASTS_SHADOWS),
-                }
-            })
-            .collect();
-        let mut sections = model
-            .sections
-            .iter()
-            .filter(|section| !section.vertices.is_empty() && !section.indices.is_empty())
-            .map(|section| GpuSection {
-                vertex_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("UGX Section Vertices"),
-                    contents: bytemuck::cast_slice(&section.vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                }),
-                index_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("UGX Section Indices"),
-                    contents: bytemuck::cast_slice(&section.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                }),
-                index_count: section.index_count,
-                material_index: section.material_index,
-            })
-            .collect::<Vec<_>>();
-        sections.sort_by_key(|section| materials[section.material_index].blend.rank());
+        let gpu_model = shared.gpu_model(device, queue, model);
 
         Self {
             shared,
             scene_buffer,
             scene_bind_group,
             joint_buffer,
-            materials,
-            sections,
+            gpu_model,
             model_transform,
             joint_count: model.joint_count,
         }
@@ -968,8 +1099,8 @@ impl Renderer {
         pass.set_bind_group(0, &self.scene_bind_group, &[]);
         pass.set_bind_group(2, &self.shared.shadow_bind_group, &[]);
         for blend in BlendMode::DRAW_ORDER {
-            for section in &self.sections {
-                let material = &self.materials[section.material_index];
+            for section in &self.gpu_model.sections {
+                let material = &self.gpu_model.materials[section.material_index];
                 if material.blend != blend {
                     continue;
                 }
@@ -990,8 +1121,8 @@ impl Renderer {
         pass.set_bind_group(0, &self.scene_bind_group, &[]);
         pass.set_bind_group(2, &self.shared.shadow_bind_group, &[]);
         for blend in BlendMode::DRAW_ORDER {
-            for section in &self.sections {
-                let material = &self.materials[section.material_index];
+            for section in &self.gpu_model.sections {
+                let material = &self.gpu_model.materials[section.material_index];
                 if material.blend != blend {
                     continue;
                 }
@@ -1008,8 +1139,8 @@ impl Renderer {
     /// screen-space offset target.
     pub fn render_distortion<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {
         pass.set_bind_group(0, &self.scene_bind_group, &[]);
-        for section in &self.sections {
-            let material = &self.materials[section.material_index];
+        for section in &self.gpu_model.sections {
+            let material = &self.gpu_model.materials[section.material_index];
             if !material.has_distortion {
                 continue;
             }
@@ -1034,8 +1165,8 @@ impl Renderer {
         }
 
         pass.set_bind_group(0, &self.scene_bind_group, &[]);
-        for section in &self.sections {
-            let material = &self.materials[section.material_index];
+        for section in &self.gpu_model.sections {
+            let material = &self.gpu_model.materials[section.material_index];
             if !material.casts_shadows {
                 continue;
             }
@@ -1053,6 +1184,17 @@ impl Renderer {
     #[must_use]
     pub fn model_transform(&self) -> Mat4 {
         self.model_transform
+    }
+}
+
+impl WorldRenderer for Renderer {
+    fn render_phase<'pass>(&'pass self, phase: RenderPhase, pass: &mut wgpu::RenderPass<'pass>) {
+        match phase {
+            RenderPhase::Sky => self.render_sky(pass),
+            RenderPhase::World => self.render(pass),
+            RenderPhase::Distortion => self.render_distortion(pass),
+            RenderPhase::Shadow { cascade } => self.render_shadow(pass, cascade),
+        }
     }
 }
 
@@ -1735,6 +1877,7 @@ mod tests {
             *velocity = [value, -value];
         }
         let effect = Image {
+            asset_path: "test/effect".to_owned(),
             width: 1,
             height: 1,
             pixels: vec![255; 4],
@@ -1744,6 +1887,7 @@ mod tests {
         material.distortion = Some(effect.clone());
         material.highlight = Some(effect);
         material.modulate = Some(Image {
+            asset_path: "test/modulate".to_owned(),
             width: 1,
             height: 1,
             pixels: vec![255; 4],

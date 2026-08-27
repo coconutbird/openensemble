@@ -15,6 +15,8 @@ use pipeline::ddx::DdxTexture;
 use pipeline::source::{AssetSource, StdFileProvider};
 use wgpu::util::DeviceExt;
 
+use crate::{RenderPhase, WorldRenderer};
+
 use crate::postprocess::DISTORTION_FORMAT;
 
 mod effect;
@@ -573,6 +575,16 @@ impl ParticleRenderer {
         pass.set_bind_group(1, &self.material_bind_group, &[]);
         pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
         pass.draw(0..COLOR_VERTEX_COUNT, 0..self.instance_count);
+    }
+}
+
+impl WorldRenderer for ParticleRenderer {
+    fn render_phase<'pass>(&'pass self, phase: RenderPhase, pass: &mut wgpu::RenderPass<'pass>) {
+        match phase {
+            RenderPhase::World => self.render_color(pass),
+            RenderPhase::Distortion => self.render_distortion(pass),
+            RenderPhase::Sky | RenderPhase::Shadow { .. } => {}
+        }
     }
 }
 

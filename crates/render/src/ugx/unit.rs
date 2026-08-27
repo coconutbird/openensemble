@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use glam::{Mat4, Vec3};
@@ -8,10 +9,11 @@ use pipeline::uax::Reader as UaxReader;
 
 use super::animation::AnimationPose;
 use super::model::ModelPose;
-use super::renderer::{SharedResources, WorldBindings};
+use super::renderer::{RendererResources, SharedResources, WorldBindings};
 use super::{LoadError, Model, Renderer};
 use crate::environment::EnvironmentMap;
 use crate::terrain::LightingParams;
+use crate::{RenderPhase, WorldRenderer};
 
 const MAX_ATTACHMENT_DEPTH: usize = 32;
 
@@ -49,9 +51,15 @@ pub enum UnitLoadError {
 #[derive(Debug)]
 struct UnitInstance {
     name: String,
-    model: Model,
+    model: Arc<Model>,
     pose: ModelPose,
     local_transform: Mat4,
+}
+
+#[derive(Default)]
+pub(super) struct UnitAssetCache {
+    models: HashMap<String, Arc<Model>>,
+    animations: HashMap<String, Option<AnimationPose>>,
 }
 
 /// Renderer destination for one authored visual attachment.
@@ -222,6 +230,16 @@ impl Unit {
         visual: &Visual,
         variation_index: Option<usize>,
     ) -> Result<Self, UnitLoadError> {
+        let mut cache = UnitAssetCache::default();
+        Self::load_variant_with_cache(source, visual, variation_index, &mut cache)
+    }
+
+    pub(super) fn load_variant_with_cache(
+        source: &mut AssetSource<StdFileProvider>,
+        visual: &Visual,
+        variation_index: Option<usize>,
+        cache: &mut UnitAssetCache,
+    ) -> Result<Self, UnitLoadError> {
         let default_model = visual
             .default_model
             .as_deref()
@@ -230,7 +248,9 @@ impl Unit {
             visual,
             variation_index,
         };
-        let loaded = load_named_model(source, selection, default_model, None, Mat4::IDENTITY, 0)?;
+        let mut context = UnitLoadContext { selection, cache };
+        let loaded =
+            load_named_model(source, &mut context, default_model, None, Mat4::IDENTITY, 0)?;
         let (bounds_min, bounds_max) = unit_bounds(&loaded.instances);
         Ok(Self {
             instances: loaded.instances,
@@ -308,9 +328,14 @@ struct VisualSelection<'visual> {
     variation_index: Option<usize>,
 }
 
+struct UnitLoadContext<'visual, 'cache> {
+    selection: VisualSelection<'visual>,
+    cache: &'cache mut UnitAssetCache,
+}
+
 fn load_named_model(
     source: &mut AssetSource<StdFileProvider>,
-    selection: VisualSelection<'_>,
+    context: &mut UnitLoadContext<'_, '_>,
     name: &str,
     parent: Option<(&Model, &ModelPose, &Attachment)>,
     parent_transform: Mat4,
@@ -319,17 +344,22 @@ fn load_named_model(
     if depth >= MAX_ATTACHMENT_DEPTH {
         return Err(UnitLoadError::AttachmentDepthExceeded);
     }
-    let definition = selection
+    let definition = context
+        .selection
         .visual
         .models
         .iter()
         .find(|model| model.name.eq_ignore_ascii_case(name))
         .ok_or_else(|| UnitLoadError::ModelReferenceNotFound(name.to_owned()))?;
-    let path = model_asset_path(selection.visual, definition, selection.variation_index)
-        .ok_or_else(|| UnitLoadError::ModelAssetMissing(definition.name.clone()))?;
+    let path = model_asset_path(
+        context.selection.visual,
+        definition,
+        context.selection.variation_index,
+    )
+    .ok_or_else(|| UnitLoadError::ModelAssetMissing(definition.name.clone()))?;
     load_model_definition(
         source,
-        selection,
+        context,
         definition,
         path,
         parent,
@@ -340,7 +370,7 @@ fn load_named_model(
 
 fn load_model_definition(
     source: &mut AssetSource<StdFileProvider>,
-    selection: VisualSelection<'_>,
+    context: &mut UnitLoadContext<'_, '_>,
     definition: &VisualModel,
     path: &str,
     parent: Option<(&Model, &ModelPose, &Attachment)>,
@@ -348,12 +378,8 @@ fn load_model_definition(
     depth: usize,
 ) -> Result<LoadedUnit, UnitLoadError> {
     let canonical_path = canonical_model_path(path);
-    let model = Model::load(source, &canonical_path).map_err(|source| UnitLoadError::Model {
-        component: definition.name.clone(),
-        path: canonical_path,
-        source,
-    })?;
-    let animation = load_start_animation(source, definition);
+    let model = load_cached_model(source, context.cache, &definition.name, &canonical_path)?;
+    let animation = load_start_animation(source, definition, context.cache);
     let pose = model.pose(animation.as_ref());
     let local_transform = parent.map_or(
         parent_transform,
@@ -368,7 +394,7 @@ fn load_model_definition(
     if let Some(component) = &definition.component {
         for attachment in &component.attachments {
             let descriptor = make_unit_attachment(
-                selection,
+                context.selection,
                 definition,
                 &model,
                 &pose,
@@ -379,7 +405,7 @@ fn load_model_definition(
             match descriptor.kind {
                 UnitAttachmentKind::ModelReference => children.append(load_named_model(
                     source,
-                    selection,
+                    context,
                     &attachment.name,
                     Some((&model, &pose, attachment)),
                     local_transform,
@@ -387,6 +413,7 @@ fn load_model_definition(
                 )?),
                 UnitAttachmentKind::Model => children.append(load_model_file(
                     source,
+                    context,
                     &model,
                     &pose,
                     attachment,
@@ -404,7 +431,7 @@ fn load_model_definition(
     for animation in &definition.anims {
         for attachment in &animation.attachments {
             attachments.push(make_unit_attachment(
-                selection,
+                context.selection,
                 definition,
                 &model,
                 &pose,
@@ -430,6 +457,7 @@ fn load_model_definition(
 
 fn load_model_file(
     source: &mut AssetSource<StdFileProvider>,
+    context: &mut UnitLoadContext<'_, '_>,
     parent_model: &Model,
     parent_pose: &ModelPose,
     attachment: &Attachment,
@@ -440,11 +468,7 @@ fn load_model_file(
         return Err(UnitLoadError::AttachmentDepthExceeded);
     }
     let canonical_path = canonical_model_path(&attachment.name);
-    let model = Model::load(source, &canonical_path).map_err(|source| UnitLoadError::Model {
-        component: attachment.name.clone(),
-        path: canonical_path,
-        source,
-    })?;
+    let model = load_cached_model(source, context.cache, &attachment.name, &canonical_path)?;
     let pose = model.pose(None);
     let local_transform = parent_transform
         * visual_attachment_transform(parent_model, parent_pose, &model, &pose, attachment);
@@ -457,6 +481,28 @@ fn load_model_file(
         }],
         attachments: Vec::new(),
     })
+}
+
+fn load_cached_model(
+    source: &mut AssetSource<StdFileProvider>,
+    cache: &mut UnitAssetCache,
+    component: &str,
+    canonical_path: &str,
+) -> Result<Arc<Model>, UnitLoadError> {
+    let key = canonical_path.to_ascii_lowercase();
+    if let Some(model) = cache.models.get(&key) {
+        return Ok(Arc::clone(model));
+    }
+    let model =
+        Arc::new(
+            Model::load(source, canonical_path).map_err(|source| UnitLoadError::Model {
+                component: component.to_owned(),
+                path: canonical_path.to_owned(),
+                source,
+            })?,
+        );
+    cache.models.insert(key, Arc::clone(&model));
+    Ok(model)
 }
 
 fn make_unit_attachment(
@@ -551,6 +597,7 @@ fn model_asset_path<'visual>(
 fn load_start_animation(
     source: &mut AssetSource<StdFileProvider>,
     model: &VisualModel,
+    cache: &mut UnitAssetCache,
 ) -> Option<AnimationPose> {
     let path = model
         .anims
@@ -566,12 +613,17 @@ fn load_start_animation(
             })
         })?;
     let canonical_path = canonical_animation_path(path);
+    let key = canonical_path.to_ascii_lowercase();
+    if let Some(animation) = cache.animations.get(&key) {
+        return animation.clone();
+    }
     let Some(bytes) = source.resolve_with_fallback(&canonical_path, &[".uax"]) else {
         log::warn!(
             "UGX visual model '{}' is missing optional idle animation '{}'; using bind pose",
             model.name,
             canonical_path,
         );
+        cache.animations.insert(key, None);
         return None;
     };
     let animation = match UaxReader::read(&bytes) {
@@ -582,10 +634,13 @@ fn load_start_animation(
                 model.name,
                 canonical_path,
             );
+            cache.animations.insert(key, None);
             return None;
         }
     };
-    Some(AnimationPose::at_start(&animation))
+    let pose = AnimationPose::at_start(&animation);
+    cache.animations.insert(key, Some(pose.clone()));
+    Some(pose)
 }
 
 fn visual_attachment_transform(
@@ -768,8 +823,20 @@ impl UnitRenderer {
         unit_transform: Mat4,
         world: WorldBindings<'_>,
     ) -> Self {
-        let shared = Arc::new(SharedResources::new(device, queue, surface_format, world));
-        Self::new_with_shared(device, queue, unit, unit_transform, &shared)
+        let resources = RendererResources::new_with_world(device, queue, surface_format, world);
+        Self::new_with_resources(device, queue, unit, unit_transform, &resources)
+    }
+
+    /// Uploads every component using an existing scenario-global pipeline set.
+    #[must_use]
+    pub fn new_with_resources(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        unit: &Unit,
+        unit_transform: Mat4,
+        resources: &RendererResources,
+    ) -> Self {
+        Self::new_with_shared(device, queue, unit, unit_transform, &resources.shared)
     }
 
     pub(super) fn new_with_shared(
@@ -840,36 +907,36 @@ impl UnitRenderer {
 
     /// Draws the full recursive unit graph.
     pub fn render<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {
-        for instance in &self.instances {
-            instance.renderer.render(pass);
-        }
+        self.render_phase(RenderPhase::World, pass);
     }
 
     /// Draws every component through the camera-relative sky pipeline.
     pub fn render_sky<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {
-        for instance in &self.instances {
-            instance.renderer.render_sky(pass);
-        }
+        self.render_phase(RenderPhase::Sky, pass);
     }
 
     /// Draws every component's authored screen-space distortion pass.
     pub fn render_distortion<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {
-        for instance in &self.instances {
-            instance.renderer.render_distortion(pass);
-        }
+        self.render_phase(RenderPhase::Distortion, pass);
     }
 
     /// Draws every shadow-enabled component into one directional cascade.
     pub fn render_shadow<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>, cascade: usize) {
-        for instance in &self.instances {
-            instance.renderer.render_shadow(pass, cascade);
-        }
+        self.render_phase(RenderPhase::Shadow { cascade }, pass);
     }
 
     /// Returns the current unit-to-world transform.
     #[must_use]
     pub fn unit_transform(&self) -> Mat4 {
         self.unit_transform
+    }
+}
+
+impl WorldRenderer for UnitRenderer {
+    fn render_phase<'pass>(&'pass self, phase: RenderPhase, pass: &mut wgpu::RenderPass<'pass>) {
+        for instance in &self.instances {
+            instance.renderer.render_phase(phase, pass);
+        }
     }
 }
 

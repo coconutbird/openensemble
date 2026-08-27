@@ -72,6 +72,7 @@ impl BlendMode {
 
 #[derive(Clone, Debug)]
 pub(super) struct Image {
+    pub(super) asset_path: String,
     pub(super) width: u32,
     pub(super) height: u32,
     pub(super) pixels: Vec<u8>,
@@ -246,6 +247,7 @@ pub(super) struct ModelPose {
 /// A decoded UGX model ready for upload to the renderer.
 #[derive(Clone, Debug)]
 pub struct Model {
+    pub(super) asset_path: String,
     pub(super) bounds_min: [f32; 3],
     pub(super) bounds_max: [f32; 3],
     pub(super) sphere_center: [f32; 3],
@@ -274,7 +276,7 @@ impl Model {
             path: path.to_owned(),
             reason: error.to_string(),
         })?;
-        Self::from_geometry(source, &geometry)
+        Self::from_geometry(source, &geometry, path)
     }
 
     /// Returns the model-space lower bound.
@@ -372,6 +374,7 @@ impl Model {
     fn from_geometry(
         source: &mut AssetSource<StdFileProvider>,
         geometry: &UgxGeom,
+        asset_path: &str,
     ) -> Result<Self, LoadError> {
         let mut materials = geometry
             .materials
@@ -440,6 +443,7 @@ impl Model {
             .max(maximum_joint.saturating_add(1))
             .max(1);
         Ok(Self {
+            asset_path: asset_path.replace('/', "\\").to_ascii_lowercase(),
             bounds_min: geometry.bounds.min,
             bounds_max: geometry.bounds.max,
             sphere_center: geometry.bounding_sphere.center,
@@ -805,6 +809,7 @@ fn load_map(
     }
     (
         Some(Image {
+            asset_path: path,
             width: decoded.width,
             height: decoded.height,
             pixels: decoded.pixels,
