@@ -7,7 +7,7 @@
 mod input;
 mod rendering;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use glam::{FloatExt, Mat4, Vec3};
 use num_traits::ToPrimitive;
@@ -15,14 +15,31 @@ use pipeline::hw1;
 use pipeline::source::{AssetSource, StdFileProvider};
 use pipeline::xtd;
 use pipeline::xtt;
+use render::environment::EnvironmentMap;
+use render::lighting::LocalLightSet;
+use render::postprocess::{HDR_COLOR_FORMAT, ToneMapResources};
 use render::terrain::{Camera, CompositorResources, LodConfig, TerrainScene};
-use render::ugx::{Unit as UgxUnit, UnitRenderer as UgxUnitRenderer};
+use render::ugx::{
+    Unit as UgxUnit, UnitRenderer as UgxUnitRenderer, UnitScene as UgxUnitScene,
+    UnitSceneRenderer as UgxUnitSceneRenderer,
+};
 use render::wgpu;
 
 use crate::capture::{CaptureConfig, CaptureState};
 use crate::types::GpuResources;
 
 const WARTHOG_VISUAL: &str = "unsc_veh_warthog_01";
+
+struct TerrainLoadInputs {
+    terrain: xtd::XtdFile,
+    textures: Option<xtt::XttFile>,
+    lightset: Option<hw1::LightSetData>,
+    environment: Option<EnvironmentMap>,
+    sky: Option<UgxUnit>,
+    source: Option<AssetSource<StdFileProvider>>,
+    warthog_visual: Option<pipeline::database::hw1::Visual>,
+    ugx_scene: Option<UgxUnitScene>,
+}
 
 /// The terrain viewer application.
 pub struct TerrainViewer {
@@ -33,12 +50,27 @@ pub struct TerrainViewer {
     pub asset_source: Option<AssetSource<StdFileProvider>>,
     /// All decoded terrain data (mesh, textures, splat, decals, foliage, roads).
     pub scene: Option<TerrainScene>,
+    /// Scenario GLS/FLS constants used by every lit renderer.
+    pub lightset: Option<hw1::LightSetData>,
+    /// Runtime local lights shared by all lit world renderers.
+    pub local_lights: LocalLightSet,
+    /// Scenario-global HDR environment cubemap used by reflective materials.
+    pub environment: Option<EnvironmentMap>,
+    /// Authored scenario sky visual, resolved directly through VIS/UGX.
+    pub sky_unit: Option<UgxUnit>,
+    /// GPU resources for the camera-relative authored sky visual.
+    pub sky_renderer: Option<UgxUnitRenderer>,
     pub camera: Camera,
     pub show_info: bool,
     pub wireframe: bool,
     pub load_error: Option<String>,
     pub gpu: Option<GpuResources>,
-    pub surface_format: wgpu::TextureFormat,
+    /// Linear color format shared by all scene pipelines.
+    pub scene_format: wgpu::TextureFormat,
+    /// HDR scene target, luminance reduction, and presentation pipeline.
+    pub tone_map_resources: Option<ToneMapResources>,
+    /// Monotonic render time used by authored material and foliage animation.
+    pub render_time_seconds: f32,
     /// Display mode. Mode 12 is the canonical GPU-composited terrain view.
     pub debug_mode: u32,
     /// Normal map strength (gBumpPower in game, scales XY components).
@@ -67,6 +99,10 @@ pub struct TerrainViewer {
     pub ugx_transform: Mat4,
     /// A model-loading failure does not prevent terrain diagnostics from running.
     pub ugx_error: Option<String>,
+    /// Scenario objects resolved through their database visuals.
+    pub ugx_scene: Option<UgxUnitScene>,
+    /// GPU resources for renderable scenario object placements.
+    pub ugx_scene_renderer: Option<UgxUnitSceneRenderer>,
     /// Optional deterministic top-down capture-and-exit state.
     pub capture: Option<CaptureState>,
 }
@@ -78,12 +114,19 @@ impl TerrainViewer {
             scenario_name: None,
             asset_source: None,
             scene: None,
+            lightset: None,
+            local_lights: LocalLightSet::default(),
+            environment: None,
+            sky_unit: None,
+            sky_renderer: None,
             camera: Camera::default(),
             show_info: true,
             wireframe: false,
             load_error: None,
             gpu: None,
-            surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            scene_format: HDR_COLOR_FORMAT,
+            tone_map_resources: None,
+            render_time_seconds: 0.0,
             debug_mode: 12,
             bump_power: 1.0,
             compositor: None,
@@ -98,6 +141,8 @@ impl TerrainViewer {
             ugx_renderer: None,
             ugx_transform: Mat4::IDENTITY,
             ugx_error: None,
+            ugx_scene: None,
+            ugx_scene_renderer: None,
             capture: None,
         }
     }
@@ -127,74 +172,39 @@ impl TerrainViewer {
     }
 
     fn load_terrain(&mut self) {
-        // Determine which loading path to use
-        let (terrain_file, texture_file, asset_source_opt, unit_visual) =
-            if let Some(scenario_name) = &self.scenario_name {
-                log::info!("Loading scenario via pipeline::World: {scenario_name}");
-                let dir = data::paths::game_dir();
-                let dir_str = dir.to_string_lossy();
-
-                let (mut world, mut src) = match hw1::World::load(&dir_str) {
-                    Ok(ws) => ws,
-                    Err(e) => {
-                        self.load_error = Some(format!("Failed to load World: {e}"));
-                        log::error!("{}", self.load_error.as_ref().unwrap());
-                        return;
-                    }
-                };
-                world.swap_scenario(&mut src, scenario_name);
-                let unit_visual = world.visuals.get(WARTHOG_VISUAL).cloned();
-
-                let Some(xtd) = world.terrain_data else {
-                    self.load_error = Some(format!(
-                        "World loaded but no XTD terrain data for scenario '{scenario_name}'"
-                    ));
-                    log::error!("{}", self.load_error.as_ref().unwrap());
-                    return;
-                };
-
-                (xtd, world.terrain_textures, Some(src), unit_visual)
-            } else if let Some(path) = &self.xtd_path {
-                // Load from file path (legacy mode — no ERA, no World)
-                log::info!("Loading XTD from file: {}", path.display());
-                match std::fs::read(path) {
-                    Ok(data) => match xtd::Reader::read(&data) {
-                        Ok(xtd) => {
-                            let xtt_path = path.with_extension("xtt");
-                            let xtt = if xtt_path.exists() {
-                                std::fs::read(&xtt_path)
-                                    .ok()
-                                    .and_then(|d| xtt::Reader::read(&d).ok())
-                            } else {
-                                None
-                            };
-                            (xtd, xtt, None, None)
-                        }
-                        Err(e) => {
-                            self.load_error = Some(format!("Failed to parse XTD: {e}"));
-                            log::error!("{}", self.load_error.as_ref().unwrap());
-                            return;
-                        }
-                    },
-                    Err(e) => {
-                        self.load_error = Some(format!("Failed to read file: {e}"));
-                        log::error!("{}", self.load_error.as_ref().unwrap());
-                        return;
-                    }
-                }
-            } else {
-                self.load_error = Some("No terrain source specified".to_string());
+        let inputs = if let Some(scenario_name) = &self.scenario_name {
+            load_scenario_inputs(scenario_name)
+        } else if let Some(path) = &self.xtd_path {
+            load_file_inputs(path)
+        } else {
+            Err("No terrain source specified".to_owned())
+        };
+        let inputs = match inputs {
+            Ok(inputs) => inputs,
+            Err(error) => {
+                log::error!("{error}");
+                self.load_error = Some(error);
                 return;
-            };
+            }
+        };
 
         // Store asset source for road texture loading later
-        self.asset_source = asset_source_opt;
+        self.asset_source = inputs.source;
+        self.lightset = inputs.lightset;
+        self.environment = inputs.environment;
+        self.sky_unit = inputs.sky;
+        self.sky_renderer = None;
+        if let Some(lightset) = &self.lightset {
+            self.bump_power = lightset.terrain_bump_strength;
+        }
+        self.ugx_scene = inputs.ugx_scene;
+        self.ugx_scene_renderer = None;
 
         // Load entire terrain scene in one call
         let first_load = self.scene.is_none();
         match TerrainScene::load(
-            &terrain_file,
-            texture_file.as_ref(),
+            &inputs.terrain,
+            inputs.textures.as_ref(),
             self.asset_source.as_mut(),
         ) {
             Ok(scene) => {
@@ -203,7 +213,7 @@ impl TerrainViewer {
                 }
                 self.scene = Some(scene);
                 self.load_error = None;
-                self.load_warthog(unit_visual.as_ref());
+                self.load_warthog(inputs.warthog_visual.as_ref());
             }
             Err(e) => {
                 self.load_error = Some(e.clone());
@@ -245,9 +255,11 @@ impl TerrainViewer {
                     - Vec3::new(model_center.x, bounds_min.y, model_center.z);
                 self.ugx_transform = Mat4::from_translation(translation);
                 log::info!(
-                    "Loaded centered Warthog unit: {} components, {} triangles at ({:.2}, {:.2}, {:.2}) [{}]",
+                    "Loaded centered Warthog unit: {} components, {} triangles, {} authored attachments ({} unresolved target bones) at ({:.2}, {:.2}, {:.2}) [{}]",
                     unit.component_count(),
                     unit.triangle_count(),
+                    unit.attachments().len(),
+                    unit.unresolved_attachment_bone_count(),
                     center.x,
                     terrain_height,
                     center.z,
@@ -261,6 +273,183 @@ impl TerrainViewer {
                 self.ugx_error = Some(message);
             }
         }
+    }
+}
+
+fn load_scenario_inputs(scenario_name: &str) -> Result<TerrainLoadInputs, String> {
+    log::info!("Loading scenario via pipeline::World: {scenario_name}");
+    let dir = data::paths::game_dir();
+    let dir_str = dir.to_string_lossy();
+    let (mut world, mut source) =
+        hw1::World::load(&dir_str).map_err(|error| format!("Failed to load World: {error}"))?;
+    world.swap_scenario(&mut source, scenario_name);
+
+    let warthog_visual = world.visuals.get(WARTHOG_VISUAL).cloned();
+    let sky = world
+        .manifest
+        .sky_ref
+        .as_deref()
+        .map(|reference| load_sky_unit(&mut source, reference))
+        .transpose()?;
+    if let (Some(reference), Some(sky)) = (&world.manifest.sky_ref, &sky) {
+        log::info!(
+            "Loaded scenario sky '{}': {} components, {} triangles",
+            reference,
+            sky.component_count(),
+            sky.triangle_count(),
+        );
+    }
+    let environment = world
+        .manifest
+        .terrain_env_ref
+        .as_deref()
+        .map(|path| EnvironmentMap::load(&mut source, path))
+        .transpose()
+        .map_err(|error| format!("Failed to load scenario environment: {error}"))?;
+    if let Some(environment) = &environment {
+        log::info!(
+            "Loaded scenario environment {} ({}x{}, {} mips, HDR scale {})",
+            environment.path(),
+            environment.size(),
+            environment.size(),
+            environment.mip_count(),
+            environment.hdr_scale(),
+        );
+    }
+    let player_start_proto = world
+        .database
+        .game_data
+        .as_ref()
+        .and_then(|game_data| game_data.code_proto_objects.as_ref())
+        .and_then(|mappings| {
+            mappings.entries.iter().find(|entry| {
+                entry
+                    .object_type
+                    .eq_ignore_ascii_case("SkirmishEmptyBaseObject")
+            })
+        })
+        .map(|entry| entry.proto_name.clone());
+    let ugx_scene = world.scenario_data.as_ref().map(|scenario| {
+        if let Some(proto_name) = player_start_proto.as_deref() {
+            UgxUnitScene::load_scenario(
+                &mut source,
+                scenario,
+                &world.visuals,
+                &world.database.objects,
+                proto_name,
+            )
+        } else {
+            if !scenario.positions().is_empty() {
+                log::warn!(
+                    "Game data has no SkirmishEmptyBaseObject mapping; player-start pads are unavailable"
+                );
+            }
+            UgxUnitScene::load(
+                &mut source,
+                scenario.objects(),
+                &world.visuals,
+                &world.database.objects,
+            )
+        }
+    });
+    if let Some(scene) = &ugx_scene {
+        log_ugx_scene_summary(scene);
+    }
+
+    let terrain = world.terrain_data.take().ok_or_else(|| {
+        format!("World loaded but no XTD terrain data for scenario '{scenario_name}'")
+    })?;
+    Ok(TerrainLoadInputs {
+        terrain,
+        textures: world.terrain_textures.take(),
+        lightset: world.lightset.take(),
+        environment,
+        sky,
+        source: Some(source),
+        warthog_visual,
+        ugx_scene,
+    })
+}
+
+fn log_ugx_scene_summary(scene: &UgxUnitScene) {
+    log::info!(
+        "Resolved scenario UGX scene: {} placements from {} objects + {} player starts across {} visuals ({} NoRender, {} gameplay-only, {} squads, {} malformed, {} invalid transforms, {} object load failures, {} start failures)",
+        scene.placement_count(),
+        scene.object_count(),
+        scene.player_start_count(),
+        scene.unique_visual_count(),
+        scene.skipped_no_render_count(),
+        scene.missing_visual_count(),
+        scene.skipped_squad_count(),
+        scene.missing_proto_count(),
+        scene.invalid_transform_count(),
+        scene.load_failure_count(),
+        scene.player_start_failure_count(),
+    );
+    for issue in scene.issues() {
+        log::warn!(
+            "Scenario visual '{}' was skipped: {}",
+            issue.proto_name(),
+            issue.reason()
+        );
+    }
+}
+
+fn load_file_inputs(path: &Path) -> Result<TerrainLoadInputs, String> {
+    log::info!("Loading XTD from file: {}", path.display());
+    let data = std::fs::read(path).map_err(|error| format!("Failed to read file: {error}"))?;
+    let terrain =
+        xtd::Reader::read(&data).map_err(|error| format!("Failed to parse XTD: {error}"))?;
+    let xtt_path = path.with_extension("xtt");
+    let textures = xtt_path
+        .exists()
+        .then(|| std::fs::read(&xtt_path).ok())
+        .flatten()
+        .and_then(|data| xtt::Reader::read(&data).ok());
+    Ok(TerrainLoadInputs {
+        terrain,
+        textures,
+        lightset: None,
+        environment: None,
+        sky: None,
+        source: None,
+        warthog_visual: None,
+        ugx_scene: None,
+    })
+}
+
+fn load_sky_unit(
+    source: &mut AssetSource<StdFileProvider>,
+    reference: &str,
+) -> Result<UgxUnit, String> {
+    let path = canonical_sky_visual_path(reference);
+    let document = source
+        .read_xmb(&path)
+        .ok_or_else(|| format!("scenario sky visual was not found: {path}"))?;
+    let visual = pipeline::database::hw1::visual::parse(&document)
+        .map_err(|error| format!("failed to parse scenario sky visual '{path}': {error}"))?;
+    UgxUnit::load(source, &visual)
+        .map_err(|error| format!("failed to load scenario sky visual '{path}': {error}"))
+}
+
+fn canonical_sky_visual_path(reference: &str) -> String {
+    let mut normalized = reference
+        .trim()
+        .trim_start_matches(['\\', '/'])
+        .replace('/', "\\");
+    if normalized.to_ascii_lowercase().ends_with(".xmb") {
+        normalized.truncate(normalized.len() - 4);
+    }
+    if !normalized.to_ascii_lowercase().ends_with(".vis") {
+        normalized.push_str(".vis");
+    }
+    if normalized
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("art\\"))
+    {
+        normalized
+    } else {
+        format!("art\\{normalized}")
     }
 }
 

@@ -165,6 +165,14 @@ impl TerrainViewer {
             ui.label("Terrain path: packed GPU patches");
             ui.label("Material: oracle unique-map compositor");
         }
+        if let Some(environment) = &self.environment {
+            ui.label(format!(
+                "Environment: {} ({}², {} mips)",
+                environment.path(),
+                environment.size(),
+                environment.mip_count()
+            ));
+        }
         if let Some(error) = &self.load_error {
             ui.separator();
             ui.colored_label(egui::Color32::RED, error);
@@ -172,9 +180,20 @@ impl TerrainViewer {
         if let Some(unit) = &self.ugx_unit {
             ui.separator();
             ui.label(format!(
-                "UGX Warthog: {} components, {} triangles",
+                "UGX Warthog: {} components, {} triangles, {} attachments ({} unresolved bones)",
                 unit.component_count(),
-                unit.triangle_count()
+                unit.triangle_count(),
+                unit.attachments().len(),
+                unit.unresolved_attachment_bone_count()
+            ));
+        }
+        if let Some(scene) = &self.ugx_scene {
+            ui.label(format!(
+                "UGX scenario: {} placements from {} objects + {} starts, {} unique visuals",
+                scene.placement_count(),
+                scene.object_count(),
+                scene.player_start_count(),
+                scene.unique_visual_count()
             ));
         }
         if let Some(error) = &self.ugx_error {
@@ -258,6 +277,7 @@ impl Application for TerrainViewer {
             // or compositor LOD changes from the normal viewer camera.
             return self.load_error.is_none();
         }
+        self.render_time_seconds += ctx.delta_time;
         self.update_display_toggles(input);
         self.update_debug_keys(input);
         self.update_compositor_controls(input);

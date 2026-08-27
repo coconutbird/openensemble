@@ -2322,6 +2322,7 @@ dependencies = [
  "num-traits",
  "pipeline",
  "png 0.17.16",
+ "pollster",
  "render",
  "sim",
  "xcore",

@@ -8,6 +8,7 @@ use pipeline::ugx::{
 use glam::Mat4;
 
 use super::animation::AnimationPose;
+use crate::environment::EnvironmentMap;
 
 /// Errors produced while resolving or decoding a UGX model.
 #[derive(Debug, thiserror::Error)]
@@ -29,17 +30,6 @@ pub enum LoadError {
         /// Zero-based section index.
         section: usize,
         /// Validation diagnostic.
-        reason: String,
-    },
-    /// A referenced material texture was absent.
-    #[error("UGX texture not found: {0}")]
-    TextureNotFound(String),
-    /// A referenced material texture could not be decoded.
-    #[error("failed to decode UGX texture '{path}': {reason}")]
-    TextureDecode {
-        /// Resolved game path.
-        path: String,
-        /// Decoder diagnostic.
         reason: String,
     },
 }
@@ -97,6 +87,11 @@ pub(super) struct MapChannels {
     pub(super) xform: u32,
     pub(super) emissive: u32,
     pub(super) ao: u32,
+    pub(super) environment_mask: u32,
+    pub(super) emissive_xform: u32,
+    pub(super) distortion: u32,
+    pub(super) highlight: u32,
+    pub(super) modulate: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -109,13 +104,58 @@ pub(super) struct Material {
     pub(super) xform: Option<Image>,
     pub(super) emissive: Option<Image>,
     pub(super) ao: Option<Image>,
+    pub(super) environment: Option<EnvironmentMap>,
+    pub(super) environment_mask: Option<Image>,
+    pub(super) emissive_xform: Option<Image>,
+    pub(super) distortion: Option<Image>,
+    pub(super) highlight: Option<Image>,
+    pub(super) modulate: Option<Image>,
     pub(super) channels: MapChannels,
+    pub(super) uv_velocity: [[f32; 2]; MapType::NUM_TYPES],
     pub(super) specular_color: [f32; 3],
     pub(super) specular_power: f32,
     pub(super) opacity: f32,
     pub(super) blend: BlendMode,
-    pub(super) two_sided: bool,
-    pub(super) color_gloss: bool,
+    features: MaterialFeatures,
+    pub(super) environment_reflectivity: f32,
+    pub(super) environment_sharpness: f32,
+    pub(super) environment_fresnel: f32,
+    pub(super) environment_fresnel_power: f32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct MaterialFeature(u32);
+
+impl MaterialFeature {
+    pub(super) const TWO_SIDED: Self = Self(1 << 0);
+    pub(super) const CASTS_SHADOWS: Self = Self(1 << 1);
+    pub(super) const RECEIVES_SHADOWS: Self = Self(1 << 2);
+    pub(super) const COLOR_GLOSS: Self = Self(1 << 3);
+    pub(super) const GLOBAL_ENVIRONMENT: Self = Self(1 << 4);
+    pub(super) const TERRAIN_CONFORM: Self = Self(1 << 5);
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MaterialFeatures(u32);
+
+impl Default for MaterialFeatures {
+    fn default() -> Self {
+        Self(MaterialFeature::CASTS_SHADOWS.0 | MaterialFeature::RECEIVES_SHADOWS.0)
+    }
+}
+
+impl MaterialFeatures {
+    fn contains(self, feature: MaterialFeature) -> bool {
+        self.0 & feature.0 != 0
+    }
+
+    fn set(&mut self, feature: MaterialFeature, enabled: bool) {
+        if enabled {
+            self.0 |= feature.0;
+        } else {
+            self.0 &= !feature.0;
+        }
+    }
 }
 
 impl Default for Material {
@@ -129,14 +169,39 @@ impl Default for Material {
             xform: None,
             emissive: None,
             ao: None,
+            environment: None,
+            environment_mask: None,
+            emissive_xform: None,
+            distortion: None,
+            highlight: None,
+            modulate: None,
             channels: MapChannels::default(),
+            uv_velocity: [[0.0; 2]; MapType::NUM_TYPES],
             specular_color: [1.0; 3],
             specular_power: 10.0,
             opacity: 1.0,
             blend: BlendMode::Opaque,
-            two_sided: false,
-            color_gloss: false,
+            features: MaterialFeatures::default(),
+            environment_reflectivity: 1.0,
+            environment_sharpness: 1.0,
+            environment_fresnel: 0.5,
+            environment_fresnel_power: 4.0,
         }
+    }
+}
+
+impl Material {
+    pub(super) fn map_velocity(&self, map_type: MapType) -> [f32; 2] {
+        self.uv_velocity[map_index(map_type)]
+    }
+
+    pub(super) fn has_feature(&self, feature: MaterialFeature) -> bool {
+        self.features.contains(feature)
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_feature(&mut self, feature: MaterialFeature, enabled: bool) {
+        self.features.set(feature, enabled);
     }
 }
 
@@ -198,8 +263,9 @@ impl Model {
     ///
     /// # Errors
     ///
-    /// Returns an error when the model or a referenced texture is missing,
-    /// malformed, or contains invalid section ranges.
+    /// Returns an error when the model is missing, malformed, or contains
+    /// invalid section ranges. Missing or malformed material maps use their
+    /// shader fallback so one optional texture cannot suppress the geometry.
     pub fn load(source: &mut AssetSource<StdFileProvider>, path: &str) -> Result<Self, LoadError> {
         let bytes = source
             .resolve_with_fallback(path, &[".ugx"])
@@ -311,7 +377,7 @@ impl Model {
             .materials
             .iter()
             .map(|material| load_material(source, material))
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Vec<_>>();
         if materials.is_empty() {
             materials.push(Material::default());
         }
@@ -568,30 +634,40 @@ fn normalized_basis(value: [f32; 4], fallback: [f32; 4]) -> [f32; 4] {
 fn load_material(
     source: &mut AssetSource<StdFileProvider>,
     material: &pipeline::ugx::Material,
-) -> Result<Material, LoadError> {
+) -> Material {
     let Some(legacy) = material.legacy() else {
         log::warn!(
             "UGX material '{}' uses the unsupported Hogan material system; using defaults",
             material.name
         );
-        return Ok(Material {
+        return Material {
             name: material.name.clone(),
             ..Material::default()
-        });
+        };
     };
-    let (diffuse, diffuse_channel) = load_map(source, legacy, MapType::Diffuse)?;
-    let (normal, normal_channel) = load_map(source, legacy, MapType::Normal)?;
-    let (gloss, gloss_channel) = load_map(source, legacy, MapType::Gloss)?;
-    let (opacity_map, opacity_channel) = load_map(source, legacy, MapType::Opacity)?;
-    let (xform, xform_channel) = load_map(source, legacy, MapType::XForm)?;
-    let (emissive, emissive_channel) = load_map(source, legacy, MapType::Emissive)?;
-    let (ao, ao_channel) = load_map(source, legacy, MapType::AO)?;
+    let (diffuse, diffuse_channel) = load_map(source, legacy, MapType::Diffuse, &material.name);
+    let (normal, normal_channel) = load_map(source, legacy, MapType::Normal, &material.name);
+    let (gloss, gloss_channel) = load_map(source, legacy, MapType::Gloss, &material.name);
+    let (opacity_map, opacity_channel) = load_map(source, legacy, MapType::Opacity, &material.name);
+    let (xform, xform_channel) = load_map(source, legacy, MapType::XForm, &material.name);
+    let (emissive, emissive_channel) = load_map(source, legacy, MapType::Emissive, &material.name);
+    let (ao, ao_channel) = load_map(source, legacy, MapType::AO, &material.name);
+    let environment = load_environment_map(source, legacy, &material.name);
+    let (environment_mask, environment_mask_channel) =
+        load_map(source, legacy, MapType::EnvMask, &material.name);
+    let (emissive_xform, emissive_xform_channel) =
+        load_map(source, legacy, MapType::EmXForm, &material.name);
+    let (distortion, distortion_channel) =
+        load_map(source, legacy, MapType::Distortion, &material.name);
+    let (highlight, highlight_channel) =
+        load_map(source, legacy, MapType::Highlight, &material.name);
+    let (modulate, modulate_channel) = load_map(source, legacy, MapType::Modulate, &material.name);
     let opacity = if legacy.flags & material_flags::OPACITY_VALID != 0 {
         legacy.opacity.clamp(0.0, 1.0)
     } else {
         1.0
     };
-    Ok(Material {
+    Material {
         name: material.name.clone(),
         diffuse,
         normal,
@@ -600,6 +676,12 @@ fn load_material(
         xform,
         emissive,
         ao,
+        environment,
+        environment_mask,
+        emissive_xform,
+        distortion,
+        highlight,
+        modulate,
         channels: MapChannels {
             diffuse: diffuse_channel,
             normal: normal_channel,
@@ -608,40 +690,111 @@ fn load_material(
             xform: xform_channel,
             emissive: emissive_channel,
             ao: ao_channel,
+            environment_mask: environment_mask_channel,
+            emissive_xform: emissive_xform_channel,
+            distortion: distortion_channel,
+            highlight: highlight_channel,
+            modulate: modulate_channel,
         },
+        uv_velocity: legacy
+            .uvw_velocity
+            .map(|velocity| [velocity[0], velocity[1]]),
         specular_color: legacy.spec_color,
         specular_power: legacy.spec_power.max(0.0001),
         opacity,
         blend: BlendMode::from_legacy(legacy.blend_type),
-        two_sided: legacy.flags & material_flags::TWO_SIDED != 0,
-        color_gloss: legacy.flags & material_flags::COLOR_GLOSS != 0,
-    })
+        features: material_features(legacy.flags),
+        environment_reflectivity: legacy.env_reflectivity.max(0.0),
+        environment_sharpness: legacy.env_sharpness,
+        environment_fresnel: legacy.env_fresnel.clamp(0.0, 1.0),
+        environment_fresnel_power: legacy.env_fresnel_power.max(0.0001),
+    }
+}
+
+fn load_environment_map(
+    source: &mut AssetSource<StdFileProvider>,
+    material: &LegacyMaterialData,
+    material_name: &str,
+) -> Option<EnvironmentMap> {
+    let map = material.maps[map_index(MapType::Env)].first()?;
+    match EnvironmentMap::load(source, &map.name) {
+        Ok(environment) => Some(environment),
+        Err(error) => {
+            log::warn!(
+                "UGX material '{material_name}' could not load environment map '{}'; using the global/black fallback: {error}",
+                map.name,
+            );
+            None
+        }
+    }
+}
+
+fn material_features(flags: u32) -> MaterialFeatures {
+    let mut features = MaterialFeatures::default();
+    features.set(
+        MaterialFeature::TWO_SIDED,
+        flags & material_flags::TWO_SIDED != 0,
+    );
+    features.set(
+        MaterialFeature::CASTS_SHADOWS,
+        flags & material_flags::DISABLE_SHADOWS == 0,
+    );
+    features.set(
+        MaterialFeature::RECEIVES_SHADOWS,
+        flags & material_flags::DISABLE_SHADOW_RECEPTION == 0,
+    );
+    features.set(
+        MaterialFeature::COLOR_GLOSS,
+        flags & material_flags::COLOR_GLOSS != 0,
+    );
+    features.set(
+        MaterialFeature::GLOBAL_ENVIRONMENT,
+        flags & material_flags::GLOBAL_ENV != 0,
+    );
+    features.set(
+        MaterialFeature::TERRAIN_CONFORM,
+        flags & material_flags::TERRAIN_CONFORM != 0,
+    );
+    features
 }
 
 fn load_map(
     source: &mut AssetSource<StdFileProvider>,
     material: &LegacyMaterialData,
     map_type: MapType,
-) -> Result<(Option<Image>, u32), LoadError> {
+    material_name: &str,
+) -> (Option<Image>, u32) {
     let Some(map) = material.maps[map_index(map_type)].first() else {
-        return Ok((None, 0));
+        return (None, 0);
     };
+    let channel = u32::try_from(map.channel.max(0)).unwrap_or(0).min(2);
     let path = canonical_texture_path(&map.name);
-    let bytes = source
-        .resolve_with_fallback(&path, &[".ddx"])
-        .ok_or_else(|| LoadError::TextureNotFound(path.clone()))?;
-    let texture = DdxTexture::from_bytes(&bytes).map_err(|error| LoadError::TextureDecode {
-        path: path.clone(),
-        reason: error.to_string(),
-    })?;
+    let Some(bytes) = source.resolve_with_fallback(&path, &[".ddx"]) else {
+        log::warn!(
+            "UGX material '{material_name}' map {map_type:?} was not found at '{path}'; using the shader fallback"
+        );
+        return (None, channel);
+    };
+    let texture = match DdxTexture::from_bytes(&bytes) {
+        Ok(texture) => texture,
+        Err(error) => {
+            log::warn!(
+                "UGX material '{material_name}' map {map_type:?} at '{path}' could not be parsed; using the shader fallback: {error}"
+            );
+            return (None, channel);
+        }
+    };
     let hdr_scale = texture.info.hdr_scale;
     let data_format = texture.info.data_format;
-    let mut decoded = texture
-        .decode_to_rgba()
-        .map_err(|error| LoadError::TextureDecode {
-            path: path.clone(),
-            reason: error.to_string(),
-        })?;
+    let mut decoded = match texture.decode_to_rgba() {
+        Ok(decoded) => decoded,
+        Err(error) => {
+            log::warn!(
+                "UGX material '{material_name}' map {map_type:?} at '{path}' could not be decoded; using the shader fallback: {error}"
+            );
+            return (None, channel);
+        }
+    };
     if map_type == MapType::Normal && data_format == DataFormat::Dxt5N {
         let (pixels, _) = decoded.pixels.as_chunks_mut::<4>();
         for pixel in pixels {
@@ -650,8 +803,7 @@ fn load_map(
             pixel[3] = 255;
         }
     }
-    let channel = u32::try_from(map.channel.max(0)).unwrap_or(0).min(2);
-    Ok((
+    (
         Some(Image {
             width: decoded.width,
             height: decoded.height,
@@ -659,7 +811,7 @@ fn load_map(
             hdr_scale,
         }),
         channel,
-    ))
+    )
 }
 
 fn map_index(map_type: MapType) -> usize {

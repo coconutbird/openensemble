@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use glam::{Mat4, Vec3};
 use pipeline::database::hw1::Visual;
 use pipeline::database::hw1::visual::{Attachment, Model as VisualModel};
@@ -6,7 +8,9 @@ use pipeline::uax::Reader as UaxReader;
 
 use super::animation::AnimationPose;
 use super::model::ModelPose;
+use super::renderer::{SharedResources, WorldBindings};
 use super::{LoadError, Model, Renderer};
+use crate::environment::EnvironmentMap;
 use crate::terrain::LightingParams;
 
 const MAX_ATTACHMENT_DEPTH: usize = 32;
@@ -34,27 +38,12 @@ pub enum UnitLoadError {
         #[source]
         source: LoadError,
     },
-    /// A component animation was absent from the active asset stack.
-    #[error("UAX animation for visual model '{component}' was not found: {path}")]
-    AnimationNotFound {
-        /// Named component in the visual graph.
-        component: String,
-        /// Resolved game asset path.
-        path: String,
-    },
-    /// A component animation could not be decoded or sampled.
-    #[error("failed to load animation for visual model '{component}' from '{path}': {reason}")]
-    Animation {
-        /// Named component in the visual graph.
-        component: String,
-        /// Resolved game asset path.
-        path: String,
-        /// Parser or pose-sampling diagnostic.
-        reason: String,
-    },
     /// The model-reference graph contains a cycle or is unreasonably deep.
     #[error("visual attachment graph exceeds {MAX_ATTACHMENT_DEPTH} levels")]
     AttachmentDepthExceeded,
+    /// The decoded visual contains an attachment outside the shipped schema.
+    #[error("unsupported visual attachment type '{0}'")]
+    UnsupportedAttachmentType(String),
 }
 
 #[derive(Debug)]
@@ -65,6 +54,125 @@ struct UnitInstance {
     local_transform: Mat4,
 }
 
+/// Renderer destination for one authored visual attachment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UnitAttachmentKind {
+    /// A named model in the same visual definition.
+    ModelReference,
+    /// A direct UGX model asset.
+    Model,
+    /// A PFX particle effect.
+    Particle,
+    /// A TFX terrain-surface router.
+    TerrainEffect,
+    /// An LGT local-light definition.
+    Light,
+}
+
+impl UnitAttachmentKind {
+    fn from_authored(value: &str) -> Result<Self, UnitLoadError> {
+        if value.eq_ignore_ascii_case("ModelRef") {
+            Ok(Self::ModelReference)
+        } else if value.eq_ignore_ascii_case("ModelFile") {
+            Ok(Self::Model)
+        } else if value.eq_ignore_ascii_case("ParticleFile") {
+            Ok(Self::Particle)
+        } else if value.eq_ignore_ascii_case("TerrainEffect") {
+            Ok(Self::TerrainEffect)
+        } else if value.eq_ignore_ascii_case("LightFile") {
+            Ok(Self::Light)
+        } else {
+            Err(UnitLoadError::UnsupportedAttachmentType(value.to_owned()))
+        }
+    }
+}
+
+/// Runtime condition under which an authored attachment is active.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum UnitAttachmentTrigger {
+    /// Component attachment that remains active with the unit.
+    Persistent,
+    /// Attachment started and stopped with a named animation state.
+    Animation(String),
+}
+
+impl UnitAttachmentTrigger {
+    /// Returns whether this trigger is active for the supplied animation.
+    #[must_use]
+    pub fn matches_animation(&self, animation: Option<&str>) -> bool {
+        match self {
+            Self::Persistent => true,
+            Self::Animation(name) => {
+                animation.is_some_and(|active| name.eq_ignore_ascii_case(active))
+            }
+        }
+    }
+}
+
+/// Authored attachment metadata anchored to a resolved component bone.
+///
+/// Persistent model attachments are already represented in [`Unit`]'s model
+/// instances. Animation-triggered model attachments remain descriptors so the
+/// simulation can activate them at the correct event without making them
+/// permanently visible.
+#[derive(Clone, Debug)]
+pub struct UnitAttachment {
+    /// Component model that owns the attachment.
+    pub component: String,
+    /// Renderer destination encoded by the visual's `type` attribute.
+    pub kind: UnitAttachmentKind,
+    /// Authored attachment name/reference.
+    pub name: String,
+    /// Canonical direct asset path when one can be determined without loading
+    /// an animation-triggered child model. Model references with a malformed
+    /// target remain `None` and can be diagnosed by the caller.
+    pub asset_path: Option<String>,
+    /// Parent target bone, if authored.
+    pub to_bone: Option<String>,
+    /// Child source bone, if authored.
+    pub from_bone: Option<String>,
+    /// Whether child and parent animation clocks should be synchronized.
+    pub sync_animations: bool,
+    /// Persistent or animation-triggered lifetime.
+    pub trigger: UnitAttachmentTrigger,
+    anchor_transform: Mat4,
+    target_bone_resolved: bool,
+}
+
+impl UnitAttachment {
+    /// Returns the component-local attachment anchor in unit space.
+    #[must_use]
+    pub fn anchor_transform(&self) -> Mat4 {
+        self.anchor_transform
+    }
+
+    /// Applies a unit-to-world transform to this attachment anchor.
+    #[must_use]
+    pub fn world_transform(&self, unit_transform: Mat4) -> Mat4 {
+        unit_transform * self.anchor_transform
+    }
+
+    /// Returns whether an authored `tobone` resolved in the decoded UGX
+    /// skeleton. Attachments without a `tobone` are considered resolved.
+    #[must_use]
+    pub fn target_bone_resolved(&self) -> bool {
+        self.target_bone_resolved
+    }
+}
+
+#[derive(Default)]
+struct LoadedUnit {
+    instances: Vec<UnitInstance>,
+    attachments: Vec<UnitAttachment>,
+}
+
+impl LoadedUnit {
+    fn append(&mut self, mut other: Self) {
+        self.instances.append(&mut other.instances);
+        self.attachments.append(&mut other.attachments);
+    }
+}
+
 /// A decoded unit assembled from a visual's recursive UGX attachments.
 ///
 /// Halo Wars visual files describe wheels, turrets, passengers, and similar
@@ -73,6 +181,7 @@ struct UnitInstance {
 #[derive(Debug)]
 pub struct Unit {
     instances: Vec<UnitInstance>,
+    attachments: Vec<UnitAttachment>,
     bounds_min: Vec3,
     bounds_max: Vec3,
 }
@@ -93,14 +202,39 @@ impl Unit {
         source: &mut AssetSource<StdFileProvider>,
         visual: &Visual,
     ) -> Result<Self, UnitLoadError> {
+        Self::load_variant(source, visual, None)
+    }
+
+    /// Loads a visual while selecting one stable `Variation` logic entry.
+    ///
+    /// Scenario objects carry a zero-based visual variation index. The
+    /// original renderer keeps that index stable for the object's lifetime and
+    /// clamps it to the final entry of each component's variation list. When no
+    /// index is supplied, entry zero is used as a deterministic preview
+    /// fallback.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the visual graph is malformed or any referenced
+    /// model cannot be loaded.
+    pub fn load_variant(
+        source: &mut AssetSource<StdFileProvider>,
+        visual: &Visual,
+        variation_index: Option<usize>,
+    ) -> Result<Self, UnitLoadError> {
         let default_model = visual
             .default_model
             .as_deref()
             .ok_or(UnitLoadError::MissingDefaultModel)?;
-        let instances = load_named_model(source, visual, default_model, None, Mat4::IDENTITY, 0)?;
-        let (bounds_min, bounds_max) = unit_bounds(&instances);
+        let selection = VisualSelection {
+            visual,
+            variation_index,
+        };
+        let loaded = load_named_model(source, selection, default_model, None, Mat4::IDENTITY, 0)?;
+        let (bounds_min, bounds_max) = unit_bounds(&loaded.instances);
         Ok(Self {
-            instances,
+            instances: loaded.instances,
+            attachments: loaded.attachments,
             bounds_min,
             bounds_max,
         })
@@ -138,29 +272,64 @@ impl Unit {
     pub fn component_names(&self) -> impl Iterator<Item = &str> {
         self.instances.iter().map(|instance| instance.name.as_str())
     }
+
+    /// Returns every persistent and animation-triggered authored attachment.
+    #[must_use]
+    pub fn attachments(&self) -> &[UnitAttachment] {
+        &self.attachments
+    }
+
+    /// Returns attachments active for a named animation while always retaining
+    /// persistent component attachments.
+    pub fn attachments_for_animation<'unit>(
+        &'unit self,
+        animation: Option<&'unit str>,
+    ) -> impl Iterator<Item = &'unit UnitAttachment> {
+        self.attachments
+            .iter()
+            .filter(move |attachment| attachment.trigger.matches_animation(animation))
+    }
+
+    /// Counts attachment target bones that did not resolve in decoded UGX
+    /// geometry. The original runtime tolerates these and omits the bone-side
+    /// transform, so they remain visible as diagnostics rather than load errors.
+    #[must_use]
+    pub fn unresolved_attachment_bone_count(&self) -> usize {
+        self.attachments
+            .iter()
+            .filter(|attachment| !attachment.target_bone_resolved())
+            .count()
+    }
+}
+
+#[derive(Clone, Copy)]
+struct VisualSelection<'visual> {
+    visual: &'visual Visual,
+    variation_index: Option<usize>,
 }
 
 fn load_named_model(
     source: &mut AssetSource<StdFileProvider>,
-    visual: &Visual,
+    selection: VisualSelection<'_>,
     name: &str,
     parent: Option<(&Model, &ModelPose, &Attachment)>,
     parent_transform: Mat4,
     depth: usize,
-) -> Result<Vec<UnitInstance>, UnitLoadError> {
+) -> Result<LoadedUnit, UnitLoadError> {
     if depth >= MAX_ATTACHMENT_DEPTH {
         return Err(UnitLoadError::AttachmentDepthExceeded);
     }
-    let definition = visual
+    let definition = selection
+        .visual
         .models
         .iter()
         .find(|model| model.name.eq_ignore_ascii_case(name))
         .ok_or_else(|| UnitLoadError::ModelReferenceNotFound(name.to_owned()))?;
-    let path = model_asset_path(definition)
+    let path = model_asset_path(selection.visual, definition, selection.variation_index)
         .ok_or_else(|| UnitLoadError::ModelAssetMissing(definition.name.clone()))?;
     load_model_definition(
         source,
-        visual,
+        selection,
         definition,
         path,
         parent,
@@ -171,20 +340,20 @@ fn load_named_model(
 
 fn load_model_definition(
     source: &mut AssetSource<StdFileProvider>,
-    visual: &Visual,
+    selection: VisualSelection<'_>,
     definition: &VisualModel,
     path: &str,
     parent: Option<(&Model, &ModelPose, &Attachment)>,
     parent_transform: Mat4,
     depth: usize,
-) -> Result<Vec<UnitInstance>, UnitLoadError> {
+) -> Result<LoadedUnit, UnitLoadError> {
     let canonical_path = canonical_model_path(path);
     let model = Model::load(source, &canonical_path).map_err(|source| UnitLoadError::Model {
         component: definition.name.clone(),
         path: canonical_path,
         source,
     })?;
-    let animation = load_start_animation(source, definition)?;
+    let animation = load_start_animation(source, definition);
     let pose = model.pose(animation.as_ref());
     let local_transform = parent.map_or(
         parent_transform,
@@ -194,40 +363,69 @@ fn load_model_definition(
         },
     );
 
-    let mut children = Vec::new();
+    let mut children = LoadedUnit::default();
+    let mut attachments = Vec::new();
     if let Some(component) = &definition.component {
         for attachment in &component.attachments {
-            if attachment.attach_type.eq_ignore_ascii_case("ModelRef") {
-                children.extend(load_named_model(
+            let descriptor = make_unit_attachment(
+                selection,
+                definition,
+                &model,
+                &pose,
+                local_transform,
+                attachment,
+                UnitAttachmentTrigger::Persistent,
+            )?;
+            match descriptor.kind {
+                UnitAttachmentKind::ModelReference => children.append(load_named_model(
                     source,
-                    visual,
+                    selection,
                     &attachment.name,
                     Some((&model, &pose, attachment)),
                     local_transform,
                     depth + 1,
-                )?);
-            } else if attachment.attach_type.eq_ignore_ascii_case("ModelFile") {
-                children.extend(load_model_file(
+                )?),
+                UnitAttachmentKind::Model => children.append(load_model_file(
                     source,
                     &model,
                     &pose,
                     attachment,
                     local_transform,
                     depth + 1,
-                )?);
+                )?),
+                UnitAttachmentKind::Particle
+                | UnitAttachmentKind::TerrainEffect
+                | UnitAttachmentKind::Light => {}
             }
+            attachments.push(descriptor);
         }
     }
 
-    let mut instances = Vec::with_capacity(children.len() + 1);
-    instances.push(UnitInstance {
-        name: definition.name.clone(),
-        model,
-        pose,
-        local_transform,
-    });
-    instances.extend(children);
-    Ok(instances)
+    for animation in &definition.anims {
+        for attachment in &animation.attachments {
+            attachments.push(make_unit_attachment(
+                selection,
+                definition,
+                &model,
+                &pose,
+                local_transform,
+                attachment,
+                UnitAttachmentTrigger::Animation(animation.anim_type.clone()),
+            )?);
+        }
+    }
+
+    let mut loaded = LoadedUnit {
+        instances: vec![UnitInstance {
+            name: definition.name.clone(),
+            model,
+            pose,
+            local_transform,
+        }],
+        attachments,
+    };
+    loaded.append(children);
+    Ok(loaded)
 }
 
 fn load_model_file(
@@ -237,7 +435,7 @@ fn load_model_file(
     attachment: &Attachment,
     parent_transform: Mat4,
     depth: usize,
-) -> Result<Vec<UnitInstance>, UnitLoadError> {
+) -> Result<LoadedUnit, UnitLoadError> {
     if depth >= MAX_ATTACHMENT_DEPTH {
         return Err(UnitLoadError::AttachmentDepthExceeded);
     }
@@ -250,15 +448,60 @@ fn load_model_file(
     let pose = model.pose(None);
     let local_transform = parent_transform
         * visual_attachment_transform(parent_model, parent_pose, &model, &pose, attachment);
-    Ok(vec![UnitInstance {
-        name: attachment.name.clone(),
-        model,
-        pose,
-        local_transform,
-    }])
+    Ok(LoadedUnit {
+        instances: vec![UnitInstance {
+            name: attachment.name.clone(),
+            model,
+            pose,
+            local_transform,
+        }],
+        attachments: Vec::new(),
+    })
 }
 
-fn model_asset_path(model: &VisualModel) -> Option<&str> {
+fn make_unit_attachment(
+    selection: VisualSelection<'_>,
+    owner: &VisualModel,
+    parent_model: &Model,
+    parent_pose: &ModelPose,
+    parent_transform: Mat4,
+    attachment: &Attachment,
+    trigger: UnitAttachmentTrigger,
+) -> Result<UnitAttachment, UnitLoadError> {
+    let kind = UnitAttachmentKind::from_authored(&attachment.attach_type)?;
+    let to_bone_transform = attachment.to_bone.as_deref().and_then(|name| {
+        find_attachment_bone(parent_model, parent_pose, name, "tobone", &attachment.name)
+    });
+    let target_bone_resolved = attachment.to_bone.is_none() || to_bone_transform.is_some();
+    let asset_path = match kind {
+        UnitAttachmentKind::ModelReference => selection
+            .visual
+            .models
+            .iter()
+            .find(|model| model.name.eq_ignore_ascii_case(&attachment.name))
+            .and_then(|model| model_asset_path(selection.visual, model, selection.variation_index))
+            .map(canonical_model_path),
+        UnitAttachmentKind::Model => Some(canonical_model_path(&attachment.name)),
+        UnitAttachmentKind::Particle
+        | UnitAttachmentKind::TerrainEffect
+        | UnitAttachmentKind::Light => Some(canonical_art_path(&attachment.name)),
+    };
+
+    Ok(UnitAttachment {
+        component: owner.name.clone(),
+        kind,
+        name: attachment.name.clone(),
+        asset_path,
+        to_bone: attachment.to_bone.clone(),
+        from_bone: attachment.from_bone.clone(),
+        sync_animations: attachment.sync_anims.unwrap_or(false),
+        trigger,
+        anchor_transform: parent_transform * to_bone_transform.unwrap_or(Mat4::IDENTITY),
+        target_bone_resolved,
+    })
+}
+
+fn direct_model_asset_path(model: &VisualModel) -> Option<&str> {
     model.component.as_ref()?.assets.iter().find_map(|asset| {
         asset
             .asset_type
@@ -268,11 +511,48 @@ fn model_asset_path(model: &VisualModel) -> Option<&str> {
     })
 }
 
+fn model_asset_path<'visual>(
+    visual: &'visual Visual,
+    model: &'visual VisualModel,
+    variation_index: Option<usize>,
+) -> Option<&'visual str> {
+    let component = model.component.as_ref()?;
+    let selected = component
+        .logic
+        .as_ref()
+        .filter(|logic| logic.logic_type.eq_ignore_ascii_case("Variation"))
+        .and_then(|logic| {
+            let last = logic.entries.len().checked_sub(1)?;
+            logic.entries.get(variation_index.unwrap_or(0).min(last))
+        });
+    if let Some(entry) = selected {
+        if let Some(path) = entry.asset.as_ref().and_then(|asset| {
+            asset
+                .asset_type
+                .eq_ignore_ascii_case("Model")
+                .then_some(asset.file.as_deref())
+                .flatten()
+        }) {
+            return Some(path);
+        }
+        if let Some(reference) = entry.model_ref.as_deref() {
+            let referenced = visual
+                .models
+                .iter()
+                .find(|candidate| candidate.name.eq_ignore_ascii_case(reference))?;
+            if let Some(path) = direct_model_asset_path(referenced) {
+                return Some(path);
+            }
+        }
+    }
+    direct_model_asset_path(model)
+}
+
 fn load_start_animation(
     source: &mut AssetSource<StdFileProvider>,
     model: &VisualModel,
-) -> Result<Option<AnimationPose>, UnitLoadError> {
-    let Some(path) = model
+) -> Option<AnimationPose> {
+    let path = model
         .anims
         .iter()
         .find(|animation| animation.anim_type.eq_ignore_ascii_case("Idle"))
@@ -284,29 +564,28 @@ fn load_start_animation(
                     .then_some(asset.file.as_deref())
                     .flatten()
             })
-        })
-    else {
-        return Ok(None);
-    };
-    let canonical_path = canonical_animation_path(path);
-    let bytes = source
-        .resolve_with_fallback(&canonical_path, &[".uax"])
-        .ok_or_else(|| UnitLoadError::AnimationNotFound {
-            component: model.name.clone(),
-            path: canonical_path.clone(),
         })?;
-    let animation = UaxReader::read(&bytes).map_err(|error| UnitLoadError::Animation {
-        component: model.name.clone(),
-        path: canonical_path.clone(),
-        reason: error.to_string(),
-    })?;
-    AnimationPose::at_start(&animation)
-        .map(Some)
-        .map_err(|error| UnitLoadError::Animation {
-            component: model.name.clone(),
-            path: canonical_path,
-            reason: error.to_string(),
-        })
+    let canonical_path = canonical_animation_path(path);
+    let Some(bytes) = source.resolve_with_fallback(&canonical_path, &[".uax"]) else {
+        log::warn!(
+            "UGX visual model '{}' is missing optional idle animation '{}'; using bind pose",
+            model.name,
+            canonical_path,
+        );
+        return None;
+    };
+    let animation = match UaxReader::read(&bytes) {
+        Ok(animation) => animation,
+        Err(error) => {
+            log::warn!(
+                "UGX visual model '{}' could not decode optional idle animation '{}'; using bind pose: {error}",
+                model.name,
+                canonical_path,
+            );
+            return None;
+        }
+    };
+    Some(AnimationPose::at_start(&animation))
 }
 
 fn visual_attachment_transform(
@@ -421,6 +700,85 @@ impl UnitRenderer {
         unit: &Unit,
         unit_transform: Mat4,
     ) -> Self {
+        Self::new_with_world(
+            device,
+            queue,
+            surface_format,
+            unit,
+            unit_transform,
+            WorldBindings::default(),
+        )
+    }
+
+    /// Uploads every component with a scenario-global environment fallback.
+    #[must_use]
+    pub fn new_with_environment(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        unit: &Unit,
+        unit_transform: Mat4,
+        environment: Option<&EnvironmentMap>,
+    ) -> Self {
+        Self::new_with_world(
+            device,
+            queue,
+            surface_format,
+            unit,
+            unit_transform,
+            WorldBindings {
+                environment,
+                ..WorldBindings::default()
+            },
+        )
+    }
+
+    /// Uploads every component with environment and directional-shadow inputs.
+    #[must_use]
+    pub fn new_with_environment_and_shadow(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        unit: &Unit,
+        unit_transform: Mat4,
+        environment: Option<&EnvironmentMap>,
+        shadow_view: Option<&wgpu::TextureView>,
+    ) -> Self {
+        Self::new_with_world(
+            device,
+            queue,
+            surface_format,
+            unit,
+            unit_transform,
+            WorldBindings {
+                environment,
+                directional_shadow: shadow_view,
+                ..WorldBindings::default()
+            },
+        )
+    }
+
+    /// Uploads every component with all scenario-global rendering inputs.
+    #[must_use]
+    pub fn new_with_world(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        unit: &Unit,
+        unit_transform: Mat4,
+        world: WorldBindings<'_>,
+    ) -> Self {
+        let shared = Arc::new(SharedResources::new(device, queue, surface_format, world));
+        Self::new_with_shared(device, queue, unit, unit_transform, &shared)
+    }
+
+    pub(super) fn new_with_shared(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        unit: &Unit,
+        unit_transform: Mat4,
+        shared: &Arc<SharedResources>,
+    ) -> Self {
         let instances = unit
             .instances
             .iter()
@@ -429,12 +787,12 @@ impl UnitRenderer {
                 RenderedUnitInstance {
                     local_transform: instance.local_transform,
                     renderer: {
-                        let renderer = Renderer::new(
+                        let renderer = Renderer::new_with_shared(
                             device,
                             queue,
-                            surface_format,
                             &instance.model,
                             model_transform,
+                            Arc::clone(shared),
                         );
                         renderer.update_joints(queue, instance.pose.joint_matrices());
                         renderer
@@ -456,13 +814,26 @@ impl UnitRenderer {
         unit_transform: Mat4,
         lighting: &LightingParams,
     ) {
+        self.update_frame_at_time(queue, view_projection, unit_transform, lighting, 0.0);
+    }
+
+    /// Updates transforms, lighting, and animated legacy material UVs.
+    pub fn update_frame_at_time(
+        &mut self,
+        queue: &wgpu::Queue,
+        view_projection: Mat4,
+        unit_transform: Mat4,
+        lighting: &LightingParams,
+        time_seconds: f32,
+    ) {
         self.unit_transform = unit_transform;
         for instance in &mut self.instances {
-            instance.renderer.update_frame(
+            instance.renderer.update_frame_at_time(
                 queue,
                 view_projection,
                 unit_transform * instance.local_transform,
                 lighting,
+                time_seconds,
             );
         }
     }
@@ -471,6 +842,27 @@ impl UnitRenderer {
     pub fn render<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {
         for instance in &self.instances {
             instance.renderer.render(pass);
+        }
+    }
+
+    /// Draws every component through the camera-relative sky pipeline.
+    pub fn render_sky<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {
+        for instance in &self.instances {
+            instance.renderer.render_sky(pass);
+        }
+    }
+
+    /// Draws every component's authored screen-space distortion pass.
+    pub fn render_distortion<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {
+        for instance in &self.instances {
+            instance.renderer.render_distortion(pass);
+        }
+    }
+
+    /// Draws every shadow-enabled component into one directional cascade.
+    pub fn render_shadow<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>, cascade: usize) {
+        for instance in &self.instances {
+            instance.renderer.render_shadow(pass, cascade);
         }
     }
 
@@ -484,8 +876,47 @@ impl UnitRenderer {
 #[cfg(test)]
 mod tests {
     use glam::{Mat4, Vec3};
+    use pipeline::database::hw1::Visual;
+    use pipeline::database::hw1::visual::{
+        Asset, Component, Logic, LogicEntry, Model as VisualModel,
+    };
 
-    use super::{attachment_transform, canonical_animation_path, canonical_model_path};
+    use super::{
+        UnitAttachmentKind, UnitAttachmentTrigger, UnitLoadError, attachment_transform,
+        canonical_animation_path, canonical_model_path, model_asset_path,
+    };
+
+    #[test]
+    fn shipped_attachment_kinds_are_classified_strictly() {
+        for (authored, expected) in [
+            ("ModelRef", UnitAttachmentKind::ModelReference),
+            ("ModelFile", UnitAttachmentKind::Model),
+            ("ParticleFile", UnitAttachmentKind::Particle),
+            ("TerrainEffect", UnitAttachmentKind::TerrainEffect),
+            ("LightFile", UnitAttachmentKind::Light),
+        ] {
+            assert_eq!(
+                UnitAttachmentKind::from_authored(authored).unwrap(),
+                expected
+            );
+        }
+        assert!(matches!(
+            UnitAttachmentKind::from_authored("UnknownAttachment"),
+            Err(UnitLoadError::UnsupportedAttachmentType(value))
+                if value == "UnknownAttachment"
+        ));
+    }
+
+    #[test]
+    fn animation_attachments_preserve_authored_trigger_lifetime() {
+        assert!(UnitAttachmentTrigger::Persistent.matches_animation(None));
+        assert!(UnitAttachmentTrigger::Persistent.matches_animation(Some("Idle")));
+
+        let trigger = UnitAttachmentTrigger::Animation("Death".to_owned());
+        assert!(trigger.matches_animation(Some("death")));
+        assert!(!trigger.matches_animation(Some("Idle")));
+        assert!(!trigger.matches_animation(None));
+    }
 
     #[test]
     fn model_paths_are_resolved_from_art() {
@@ -511,5 +942,45 @@ mod tests {
         let aligned = transform.transform_point3(from_bone.transform_point3(Vec3::ZERO));
         let expected = to_bone.transform_point3(Vec3::ZERO);
         assert!(aligned.abs_diff_eq(expected, 1.0e-5));
+    }
+
+    #[test]
+    fn scenario_variation_index_selects_and_clamps_model_asset() {
+        let model = VisualModel {
+            name: "Default".to_owned(),
+            component: Some(Component {
+                logic: Some(Logic {
+                    logic_type: "Variation".to_owned(),
+                    entries: vec![
+                        LogicEntry {
+                            asset: Some(model_asset("crate_01")),
+                            ..LogicEntry::default()
+                        },
+                        LogicEntry {
+                            asset: Some(model_asset("crate_02")),
+                            ..LogicEntry::default()
+                        },
+                    ],
+                }),
+                ..Component::default()
+            }),
+            ..VisualModel::default()
+        };
+        let visual = Visual {
+            default_model: Some("Default".to_owned()),
+            models: vec![model],
+        };
+        let model = &visual.models[0];
+        assert_eq!(model_asset_path(&visual, model, Some(0)), Some("crate_01"));
+        assert_eq!(model_asset_path(&visual, model, Some(1)), Some("crate_02"));
+        assert_eq!(model_asset_path(&visual, model, Some(99)), Some("crate_02"));
+    }
+
+    fn model_asset(path: &str) -> Asset {
+        Asset {
+            asset_type: "Model".to_owned(),
+            file: Some(path.to_owned()),
+            ..Asset::default()
+        }
     }
 }

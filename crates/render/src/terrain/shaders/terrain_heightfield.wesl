@@ -2,37 +2,35 @@ import package::shared::lighting::compute_sh_fill_lighting;
 import package::shared::fog::compute_radial_fog_density;
 import package::shared::fog::compute_fog;
 import package::shared::fog::compute_planar_fog_density;
-import package::shared::normal::compute_tbn;
-import package::shared::normal::unpack_dxn_normal;
 import package::shared::shadows::compute_dir_shadow;
 import package::shared::blackmap::apply_blackmap;
-import package::shared::local_lights::evaluate_spot_specular;
+import package::shared::local_lights::evaluate_light_volume;
+import package::shared::local_lights::evaluate_spot_specular_shadowed;
+import package::shared::specular::specular_schlick;
 
-// Heightfield/decal patch implementation derived from the fresh PC decompile.
-//
-// Renders instanced quad patches ("decals") projected onto terrain.
-// Implemented features:
-//   - Bilinear quad interpolation with forward/right vectors
-//   - Terrain-conforming via heightfield texture sampling
-//   - Full lit pipeline: directional + SH ambient
-//   - Normal mapping with TBN reconstruction
-//   - Specular (Blinn-Phong)
-//   - Fog (radial + planar)
-//   - Opacity-based alpha blending
+// Terrain-conforming patch translation of terrainheightfield shaders #5-#10.
+// The PC pipeline fed one five-float4 control point into a quad hull/domain
+// shader. wgpu has no tessellation stages, so the renderer supplies the same
+// 16x16 domain as a static indexed carrier mesh. Instance locations 1-5 retain
+// the original POSITION/TEXCOORD0/TEXCOORD1/TEXCOORD2/COLOR packing exactly.
 
 struct CameraUniform {
     view_proj: mat4x4<f32>,
 };
-@group(0) @binding(0)
-var<uniform> camera: CameraUniform;
 
-struct HeightfieldParams {
-    world_to_heightfield: mat4x4<f32>,
-    y_scale_ofs: vec4<f32>,          // x=yScale, y=yOfs, z=yLowLimit, w=yHighLimit
-    sample_params: vec4<f32>,        // x=1/numTrisPerRow, y=numTrisPerRow, z=1/w, w=1/h
-    camera_pos: vec4<f32>,
-    dir_light_vec: vec4<f32>,        // xyz = toward light
-    dir_light_color: vec4<f32>,      // rgb = color, a = shadow_darkness
+struct PatchParams {
+    // x = texture dimension, y = inverse tile scale, z = Y range, w = Y midpoint
+    terrain_info: vec4<f32>,
+    // x = normalized Y bias, yz = world X/Z origin, w = conform switch
+    terrain_origin: vec4<f32>,
+    // x = reciprocal-specular power, y = terrain-alpha switch
+    material_params: vec4<f32>,
+};
+
+struct LightingParams {
+    dir_light_vec: vec4<f32>,
+    dir_light_color: vec4<f32>,
+    world_camera_pos: vec4<f32>,
     sh_fill_ar: vec4<f32>,
     sh_fill_ag: vec4<f32>,
     sh_fill_ab: vec4<f32>,
@@ -41,268 +39,331 @@ struct HeightfieldParams {
     sh_fill_bb: vec4<f32>,
     sh_fill_c: vec4<f32>,
     fog_color: vec4<f32>,
-    fog_params: vec4<f32>,           // x=density2, y=start2
+    fog_params: vec4<f32>,
     planar_fog_color: vec4<f32>,
-    planar_fog_params: vec4<f32>,    // x=enabled, y=start, z=density2
-    spec_power: vec4<f32>,           // x=spec_power, y=conform_to_terrain (0/1)
-    // Shadow params
+    planar_fog_params: vec4<f32>,
+    ao_params: vec4<f32>,
     shadow_vp_col0: vec4<f32>,
     shadow_vp_col1: vec4<f32>,
     shadow_vp_col2: vec4<f32>,
     shadow_vp_col3: vec4<f32>,
-    shadow_params: vec4<f32>,       // x = csm_scale, y = num_passes, z = enabled
-    // Blackmap params
-    blackmap_params0: vec4<f32>,    // rgb = bg_color, w = fog_scalar
-    blackmap_params1: vec4<f32>,    // x = unexplored_scalar, yz = bounds_lo_xz, w = enabled
-    blackmap_params2: vec4<f32>,    // x = pad, yz = bounds_hi_xz, w = bounds_falloff
-    // Local light params
-    local_light_params: vec4<f32>,  // x = num_lights, y = spec_power
+    shadow_params: vec4<f32>,
+    blackmap_params0: vec4<f32>,
+    blackmap_params1: vec4<f32>,
+    blackmap_params2: vec4<f32>,
+    local_light_params: vec4<f32>,
+    fadeout_params: vec4<f32>,
+    blackmap_uv_scales: vec4<f32>,
+    fill_spec_direction_power: vec4<f32>,
+    fill_spec_color_shadow: vec4<f32>,
+    light_volume_params: vec4<f32>,
+    light_volume_row0: vec4<f32>,
+    light_volume_row1: vec4<f32>,
+    light_volume_row2: vec4<f32>,
 };
-@group(1) @binding(0)
-var<uniform> params: HeightfieldParams;
 
-@group(1) @binding(1)
+@group(0) @binding(0)
+var<uniform> camera: CameraUniform;
+@group(0) @binding(1)
+var<uniform> patch_params: PatchParams;
+@group(0) @binding(2)
+var<uniform> lighting: LightingParams;
+@group(0) @binding(3)
 var t_heightfield: texture_2d<f32>;
-@group(1) @binding(2)
+@group(0) @binding(4)
 var s_heightfield: sampler;
-
-// Shadow, blackmap, and local light resources
-@group(1) @binding(3)
+@group(0) @binding(5)
+var t_terrain_alpha: texture_2d<f32>;
+@group(0) @binding(6)
 var t_shadow_map: texture_2d_array<f32>;
-@group(1) @binding(4)
+@group(0) @binding(7)
 var t_blackmap: texture_2d<f32>;
-@group(1) @binding(5)
+@group(0) @binding(8)
 var t_unexplored: texture_2d<f32>;
-@group(1) @binding(6)
+@group(0) @binding(9)
 var<storage, read> local_lights: array<vec4<f32>>;
+@group(0) @binding(10)
+var s_lighting: sampler;
+@group(0) @binding(11)
+var t_local_shadow_map: texture_2d_array<f32>;
+@group(0) @binding(12)
+var t_light_volume_color: texture_3d<f32>;
+@group(0) @binding(13)
+var t_light_volume_vector: texture_3d<f32>;
 
-@group(2) @binding(0)
+@group(1) @binding(0)
 var t_diffuse: texture_2d<f32>;
-@group(2) @binding(1)
-var s_diffuse: sampler;
-@group(2) @binding(2)
+@group(1) @binding(1)
 var t_normal: texture_2d<f32>;
-@group(2) @binding(3)
+@group(1) @binding(2)
 var t_opacity: texture_2d<f32>;
-@group(2) @binding(4)
+@group(1) @binding(3)
 var t_specular: texture_2d<f32>;
-
-struct PatchInstance {
-    @location(0) position: vec3<f32>,
-    @location(1) forward: vec3<f32>,
-    @location(2) right: vec3<f32>,
-    @location(3) y_offset_intensity: vec2<f32>,
-    @location(4) color: vec4<f32>,
-    @location(5) tex_uv: vec4<f32>,
-};
+@group(1) @binding(4)
+var s_material: sampler;
 
 struct VertexInput {
-    @builtin(vertex_index) vertex_index: u32,
+    @location(0) domain: vec2<f32>,
+    @location(1) position: vec4<f32>,
+    @location(2) axis_v_and_axis_u_x: vec4<f32>,
+    @location(3) axis_u_yz_offset_intensity: vec4<f32>,
+    @location(4) tex_uv: vec4<f32>,
+    @location(5) color: vec4<f32>,
 };
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-    @location(1) tex_uv: vec4<f32>,
-    @location(2) color: vec4<f32>,
-    @location(3) world_pos: vec3<f32>,
-    @location(4) normal: vec3<f32>,
-    @location(5) tangent: vec3<f32>,
-    @location(6) binormal: vec3<f32>,
-    @location(7) fog_densities: vec2<f32>,
+    @location(0) tangent: vec3<f32>,
+    @location(1) binormal: vec3<f32>,
+    @location(2) normal: vec3<f32>,
+    @location(3) domain: vec2<f32>,
+    @location(4) tex_uv: vec4<f32>,
+    @location(5) world_pos: vec3<f32>,
+    @location(6) fog_densities: vec2<f32>,
+    @location(7) color: vec4<f32>,
 };
 
-// --- Local helpers ---
-
-fn heightfield_depth_to_y(s: vec2<f32>) -> vec2<f32> {
-    return s * params.y_scale_ofs.x + params.y_scale_ofs.y;
+fn heightfield_uv(world_pos: vec3<f32>) -> vec2<f32> {
+    let grid = vec2<f32>(
+        (world_pos.z - patch_params.terrain_origin.z) * patch_params.terrain_info.y,
+        (world_pos.x - patch_params.terrain_origin.y) * patch_params.terrain_info.y,
+    );
+    return grid / patch_params.terrain_info.x;
 }
 
-// --- Vertex shader for instanced patch rendering ---
+fn terrain_height(world_pos: vec3<f32>) -> f32 {
+    let normalized_y = textureSampleLevel(
+        t_heightfield,
+        s_heightfield,
+        heightfield_uv(world_pos),
+        0.0,
+    ).g;
+    return (normalized_y - patch_params.terrain_origin.x)
+        * patch_params.terrain_info.z
+        - patch_params.terrain_info.w;
+}
 
 @vertex
-fn vs_main(in: VertexInput, instance: PatchInstance) -> VertexOutput {
+fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
 
-    // Generate quad vertices from vertex_index (0-5 for two triangles)
-    var local_uv: vec2<f32>;
-    let vi = in.vertex_index % 6u;
-    if vi == 0u { local_uv = vec2<f32>(0.0, 0.0); }
-    else if vi == 1u { local_uv = vec2<f32>(1.0, 0.0); }
-    else if vi == 2u { local_uv = vec2<f32>(0.0, 1.0); }
-    else if vi == 3u { local_uv = vec2<f32>(0.0, 1.0); }
-    else if vi == 4u { local_uv = vec2<f32>(1.0, 0.0); }
-    else { local_uv = vec2<f32>(1.0, 1.0); }
+    // Decompiled domain shader #9:
+    //   axis U = (TEXCOORD0.w, TEXCOORD1.x, TEXCOORD1.y)
+    //   axis V = TEXCOORD0.xyz
+    // Both axes use (1 - 2 * domain), including the original orientation.
+    let axis_u = vec3<f32>(
+        in.axis_v_and_axis_u_x.w,
+        in.axis_u_yz_offset_intensity.x,
+        in.axis_u_yz_offset_intensity.y,
+    );
+    let axis_v = in.axis_v_and_axis_u_x.xyz;
+    var world_pos = in.position.xyz
+        + axis_u * (1.0 - 2.0 * in.domain.x)
+        + axis_v * (1.0 - 2.0 * in.domain.y);
 
-    // Interpolate position on quad using forward/right vectors
-    let p = instance.position
-        + instance.right * (local_uv.x * 2.0 - 1.0)
-        + instance.forward * (local_uv.y * 2.0 - 1.0);
-
-    var world_pos = vec4<f32>(p, 1.0);
-
-    // Terrain conforming via heightfield sampling
-    if params.spec_power.y > 0.5 {
-        let hf_pos = params.world_to_heightfield * world_pos;
-        let hf_uv = hf_pos.xy * params.sample_params.zw;
-        let hf_sample = textureSampleLevel(t_heightfield, s_heightfield, hf_uv, 0.0);
-        let lo_hi_y = heightfield_depth_to_y(hf_sample.xy);
-
-        let center_hf_pos = params.world_to_heightfield * vec4<f32>(instance.position, 1.0);
-        let center_uv = center_hf_pos.xy * params.sample_params.zw;
-        let center_sample = textureSampleLevel(t_heightfield, s_heightfield, center_uv, 0.0);
-        let center_lo_hi_y = heightfield_depth_to_y(center_sample.xy);
-
-        var center_y = center_lo_hi_y.x;
-        if abs(instance.position.y - center_lo_hi_y.y) < abs(instance.position.y - center_y) {
-            center_y = center_lo_hi_y.y;
+    var terrain_alpha = 1.0;
+    if patch_params.terrain_origin.w > 0.5 {
+        world_pos.y = terrain_height(world_pos);
+        if patch_params.material_params.y > 0.5 {
+            terrain_alpha = textureSampleLevel(
+                t_terrain_alpha,
+                s_heightfield,
+                heightfield_uv(world_pos),
+                0.0,
+            ).r;
         }
+    }
+    world_pos.y += in.axis_u_yz_offset_intensity.z;
 
-        var sample_y = lo_hi_y.x;
-        if abs(center_y - lo_hi_y.y) < abs(center_y - lo_hi_y.x) {
-            sample_y = lo_hi_y.y;
-        }
-
-        world_pos.y = sample_y;
+    let radial_fog = compute_radial_fog_density(
+        world_pos,
+        lighting.world_camera_pos.xyz,
+        lighting.fog_params.x,
+        lighting.fog_params.y,
+    );
+    var planar_fog = 1.0;
+    if lighting.planar_fog_params.x > 0.5 {
+        planar_fog = compute_planar_fog_density(
+            world_pos,
+            lighting.world_camera_pos.xyz,
+            lighting.planar_fog_params.y,
+            lighting.planar_fog_params.z,
+        );
     }
 
-    world_pos.y += instance.y_offset_intensity.x;
-
-    // TBN - heightfield patches use up-facing normal (0,1,0)
-    let normal = vec3<f32>(0.0, 1.0, 0.0);
-    let tbn = compute_tbn(normal);
-
-    // Fog
-    let z_fog = compute_radial_fog_density(world_pos.xyz, params.camera_pos.xyz, params.fog_params.x, params.fog_params.y);
-    var p_fog = 1.0;
-    if params.planar_fog_params.x > 0.5 {
-        p_fog = compute_planar_fog_density(world_pos.xyz, params.camera_pos.xyz, params.planar_fog_params.y, params.planar_fog_params.z);
-    }
-
-    // sRGB to linear for instance color
-    let linear_color = pow(instance.color.rgb, vec3<f32>(2.2));
-
-    out.clip_position = camera.view_proj * world_pos;
-    out.uv = local_uv;
-    out.tex_uv = instance.tex_uv;
-    out.color = vec4<f32>(linear_color * instance.y_offset_intensity.y, instance.color.a);
-    out.world_pos = world_pos.xyz;
-    out.normal = normal;
-    out.tangent = tbn[0];
-    out.binormal = tbn[1];
-    out.fog_densities = vec2<f32>(z_fog, p_fog);
-
+    let saturated_color = clamp(in.color.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    out.clip_position = camera.view_proj * vec4<f32>(world_pos, 1.0);
+    out.tangent = vec3<f32>(1.0, 0.0, 0.0);
+    out.binormal = vec3<f32>(0.0, 0.0, -1.0);
+    out.normal = vec3<f32>(0.0, 1.0, 0.0);
+    out.domain = in.domain;
+    out.tex_uv = in.tex_uv;
+    out.world_pos = world_pos;
+    out.fog_densities = vec2<f32>(radial_fog, planar_fog);
+    out.color = vec4<f32>(
+        saturated_color * saturated_color * in.axis_u_yz_offset_intensity.w,
+        terrain_alpha * in.color.a,
+    );
     return out;
 }
 
-// --- Fragment shader with full lighting ---
-
-const SPEC_TO_DIFFUSE_RATIO: f32 = 3.14159265;
+fn material_uv(in: VertexOutput) -> vec2<f32> {
+    return in.domain * in.tex_uv.zw + in.tex_uv.xy;
+}
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Compute texture UV from instance UV rect + interpolated local UV
-    let uv = vec2<f32>(
-        in.tex_uv.x + in.uv.x * in.tex_uv.z,
-        in.tex_uv.y + in.uv.y * in.tex_uv.w
+fn fs_unlit(in: VertexOutput) -> @location(0) vec4<f32> {
+    let diffuse = textureSample(t_diffuse, s_material, material_uv(in));
+    if diffuse.a < 0.1 {
+        discard;
+    }
+    let saturated = clamp(diffuse.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    return vec4<f32>(saturated * saturated * in.color.rgb, diffuse.a)
+        * in.color.a;
+}
+
+@fragment
+fn fs_lit(in: VertexOutput) -> @location(0) vec4<f32> {
+    let uv = material_uv(in);
+    let diffuse_sample = clamp(
+        textureSample(t_diffuse, s_material, uv).rgb,
+        vec3<f32>(0.0),
+        vec3<f32>(1.0),
     );
-
-    // Sample textures
-    let albedo = textureSample(t_diffuse, s_diffuse, uv).rgb;
-    let spec_map = textureSample(t_specular, s_diffuse, uv).rgb;
-    let opacity = textureSample(t_opacity, s_diffuse, uv).r;
-    let tex_normal = unpack_dxn_normal(textureSample(t_normal, s_diffuse, uv));
-
-    // Transform tangent-space normal to world space
+    let albedo = diffuse_sample * diffuse_sample;
+    let specular_map = textureSample(t_specular, s_material, uv).rgb;
+    let opacity = textureSample(t_opacity, s_material, uv).r;
+    let normal_xy = textureSample(t_normal, s_material, uv).xy * 2.0
+        - vec2<f32>(1.0);
+    let tangent_normal = vec3<f32>(
+        normal_xy,
+        sqrt(max(1.0 - dot(normal_xy, normal_xy), 0.0)),
+    );
     let world_normal = normalize(
-        tex_normal.x * in.tangent +
-        tex_normal.y * in.binormal +
-        tex_normal.z * in.normal
+        tangent_normal.x * in.tangent
+        + tangent_normal.y * in.binormal
+        + tangent_normal.z * in.normal,
     );
 
-    // Directional lighting
-    let n_dot_l = max(dot(world_normal, params.dir_light_vec.xyz), 0.0);
-    var diffuse_sum = params.dir_light_color.rgb * n_dot_l;
+    let light_direction = normalize(lighting.dir_light_vec.xyz);
+    let n_dot_l = max(dot(world_normal, light_direction), 0.0);
+    var directional_diffuse = lighting.dir_light_color.rgb * n_dot_l
+        * lighting.dir_light_vec.w;
 
-    // Specular (Blinn-Phong)
-    let view_dir = normalize(params.camera_pos.xyz - in.world_pos);
-    let half_vec = normalize(params.dir_light_vec.xyz + view_dir);
-    let n_dot_h = max(dot(world_normal, half_vec), 0.0);
-    var spec_sum = params.dir_light_color.rgb * pow(n_dot_h, params.spec_power.x);
-
-    // === Shadows (VSM) ===
-    var shadow_factor = 1.0;
-    if params.shadow_params.z > 0.5 {
+    var shadow = 1.0;
+    if lighting.shadow_params.z > 0.5 && n_dot_l > 0.0 {
         let shadow_vp = mat4x4<f32>(
-            params.shadow_vp_col0,
-            params.shadow_vp_col1,
-            params.shadow_vp_col2,
-            params.shadow_vp_col3,
+            lighting.shadow_vp_col0,
+            lighting.shadow_vp_col1,
+            lighting.shadow_vp_col2,
+            lighting.shadow_vp_col3,
         );
-        let shadow_pos = shadow_vp * vec4<f32>(in.world_pos, 1.0);
-        let shadow_ndc = shadow_pos.xyz / shadow_pos.w;
-        shadow_factor = compute_dir_shadow(
-            shadow_ndc,
-            params.dir_light_color.a,
-            params.shadow_params.x,
-            params.shadow_params.y,
+        let projected = shadow_vp * vec4<f32>(in.world_pos, 1.0);
+        shadow = compute_dir_shadow(
+            projected.xyz / projected.w,
+            lighting.dir_light_color.a,
+            lighting.shadow_params.x,
+            lighting.shadow_params.y,
             t_shadow_map,
-            s_diffuse,
+            s_lighting,
         );
     }
-    diffuse_sum *= shadow_factor;
-    spec_sum *= shadow_factor;
+    directional_diffuse *= shadow;
 
-    // SH ambient
-    let ambient_sum = compute_sh_fill_lighting(world_normal, params.sh_fill_ar, params.sh_fill_ag, params.sh_fill_ab, params.sh_fill_br, params.sh_fill_bg, params.sh_fill_bb, params.sh_fill_c);
+    let view_direction = normalize(lighting.world_camera_pos.xyz - in.world_pos);
+    let world_reflect = reflect(-view_direction, world_normal);
+    let specular_power = max(patch_params.material_params.x, 0.000001);
+    let directional_reflection = max(dot(world_reflect, light_direction), 0.0);
+    var specular_sum = directional_diffuse
+        * specular_schlick(directional_reflection, specular_power);
+    var diffuse_sum = directional_diffuse;
 
-    // === Local lights ===
-    var local_diffuse = vec3<f32>(0.0);
-    var local_spec = vec3<f32>(0.0);
-    let num_lights = u32(params.local_light_params.x);
-    let local_spec_power = params.local_light_params.y;
-    let world_reflect = reflect(-view_dir, world_normal);
-    for (var i = 0u; i < num_lights; i++) {
-        let base = i * 8u;
-        let light_pos = local_lights[base].xyz;
-        let omni_mul = local_lights[base].w;
-        let light_color = local_lights[base + 1u].xyz;
-        let omni_add = local_lights[base + 1u].w;
-        let decay_dist = local_lights[base + 2u].x;
-        let spec_int = local_lights[base + 3u].w;
-        let result = evaluate_spot_specular(
-            light_pos, light_color, omni_mul, omni_add, decay_dist,
-            local_lights[base + 2u].y, local_lights[base + 2u].z,
-            local_lights[base + 3u].xyz, spec_int,
-            in.world_pos, world_normal, world_reflect, local_spec_power,
+    let light_count = select(
+        0u,
+        min(u32(lighting.local_light_params.x), 20u),
+        lighting.local_light_params.w > 0.5,
+    );
+    for (var index = 0u; index < light_count; index++) {
+        let base = index * 8u;
+        let result = evaluate_spot_specular_shadowed(
+            local_lights[base],
+            local_lights[base + 1u],
+            local_lights[base + 2u],
+            local_lights[base + 3u],
+            local_lights[base + 4u],
+            local_lights[base + 5u],
+            local_lights[base + 6u],
+            local_lights[base + 7u],
+            in.world_pos,
+            world_normal,
+            world_reflect,
+            specular_power,
+            lighting.local_light_params.z > 0.5,
+            t_local_shadow_map,
+            s_lighting,
         );
-        local_diffuse += result.diffuse;
-        local_spec += result.specular;
+        diffuse_sum += result.diffuse;
+        specular_sum += result.specular;
     }
 
-    // Combine lighting
-    diffuse_sum += ambient_sum + local_diffuse;
-    var lit_color = diffuse_sum * albedo;
-    lit_color += (spec_sum * spec_map + local_spec) * SPEC_TO_DIFFUSE_RATIO;
+    if lighting.light_volume_params.x > 0.5 {
+        let volume = evaluate_light_volume(
+            in.world_pos,
+            world_normal,
+            world_reflect,
+            specular_power,
+            lighting.light_volume_row0,
+            lighting.light_volume_row1,
+            lighting.light_volume_row2,
+            t_light_volume_color,
+            t_light_volume_vector,
+            s_lighting,
+        );
+        diffuse_sum += volume.diffuse;
+        specular_sum += volume.specular;
+    }
 
-    // === Blackmap (fog-of-war) ===
-    if params.blackmap_params1.w > 0.5 {
-        let bm_uv = in.uv;
-        let vis_factor = textureSample(t_blackmap, s_diffuse, bm_uv).a;
-        let unexplored_sample = textureSample(t_unexplored, s_diffuse, bm_uv);
+    let ambient = compute_sh_fill_lighting(
+        world_normal,
+        lighting.sh_fill_ar,
+        lighting.sh_fill_ag,
+        lighting.sh_fill_ab,
+        lighting.sh_fill_br,
+        lighting.sh_fill_bg,
+        lighting.sh_fill_bb,
+        lighting.sh_fill_c,
+    );
+    var lit_color = (ambient + diffuse_sum) * albedo
+        + specular_map * specular_sum * 3.14;
+
+    if lighting.blackmap_params1.w > 0.5 {
+        let visibility_uv = vec2<f32>(
+            in.world_pos.x * lighting.blackmap_uv_scales.x,
+            -in.world_pos.z * lighting.blackmap_uv_scales.x + 1.0,
+        );
+        let unexplored_uv = in.world_pos.xz * lighting.blackmap_uv_scales.y;
+        let visibility = textureSample(t_blackmap, s_lighting, visibility_uv).a;
+        let unexplored = textureSample(t_unexplored, s_lighting, unexplored_uv);
         lit_color = apply_blackmap(
-            lit_color, in.world_pos, vis_factor, unexplored_sample,
-            params.blackmap_params0.xyz,
-            params.blackmap_params0.w,
-            params.blackmap_params1.x,
-            params.blackmap_params1.yz,
-            params.blackmap_params2.yz,
-            params.blackmap_params2.w,
+            lit_color,
+            in.world_pos,
+            visibility,
+            unexplored,
+            lighting.blackmap_params0.xyz,
+            lighting.blackmap_params0.w,
+            lighting.blackmap_params1.x,
+            lighting.blackmap_params1.yz,
+            lighting.blackmap_params2.yz,
+            lighting.blackmap_params2.w,
         );
     }
 
-    // Apply fog
-    lit_color = compute_fog(lit_color, in.fog_densities.x, in.fog_densities.y, params.fog_color.xyz, params.planar_fog_color.xyz);
-
-    return vec4<f32>(lit_color, in.color.a * opacity);
+    let fogged = compute_fog(
+        lit_color,
+        in.fog_densities.x,
+        in.fog_densities.y,
+        lighting.fog_color.xyz,
+        lighting.planar_fog_color.xyz,
+    );
+    return vec4<f32>(fogged, opacity * in.color.a);
 }

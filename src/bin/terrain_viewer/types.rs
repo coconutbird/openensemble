@@ -45,10 +45,14 @@ pub struct GpuResources {
     pub camera_bind_group_layout: wgpu::BindGroupLayout,
     pub camera_bind_group: wgpu::BindGroup,
     pub texture_bind_group: wgpu::BindGroup,
+    /// Accepted-axis packed position texture shared with terrain-conform UGX.
+    pub position_texture_view: wgpu::TextureView,
     pub depth_texture: wgpu::Texture,
     pub depth_view: wgpu::TextureView,
     pub params_buffer: wgpu::Buffer,
     pub lighting_buffer: Option<wgpu::Buffer>,
+    /// Shared oracle-packed local-light storage used by every world renderer.
+    pub local_lights: render::lighting::LocalLightBuffer,
     pub terrain_size: [f32; 2],
     pub tile_scale: f32,
     /// Number of patch instances to draw (64x64 = 4096).

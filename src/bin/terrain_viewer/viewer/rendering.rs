@@ -3,6 +3,7 @@
 //! Implements the `Application3D` trait: GPU initialization, resize, and render pass.
 
 use num_traits::ToPrimitive;
+use render::postprocess::{ToneMapResources, ToneMapSettings};
 use render::terrain::{LightingParams, RawXtdData, TerrainParams};
 use render::{Application3D, RenderContext, wgpu};
 
@@ -21,7 +22,14 @@ impl TerrainViewer {
             return;
         }
 
-        let scene = self.scene.as_mut().expect("scene was checked above");
+        if self.tone_map_resources.is_none() {
+            self.tone_map_resources = Some(ToneMapResources::new(
+                ctx.device,
+                ctx.format,
+                [ctx.size.0, ctx.size.1],
+            ));
+        }
+        let scene = self.scene.as_ref().expect("scene was checked above");
         let Some(raw_data) = &scene.raw_xtd_data else {
             log::error!("Packed XTD terrain data is required by the GPU terrain renderer");
             return;
@@ -39,7 +47,84 @@ impl TerrainViewer {
             ao_data: raw_data.ao_data.clone(),
             alpha_data: raw_data.alpha_data.clone(),
         };
-        if let (Some(capture), Some(albedo)) = (&self.capture, &scene.albedo) {
+        self.write_decoded_capture_references(&raw_data);
+        let albedo = self
+            .scene
+            .as_mut()
+            .expect("scene was checked above")
+            .albedo
+            .take();
+        self.create_gpu_tessellation_resources(
+            ctx.device,
+            ctx.queue,
+            &raw_data,
+            albedo.as_ref(),
+            [ctx.size.0, ctx.size.1],
+        );
+        let directional_shadow_view = self
+            .shadow_resources
+            .as_ref()
+            .map(|shadow| shadow.shadow_view.clone());
+        let terrain_heightfield = self
+            .gpu
+            .as_ref()
+            .map(|gpu| render::ugx::TerrainHeightfield {
+                view: &gpu.position_texture_view,
+                dimension: raw_data.num_verts_per_axis,
+                tile_scale: raw_data.tile_scale,
+                world_min_xz: [raw_data.world_min[0], raw_data.world_min[2]],
+                y_range: raw_data.range[1],
+                y_mid: raw_data.mid[1],
+                normalized_y_bias: render::terrain::NORMALIZED_TERRAIN_Y_OFFSET,
+            });
+        let world = render::ugx::WorldBindings {
+            environment: self.environment.as_ref(),
+            directional_shadow: directional_shadow_view.as_ref(),
+            terrain_heightfield,
+            local_lights: self.gpu.as_ref().map(|gpu| &gpu.local_lights),
+            ..Default::default()
+        };
+        if let Some(sky) = &self.sky_unit {
+            self.sky_renderer = Some(render::ugx::UnitRenderer::new_with_environment(
+                ctx.device,
+                ctx.queue,
+                self.scene_format,
+                sky,
+                glam::Mat4::IDENTITY,
+                self.environment.as_ref(),
+            ));
+        }
+        if let Some(unit) = &self.ugx_unit {
+            self.ugx_renderer = Some(render::ugx::UnitRenderer::new_with_world(
+                ctx.device,
+                ctx.queue,
+                self.scene_format,
+                unit,
+                self.ugx_transform,
+                world,
+            ));
+        }
+        if let Some(scene) = &self.ugx_scene {
+            let renderer = render::ugx::UnitSceneRenderer::new_with_world(
+                ctx.device,
+                ctx.queue,
+                self.scene_format,
+                scene,
+                world,
+            );
+            log::info!(
+                "Uploaded {} scenario UGX placements",
+                renderer.placement_count()
+            );
+            self.ugx_scene_renderer = Some(renderer);
+        }
+    }
+
+    fn write_decoded_capture_references(&self, raw_data: &RawXtdData) {
+        let (Some(capture), Some(scene)) = (&self.capture, &self.scene) else {
+            return;
+        };
+        if let Some(albedo) = &scene.albedo {
             match write_xtt_reference(capture.config(), albedo) {
                 Ok(path) => log::info!("Wrote decoded XTT atlas oracle to {}", path.display()),
                 Err(error) => log::error!("Failed to write decoded XTT atlas oracle: {error:#}"),
@@ -57,43 +142,22 @@ impl TerrainViewer {
                 Err(error) => log::error!("Failed to write foliage placement map: {error:#}"),
             }
         }
-        if let Some(capture) = &self.capture {
-            match write_packed_height_reference(capture.config(), &raw_data) {
-                Ok(path) => log::info!("Wrote unpacked XTD height map to {}", path.display()),
-                Err(error) => log::error!("Failed to write unpacked XTD height map: {error:#}"),
-            }
-            match write_tessellation_reference(capture.config(), &raw_data) {
-                Ok(Some(path)) => {
-                    log::info!("Wrote XTD tessellation map to {}", path.display());
-                }
-                Ok(None) => log::warn!("No XTD tessellation metadata available for capture"),
-                Err(error) => log::error!("Failed to write XTD tessellation map: {error:#}"),
-            }
-            match write_foliage_references(capture.config(), &scene.foliage_sets) {
-                Ok(paths) => {
-                    for path in paths {
-                        log::info!("Wrote decoded foliage reference to {}", path.display());
-                    }
-                }
-                Err(error) => log::error!("Failed to write foliage references: {error:#}"),
-            }
+        match write_packed_height_reference(capture.config(), raw_data) {
+            Ok(path) => log::info!("Wrote unpacked XTD height map to {}", path.display()),
+            Err(error) => log::error!("Failed to write unpacked XTD height map: {error:#}"),
         }
-        let albedo = scene.albedo.take();
-        self.create_gpu_tessellation_resources(
-            ctx.device,
-            ctx.queue,
-            &raw_data,
-            albedo.as_ref(),
-            [ctx.size.0, ctx.size.1],
-        );
-        if let Some(unit) = &self.ugx_unit {
-            self.ugx_renderer = Some(render::ugx::UnitRenderer::new(
-                ctx.device,
-                ctx.queue,
-                ctx.format,
-                unit,
-                self.ugx_transform,
-            ));
+        match write_tessellation_reference(capture.config(), raw_data) {
+            Ok(Some(path)) => log::info!("Wrote XTD tessellation map to {}", path.display()),
+            Ok(None) => log::warn!("No XTD tessellation metadata available for capture"),
+            Err(error) => log::error!("Failed to write XTD tessellation map: {error:#}"),
+        }
+        match write_foliage_references(capture.config(), &scene.foliage_sets) {
+            Ok(paths) => {
+                for path in paths {
+                    log::info!("Wrote decoded foliage reference to {}", path.display());
+                }
+            }
+            Err(error) => log::error!("Failed to write foliage references: {error:#}"),
         }
     }
 
@@ -129,11 +193,31 @@ impl TerrainViewer {
         let Some(gpu) = &self.gpu else {
             return LightingParams::default();
         };
-        let light_direction = glam::Vec3::new(0.4, 0.8, 0.3).normalize();
+        let camera = [camera_position.x, camera_position.y, camera_position.z];
+        let mut params = self.lightset.as_ref().map_or_else(
+            || LightingParams {
+                world_camera_pos: [camera[0], camera[1], camera[2], 0.0],
+                ..Default::default()
+            },
+            |lightset| LightingParams::from_lightset(lightset, camera),
+        );
+        let light_direction = glam::Vec3::from_array([
+            params.dir_light_vec[0],
+            params.dir_light_vec[1],
+            params.dir_light_vec[2],
+        ])
+        .normalize_or_zero();
+        let shadows_requested = self
+            .lightset
+            .as_ref()
+            .is_none_or(|lightset| lightset.sun_shadows);
         let mut shadow_columns = [[1.0_f32, 0.0, 0.0, 0.0]; 4];
         let mut shadow_enabled = 0.0;
 
-        if let Some(shadow) = &mut self.shadow_resources {
+        if shadows_requested
+            && light_direction != glam::Vec3::ZERO
+            && let Some(shadow) = &mut self.shadow_resources
+        {
             let terrain_center =
                 glam::Vec3::new(gpu.terrain_size[0] * 0.5, 50.0, gpu.terrain_size[1] * 0.5);
             let terrain_size = glam::Vec3::new(gpu.terrain_size[0], 100.0, gpu.terrain_size[1]);
@@ -144,20 +228,18 @@ impl TerrainViewer {
             shadow_enabled = 1.0;
         }
 
-        let mut params = LightingParams {
-            world_camera_pos: [camera_position.x, camera_position.y, camera_position.z, 0.0],
-            ..Default::default()
-        };
         params.shadow_vp_col0 = shadow_columns[0];
         params.shadow_vp_col1 = shadow_columns[1];
         params.shadow_vp_col2 = shadow_columns[2];
         params.shadow_vp_col3 = shadow_columns[3];
         params.shadow_params[2] = shadow_enabled;
+        self.local_lights.apply_to_lighting(&mut params);
+        gpu.local_lights.update(queue, &self.local_lights);
         if let Some(lighting_buffer) = &gpu.lighting_buffer {
             queue.write_buffer(lighting_buffer, 0, bytemuck::bytes_of(&params));
         }
         if let Some(foliage) = &mut self.foliage_resources {
-            foliage.update_frame(queue, &params, 0.0);
+            foliage.update_frame(queue, &params, self.render_time_seconds);
         }
         if let Some(roads) = &mut self.road_resources {
             roads.update_frame(queue, &params, self.bump_power);
@@ -171,8 +253,36 @@ impl TerrainViewer {
         view_projection: glam::Mat4,
         lighting: &LightingParams,
     ) {
+        if let Some(renderer) = &mut self.sky_renderer {
+            let camera = glam::Vec3::from_array([
+                lighting.world_camera_pos[0],
+                lighting.world_camera_pos[1],
+                lighting.world_camera_pos[2],
+            ]);
+            renderer.update_frame_at_time(
+                queue,
+                view_projection,
+                glam::Mat4::from_translation(camera),
+                lighting,
+                self.render_time_seconds,
+            );
+        }
         if let Some(renderer) = &mut self.ugx_renderer {
-            renderer.update_frame(queue, view_projection, self.ugx_transform, lighting);
+            renderer.update_frame_at_time(
+                queue,
+                view_projection,
+                self.ugx_transform,
+                lighting,
+                self.render_time_seconds,
+            );
+        }
+        if let Some(renderer) = &mut self.ugx_scene_renderer {
+            renderer.update_frame_at_time(
+                queue,
+                view_projection,
+                lighting,
+                self.render_time_seconds,
+            );
         }
     }
 
@@ -211,6 +321,13 @@ impl TerrainViewer {
     }
 
     fn render_shadow_pass(&self, encoder: &mut wgpu::CommandEncoder) {
+        if self
+            .lightset
+            .as_ref()
+            .is_some_and(|lightset| !lightset.sun_shadows)
+        {
+            return;
+        }
         let (Some(gpu), Some(shadow)) = (&self.gpu, &self.shadow_resources) else {
             return;
         };
@@ -223,6 +340,40 @@ impl TerrainViewer {
         );
         if let Some(foliage) = &self.foliage_resources {
             crate::foliage::render_foliage_shadow(encoder, foliage, shadow);
+        }
+        if self.ugx_renderer.is_none() && self.ugx_scene_renderer.is_none() {
+            return;
+        }
+        let cascade_count = usize::try_from(crate::shadow::SHADOW_CASCADE_COUNT)
+            .expect("shadow cascade count must fit usize");
+        for cascade in 0..cascade_count {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("UGX Directional Shadow Cascade"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: shadow.cascade_shadow_view(cascade),
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: shadow.cascade_depth_view(cascade),
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            if let Some(renderer) = &self.ugx_renderer {
+                renderer.render_shadow(&mut pass, cascade);
+            }
+            if let Some(renderer) = &self.ugx_scene_renderer {
+                renderer.render_shadow(&mut pass, cascade);
+            }
         }
     }
 
@@ -256,6 +407,9 @@ impl TerrainViewer {
             occlusion_query_set: None,
             timestamp_writes: None,
         });
+        if include_details && let Some(renderer) = &self.sky_renderer {
+            renderer.render_sky(&mut render_pass);
+        }
         render_pass.set_pipeline(&gpu.pipeline);
         render_pass.set_bind_group(0, &gpu.camera_bind_group, &[]);
         render_pass.set_bind_group(1, &gpu.texture_bind_group, &[]);
@@ -265,6 +419,9 @@ impl TerrainViewer {
 
         if include_details {
             if let Some(renderer) = &self.ugx_renderer {
+                renderer.render(&mut render_pass);
+            }
+            if let Some(renderer) = &self.ugx_scene_renderer {
                 renderer.render(&mut render_pass);
             }
             if let Some(foliage) = &self.foliage_resources {
@@ -279,6 +436,44 @@ impl TerrainViewer {
             }
             if let Some(roads) = &self.road_resources {
                 crate::roads::render_roads(&mut render_pass, roads, &gpu.camera_bind_group);
+            }
+        }
+    }
+
+    fn render_distortion_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        distortion_view: &wgpu::TextureView,
+        depth_view: &wgpu::TextureView,
+        include_details: bool,
+    ) {
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("UGX Distortion Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: distortion_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        if include_details {
+            if let Some(renderer) = &self.ugx_renderer {
+                renderer.render_distortion(&mut render_pass);
+            }
+            if let Some(renderer) = &self.ugx_scene_renderer {
+                renderer.render_distortion(&mut render_pass);
             }
         }
     }
@@ -305,6 +500,11 @@ impl TerrainViewer {
         path: &std::path::Path,
         include_details: bool,
     ) -> anyhow::Result<()> {
+        let tone_map = self
+            .tone_map_resources
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("tone-map resources are unavailable"))?;
+        tone_map.resize(ctx.device, [size, size]);
         self.update_terrain_uniforms(ctx.queue, camera.view_projection, debug_mode);
         let lighting = self.update_lighting(ctx.queue, camera.position);
         self.update_ugx(ctx.queue, camera.view_projection, &lighting);
@@ -315,18 +515,33 @@ impl TerrainViewer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Terrain Validation Capture Encoder"),
             });
+        self.render_shadow_pass(&mut encoder);
+        let tone_map = self
+            .tone_map_resources
+            .as_ref()
+            .expect("tone-map resources were checked above");
         self.render_terrain_pass(
             &mut encoder,
-            &target.view,
+            tone_map.scene_view(),
             &depth_view,
-            wgpu::LoadOp::Clear(wgpu::Color {
-                r: 0.4,
-                g: 0.6,
-                b: 0.9,
-                a: 1.0,
-            }),
+            wgpu::LoadOp::Clear(scene_clear_color(&lighting)),
             include_details,
         );
+        self.render_distortion_pass(
+            &mut encoder,
+            tone_map.distortion_view(),
+            &depth_view,
+            include_details,
+        );
+        let tone_settings = if debug_mode == 12 {
+            self.lightset
+                .as_ref()
+                .map_or_else(ToneMapSettings::default, ToneMapSettings::from)
+        } else {
+            ToneMapSettings::default()
+        };
+        tone_map.update(ctx.queue, tone_settings);
+        tone_map.encode(&mut encoder, &target.view);
         target.encode_copy(&mut encoder);
         ctx.queue.submit(std::iter::once(encoder.finish()));
         target.write_png(ctx.device, path)
@@ -426,9 +641,8 @@ impl Application3D for TerrainViewer {
         &mut self,
         _device: &wgpu::Device,
         _queue: &wgpu::Queue,
-        format: wgpu::TextureFormat,
+        _format: wgpu::TextureFormat,
     ) {
-        self.surface_format = format;
     }
 
     fn resize_gpu(&mut self, device: &wgpu::Device, width: u32, height: u32) {
@@ -439,6 +653,9 @@ impl Application3D for TerrainViewer {
             let (depth_texture, depth_view) = create_depth_texture(device, width, height);
             gpu.depth_texture = depth_texture;
             gpu.depth_view = depth_view;
+        }
+        if let Some(tone_map) = &mut self.tone_map_resources {
+            tone_map.resize(device, [width, height]);
         }
     }
 
@@ -482,11 +699,37 @@ impl Application3D for TerrainViewer {
             return;
         }
         self.render_shadow_pass(ctx.encoder);
+        let tone_map = self
+            .tone_map_resources
+            .as_ref()
+            .expect("GPU initialization creates tone-map resources");
+        let tone_settings = self
+            .lightset
+            .as_ref()
+            .map_or_else(ToneMapSettings::default, ToneMapSettings::from);
+        tone_map.update(ctx.queue, tone_settings);
         let depth_view = &self
             .gpu
             .as_ref()
             .expect("GPU resources were checked above")
             .depth_view;
-        self.render_terrain_pass(ctx.encoder, ctx.view, depth_view, wgpu::LoadOp::Load, true);
+        self.render_terrain_pass(
+            ctx.encoder,
+            tone_map.scene_view(),
+            depth_view,
+            wgpu::LoadOp::Clear(scene_clear_color(&lighting)),
+            true,
+        );
+        self.render_distortion_pass(ctx.encoder, tone_map.distortion_view(), depth_view, true);
+        tone_map.encode(ctx.encoder, ctx.view);
+    }
+}
+
+fn scene_clear_color(lighting: &LightingParams) -> wgpu::Color {
+    wgpu::Color {
+        r: f64::from(lighting.fog_color[0]),
+        g: f64::from(lighting.fog_color[1]),
+        b: f64::from(lighting.fog_color[2]),
+        a: 1.0,
     }
 }

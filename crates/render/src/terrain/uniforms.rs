@@ -7,6 +7,8 @@
 //! - `vec4<f32>` = 16 byte alignment
 //! - Struct total size must be multiple of largest member alignment
 
+use pipeline::hw1::LightSetData;
+
 /// Exact normalized height bias used by the PC terrain vertex/domain shaders.
 pub const NORMALIZED_TERRAIN_Y_OFFSET: f32 = 1.0 / 2048.0;
 
@@ -182,18 +184,18 @@ pub struct LightingParams {
     /// Blackmap UV scales [`scale_x`, `scale_z`, pad, pad].
     pub blackmap_uv_scales: [f32; 4],
 
-    /// Secondary specular direction and power (HWDE cb4[37]).
+    /// Secondary specular direction and power (HWDE `cb4[37]`).
     pub fill_spec_direction_power: [f32; 4],
-    /// Secondary specular RGB and directional-shadow influence (HWDE cb4[38]).
+    /// Secondary specular RGB and directional-shadow influence (HWDE `cb4[38]`).
     pub fill_spec_color_shadow: [f32; 4],
 
-    /// Light-volume params [enabled, pad, pad, pad] (HWDE cb4[39]).
+    /// Light-volume params `[enabled, pad, pad, pad]` (HWDE `cb4[39]`).
     pub light_volume_params: [f32; 4],
-    /// World-to-light-volume transform row 0 (HWDE cb4[40]).
+    /// World-to-light-volume transform row 0 (HWDE `cb4[40]`).
     pub light_volume_row0: [f32; 4],
-    /// World-to-light-volume transform row 1 (HWDE cb4[41]).
+    /// World-to-light-volume transform row 1 (HWDE `cb4[41]`).
     pub light_volume_row1: [f32; 4],
-    /// World-to-light-volume transform row 2 (HWDE cb4[42]).
+    /// World-to-light-volume transform row 2 (HWDE `cb4[42]`).
     pub light_volume_row2: [f32; 4],
 }
 
@@ -253,6 +255,160 @@ impl Default for LightingParams {
     }
 }
 
+impl LightingParams {
+    /// Builds the original shared-lighting constants from a scenario GLS/FLS
+    /// lightset.
+    ///
+    /// FLS stores the conventional nine-term, second-order SH polynomial in
+    /// the order `1, y, z, x, xy, yz, 3z²-1, zx, x²-y²`. The PC shaders use
+    /// the algebraically equivalent seven-vector A/B/C packing, so the
+    /// coefficient at index six contributes to both `A.w` and `B.z`.
+    #[must_use]
+    pub fn from_lightset(lightset: &LightSetData, camera_position: [f32; 3]) -> Self {
+        let mut params = Self::default();
+        let direction = lightset.sun_direction();
+        let color = lightset.sun_color_linear();
+        let (ar, br, cr) = pack_sh_channel(&lightset.sh_coeffs_r, lightset.sh_fill_intensity);
+        let (ag, bg, cg) = pack_sh_channel(&lightset.sh_coeffs_g, lightset.sh_fill_intensity);
+        let (ab, bb, cb) = pack_sh_channel(&lightset.sh_coeffs_b, lightset.sh_fill_intensity);
+
+        params.dir_light_vec = [direction[0], direction[1], direction[2], 1.0];
+        params.dir_light_color = [
+            color[0],
+            color[1],
+            color[2],
+            lightset.sun_terrain_shadow_darkness,
+        ];
+        params.world_camera_pos = [
+            camera_position[0],
+            camera_position[1],
+            camera_position[2],
+            0.0,
+        ];
+        params.sh_fill_ar = ar;
+        params.sh_fill_ag = ag;
+        params.sh_fill_ab = ab;
+        params.sh_fill_br = br;
+        params.sh_fill_bg = bg;
+        params.sh_fill_bb = bb;
+        params.sh_fill_c = [cr, cg, cb, 0.0];
+        params.fog_color = color4(lightset.z_fog_color);
+        params.fog_params = [
+            fog_density_squared(lightset.z_fog_density, lightset.z_fog_intensity),
+            lightset.z_fog_start * lightset.z_fog_start,
+            0.0,
+            0.0,
+        ];
+        params.planar_fog_color = color4(lightset.planar_fog_color);
+        params.planar_fog_params = [
+            f32::from(lightset.planar_fog_intensity > 0.0),
+            lightset.planar_fog_start,
+            fog_density_squared(lightset.planar_fog_density, lightset.planar_fog_intensity),
+            0.0,
+        ];
+        params.ao_params[0] = lightset.terrain_ao_diffuse_intensity;
+        params.local_light_params[1] = lightset.terrain_specular_power;
+        params.fill_spec_direction_power[3] = lightset.terrain_specular_power;
+        params
+    }
+}
+
+fn pack_sh_channel(coefficients: &[f32; 9], intensity: f32) -> ([f32; 4], [f32; 4], f32) {
+    let scaled = |index: usize| coefficients[index] * intensity;
+    (
+        [scaled(3), scaled(1), scaled(2), scaled(0) - scaled(6)],
+        [scaled(4), scaled(5), 3.0 * scaled(6), scaled(7)],
+        scaled(8),
+    )
+}
+
+fn fog_density_squared(density: f32, intensity: f32) -> f32 {
+    let density_world = density * intensity * 0.001;
+    density_world * density_world
+}
+
+fn color4(color: [f32; 3]) -> [f32; 4] {
+    [color[0], color[1], color[2], 0.0]
+}
+
 // SAFETY: LightingParams is repr(C) with all f32 fields
 unsafe impl bytemuck::Pod for LightingParams {}
 unsafe impl bytemuck::Zeroable for LightingParams {}
+
+#[cfg(test)]
+mod tests {
+    use pipeline::hw1::LightSetData;
+
+    use super::{LightingParams, pack_sh_channel};
+
+    #[test]
+    fn packed_sh_matches_the_nine_term_polynomial() {
+        let coefficients = [0.3, -0.2, 0.7, 0.4, -0.1, 0.8, -0.6, 0.5, 0.9];
+        let intensity = 0.75;
+        let normal = [0.36_f32, 0.48, 0.8];
+        let expected = intensity
+            * (coefficients[0]
+                + coefficients[1] * normal[1]
+                + coefficients[2] * normal[2]
+                + coefficients[3] * normal[0]
+                + coefficients[4] * normal[0] * normal[1]
+                + coefficients[5] * normal[1] * normal[2]
+                + coefficients[6] * (3.0 * normal[2] * normal[2] - 1.0)
+                + coefficients[7] * normal[2] * normal[0]
+                + coefficients[8] * (normal[0] * normal[0] - normal[1] * normal[1]));
+        let (a, b, c) = pack_sh_channel(&coefficients, intensity);
+        let actual = normal[0] * a[0]
+            + normal[1] * a[1]
+            + normal[2] * a[2]
+            + a[3]
+            + normal[0] * normal[1] * b[0]
+            + normal[1] * normal[2] * b[1]
+            + normal[2] * normal[2] * b[2]
+            + normal[2] * normal[0] * b[3]
+            + c * (normal[0] * normal[0] - normal[1] * normal[1]);
+        assert!((actual - expected).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn lightset_conversion_populates_shader_constants() {
+        let lightset = LightSetData {
+            sun_inclination_deg: 0.0,
+            sun_terrain_color: [0.5, 0.25, 0.125],
+            sun_terrain_intensity: 4.0,
+            sun_terrain_shadow_darkness: 0.2,
+            sh_fill_intensity: 2.0,
+            sh_coeffs_r: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+            z_fog_start: 12.0,
+            z_fog_density: 4.0,
+            z_fog_intensity: 0.5,
+            planar_fog_intensity: 0.0,
+            terrain_specular_power: 64.0,
+            terrain_ao_diffuse_intensity: 0.7,
+            ..Default::default()
+        };
+        let params = LightingParams::from_lightset(&lightset, [1.0, 2.0, 3.0]);
+
+        assert_close_slice(&params.dir_light_vec, &[0.0, 1.0, 0.0, 1.0]);
+        assert_close_slice(&params.dir_light_color, &[2.0, 1.0, 0.5, 0.2]);
+        assert_close_slice(&params.world_camera_pos, &[1.0, 2.0, 3.0, 0.0]);
+        assert_close_slice(&params.sh_fill_ar, &[8.0, 4.0, 6.0, -12.0]);
+        assert_close_slice(&params.sh_fill_br, &[10.0, 12.0, 42.0, 16.0]);
+        assert_close(params.sh_fill_c[0], 18.0);
+        assert_close(params.fog_params[1], 144.0);
+        assert!((params.fog_params[0] - 4.0e-6).abs() < f32::EPSILON);
+        assert_close(params.planar_fog_params[0], 0.0);
+        assert_close(params.ao_params[0], 0.7);
+        assert_close(params.local_light_params[1], 64.0);
+    }
+
+    fn assert_close_slice(actual: &[f32], expected: &[f32]) {
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert_close(*actual, *expected);
+        }
+    }
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!((actual - expected).abs() < f32::EPSILON);
+    }
+}

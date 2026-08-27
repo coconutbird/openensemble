@@ -1,10 +1,17 @@
+use std::collections::HashMap;
 use std::mem;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use glam::Mat4;
+use num_traits::ToPrimitive;
+use pipeline::ugx::MapType;
 use wgpu::util::DeviceExt;
 
-use super::model::{BlendMode, Image, Material, Model, Vertex};
-use crate::terrain::{LightingParams, generate_mipmaps, mip_level_count};
+use super::model::{BlendMode, Image, Material, MaterialFeature, Model, Vertex};
+use crate::environment::EnvironmentMap;
+use crate::lighting::LocalLightBuffer;
+use crate::postprocess::DISTORTION_FORMAT;
+use crate::terrain::{LightingParams, TerrainHeightfield, generate_mipmaps, mip_level_count};
 
 const SHADER: &str = include_str!("shader.wgsl");
 const MATERIAL_FLAG_DIFFUSE: u32 = 1 << 0;
@@ -16,6 +23,15 @@ const MATERIAL_FLAG_EMISSIVE: u32 = 1 << 5;
 const MATERIAL_FLAG_AO: u32 = 1 << 6;
 const MATERIAL_FLAG_COLOR_GLOSS: u32 = 1 << 7;
 const MATERIAL_FLAG_TWO_SIDED: u32 = 1 << 8;
+const MATERIAL_FLAG_ENVIRONMENT: u32 = 1 << 9;
+const MATERIAL_FLAG_ENVIRONMENT_MASK: u32 = 1 << 10;
+const MATERIAL_FLAG_EMISSIVE_XFORM: u32 = 1 << 11;
+const MATERIAL_FLAG_HIGHLIGHT: u32 = 1 << 12;
+const MATERIAL_FLAG_MODULATE: u32 = 1 << 13;
+const MATERIAL_FLAG_DISTORTION: u32 = 1 << 14;
+const MATERIAL_FLAG_RECEIVES_SHADOWS: u32 = 1 << 15;
+const MATERIAL_FLAG_TERRAIN_CONFORM: u32 = 1 << 16;
+const DIRECTIONAL_SHADOW_CASCADE_SCALES: [f32; 4] = [8.0, 4.0, 2.0, 1.0];
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -37,14 +53,39 @@ struct SceneUniform {
     planar_fog_color: [f32; 4],
     planar_fog_params: [f32; 4],
     ao_params: [f32; 4],
+    frame_params: [f32; 4],
+    shadow_vp_col0: [f32; 4],
+    shadow_vp_col1: [f32; 4],
+    shadow_vp_col2: [f32; 4],
+    shadow_vp_col3: [f32; 4],
+    shadow_params: [f32; 4],
+    terrain_info: [f32; 4],
+    terrain_decode: [f32; 4],
+    local_light_params: [f32; 4],
+    light_volume_params: [f32; 4],
+    light_volume_row0: [f32; 4],
+    light_volume_row1: [f32; 4],
+    light_volume_row2: [f32; 4],
 }
 
 impl SceneUniform {
-    fn new(model: Mat4) -> Self {
-        Self::from_frame(Mat4::IDENTITY, model, &LightingParams::default())
+    fn new(model: Mat4, terrain: TerrainHeightfieldInfo) -> Self {
+        Self::from_frame(
+            Mat4::IDENTITY,
+            model,
+            &LightingParams::default(),
+            0.0,
+            terrain,
+        )
     }
 
-    fn from_frame(view_projection: Mat4, model: Mat4, lighting: &LightingParams) -> Self {
+    fn from_frame(
+        view_projection: Mat4,
+        model: Mat4,
+        lighting: &LightingParams,
+        time_seconds: f32,
+        terrain: TerrainHeightfieldInfo,
+    ) -> Self {
         Self {
             view_projection: view_projection.to_cols_array_2d(),
             model: model.to_cols_array_2d(),
@@ -63,6 +104,29 @@ impl SceneUniform {
             planar_fog_color: lighting.planar_fog_color,
             planar_fog_params: lighting.planar_fog_params,
             ao_params: lighting.ao_params,
+            frame_params: [time_seconds, 0.0, 0.0, 0.0],
+            shadow_vp_col0: lighting.shadow_vp_col0,
+            shadow_vp_col1: lighting.shadow_vp_col1,
+            shadow_vp_col2: lighting.shadow_vp_col2,
+            shadow_vp_col3: lighting.shadow_vp_col3,
+            shadow_params: lighting.shadow_params,
+            terrain_info: [
+                terrain.dimension.to_f32().unwrap_or(f32::MAX),
+                terrain.tile_scale.recip(),
+                terrain.y_range,
+                terrain.y_mid,
+            ],
+            terrain_decode: [
+                terrain.normalized_y_bias,
+                terrain.world_min_xz[0],
+                terrain.world_min_xz[1],
+                0.0,
+            ],
+            local_light_params: lighting.local_light_params,
+            light_volume_params: lighting.light_volume_params,
+            light_volume_row0: lighting.light_volume_row0,
+            light_volume_row1: lighting.light_volume_row1,
+            light_volume_row2: lighting.light_volume_row2,
         }
     }
 }
@@ -76,26 +140,24 @@ struct MaterialUniform {
     flags: [u32; 4],
     channels0: [u32; 4],
     channels1: [u32; 4],
+    channels2: [u32; 4],
+    environment: [f32; 4],
+    hdr_scales: [f32; 4],
+    uv_velocity0: [f32; 4],
+    uv_velocity1: [f32; 4],
+    uv_velocity2: [f32; 4],
+    uv_velocity3: [f32; 4],
+    uv_velocity4: [f32; 4],
+    uv_velocity5: [f32; 4],
 }
 
 impl MaterialUniform {
-    fn from_material(material: &Material) -> Self {
-        let mut flags = 0;
-        for (enabled, flag) in [
-            (material.diffuse.is_some(), MATERIAL_FLAG_DIFFUSE),
-            (material.normal.is_some(), MATERIAL_FLAG_NORMAL),
-            (material.gloss.is_some(), MATERIAL_FLAG_GLOSS),
-            (material.opacity_map.is_some(), MATERIAL_FLAG_OPACITY),
-            (material.xform.is_some(), MATERIAL_FLAG_XFORM),
-            (material.emissive.is_some(), MATERIAL_FLAG_EMISSIVE),
-            (material.ao.is_some(), MATERIAL_FLAG_AO),
-            (material.color_gloss, MATERIAL_FLAG_COLOR_GLOSS),
-            (material.two_sided, MATERIAL_FLAG_TWO_SIDED),
-        ] {
-            if enabled {
-                flags |= flag;
-            }
-        }
+    fn from_material(
+        material: &Material,
+        environment_available: bool,
+        environment_hdr_scale: f32,
+    ) -> Self {
+        let flags = material_flags(material, environment_available);
         let alpha_reference = if material.blend == BlendMode::AlphaTest {
             0.5
         } else {
@@ -125,16 +187,211 @@ impl MaterialUniform {
                 material.channels.xform,
                 material.channels.emissive,
                 material.channels.ao,
-                0,
+                material.channels.environment_mask,
             ],
+            channels2: [
+                material.channels.emissive_xform,
+                material.channels.distortion,
+                material.channels.highlight,
+                material.channels.modulate,
+            ],
+            environment: [
+                material.environment_fresnel_power,
+                material.environment_sharpness,
+                material.environment_fresnel,
+                material.environment_reflectivity,
+            ],
+            hdr_scales: [
+                emissive_hdr_scale,
+                environment_hdr_scale,
+                material
+                    .highlight
+                    .as_ref()
+                    .map_or(1.0, |image| image.hdr_scale.max(1.0)),
+                1.0,
+            ],
+            uv_velocity0: velocity_pair(material, MapType::Diffuse, MapType::Normal),
+            uv_velocity1: velocity_pair(material, MapType::Gloss, MapType::Opacity),
+            uv_velocity2: velocity_pair(material, MapType::Emissive, MapType::EnvMask),
+            uv_velocity3: velocity_pair(material, MapType::AO, MapType::XForm),
+            uv_velocity4: velocity_pair(material, MapType::EmXForm, MapType::Distortion),
+            uv_velocity5: velocity_pair(material, MapType::Highlight, MapType::Modulate),
         }
     }
+}
+
+fn material_flags(material: &Material, environment_available: bool) -> u32 {
+    [
+        (material.diffuse.is_some(), MATERIAL_FLAG_DIFFUSE),
+        (material.normal.is_some(), MATERIAL_FLAG_NORMAL),
+        (material.gloss.is_some(), MATERIAL_FLAG_GLOSS),
+        (material.opacity_map.is_some(), MATERIAL_FLAG_OPACITY),
+        (material.xform.is_some(), MATERIAL_FLAG_XFORM),
+        (material.emissive.is_some(), MATERIAL_FLAG_EMISSIVE),
+        (material.ao.is_some(), MATERIAL_FLAG_AO),
+        (
+            material.has_feature(MaterialFeature::COLOR_GLOSS),
+            MATERIAL_FLAG_COLOR_GLOSS,
+        ),
+        (
+            material.has_feature(MaterialFeature::TWO_SIDED),
+            MATERIAL_FLAG_TWO_SIDED,
+        ),
+        (environment_available, MATERIAL_FLAG_ENVIRONMENT),
+        (
+            material.environment_mask.is_some(),
+            MATERIAL_FLAG_ENVIRONMENT_MASK,
+        ),
+        (
+            material.emissive_xform.is_some(),
+            MATERIAL_FLAG_EMISSIVE_XFORM,
+        ),
+        (material.highlight.is_some(), MATERIAL_FLAG_HIGHLIGHT),
+        (material.modulate.is_some(), MATERIAL_FLAG_MODULATE),
+        (material.distortion.is_some(), MATERIAL_FLAG_DISTORTION),
+        (
+            material.has_feature(MaterialFeature::RECEIVES_SHADOWS),
+            MATERIAL_FLAG_RECEIVES_SHADOWS,
+        ),
+        (
+            material.has_feature(MaterialFeature::TERRAIN_CONFORM),
+            MATERIAL_FLAG_TERRAIN_CONFORM,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(enabled, flag)| enabled.then_some(flag))
+    .fold(0, |flags, flag| flags | flag)
+}
+
+fn velocity_pair(material: &Material, first: MapType, second: MapType) -> [f32; 4] {
+    let first = material.map_velocity(first);
+    let second = material.map_velocity(second);
+    [first[0], first[1], second[0], second[1]]
 }
 
 struct GpuMaterial {
     bind_group: wgpu::BindGroup,
     blend: BlendMode,
     pipeline_index: usize,
+    two_sided_pipeline_index: usize,
+    has_distortion: bool,
+    casts_shadows: bool,
+}
+
+struct MaterialTextureViews {
+    diffuse: wgpu::TextureView,
+    normal: wgpu::TextureView,
+    gloss: wgpu::TextureView,
+    opacity: wgpu::TextureView,
+    xform: wgpu::TextureView,
+    emissive: wgpu::TextureView,
+    ao: wgpu::TextureView,
+    environment_mask: wgpu::TextureView,
+    emissive_xform: wgpu::TextureView,
+    distortion: wgpu::TextureView,
+    highlight: wgpu::TextureView,
+    modulate: wgpu::TextureView,
+}
+
+impl MaterialTextureViews {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, material: &Material) -> Self {
+        let texture = |map_name, image, fallback, format| {
+            create_material_texture_view(device, queue, material, map_name, image, fallback, format)
+        };
+        Self {
+            diffuse: texture(
+                "Diffuse",
+                material.diffuse.as_ref(),
+                [255; 4],
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+            ),
+            normal: texture(
+                "Normal",
+                material.normal.as_ref(),
+                [128, 128, 255, 255],
+                wgpu::TextureFormat::Rgba8Unorm,
+            ),
+            gloss: texture(
+                "Gloss",
+                material.gloss.as_ref(),
+                [255; 4],
+                wgpu::TextureFormat::Rgba8Unorm,
+            ),
+            opacity: texture(
+                "Opacity",
+                material.opacity_map.as_ref(),
+                [255; 4],
+                wgpu::TextureFormat::Rgba8Unorm,
+            ),
+            xform: texture(
+                "XForm",
+                material.xform.as_ref(),
+                [0, 0, 0, 255],
+                wgpu::TextureFormat::Rgba8Unorm,
+            ),
+            emissive: texture(
+                "Emissive",
+                material.emissive.as_ref(),
+                [0; 4],
+                wgpu::TextureFormat::Rgba8Unorm,
+            ),
+            ao: texture(
+                "AO",
+                material.ao.as_ref(),
+                [255; 4],
+                wgpu::TextureFormat::Rgba8Unorm,
+            ),
+            environment_mask: texture(
+                "Environment Mask",
+                material.environment_mask.as_ref(),
+                [255; 4],
+                wgpu::TextureFormat::Rgba8Unorm,
+            ),
+            emissive_xform: texture(
+                "Emissive XForm",
+                material.emissive_xform.as_ref(),
+                [0; 4],
+                wgpu::TextureFormat::Rgba8Unorm,
+            ),
+            distortion: texture(
+                "Distortion",
+                material.distortion.as_ref(),
+                [128, 128, 0, 0],
+                wgpu::TextureFormat::Rgba8Unorm,
+            ),
+            highlight: texture(
+                "Highlight",
+                material.highlight.as_ref(),
+                [0; 4],
+                wgpu::TextureFormat::Rgba8Unorm,
+            ),
+            modulate: texture(
+                "Modulate",
+                material.modulate.as_ref(),
+                [255; 4],
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+            ),
+        }
+    }
+}
+
+fn create_material_texture_view(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    material: &Material,
+    map_name: &str,
+    image: Option<&Image>,
+    fallback: [u8; 4],
+    format: wgpu::TextureFormat,
+) -> wgpu::TextureView {
+    create_texture_view(
+        device,
+        queue,
+        &format!("UGX {map_name}: {}", material.name),
+        image,
+        fallback,
+        format,
+    )
 }
 
 struct GpuSection {
@@ -144,14 +401,341 @@ struct GpuSection {
     material_index: usize,
 }
 
+pub(super) struct SharedResources {
+    scene_layout: wgpu::BindGroupLayout,
+    material_layout: wgpu::BindGroupLayout,
+    shadow_bind_group: wgpu::BindGroup,
+    terrain_heightfield_view: wgpu::TextureView,
+    terrain_heightfield_info: TerrainHeightfieldInfo,
+    sampler: wgpu::Sampler,
+    environment_sampler: wgpu::Sampler,
+    environment_view: wgpu::TextureView,
+    environment_hdr_scale: f32,
+    environment_available: bool,
+    environment_views: Mutex<HashMap<String, wgpu::TextureView>>,
+    pipelines: Vec<wgpu::RenderPipeline>,
+    sky_pipelines: Vec<wgpu::RenderPipeline>,
+    distortion_pipelines: [wgpu::RenderPipeline; 2],
+    shadow_pipelines: Vec<wgpu::RenderPipeline>,
+}
+
+/// Scenario-global resources shared by all UGX models in one renderer.
+#[derive(Clone, Copy, Default)]
+pub struct WorldBindings<'a> {
+    /// Scenario HDR environment cubemap.
+    pub environment: Option<&'a EnvironmentMap>,
+    /// Directional variance-shadow array.
+    pub directional_shadow: Option<&'a wgpu::TextureView>,
+    /// Accepted-axis terrain position texture for conforming materials.
+    pub terrain_heightfield: Option<TerrainHeightfield<'a>>,
+    /// Oracle-packed local-light storage shared with terrain and foliage.
+    pub local_lights: Option<&'a LocalLightBuffer>,
+    /// Local spot/omni shadow texture array.
+    pub local_shadow: Option<&'a wgpu::TextureView>,
+    /// Optional light-volume color field.
+    pub light_volume_color: Option<&'a wgpu::TextureView>,
+    /// Optional light-volume direction field.
+    pub light_volume_vector: Option<&'a wgpu::TextureView>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TerrainHeightfieldInfo {
+    dimension: u32,
+    tile_scale: f32,
+    world_min_xz: [f32; 2],
+    y_range: f32,
+    y_mid: f32,
+    normalized_y_bias: f32,
+}
+
+impl Default for TerrainHeightfieldInfo {
+    fn default() -> Self {
+        Self {
+            dimension: 1,
+            tile_scale: 1.0,
+            world_min_xz: [0.0; 2],
+            y_range: 0.0,
+            y_mid: 0.0,
+            normalized_y_bias: 0.0,
+        }
+    }
+}
+
+impl From<TerrainHeightfield<'_>> for TerrainHeightfieldInfo {
+    fn from(heightfield: TerrainHeightfield<'_>) -> Self {
+        Self {
+            dimension: heightfield.dimension.max(1),
+            tile_scale: heightfield.tile_scale.abs().max(f32::EPSILON),
+            world_min_xz: heightfield.world_min_xz,
+            y_range: heightfield.y_range,
+            y_mid: heightfield.y_mid,
+            normalized_y_bias: heightfield.normalized_y_bias,
+        }
+    }
+}
+
+struct EnvironmentResources {
+    sampler: wgpu::Sampler,
+    view: wgpu::TextureView,
+    hdr_scale: f32,
+    available: bool,
+}
+
+fn create_environment_resources(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    environment: Option<&EnvironmentMap>,
+) -> EnvironmentResources {
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("UGX Environment Sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+    let available = environment.is_some();
+    let fallback = EnvironmentMap::black();
+    let environment = environment.unwrap_or(&fallback);
+    EnvironmentResources {
+        sampler,
+        view: environment.create_texture_view(device, queue, "UGX Global Environment Cubemap"),
+        hdr_scale: environment.hdr_scale(),
+        available,
+    }
+}
+
+fn create_world_bind_group(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    layout: &wgpu::BindGroupLayout,
+    world: WorldBindings<'_>,
+) -> wgpu::BindGroup {
+    let fallback_directional = create_fallback_shadow_view(device, queue, 4, "UGX Fallback CSM");
+    let directional_shadow = world.directional_shadow.unwrap_or(&fallback_directional);
+    let fallback_local_lights = LocalLightBuffer::empty(device);
+    let local_lights = world.local_lights.unwrap_or(&fallback_local_lights);
+    let fallback_local_shadow =
+        create_fallback_shadow_view(device, queue, 8, "UGX Fallback Local Shadows");
+    let local_shadow = world.local_shadow.unwrap_or(&fallback_local_shadow);
+    let fallback_volume_color = create_fallback_volume_view(
+        device,
+        queue,
+        "UGX Fallback Light Volume Color",
+        [0, 0, 0, 0],
+    );
+    let fallback_volume_vector = create_fallback_volume_view(
+        device,
+        queue,
+        "UGX Fallback Light Volume Vector",
+        [128, 128, 128, 255],
+    );
+    let volume_color = world.light_volume_color.unwrap_or(&fallback_volume_color);
+    let volume_vector = world.light_volume_vector.unwrap_or(&fallback_volume_vector);
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("UGX World Lighting Sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("UGX World Lighting Bind Group"),
+        layout,
+        entries: &[
+            texture_entry(0, directional_shadow),
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: local_lights.buffer().as_entire_binding(),
+            },
+            texture_entry(3, local_shadow),
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+            texture_entry(5, volume_color),
+            texture_entry(6, volume_vector),
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+        ],
+    })
+}
+
+impl SharedResources {
+    pub(super) fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        world: WorldBindings<'_>,
+    ) -> Self {
+        let scene_layout = create_scene_layout(device);
+        let material_layout = create_material_layout(device);
+        let shadow_layout = create_shadow_layout(device);
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("UGX Material Sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let environment = create_environment_resources(device, queue, world.environment);
+        let shadow_bind_group = create_world_bind_group(device, queue, &shadow_layout, world);
+        let terrain_heightfield_view = world.terrain_heightfield.map_or_else(
+            || create_fallback_terrain_heightfield_view(device, queue),
+            |heightfield| heightfield.view.clone(),
+        );
+        let terrain_heightfield_info = world.terrain_heightfield.map_or_else(
+            TerrainHeightfieldInfo::default,
+            TerrainHeightfieldInfo::from,
+        );
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("UGX Parametric Shader Translation"),
+            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+        });
+        let pipelines = create_pipelines(
+            device,
+            surface_format,
+            &shader,
+            &scene_layout,
+            &material_layout,
+            &shadow_layout,
+        );
+        let sky_pipelines = create_sky_pipelines(
+            device,
+            surface_format,
+            &shader,
+            &scene_layout,
+            &material_layout,
+            &shadow_layout,
+        );
+        let distortion_pipelines =
+            create_distortion_pipelines(device, &shader, &scene_layout, &material_layout);
+        let shadow_pipelines =
+            create_shadow_pipelines(device, &shader, &scene_layout, &material_layout);
+        Self {
+            scene_layout,
+            material_layout,
+            shadow_bind_group,
+            terrain_heightfield_view,
+            terrain_heightfield_info,
+            sampler,
+            environment_sampler: environment.sampler,
+            environment_view: environment.view,
+            environment_hdr_scale: environment.hdr_scale,
+            environment_available: environment.available,
+            environment_views: Mutex::new(HashMap::new()),
+            pipelines,
+            sky_pipelines,
+            distortion_pipelines,
+            shadow_pipelines,
+        }
+    }
+
+    fn environment_view_for(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        environment: Option<&EnvironmentMap>,
+    ) -> wgpu::TextureView {
+        environment.map_or_else(
+            || self.environment_view.clone(),
+            |environment| {
+                let mut views = self
+                    .environment_views
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                views
+                    .entry(environment.path().to_owned())
+                    .or_insert_with(|| {
+                        environment.create_texture_view(
+                            device,
+                            queue,
+                            &format!("UGX Environment: {}", environment.path()),
+                        )
+                    })
+                    .clone()
+            },
+        )
+    }
+
+    fn create_material_bind_group(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        material: &Material,
+    ) -> wgpu::BindGroup {
+        let explicit_environment = material.environment.as_ref();
+        let use_global_environment = explicit_environment.is_none()
+            && self.environment_available
+            && (material.has_feature(MaterialFeature::GLOBAL_ENVIRONMENT)
+                || material.environment_mask.is_some());
+        let environment_available = explicit_environment.is_some() || use_global_environment;
+        let environment_hdr_scale =
+            explicit_environment.map_or(self.environment_hdr_scale, EnvironmentMap::hdr_scale);
+        let uniform =
+            MaterialUniform::from_material(material, environment_available, environment_hdr_scale);
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("UGX Material Uniform: {}", material.name)),
+            contents: bytemuck::bytes_of(&uniform),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let textures = MaterialTextureViews::new(device, queue, material);
+        let environment_view = self.environment_view_for(device, queue, explicit_environment);
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&format!("UGX Material Bind Group: {}", material.name)),
+            layout: &self.material_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                },
+                texture_entry(1, &textures.diffuse),
+                texture_entry(2, &textures.normal),
+                texture_entry(3, &textures.gloss),
+                texture_entry(4, &textures.opacity),
+                texture_entry(5, &textures.xform),
+                texture_entry(6, &textures.emissive),
+                texture_entry(7, &textures.ao),
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                texture_entry(9, &textures.environment_mask),
+                texture_entry(10, &environment_view),
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: wgpu::BindingResource::Sampler(&self.environment_sampler),
+                },
+                texture_entry(12, &textures.emissive_xform),
+                texture_entry(13, &textures.distortion),
+                texture_entry(14, &textures.highlight),
+                texture_entry(15, &textures.modulate),
+            ],
+        })
+    }
+}
+
 /// GPU resources used to draw one decoded [`Model`].
 pub struct Renderer {
+    shared: Arc<SharedResources>,
     scene_buffer: wgpu::Buffer,
     scene_bind_group: wgpu::BindGroup,
     joint_buffer: wgpu::Buffer,
     materials: Vec<GpuMaterial>,
     sections: Vec<GpuSection>,
-    pipelines: Vec<wgpu::RenderPipeline>,
     model_transform: Mat4,
     joint_count: usize,
 }
@@ -166,7 +750,86 @@ impl Renderer {
         model: &Model,
         model_transform: Mat4,
     ) -> Self {
-        let scene_uniform = SceneUniform::new(model_transform);
+        Self::new_with_world(
+            device,
+            queue,
+            surface_format,
+            model,
+            model_transform,
+            WorldBindings::default(),
+        )
+    }
+
+    /// Uploads a decoded model with a scenario-global environment fallback.
+    #[must_use]
+    pub fn new_with_environment(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        model: &Model,
+        model_transform: Mat4,
+        environment: Option<&EnvironmentMap>,
+    ) -> Self {
+        Self::new_with_world(
+            device,
+            queue,
+            surface_format,
+            model,
+            model_transform,
+            WorldBindings {
+                environment,
+                ..WorldBindings::default()
+            },
+        )
+    }
+
+    /// Uploads a decoded model with environment and directional-shadow inputs.
+    #[must_use]
+    pub fn new_with_environment_and_shadow(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        model: &Model,
+        model_transform: Mat4,
+        environment: Option<&EnvironmentMap>,
+        shadow_view: Option<&wgpu::TextureView>,
+    ) -> Self {
+        Self::new_with_world(
+            device,
+            queue,
+            surface_format,
+            model,
+            model_transform,
+            WorldBindings {
+                environment,
+                directional_shadow: shadow_view,
+                ..WorldBindings::default()
+            },
+        )
+    }
+
+    /// Uploads a model with every scenario-global rendering input.
+    #[must_use]
+    pub fn new_with_world(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        model: &Model,
+        model_transform: Mat4,
+        world: WorldBindings<'_>,
+    ) -> Self {
+        let shared = Arc::new(SharedResources::new(device, queue, surface_format, world));
+        Self::new_with_shared(device, queue, model, model_transform, shared)
+    }
+
+    pub(super) fn new_with_shared(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        model: &Model,
+        model_transform: Mat4,
+        shared: Arc<SharedResources>,
+    ) -> Self {
+        let scene_uniform = SceneUniform::new(model_transform, shared.terrain_heightfield_info);
         let scene_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("UGX Scene Uniform"),
             contents: bytemuck::bytes_of(&scene_uniform),
@@ -178,10 +841,9 @@ impl Renderer {
             contents: bytemuck::cast_slice(&identity_joints),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
-        let scene_layout = create_scene_layout(device);
         let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("UGX Scene Bind Group"),
-            layout: &scene_layout,
+            layout: &shared.scene_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -191,44 +853,30 @@ impl Renderer {
                     binding: 1,
                     resource: joint_buffer.as_entire_binding(),
                 },
+                texture_entry(2, &shared.terrain_heightfield_view),
             ],
         });
 
-        let material_layout = create_material_layout(device);
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("UGX Material Sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
         let materials: Vec<GpuMaterial> = model
             .materials
             .iter()
             .map(|material| {
-                let bind_group =
-                    create_material_bind_group(device, queue, &material_layout, &sampler, material);
+                let bind_group = shared.create_material_bind_group(device, queue, material);
                 GpuMaterial {
                     bind_group,
                     blend: material.blend,
-                    pipeline_index: pipeline_index(material.blend, material.two_sided),
+                    pipeline_index: pipeline_index(
+                        material.blend,
+                        material.has_feature(MaterialFeature::TWO_SIDED),
+                    ),
+                    two_sided_pipeline_index: usize::from(
+                        material.has_feature(MaterialFeature::TWO_SIDED),
+                    ),
+                    has_distortion: material.distortion.is_some(),
+                    casts_shadows: material.has_feature(MaterialFeature::CASTS_SHADOWS),
                 }
             })
             .collect();
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("UGX Parametric Shader Translation"),
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
-        });
-        let pipelines = create_pipelines(
-            device,
-            surface_format,
-            &shader,
-            &scene_layout,
-            &material_layout,
-        );
         let mut sections = model
             .sections
             .iter()
@@ -251,12 +899,12 @@ impl Renderer {
         sections.sort_by_key(|section| materials[section.material_index].blend.rank());
 
         Self {
+            shared,
             scene_buffer,
             scene_bind_group,
             joint_buffer,
             materials,
             sections,
-            pipelines,
             model_transform,
             joint_count: model.joint_count,
         }
@@ -270,8 +918,26 @@ impl Renderer {
         model_transform: Mat4,
         lighting: &LightingParams,
     ) {
+        self.update_frame_at_time(queue, view_projection, model_transform, lighting, 0.0);
+    }
+
+    /// Updates frame constants and advances legacy material UV animation.
+    pub fn update_frame_at_time(
+        &mut self,
+        queue: &wgpu::Queue,
+        view_projection: Mat4,
+        model_transform: Mat4,
+        lighting: &LightingParams,
+        time_seconds: f32,
+    ) {
         self.model_transform = model_transform;
-        let uniform = SceneUniform::from_frame(view_projection, model_transform, lighting);
+        let uniform = SceneUniform::from_frame(
+            view_projection,
+            model_transform,
+            lighting,
+            time_seconds,
+            self.shared.terrain_heightfield_info,
+        );
         queue.write_buffer(&self.scene_buffer, 0, bytemuck::bytes_of(&uniform));
     }
 
@@ -300,18 +966,86 @@ impl Renderer {
     /// Draws all sections using the oracle blend order.
     pub fn render<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {
         pass.set_bind_group(0, &self.scene_bind_group, &[]);
+        pass.set_bind_group(2, &self.shared.shadow_bind_group, &[]);
         for blend in BlendMode::DRAW_ORDER {
             for section in &self.sections {
                 let material = &self.materials[section.material_index];
                 if material.blend != blend {
                     continue;
                 }
-                pass.set_pipeline(&self.pipelines[material.pipeline_index]);
+                pass.set_pipeline(&self.shared.pipelines[material.pipeline_index]);
                 pass.set_bind_group(1, &material.bind_group, &[]);
                 pass.set_vertex_buffer(0, section.vertex_buffer.slice(..));
                 pass.set_index_buffer(section.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
                 pass.draw_indexed(0..section.index_count, 0, 0..1);
             }
+        }
+    }
+
+    /// Draws this model as a camera-relative sky background.
+    ///
+    /// Sky visuals retain their authored UGX materials, but use a far-plane,
+    /// depth-read-only pipeline so they cannot occlude world geometry.
+    pub fn render_sky<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {
+        pass.set_bind_group(0, &self.scene_bind_group, &[]);
+        pass.set_bind_group(2, &self.shared.shadow_bind_group, &[]);
+        for blend in BlendMode::DRAW_ORDER {
+            for section in &self.sections {
+                let material = &self.materials[section.material_index];
+                if material.blend != blend {
+                    continue;
+                }
+                pass.set_pipeline(&self.shared.sky_pipelines[material.pipeline_index]);
+                pass.set_bind_group(1, &material.bind_group, &[]);
+                pass.set_vertex_buffer(0, section.vertex_buffer.slice(..));
+                pass.set_index_buffer(section.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                pass.draw_indexed(0..section.index_count, 0, 0..1);
+            }
+        }
+    }
+
+    /// Draws sections with authored distortion maps into the signed
+    /// screen-space offset target.
+    pub fn render_distortion<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {
+        pass.set_bind_group(0, &self.scene_bind_group, &[]);
+        for section in &self.sections {
+            let material = &self.materials[section.material_index];
+            if !material.has_distortion {
+                continue;
+            }
+            pass.set_pipeline(&self.shared.distortion_pipelines[material.two_sided_pipeline_index]);
+            pass.set_bind_group(1, &material.bind_group, &[]);
+            pass.set_vertex_buffer(0, section.vertex_buffer.slice(..));
+            pass.set_index_buffer(section.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            pass.draw_indexed(0..section.index_count, 0, 0..1);
+        }
+    }
+
+    /// Draws shadow-casting sections into one directional cascade.
+    ///
+    /// The cascade index follows the oracle's 8x, 4x, 2x, and 1x projection
+    /// scale order. Out-of-range indices are ignored.
+    pub fn render_shadow<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>, cascade: usize) {
+        let Some(pipeline_base) = cascade.checked_mul(2) else {
+            return;
+        };
+        if pipeline_base + 1 >= self.shared.shadow_pipelines.len() {
+            return;
+        }
+
+        pass.set_bind_group(0, &self.scene_bind_group, &[]);
+        for section in &self.sections {
+            let material = &self.materials[section.material_index];
+            if !material.casts_shadows {
+                continue;
+            }
+            pass.set_pipeline(
+                &self.shared.shadow_pipelines[pipeline_base + material.two_sided_pipeline_index],
+            );
+            pass.set_bind_group(1, &material.bind_group, &[]);
+            pass.set_vertex_buffer(0, section.vertex_buffer.slice(..));
+            pass.set_index_buffer(section.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            pass.draw_indexed(0..section.index_count, 0, 0..1);
         }
     }
 
@@ -333,6 +1067,16 @@ fn create_scene_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
                     min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
                 },
                 count: None,
             },
@@ -366,7 +1110,7 @@ fn texture_layout_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
 fn create_material_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     let mut entries = vec![wgpu::BindGroupLayoutEntry {
         binding: 0,
-        visibility: wgpu::ShaderStages::FRAGMENT,
+        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
         ty: wgpu::BindingType::Buffer {
             ty: wgpu::BufferBindingType::Uniform,
             has_dynamic_offset: false,
@@ -381,9 +1125,78 @@ fn create_material_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
         count: None,
     });
+    entries.push(texture_layout_entry(9));
+    entries.push(wgpu::BindGroupLayoutEntry {
+        binding: 10,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::Cube,
+            multisampled: false,
+        },
+        count: None,
+    });
+    entries.push(wgpu::BindGroupLayoutEntry {
+        binding: 11,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        count: None,
+    });
+    entries.extend((12..=15).map(texture_layout_entry));
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("UGX Material Layout"),
         entries: &entries,
+    })
+}
+
+fn create_shadow_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let texture_array = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2Array,
+            multisampled: false,
+        },
+        count: None,
+    };
+    let sampler = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        count: None,
+    };
+    let volume = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D3,
+            multisampled: false,
+        },
+        count: None,
+    };
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("UGX World Lighting Layout"),
+        entries: &[
+            texture_array(0),
+            sampler(1),
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            texture_array(3),
+            sampler(4),
+            volume(5),
+            volume(6),
+            sampler(7),
+        ],
     })
 }
 
@@ -397,10 +1210,11 @@ fn create_pipelines(
     shader: &wgpu::ShaderModule,
     scene_layout: &wgpu::BindGroupLayout,
     material_layout: &wgpu::BindGroupLayout,
+    shadow_layout: &wgpu::BindGroupLayout,
 ) -> Vec<wgpu::RenderPipeline> {
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("UGX Pipeline Layout"),
-        bind_group_layouts: &[scene_layout, material_layout],
+        bind_group_layouts: &[scene_layout, material_layout, shadow_layout],
         push_constant_ranges: &[],
     });
     BlendMode::DRAW_ORDER
@@ -420,6 +1234,208 @@ fn create_pipelines(
         .collect()
 }
 
+fn create_sky_pipelines(
+    device: &wgpu::Device,
+    surface_format: wgpu::TextureFormat,
+    shader: &wgpu::ShaderModule,
+    scene_layout: &wgpu::BindGroupLayout,
+    material_layout: &wgpu::BindGroupLayout,
+    shadow_layout: &wgpu::BindGroupLayout,
+) -> Vec<wgpu::RenderPipeline> {
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("UGX Sky Pipeline Layout"),
+        bind_group_layouts: &[scene_layout, material_layout, shadow_layout],
+        push_constant_ranges: &[],
+    });
+    BlendMode::DRAW_ORDER
+        .into_iter()
+        .flat_map(|blend| {
+            [false, true].map(|two_sided| {
+                create_material_pipeline(
+                    device,
+                    surface_format,
+                    shader,
+                    &pipeline_layout,
+                    blend,
+                    two_sided,
+                    MaterialPipelineKind::Sky,
+                )
+            })
+        })
+        .collect()
+}
+
+fn create_distortion_pipelines(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    scene_layout: &wgpu::BindGroupLayout,
+    material_layout: &wgpu::BindGroupLayout,
+) -> [wgpu::RenderPipeline; 2] {
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("UGX Distortion Pipeline Layout"),
+        bind_group_layouts: &[scene_layout, material_layout],
+        push_constant_ranges: &[],
+    });
+    [false, true]
+        .map(|two_sided| create_distortion_pipeline(device, shader, &pipeline_layout, two_sided))
+}
+
+fn create_shadow_pipelines(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    scene_layout: &wgpu::BindGroupLayout,
+    material_layout: &wgpu::BindGroupLayout,
+) -> Vec<wgpu::RenderPipeline> {
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("UGX Directional Shadow Pipeline Layout"),
+        bind_group_layouts: &[scene_layout, material_layout],
+        push_constant_ranges: &[],
+    });
+    DIRECTIONAL_SHADOW_CASCADE_SCALES
+        .into_iter()
+        .flat_map(|cascade_scale| {
+            [false, true].map(|two_sided| {
+                create_shadow_pipeline(device, shader, &pipeline_layout, cascade_scale, two_sided)
+            })
+        })
+        .collect()
+}
+
+fn create_shadow_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    cascade_scale: f32,
+    two_sided: bool,
+) -> wgpu::RenderPipeline {
+    const ATTRIBUTES: [wgpu::VertexAttribute; 10] = wgpu::vertex_attr_array![
+        0 => Float32x3,
+        1 => Float32x3,
+        2 => Float32x4,
+        3 => Float32x4,
+        4 => Float32x2,
+        5 => Float32x2,
+        6 => Float32x2,
+        7 => Float32x4,
+        8 => Uint32x4,
+        9 => Float32x4
+    ];
+    let constants = HashMap::from([("shadow_cascade_scale".to_owned(), f64::from(cascade_scale))]);
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("UGX Directional Shadow Pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_shadow"),
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: u64::try_from(mem::size_of::<Vertex>())
+                    .expect("UGX vertex stride must fit u64"),
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &ATTRIBUTES,
+            }],
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &constants,
+                ..Default::default()
+            },
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_shadow"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rg16Float,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: (!two_sided).then_some(wgpu::Face::Back),
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    })
+}
+
+fn create_distortion_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    two_sided: bool,
+) -> wgpu::RenderPipeline {
+    const ATTRIBUTES: [wgpu::VertexAttribute; 10] = wgpu::vertex_attr_array![
+        0 => Float32x3,
+        1 => Float32x3,
+        2 => Float32x4,
+        3 => Float32x4,
+        4 => Float32x2,
+        5 => Float32x2,
+        6 => Float32x2,
+        7 => Float32x4,
+        8 => Uint32x4,
+        9 => Float32x4
+    ];
+    let additive = wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    };
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("UGX Distortion Pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: u64::try_from(mem::size_of::<Vertex>())
+                    .expect("UGX vertex stride must fit u64"),
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &ATTRIBUTES,
+            }],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_distortion"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: DISTORTION_FORMAT,
+                blend: Some(wgpu::BlendState {
+                    color: additive,
+                    alpha: additive,
+                }),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: (!two_sided).then_some(wgpu::Face::Back),
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: false,
+            depth_compare: wgpu::CompareFunction::LessEqual,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    })
+}
+
 fn create_pipeline(
     device: &wgpu::Device,
     surface_format: wgpu::TextureFormat,
@@ -427,6 +1443,32 @@ fn create_pipeline(
     layout: &wgpu::PipelineLayout,
     blend: BlendMode,
     two_sided: bool,
+) -> wgpu::RenderPipeline {
+    create_material_pipeline(
+        device,
+        surface_format,
+        shader,
+        layout,
+        blend,
+        two_sided,
+        MaterialPipelineKind::World,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum MaterialPipelineKind {
+    World,
+    Sky,
+}
+
+fn create_material_pipeline(
+    device: &wgpu::Device,
+    surface_format: wgpu::TextureFormat,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    blend: BlendMode,
+    two_sided: bool,
+    kind: MaterialPipelineKind,
 ) -> wgpu::RenderPipeline {
     const ATTRIBUTES: [wgpu::VertexAttribute; 10] = wgpu::vertex_attr_array![
         0 => Float32x3,
@@ -457,11 +1499,17 @@ fn create_pipeline(
         }),
     };
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("UGX Legacy Material Pipeline"),
+        label: Some(match kind {
+            MaterialPipelineKind::World => "UGX Legacy Material Pipeline",
+            MaterialPipelineKind::Sky => "UGX Sky Material Pipeline",
+        }),
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
-            entry_point: Some("vs_main"),
+            entry_point: Some(match kind {
+                MaterialPipelineKind::World => "vs_main",
+                MaterialPipelineKind::Sky => "vs_sky",
+            }),
             buffers: &[wgpu::VertexBufferLayout {
                 array_stride: u64::try_from(mem::size_of::<Vertex>())
                     .expect("UGX vertex stride must fit u64"),
@@ -488,7 +1536,8 @@ fn create_pipeline(
         },
         depth_stencil: Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
-            depth_write_enabled: matches!(blend, BlendMode::Opaque | BlendMode::AlphaTest),
+            depth_write_enabled: matches!(kind, MaterialPipelineKind::World)
+                && matches!(blend, BlendMode::Opaque | BlendMode::AlphaTest),
             depth_compare: wgpu::CompareFunction::LessEqual,
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
@@ -496,98 +1545,6 @@ fn create_pipeline(
         multisample: wgpu::MultisampleState::default(),
         multiview: None,
         cache: None,
-    })
-}
-
-fn create_material_bind_group(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    layout: &wgpu::BindGroupLayout,
-    sampler: &wgpu::Sampler,
-    material: &Material,
-) -> wgpu::BindGroup {
-    let uniform = MaterialUniform::from_material(material);
-    let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(&format!("UGX Material Uniform: {}", material.name)),
-        contents: bytemuck::bytes_of(&uniform),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
-    let diffuse = create_texture_view(
-        device,
-        queue,
-        &format!("UGX Diffuse: {}", material.name),
-        material.diffuse.as_ref(),
-        [255, 255, 255, 255],
-        wgpu::TextureFormat::Rgba8UnormSrgb,
-    );
-    let normal = create_texture_view(
-        device,
-        queue,
-        &format!("UGX Normal: {}", material.name),
-        material.normal.as_ref(),
-        [128, 128, 255, 255],
-        wgpu::TextureFormat::Rgba8Unorm,
-    );
-    let gloss = create_texture_view(
-        device,
-        queue,
-        &format!("UGX Gloss: {}", material.name),
-        material.gloss.as_ref(),
-        [255; 4],
-        wgpu::TextureFormat::Rgba8Unorm,
-    );
-    let opacity = create_texture_view(
-        device,
-        queue,
-        &format!("UGX Opacity: {}", material.name),
-        material.opacity_map.as_ref(),
-        [255; 4],
-        wgpu::TextureFormat::Rgba8Unorm,
-    );
-    let xform = create_texture_view(
-        device,
-        queue,
-        &format!("UGX XForm: {}", material.name),
-        material.xform.as_ref(),
-        [0, 0, 0, 255],
-        wgpu::TextureFormat::Rgba8Unorm,
-    );
-    let emissive = create_texture_view(
-        device,
-        queue,
-        &format!("UGX Emissive: {}", material.name),
-        material.emissive.as_ref(),
-        [0, 0, 0, 0],
-        wgpu::TextureFormat::Rgba8Unorm,
-    );
-    let ao = create_texture_view(
-        device,
-        queue,
-        &format!("UGX AO: {}", material.name),
-        material.ao.as_ref(),
-        [255; 4],
-        wgpu::TextureFormat::Rgba8Unorm,
-    );
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some(&format!("UGX Material Bind Group: {}", material.name)),
-        layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffer.as_entire_binding(),
-            },
-            texture_entry(1, &diffuse),
-            texture_entry(2, &normal),
-            texture_entry(3, &gloss),
-            texture_entry(4, &opacity),
-            texture_entry(5, &xform),
-            texture_entry(6, &emissive),
-            texture_entry(7, &ao),
-            wgpu::BindGroupEntry {
-                binding: 8,
-                resource: wgpu::BindingResource::Sampler(sampler),
-            },
-        ],
     })
 }
 
@@ -653,10 +1610,114 @@ fn create_texture_view(
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
+fn create_fallback_shadow_view(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    layers: u32,
+    label: &str,
+) -> wgpu::TextureView {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: layers,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        texture.as_image_copy(),
+        &vec![255; usize::try_from(layers).unwrap_or(1) * 4],
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4),
+            rows_per_image: Some(1),
+        },
+        texture.size(),
+    );
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    })
+}
+
+fn create_fallback_volume_view(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    color: [u8; 4],
+) -> wgpu::TextureView {
+    let texture = device.create_texture_with_data(
+        queue,
+        &wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D3,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+        wgpu::util::TextureDataOrder::LayerMajor,
+        &color,
+    );
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+fn create_fallback_terrain_heightfield_view(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> wgpu::TextureView {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("UGX Fallback Terrain Heightfield"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        texture.as_image_copy(),
+        &[0, 0, 0, 255],
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4),
+            rows_per_image: Some(1),
+        },
+        wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+    );
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::pipeline_index;
+    use super::{
+        MATERIAL_FLAG_DISTORTION, MATERIAL_FLAG_EMISSIVE_XFORM, MATERIAL_FLAG_HIGHLIGHT,
+        MATERIAL_FLAG_MODULATE, MATERIAL_FLAG_RECEIVES_SHADOWS, MATERIAL_FLAG_TERRAIN_CONFORM,
+        MaterialUniform, pipeline_index,
+    };
     use crate::ugx::BlendMode;
+    use crate::ugx::model::{Image, Material, MaterialFeature};
 
     #[test]
     fn pipeline_indices_keep_blends_and_culling_distinct() {
@@ -664,5 +1725,59 @@ mod tests {
         assert_eq!(pipeline_index(BlendMode::Opaque, true), 1);
         assert_eq!(pipeline_index(BlendMode::Additive, false), 6);
         assert_eq!(pipeline_index(BlendMode::Additive, true), 7);
+    }
+
+    #[test]
+    fn material_uniform_packs_oracle_uv_slots_and_effect_flags() {
+        let mut material = Material::default();
+        for (index, velocity) in material.uv_velocity.iter_mut().enumerate() {
+            let value = u16::try_from(index).map_or(f32::INFINITY, f32::from);
+            *velocity = [value, -value];
+        }
+        let effect = Image {
+            width: 1,
+            height: 1,
+            pixels: vec![255; 4],
+            hdr_scale: 2.5,
+        };
+        material.emissive_xform = Some(effect.clone());
+        material.distortion = Some(effect.clone());
+        material.highlight = Some(effect);
+        material.modulate = Some(Image {
+            width: 1,
+            height: 1,
+            pixels: vec![255; 4],
+            hdr_scale: 1.0,
+        });
+        material.set_feature(MaterialFeature::TERRAIN_CONFORM, true);
+
+        let uniform = MaterialUniform::from_material(&material, false, 1.0);
+        assert_eq!(
+            uniform.uv_velocity0.map(f32::to_bits),
+            [0.0, -0.0, 1.0, -1.0].map(f32::to_bits)
+        );
+        assert_eq!(
+            uniform.uv_velocity2.map(f32::to_bits),
+            [5.0, -5.0, 8.0, -8.0].map(f32::to_bits)
+        );
+        assert_eq!(
+            uniform.uv_velocity4.map(f32::to_bits),
+            [9.0, -9.0, 10.0, -10.0].map(f32::to_bits)
+        );
+        assert_eq!(
+            uniform.uv_velocity5.map(f32::to_bits),
+            [11.0, -11.0, 12.0, -12.0].map(f32::to_bits)
+        );
+        assert_eq!(uniform.hdr_scales[2].to_bits(), 2.5_f32.to_bits());
+        assert_ne!(uniform.flags[0] & MATERIAL_FLAG_EMISSIVE_XFORM, 0);
+        assert_ne!(uniform.flags[0] & MATERIAL_FLAG_DISTORTION, 0);
+        assert_ne!(uniform.flags[0] & MATERIAL_FLAG_HIGHLIGHT, 0);
+        assert_ne!(uniform.flags[0] & MATERIAL_FLAG_MODULATE, 0);
+        assert_ne!(uniform.flags[0] & MATERIAL_FLAG_RECEIVES_SHADOWS, 0);
+        assert_ne!(uniform.flags[0] & MATERIAL_FLAG_TERRAIN_CONFORM, 0);
+
+        material.set_feature(MaterialFeature::RECEIVES_SHADOWS, false);
+        let uniform = MaterialUniform::from_material(&material, false, 1.0);
+        assert_eq!(uniform.flags[0] & MATERIAL_FLAG_RECEIVES_SHADOWS, 0);
     }
 }

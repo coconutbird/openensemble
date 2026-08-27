@@ -23,23 +23,13 @@ const QUATERNION_SCALE_OFFSET: [[f32; 2]; 16] = {
     ]
 };
 
-#[derive(Debug, thiserror::Error)]
-pub(super) enum PoseError {
-    #[error("track '{track}' has an invalid {component} curve: {reason}")]
-    InvalidCurve {
-        track: String,
-        component: &'static str,
-        reason: String,
-    },
-}
-
 #[derive(Clone, Debug, Default)]
 pub(super) struct AnimationPose {
     tracks: Vec<(String, Mat4)>,
 }
 
 impl AnimationPose {
-    pub(super) fn at_start(animation: &Animation) -> Result<Self, PoseError> {
+    pub(super) fn at_start(animation: &Animation) -> Self {
         let mut tracks: Vec<(String, Mat4)> = Vec::new();
         for track in animation
             .track_groups
@@ -55,15 +45,14 @@ impl AnimationPose {
             {
                 continue;
             }
-            let matrix =
-                track_matrix(track).map_err(|(component, reason)| PoseError::InvalidCurve {
-                    track: name.to_owned(),
-                    component,
-                    reason,
-                })?;
-            tracks.push((name.to_owned(), matrix));
+            match track_matrix(track) {
+                Ok(matrix) => tracks.push((name.to_owned(), matrix)),
+                Err((component, reason)) => log::warn!(
+                    "UGX animation track '{name}' has an unsupported {component} curve; using the bone's bind pose: {reason}"
+                ),
+            }
         }
-        Ok(Self { tracks })
+        Self { tracks }
     }
 
     pub(super) fn local_transform(&self, bone_name: &str) -> Option<Mat4> {
@@ -126,7 +115,9 @@ fn sample_values(
         CurvePayload::Identity {
             dimension: stored_dimension,
         } => {
-            if usize::from(*stored_dimension) != dimension {
+            // A null Granny curve is represented as identity dimension zero.
+            // It is valid for every transform component.
+            if *stored_dimension != 0 && usize::from(*stored_dimension) != dimension {
                 return Err(format!(
                     "identity dimension {stored_dimension} does not match {dimension}"
                 ));
@@ -358,6 +349,19 @@ mod tests {
         assert_eq!(
             sample_values(&curve, 4, &[0.0, 0.0, 0.0, 1.0]).unwrap(),
             [0.0, 0.0, 0.0, 1.0]
+        );
+    }
+
+    #[test]
+    fn null_identity_curves_use_the_requested_component_identity() {
+        let curve = CurveData {
+            format: 0,
+            degree: 0,
+            payload: CurvePayload::Identity { dimension: 0 },
+        };
+        assert_eq!(
+            sample_values(&curve, 3, &[4.0, 5.0, 6.0]).unwrap(),
+            [4.0, 5.0, 6.0]
         );
     }
 

@@ -3,6 +3,33 @@
 //! These types represent processed terrain data ready for rendering.
 //! They bridge the gap between raw file data (XTD/XTT) and GPU resources.
 
+use crate::wgpu;
+
+/// Accepted-axis terrain position texture and the constants required to decode
+/// its normalized Y channel back into world space.
+///
+/// The position texture stores logical `(x, z)` at texture coordinate `(z, x)`.
+/// Keeping that convention in one shared type prevents model, decal, trail,
+/// and terrain-effect renderers from independently reintroducing the old
+/// diagonal mirror bug.
+#[derive(Clone, Copy)]
+pub struct TerrainHeightfield<'a> {
+    /// Packed terrain position texture used by the canonical terrain renderer.
+    pub view: &'a wgpu::TextureView,
+    /// Number of packed samples per terrain axis.
+    pub dimension: u32,
+    /// World spacing between adjacent terrain samples.
+    pub tile_scale: f32,
+    /// World-space X/Z coordinate represented by texel `(0, 0)`.
+    pub world_min_xz: [f32; 2],
+    /// XTD Y decode range.
+    pub y_range: f32,
+    /// XTD Y decode midpoint.
+    pub y_mid: f32,
+    /// Normalized Y bias used by the PC terrain shader.
+    pub normalized_y_bias: f32,
+}
+
 /// Albedo atlas data decoded from XTT file.
 #[derive(Clone)]
 pub struct AlbedoData {

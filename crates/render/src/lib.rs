@@ -3,7 +3,12 @@
 //! Rendering subsystem using wgpu (pure Rust).
 //! Provides a fully abstracted window and rendering system with egui integration.
 
+pub mod environment;
+pub mod lighting;
+pub mod particle;
+pub mod postprocess;
 pub mod terrain;
+pub mod terrain_effect;
 pub mod ugx;
 
 use egui_wgpu::ScreenDescriptor;

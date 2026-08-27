@@ -5,6 +5,7 @@
 
 use glam::Vec3;
 use num_traits::ToPrimitive;
+use render::lighting::LocalLightBuffer;
 use render::terrain::{
     CompositeBindings, CompositingConfig, CompositorResources, GPU_TESS_SHADER, GpuTessParams,
     LightingParams, NORMALIZED_TERRAIN_Y_OFFSET, TerrainParams,
@@ -310,7 +311,7 @@ impl TerrainViewer {
 
         let mut foliage_resources = crate::foliage::FoliageResources::new(
             device,
-            self.surface_format,
+            self.scene_format,
             &gpu.camera_bind_group_layout,
         );
 
@@ -405,7 +406,7 @@ impl TerrainViewer {
             queue,
             &crate::roads::RoadResourceInput {
                 camera_bind_group_layout: &camera_layout,
-                surface_format: self.surface_format,
+                surface_format: self.scene_format,
                 raw_terrain,
                 shadow_view: shadow_view.as_ref(),
                 batches: &batch_inputs,
@@ -537,7 +538,7 @@ struct TessellationAuxiliary {
     blackmap: wgpu::TextureView,
     unexplored: wgpu::TextureView,
     light: wgpu::TextureView,
-    local_lights: wgpu::Buffer,
+    local_lights: LocalLightBuffer,
     local_shadow: wgpu::TextureView,
     light_volume_color: wgpu::TextureView,
     light_volume_vector: wgpu::TextureView,
@@ -1171,14 +1172,6 @@ fn create_light_view(
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
-fn create_local_lights_buffer(device: &wgpu::Device) -> wgpu::Buffer {
-    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Local Lights Buffer"),
-        contents: &[0; 20 * 8 * 16],
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-    })
-}
-
 struct ShadowResourceBindings<'a> {
     position: &'a wgpu::TextureView,
     position_sampler: &'a wgpu::Sampler,
@@ -1585,7 +1578,7 @@ impl TerrainViewer {
             blackmap,
             unexplored,
             light: create_light_view(device, queue, lighting_source),
-            local_lights: create_local_lights_buffer(device),
+            local_lights: LocalLightBuffer::empty(device),
             local_shadow: create_placeholder_array_view(
                 device,
                 queue,
@@ -1668,7 +1661,7 @@ impl TerrainViewer {
                 shadow: &auxiliary.shadow.shadow_view,
                 blackmap: &auxiliary.blackmap,
                 unexplored: &auxiliary.unexplored,
-                local_lights: &auxiliary.local_lights,
+                local_lights: auxiliary.local_lights.buffer(),
                 lighting_sampler: &textures.samplers.lighting,
                 light: &auxiliary.light,
                 dynamic_alpha: &textures.dynamic_alpha,
@@ -1680,7 +1673,7 @@ impl TerrainViewer {
             },
         );
         let pipeline =
-            create_gpu_pipeline(device, self.surface_format, &camera.layout, &texture_layout);
+            create_gpu_pipeline(device, self.scene_format, &camera.layout, &texture_layout);
         let [width, height] = config.surface_size;
         let (depth_texture, depth_view) = create_depth_texture(device, width, height);
         let (expanded_vertex_buffer, vertex_count, expanded_vertex_count) =
@@ -1695,10 +1688,12 @@ impl TerrainViewer {
             camera_bind_group_layout: camera.layout,
             camera_bind_group: camera.bind_group,
             texture_bind_group,
+            position_texture_view: textures.position.clone(),
             depth_texture,
             depth_view,
             params_buffer,
             lighting_buffer: Some(lighting_buffer),
+            local_lights: auxiliary.local_lights.clone(),
             terrain_size: [terrain_size.x, terrain_size.z],
             tile_scale: raw_data.tile_scale,
             num_patch_instances: config.total_patches,
@@ -1709,7 +1704,7 @@ impl TerrainViewer {
             queue,
             &auxiliary.blackmap,
             &auxiliary.unexplored,
-            &auxiliary.local_lights,
+            auxiliary.local_lights.buffer(),
         );
     }
 

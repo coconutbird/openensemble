@@ -14,6 +14,7 @@ mod camera;
 mod compositing;
 pub mod loading;
 mod mesh;
+mod patch;
 mod scene;
 mod shaders;
 mod texture;
@@ -30,6 +31,11 @@ pub use loading::{
     load_terrain_textures,
 };
 pub use mesh::TerrainMesh;
+pub use patch::{
+    TerrainPatchError, TerrainPatchImage, TerrainPatchInstance, TerrainPatchMaterial,
+    TerrainPatchRenderer, TerrainPatchRendererDescriptor, TerrainPatchShading,
+    TerrainPatchWorldBindings,
+};
 pub use scene::TerrainScene;
 pub use shaders::{
     COMPOSITE_SHADER, FOLIAGE_SHADER, GPU_TESS_SHADER, HEIGHTFIELD_SHADER, ROADS_SHADER,
@@ -39,7 +45,7 @@ pub use texture::{generate_mipmaps, mip_dimensions, mip_level_count};
 pub use types::{
     AlbedoData, AlphaTextureData, AoTextureData, ChunkDecalData, ChunkSplatData, DecalInstance,
     DecalTexture, FoliageBladeVertex, FoliageQNChunk, FoliageSet, NormalMapTexture, RawXtdData,
-    RoadChunkData, SpecularMapTexture, TerrainTessellationData, TerrainTexture,
+    RoadChunkData, SpecularMapTexture, TerrainHeightfield, TerrainTessellationData, TerrainTexture,
 };
 pub use uniforms::{
     CameraUniform, GpuTessParams, LightingParams, NORMALIZED_TERRAIN_Y_OFFSET, TerrainParams,
