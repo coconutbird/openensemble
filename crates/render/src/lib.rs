@@ -4,6 +4,7 @@
 //! Provides a fully abstracted window and rendering system with egui integration.
 
 pub mod terrain;
+pub mod ugx;
 
 use egui_wgpu::ScreenDescriptor;
 use gilrs::{Axis, Button, Gilrs};

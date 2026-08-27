@@ -86,6 +86,15 @@ impl TerrainViewer {
             albedo.as_ref(),
             [ctx.size.0, ctx.size.1],
         );
+        if let Some(unit) = &self.ugx_unit {
+            self.ugx_renderer = Some(render::ugx::UnitRenderer::new(
+                ctx.device,
+                ctx.queue,
+                ctx.format,
+                unit,
+                self.ugx_transform,
+            ));
+        }
     }
 
     fn update_terrain_uniforms(
@@ -112,8 +121,14 @@ impl TerrainViewer {
         queue.write_buffer(&gpu.params_buffer, 0, bytemuck::bytes_of(&params));
     }
 
-    fn update_lighting(&mut self, queue: &wgpu::Queue, camera_position: glam::Vec3) {
-        let Some(gpu) = &self.gpu else { return };
+    fn update_lighting(
+        &mut self,
+        queue: &wgpu::Queue,
+        camera_position: glam::Vec3,
+    ) -> LightingParams {
+        let Some(gpu) = &self.gpu else {
+            return LightingParams::default();
+        };
         let light_direction = glam::Vec3::new(0.4, 0.8, 0.3).normalize();
         let mut shadow_columns = [[1.0_f32, 0.0, 0.0, 0.0]; 4];
         let mut shadow_enabled = 0.0;
@@ -146,6 +161,18 @@ impl TerrainViewer {
         }
         if let Some(roads) = &mut self.road_resources {
             roads.update_frame(queue, &params, self.bump_power);
+        }
+        params
+    }
+
+    fn update_ugx(
+        &mut self,
+        queue: &wgpu::Queue,
+        view_projection: glam::Mat4,
+        lighting: &LightingParams,
+    ) {
+        if let Some(renderer) = &mut self.ugx_renderer {
+            renderer.update_frame(queue, view_projection, self.ugx_transform, lighting);
         }
     }
 
@@ -237,6 +264,9 @@ impl TerrainViewer {
         render_pass.draw(0..gpu.index_count, 0..gpu.num_patch_instances);
 
         if include_details {
+            if let Some(renderer) = &self.ugx_renderer {
+                renderer.render(&mut render_pass);
+            }
             if let Some(foliage) = &self.foliage_resources {
                 crate::foliage::render_foliage(
                     &mut render_pass,
@@ -276,7 +306,8 @@ impl TerrainViewer {
         include_details: bool,
     ) -> anyhow::Result<()> {
         self.update_terrain_uniforms(ctx.queue, camera.view_projection, debug_mode);
-        self.update_lighting(ctx.queue, camera.position);
+        let lighting = self.update_lighting(ctx.queue, camera.position);
+        self.update_ugx(ctx.queue, camera.view_projection, &lighting);
         let target = CaptureTarget::new(ctx.device, size, ctx.format)?;
         let (_depth_texture, depth_view) = create_depth_texture(ctx.device, size, size);
         let mut encoder = ctx
@@ -429,7 +460,8 @@ impl Application3D for TerrainViewer {
             |camera| (camera.view_projection, camera.position),
         );
         self.update_terrain_uniforms(ctx.queue, view_projection, self.debug_mode);
-        self.update_lighting(ctx.queue, camera_position);
+        let lighting = self.update_lighting(ctx.queue, camera_position);
+        self.update_ugx(ctx.queue, view_projection, &lighting);
         if let (Some(camera), Some(foliage)) = (capture_camera, &mut self.foliage_resources) {
             foliage.set_fade_distances(
                 ctx.queue,

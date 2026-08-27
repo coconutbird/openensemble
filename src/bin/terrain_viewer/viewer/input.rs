@@ -169,6 +169,18 @@ impl TerrainViewer {
             ui.separator();
             ui.colored_label(egui::Color32::RED, error);
         }
+        if let Some(unit) = &self.ugx_unit {
+            ui.separator();
+            ui.label(format!(
+                "UGX Warthog: {} components, {} triangles",
+                unit.component_count(),
+                unit.triangle_count()
+            ));
+        }
+        if let Some(error) = &self.ugx_error {
+            ui.separator();
+            ui.colored_label(egui::Color32::RED, error);
+        }
     }
 
     fn draw_debug_buttons(&mut self, ui: &mut egui::Ui) {
