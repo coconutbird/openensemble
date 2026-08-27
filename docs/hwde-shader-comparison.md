@@ -16,7 +16,7 @@ used because they do not describe the binaries being rendered here.
 | Repeating material UV | Uses the shader's independent `(Z, X)` convention; this is not the chunk-address convention. |
 | Foliage random | One scalar `fract((fract(index * 0.0012385598) * 257 + 1)^2)` drives both jitter axes, rotation, and height. |
 | Foliage UV | Stored U and V pass through directly; V is not inverted. |
-| Foliage placement | In XTD source axes, `x = index / 64 + 0.5`, `z = index & 63`, followed by scalar jitter and the directly indexed XTD visual-parent origin. The complete source placement and blade geometry are then converted to viewer `(x, z) = (source z, source x)`. |
+| Foliage placement | The oracle local grid is `x = index / 64 + 0.5`, `z = index & 63`, followed by scalar jitter. The XTD visual parent already selects the viewer world chunk, so its origin stays fixed while only the local grid and blade geometry are transposed to viewer `(x, z) = (local z, local x)`. |
 | Foliage indices | Big-endian packed `u32`: blade type in the upper half, blade/vertex index in the lower half, with strip restarts. |
 | Foliage DDS | DXGI 98/99 is BC7, decoded through the local `../ensemble-formats` crate rather than the previous BC3 approximation. |
 
@@ -51,11 +51,10 @@ Albedo and opacity uploads include mip chains to keep the alpha-tested sprites
 stable under minification.
 
 QN parent IDs index the XTD visual-chunk vector directly; they must never be
-looked up in the XTT linker vector. The resulting chunk coordinates remain in
-XTD source axes while the oracle placement and RNG are evaluated. The complete
-placement is then mirrored into the viewer/material world together with the
-terrain position field. For example, XTD source chunk `(0, 6)` becomes viewer
-chunk `(6, 0)`.
+looked up in the XTT linker vector. The resulting coordinates are already the
+viewer chunk origin. The oracle placement and RNG are evaluated in its packed
+local 64×64 grid, then that local offset is transposed without moving the
+parent chunk. For example, parent 96 remains viewer chunk `(0, 6)`.
 
 ## Canonical check
 

@@ -198,9 +198,9 @@ impl Default for FoliageSet {
 pub struct FoliageQNChunk {
     /// Parent quad-node index (into terrain grid).
     pub qn_parent_index: u32,
-    /// XTD source-grid X coordinate from the parent visual quad node.
+    /// World-grid X coordinate from the parent XTD visual quad node.
     pub grid_x: i32,
-    /// XTD source-grid Z coordinate from the parent visual quad node.
+    /// World-grid Z coordinate from the parent XTD visual quad node.
     pub grid_z: i32,
     /// Number of foliage sets used in this chunk.
     pub num_sets: u32,

@@ -1325,7 +1325,7 @@ impl FoliageResources {
             }
             if chunk_index < 5 {
                 log::debug!(
-                    "  QN[{chunk_index}] parent_idx={}, source_chunk=({chunk_x},{chunk_z}), sets={}, set_indices={:?}",
+                    "  QN[{chunk_index}] parent_idx={}, world_chunk=({chunk_x},{chunk_z}), sets={}, set_indices={:?}",
                     chunk.qn_parent_index,
                     chunk.num_sets,
                     chunk.set_indices

@@ -585,7 +585,7 @@ pub fn extract_decal_data(xtt: &XttFile) -> (Vec<DecalInstance>, Vec<ChunkDecalD
     (decal_instances, chunk_decal_data)
 }
 
-/// Resolve a foliage parent in raw XTD source-grid axes.
+/// Resolve the world-grid coordinates of a foliage parent XTD visual chunk.
 fn foliage_parent_grid(visual_chunks: &[XtdVisualChunk], parent_index: u32) -> Option<(i32, i32)> {
     let parent_index = usize::try_from(parent_index).ok()?;
     let parent = visual_chunks.get(parent_index)?;

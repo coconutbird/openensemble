@@ -211,22 +211,20 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     // it for both jitter axes, rotation, and blade-height variation.
     let rnd = foliage_random(f32(blade_index));
 
-    // Fresh PC VS #0/#2: source X is bladeIndex >> 6 and source Z is
-    // bladeIndex & 63. The chunk constants come from the parent XTD visual
-    // quad node in those same source axes.
-    var source_trns_x = f32(blade_index / num_blades_per_node) + 0.5 + chunk_offset_x;
-    var source_trns_z = f32(blade_index % num_blades_per_node) + chunk_offset_z;
+    // Fresh PC VS #0/#2: local source X is bladeIndex >> 6 and local source Z
+    // is bladeIndex & 63. QN parent metadata has already selected the world
+    // chunk, so its origin must not receive the packed-atlas transpose.
+    var source_local_x = f32(blade_index / num_blades_per_node) + 0.5;
+    var source_local_z = f32(blade_index % num_blades_per_node);
 
     // Jitter
-    source_trns_x += (rnd * 2.0 - 1.0) * 0.9;
-    source_trns_z += (rnd * 2.0 - 1.0) * 0.9;
+    source_local_x += (rnd * 2.0 - 1.0) * 0.9;
+    source_local_z += (rnd * 2.0 - 1.0) * 0.9;
 
-    // XTD source space is diagonally mirrored relative to the XTT material
-    // world used by the viewer. Preserve the oracle's source-index/RNG math,
-    // then convert the complete X/Z position rather than only swapping the
-    // chunk origin.
-    let trns_x = source_trns_z;
-    let trns_z = source_trns_x;
+    // The packed local grid uses the opposite X/Z order from the viewer. Keep
+    // the parent origin fixed and transpose only the local placement.
+    let trns_x = chunk_offset_x + source_local_z;
+    let trns_z = chunk_offset_z + source_local_x;
 
     // Rotate blade around Y axis
     let rot_angle = rnd * 360.0;

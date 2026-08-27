@@ -269,32 +269,29 @@ fn foliage_random(blade_index: u32) -> f32 {
 }
 
 fn foliage_grid_position(grid_x: i32, grid_z: i32, blade_index: u32) -> Option<Vec2> {
-    let source_chunk_x = u32::try_from(grid_x).ok()?;
-    let source_chunk_z = u32::try_from(grid_z).ok()?;
+    let world_chunk_x = u32::try_from(grid_x).ok()?;
+    let world_chunk_z = u32::try_from(grid_z).ok()?;
     let random = foliage_random(blade_index);
     let jitter = (random * 2.0 - 1.0) * 0.9;
-    let source_x = source_chunk_x
+    let world_x = world_chunk_x
         .checked_mul(64)
         .and_then(|value| value.to_f32())
-        .expect("foliage source X chunk offset must fit f32")
+        .expect("foliage world X chunk offset must fit f32")
+        + (blade_index % 64)
+            .to_f32()
+            .expect("foliage source local Z must fit f32")
+        + jitter;
+    let world_z = world_chunk_z
+        .checked_mul(64)
+        .and_then(|value| value.to_f32())
+        .expect("foliage world Z chunk offset must fit f32")
         + (blade_index / 64)
             .to_f32()
             .expect("foliage source local X must fit f32")
         + 0.5
         + jitter;
-    let source_z = source_chunk_z
-        .checked_mul(64)
-        .and_then(|value| value.to_f32())
-        .expect("foliage source Z chunk offset must fit f32")
-        + (blade_index % 64)
-            .to_f32()
-            .expect("foliage source local Z must fit f32")
-        + jitter;
 
-    // The complete XTD placement is diagonally mirrored into the material
-    // world's X/Z axes, matching the packed position conversion used by GPU
-    // terrain and foliage.
-    Some(Vec2::new(source_z, source_x))
+    Some(Vec2::new(world_x, world_z))
 }
 
 fn placements_for_set(
@@ -857,12 +854,12 @@ mod tests {
     }
 
     #[test]
-    fn foliage_grid_axes_apply_the_complete_xtd_world_conversion() {
+    fn foliage_grid_axes_preserve_parent_chunk_and_transpose_local_index() {
         let random = foliage_random(64);
         let jitter = (random * 2.0 - 1.0) * 0.9;
         let position = foliage_grid_position(2, 3, 64).expect("valid XTT chunk");
-        let expected_x = 3.0 * 64.0 + jitter;
-        let expected_z = 2.0 * 64.0 + 1.5 + jitter;
+        let expected_x = 2.0 * 64.0 + jitter;
+        let expected_z = 3.0 * 64.0 + 1.5 + jitter;
         assert!((position.x - expected_x).abs() < 0.000_01);
         assert!((position.y - expected_z).abs() < 0.000_01);
     }

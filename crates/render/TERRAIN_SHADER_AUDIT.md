@@ -62,17 +62,16 @@ for this map's canonical comparison.
   the blade type; the lower 16 bits encode `blade_index * 10 + vertex`, with
   `0xffff` strip-restart entries.
 - A foliage QN parent is an index into the XTD visual-chunk vector, not the XTT
-  material-linker vector. Its stored `(grid_x, grid_z)` is an XTD source-chunk
-  origin. The complete source placement is converted into the material world,
-  so parent 96 resolves to source chunk `(0, 6)` and viewer chunk `(6, 0)`.
+  material-linker vector. Its stored `(grid_x, grid_z)` already selects the
+  viewer's world chunk, so parent 96 remains chunk `(0, 6)`.
 - The PC vertex shader derives one scalar random value from the local blade
   index and reuses it for X/Z jitter, rotation, and height variation. The WGSL
   now does the same instead of generating two independent values.
 - Blade UVs are passed through exactly as stored. There is no V inversion.
-- The source chunk, local blade location, rotated blade geometry, normal, and
-  sampled X/Z terrain displacement are all converted together. Terrain
-  displacement samples the converted atlas at the oracle's `.yx` coordinate
-  and uses the same world-space result as the terrain path.
+- The shader's packed local 64×64 blade index uses the opposite X/Z order from
+  the viewer. Only that local location, rotated blade geometry, and normal are
+  transposed; the already-resolved parent chunk origin stays fixed. Terrain
+  displacement samples the converted atlas at the oracle's `.yx` coordinate.
 - PC foliage albedo and opacity DDS resources use DXGI BC7 (98/99). The local
   `../ensemble-formats` DDX decoder now identifies and decodes BC7 instead of
   treating it as BC3/DXT5.
