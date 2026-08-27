@@ -15,7 +15,6 @@ use crate::capture::{
     write_packed_height_reference, write_tessellation_reference, write_xtt_reference,
 };
 use crate::gpu::create_depth_texture;
-use crate::types::terrain_chunk_index;
 
 impl TerrainViewer {
     fn render_units<'pass>(&'pass self, phase: RenderPhase, pass: &mut wgpu::RenderPass<'pass>) {
@@ -185,7 +184,7 @@ impl TerrainViewer {
 
         let params = TerrainParams {
             terrain_size: gpu.terrain_size,
-            chunk_count: [16.0, 16.0],
+            chunk_count: gpu.chunk_grid.dimensions_f32(),
             texture_tile_scale: gpu.tile_scale,
             debug_mode: debug_mode.to_f32().expect("debug mode must fit f32"),
             bump_power: self.bump_power,
@@ -296,6 +295,9 @@ impl TerrainViewer {
     }
 
     fn composite_dirty_chunks(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let Some(chunk_grid) = self.gpu.as_ref().map(|gpu| gpu.chunk_grid) else {
+            return;
+        };
         let (Some(compositor), Some(bind_group), Some(scene)) = (
             &mut self.compositor,
             &self.compositor_bind_group,
@@ -304,16 +306,16 @@ impl TerrainViewer {
             return;
         };
 
-        let mut layer_counts = vec![1; 256];
+        let mut layer_counts = vec![1; chunk_grid.total_chunks()];
         for chunk in &scene.chunk_splat_data {
-            if let Some(index) = terrain_chunk_index(chunk.grid_x, chunk.grid_z) {
+            if let Some(index) = chunk_grid.chunk_index(chunk.grid_x, chunk.grid_z) {
                 layer_counts[index] = u32::try_from(chunk.layer_texture_ids.len())
                     .expect("terrain layer count must fit u32");
             }
         }
-        let mut decal_layer_counts = vec![0; 256];
+        let mut decal_layer_counts = vec![0; chunk_grid.total_chunks()];
         for chunk in &scene.chunk_decal_data {
-            if let Some(index) = terrain_chunk_index(chunk.grid_x, chunk.grid_z) {
+            if let Some(index) = chunk_grid.chunk_index(chunk.grid_x, chunk.grid_z) {
                 decal_layer_counts[index] = u32::try_from(chunk.decal_layer_ids.len())
                     .expect("decal layer count must fit u32");
             }

@@ -230,6 +230,7 @@ name = "bdt"
 version = "0.1.0"
 dependencies = [
  "hashbrown 0.16.1",
+ "num-traits",
  "thiserror 2.0.18",
  "zerocopy",
 ]

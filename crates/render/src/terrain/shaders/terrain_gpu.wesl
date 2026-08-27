@@ -74,7 +74,7 @@ var t_ao: texture_2d<f32>;
 @group(1) @binding(7)
 var t_alpha: texture_2d<f32>;
 
-// GPU-composited albedo atlas (from compositor, 8K×8K for 256 chunks)
+// GPU-composited albedo atlas sized from the decoded terrain chunk grid.
 @group(1) @binding(14)
 var t_gpu_composited: texture_2d<f32>;
 
@@ -539,27 +539,29 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Debug mode 13: Chunk grid visualization with corner markers
         // Corner markers (2x2 chunk areas):
         // - (0,0) corner: BRIGHT RED (world origin)
-        // - (15,0) corner: BRIGHT BLUE (+X direction)
-        // - (0,15) corner: BRIGHT GREEN (+Z direction)
-        // - (15,15) corner: BRIGHT YELLOW (diagonal)
-        // Rest: gradient R=grid_x/16, G=grid_z/16
+        // - far X corner: BRIGHT BLUE (+X direction)
+        // - far Z corner: BRIGHT GREEN (+Z direction)
+        // - far diagonal corner: BRIGHT YELLOW
+        // Rest: a gradient normalized by the decoded chunk dimensions.
+        let far_x = u32(max(chunk_count.x - 2.0, 0.0));
+        let far_z = u32(max(chunk_count.y - 2.0, 0.0));
         if grid_x < 2u && grid_z < 2u {
             return vec4<f32>(1.0, 0.0, 0.0, 1.0); // RED = origin (0,0)
         }
-        if grid_x > 13u && grid_z < 2u {
-            return vec4<f32>(0.0, 0.0, 1.0, 1.0); // BLUE = +X direction (15,0)
+        if grid_x >= far_x && grid_z < 2u {
+            return vec4<f32>(0.0, 0.0, 1.0, 1.0); // BLUE = +X direction
         }
-        if grid_x < 2u && grid_z > 13u {
-            return vec4<f32>(0.0, 1.0, 0.0, 1.0); // GREEN = +Z direction (0,15)
+        if grid_x < 2u && grid_z >= far_z {
+            return vec4<f32>(0.0, 1.0, 0.0, 1.0); // GREEN = +Z direction
         }
-        if grid_x > 13u && grid_z > 13u {
-            return vec4<f32>(1.0, 1.0, 0.0, 1.0); // YELLOW = diagonal (15,15)
+        if grid_x >= far_x && grid_z >= far_z {
+            return vec4<f32>(1.0, 1.0, 0.0, 1.0); // YELLOW = diagonal
         }
-        return vec4<f32>(f32(grid_x) / 16.0, f32(grid_z) / 16.0, 0.0, 1.0);
+        return vec4<f32>(f32(grid_x) / chunk_count.x, f32(grid_z) / chunk_count.y, 0.0, 1.0);
     }
     if params.debug_mode > 11.5 && params.debug_mode < 12.5 {
         // Debug mode 12: GPU-composited atlas output
-        // Sample from the 8K×8K GPU-composited atlas
+        // Sample from the map-sized GPU-composited atlas.
         let gpu_composited_color = textureSample(t_gpu_composited, s_terrain, sample_uv);
         return vec4<f32>(gpu_composited_color.rgb, 1.0);
     }

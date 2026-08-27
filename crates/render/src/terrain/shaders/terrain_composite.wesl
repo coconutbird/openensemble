@@ -10,7 +10,7 @@ struct CompositeParams {
     lod_level: u32,
     hdr_mode: u32,
     hdr_scale: f32,
-    _padding: f32,
+    chunks_x: u32,
 };
 
 @group(0) @binding(0) var<uniform> params: CompositeParams;
@@ -125,8 +125,10 @@ fn rotate_decal_uv(
 @fragment
 fn fs_main(in: VertexOutput) -> CompositeOutput {
     let chunk_index = params.chunk_index;
-    let grid_z = chunk_index / 16u;
-    let grid_x = chunk_index % 16u;
+    let chunks_x = max(params.chunks_x, 1u);
+    let chunks_z = max(textureNumLayers(t_alpha_atlas) / chunks_x, 1u);
+    let grid_z = chunk_index / chunks_x;
+    let grid_x = chunk_index % chunks_x;
     let half_pixel = 0.5 / 64.0;
     let alpha_uv = mix(vec2<f32>(half_pixel), vec2<f32>(1.0 - half_pixel), in.uv);
     let alpha_low = textureSampleLevel(t_alpha_atlas, s_alpha, alpha_uv, chunk_index, 0.0);
@@ -230,13 +232,13 @@ fn fs_main(in: VertexOutput) -> CompositeOutput {
     if params.debug_mode == 1u {
         albedo = vec3<f32>(in.uv, 0.0);
     } else if params.debug_mode == 2u {
-        albedo = vec3<f32>(f32(grid_x) / 16.0, f32(grid_z) / 16.0, 0.0);
+        albedo = vec3<f32>(f32(grid_x) / f32(chunks_x), f32(grid_z) / f32(chunks_z), 0.0);
     } else if params.debug_mode == 3u {
         albedo = alpha_low.rgb;
     } else if params.debug_mode == 4u {
         albedo = sample_albedo(base_uv, base_layer);
     } else if params.debug_mode == 5u {
-        albedo = vec3<f32>(tiling_uv / 16.0, 0.0);
+        albedo = vec3<f32>(tiling_uv / vec2<f32>(f32(chunks_z), f32(chunks_x)), 0.0);
     }
 
     var out: CompositeOutput;

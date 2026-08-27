@@ -5,21 +5,28 @@
 use num_traits::ToPrimitive;
 use render::wgpu;
 
-use crate::types::terrain_chunk_index;
+use crate::types::TerrainChunkGrid;
 use crate::viewer::TerrainViewer;
 
 impl TerrainViewer {
-    pub(crate) fn create_chunk_layers_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
+    pub(crate) fn create_chunk_layers_buffer(
+        &self,
+        device: &wgpu::Device,
+        chunk_grid: TerrainChunkGrid,
+    ) -> wgpu::Buffer {
         use wgpu::util::DeviceExt;
         let scene = self.scene.as_ref().expect("scene must be loaded");
         let chunk_splat_data = &scene.chunk_splat_data;
 
-        // 256 chunks * 8 layers = 2048 u32s
-        let mut layer_data = vec![0u32; 256 * 8];
+        let layer_slots = chunk_grid
+            .total_chunks()
+            .checked_mul(8)
+            .expect("terrain layer slot count must fit usize");
+        let mut layer_data = vec![0u32; layer_slots];
 
         for chunk in chunk_splat_data {
             // XTT axes are transposed into the unique atlas by the PC shaders.
-            let Some(chunk_idx) = terrain_chunk_index(chunk.grid_x, chunk.grid_z) else {
+            let Some(chunk_idx) = chunk_grid.chunk_index(chunk.grid_x, chunk.grid_z) else {
                 continue;
             };
             let base = chunk_idx * 8;
@@ -37,7 +44,7 @@ impl TerrainViewer {
         // Log first few chunks for debugging
         log::info!("=== First 5 chunk layer IDs in buffer ===");
         for chunk in chunk_splat_data.iter().take(5) {
-            let Some(chunk_idx) = terrain_chunk_index(chunk.grid_x, chunk.grid_z) else {
+            let Some(chunk_idx) = chunk_grid.chunk_index(chunk.grid_x, chunk.grid_z) else {
                 continue;
             };
             log::info!(
@@ -92,22 +99,26 @@ impl TerrainViewer {
     }
 
     /// Creates the chunk decal layers buffer.
-    /// 256 chunks × 8 decal layer slots = 2048 u32s.
+    /// Each terrain chunk receives eight decal layer slots.
     /// Each entry is the decal instance index for that chunk's decal layer.
-    pub(crate) fn create_chunk_decal_layers_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
+    pub(crate) fn create_chunk_decal_layers_buffer(
+        &self,
+        device: &wgpu::Device,
+        chunk_grid: TerrainChunkGrid,
+    ) -> wgpu::Buffer {
         use wgpu::util::DeviceExt;
         let scene = self.scene.as_ref().expect("scene must be loaded");
 
-        // 256 chunks * 8 decal layers = 2048 u32s
-        let mut layer_data = vec![0u32; 256 * 8];
+        let layer_slots = chunk_grid
+            .total_chunks()
+            .checked_mul(8)
+            .expect("terrain decal layer slot count must fit usize");
+        let mut layer_data = vec![0u32; layer_slots];
 
         for chunk in &scene.chunk_decal_data {
-            let Some(chunk_idx) = terrain_chunk_index(chunk.grid_x, chunk.grid_z) else {
+            let Some(chunk_idx) = chunk_grid.chunk_index(chunk.grid_x, chunk.grid_z) else {
                 continue;
             };
-            if chunk_idx >= 256 {
-                continue;
-            }
             let base = chunk_idx * 8;
             for (i, &decal_id) in chunk.decal_layer_ids.iter().enumerate().take(8) {
                 layer_data[base + i] = decal_id.cast_unsigned();

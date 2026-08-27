@@ -12,6 +12,7 @@ use render::terrain::{CompositeBindings, CompositingConfig, CompositorResources}
 use render::wgpu;
 use wgpu::util::DeviceExt;
 
+use crate::types::TerrainChunkGrid;
 use crate::viewer::TerrainViewer;
 
 mod tessellation;
@@ -136,8 +137,10 @@ impl TerrainViewer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         inputs: &CompositorInputs<'_>,
+        chunk_grid: TerrainChunkGrid,
     ) {
-        let config = CompositingConfig::default();
+        let config = CompositingConfig::for_chunk_grid(chunk_grid.width(), chunk_grid.height())
+            .expect("decoded terrain chunk grid must produce a valid compositor atlas");
         log::info!(
             "Initializing GPU compositor: {}×{} atlas ({} chunks)",
             config.atlas_width,
@@ -145,11 +148,11 @@ impl TerrainViewer {
             config.total_chunks()
         );
         let compositor = CompositorResources::new(device, config);
-        let (_, decal_alpha_view) = self.create_decal_alpha_atlas(device, queue);
-        let (_, decal_alpha_hi_view) = self.create_decal_alpha_atlas_hi(device, queue);
+        let (_, decal_alpha_view) = self.create_decal_alpha_atlas(device, queue, chunk_grid);
+        let (_, decal_alpha_hi_view) = self.create_decal_alpha_atlas_hi(device, queue, chunk_grid);
         let (decal_diffuse_view, decal_opacity_view) =
             self.create_decal_texture_arrays(device, queue);
-        let decal_layers = self.create_chunk_decal_layers_buffer(device);
+        let decal_layers = self.create_chunk_decal_layers_buffer(device, chunk_grid);
         let decal_instances = self.create_decal_instances_buffer(device);
         let decal_scales = self.create_decal_uv_scales_buffer(device);
         let bind_group = compositor.create_bind_group(
@@ -178,9 +181,8 @@ impl TerrainViewer {
         log::info!("GPU compositor initialized successfully");
     }
 
-    /// Calculate chunk center positions based on terrain bounds.
-    /// Chunks are arranged in a 16×16 grid covering the terrain.
-    pub(crate) fn calculate_chunk_centers(&mut self) {
+    /// Calculates map-sized chunk center positions from the terrain bounds.
+    pub(crate) fn calculate_chunk_centers(&mut self, chunk_grid: TerrainChunkGrid) {
         let Some(scene) = &self.scene else {
             return;
         };
@@ -188,16 +190,17 @@ impl TerrainViewer {
 
         let world_min = terrain.world_min;
         let world_max = terrain.world_max;
-        let chunks_x = 16_u32;
-        let chunks_z = 16_u32;
+        let column_count = chunk_grid.width();
+        let row_count = chunk_grid.height();
+        let [column_divisor, row_divisor] = chunk_grid.dimensions_f32();
 
-        let chunk_width = (world_max[0] - world_min[0]) / 16.0;
-        let chunk_depth = (world_max[2] - world_min[2]) / 16.0;
+        let chunk_width = (world_max[0] - world_min[0]) / column_divisor;
+        let chunk_depth = (world_max[2] - world_min[2]) / row_divisor;
         let chunk_height = (world_max[1] - world_min[1]) / 2.0; // Average Y for center
 
         self.chunk_centers.clear();
-        for cz in 0..chunks_z {
-            for cx in 0..chunks_x {
+        for cz in 0..row_count {
+            for cx in 0..column_count {
                 let center_x = world_min[0]
                     + (cx.to_f32().expect("chunk X coordinate must fit f32") + 0.5) * chunk_width;
                 let center_y = world_min[1] + chunk_height; // Approximate center Y

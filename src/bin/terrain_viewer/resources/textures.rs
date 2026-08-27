@@ -8,13 +8,11 @@ use render::terrain::{
 };
 use render::wgpu;
 
-use crate::types::{AlbedoData, terrain_chunk_index};
+use crate::types::{AlbedoData, TerrainChunkGrid};
 use crate::viewer::TerrainViewer;
 
 const ALPHA_CHUNK_SIZE: u32 = 64;
 const ALPHA_CHUNK_SIZE_USIZE: usize = 64;
-const ALPHA_CHUNK_COUNT: u32 = 256;
-const ALPHA_CHUNK_COUNT_USIZE: usize = 256;
 const ALPHA_CHANNEL_COUNT: usize = 4;
 const ALPHA_CHANNEL_COUNT_U32: u32 = 4;
 const ALPHA_SLICE_BYTES: usize =
@@ -377,8 +375,11 @@ fn create_decal_array(
     (texture, view)
 }
 
-fn empty_alpha_array() -> Vec<u8> {
-    vec![0; ALPHA_SLICE_BYTES * ALPHA_CHUNK_COUNT_USIZE]
+fn empty_alpha_array(chunk_grid: TerrainChunkGrid) -> Vec<u8> {
+    let byte_count = ALPHA_SLICE_BYTES
+        .checked_mul(chunk_grid.total_chunks())
+        .expect("alpha texture array size must fit usize");
+    vec![0; byte_count]
 }
 
 fn populate_alpha_data<'a>(
@@ -386,9 +387,10 @@ fn populate_alpha_data<'a>(
     chunks: impl IntoIterator<Item = (i32, i32, &'a [Vec<u8>])>,
     first_map: usize,
     channel_count: usize,
+    chunk_grid: TerrainChunkGrid,
 ) {
     for (grid_x, grid_z, alpha_maps) in chunks {
-        let Some(chunk_index) = terrain_chunk_index(grid_x, grid_z) else {
+        let Some(chunk_index) = chunk_grid.chunk_index(grid_x, grid_z) else {
             continue;
         };
         let slice_offset = chunk_index * ALPHA_SLICE_BYTES;
@@ -417,13 +419,14 @@ fn create_alpha_texture(
     queue: &wgpu::Queue,
     label: &str,
     array_data: &[u8],
+    chunk_grid: TerrainChunkGrid,
 ) -> (wgpu::Texture, wgpu::TextureView) {
     let texture = create_array_texture(
         device,
         label,
         ALPHA_CHUNK_SIZE,
         ALPHA_CHUNK_SIZE,
-        ALPHA_CHUNK_COUNT,
+        chunk_grid.total_chunks_u32(),
         1,
         wgpu::TextureFormat::Rgba8Unorm,
     );
@@ -443,7 +446,7 @@ fn create_alpha_texture(
         wgpu::Extent3d {
             width: ALPHA_CHUNK_SIZE,
             height: ALPHA_CHUNK_SIZE,
-            depth_or_array_layers: ALPHA_CHUNK_COUNT,
+            depth_or_array_layers: chunk_grid.total_chunks_u32(),
         },
     );
     let view = array_view(&texture);
@@ -494,11 +497,12 @@ impl TerrainViewer {
         }
     }
 
-    /// Creates the alpha atlas texture (256 slices of 64x64 RGBA pixels).
+    /// Creates one 64×64 RGBA alpha slice per decoded terrain chunk.
     pub(crate) fn create_alpha_atlas(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        chunk_grid: TerrainChunkGrid,
     ) -> (wgpu::Texture, wgpu::TextureView) {
         let chunks = &self
             .scene
@@ -525,7 +529,7 @@ impl TerrainViewer {
             }
         }
 
-        let mut data = empty_alpha_array();
+        let mut data = empty_alpha_array(chunk_grid);
         populate_alpha_data(
             &mut data,
             chunks
@@ -533,8 +537,9 @@ impl TerrainViewer {
                 .map(|chunk| (chunk.grid_x, chunk.grid_z, chunk.alpha_maps.as_slice())),
             0,
             4,
+            chunk_grid,
         );
-        create_alpha_texture(device, queue, "Alpha Texture Array", &data)
+        create_alpha_texture(device, queue, "Alpha Texture Array", &data, chunk_grid)
     }
 
     /// Creates the high alpha atlas for overflow layers 5 through 7.
@@ -542,13 +547,14 @@ impl TerrainViewer {
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        chunk_grid: TerrainChunkGrid,
     ) -> (wgpu::Texture, wgpu::TextureView) {
         let chunks = &self
             .scene
             .as_ref()
             .expect("scene must be loaded")
             .chunk_splat_data;
-        let mut data = empty_alpha_array();
+        let mut data = empty_alpha_array(chunk_grid);
         populate_alpha_data(
             &mut data,
             chunks
@@ -556,8 +562,9 @@ impl TerrainViewer {
                 .map(|chunk| (chunk.grid_x, chunk.grid_z, chunk.alpha_maps.as_slice())),
             4,
             3,
+            chunk_grid,
         );
-        create_alpha_texture(device, queue, "Alpha Texture Array Hi", &data)
+        create_alpha_texture(device, queue, "Alpha Texture Array Hi", &data, chunk_grid)
     }
 
     /// Creates the decal alpha atlas texture.
@@ -565,6 +572,7 @@ impl TerrainViewer {
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        chunk_grid: TerrainChunkGrid,
     ) -> (wgpu::Texture, wgpu::TextureView) {
         let chunks = &self
             .scene
@@ -580,7 +588,7 @@ impl TerrainViewer {
             );
         }
 
-        let mut data = empty_alpha_array();
+        let mut data = empty_alpha_array(chunk_grid);
         populate_alpha_data(
             &mut data,
             chunks
@@ -588,8 +596,9 @@ impl TerrainViewer {
                 .map(|chunk| (chunk.grid_x, chunk.grid_z, chunk.alpha_maps.as_slice())),
             0,
             4,
+            chunk_grid,
         );
-        create_alpha_texture(device, queue, "Decal Alpha Atlas", &data)
+        create_alpha_texture(device, queue, "Decal Alpha Atlas", &data, chunk_grid)
     }
 
     /// Creates the high decal alpha atlas for decal layers 4 through 7.
@@ -597,13 +606,14 @@ impl TerrainViewer {
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        chunk_grid: TerrainChunkGrid,
     ) -> (wgpu::Texture, wgpu::TextureView) {
         let chunks = &self
             .scene
             .as_ref()
             .expect("scene must be loaded")
             .chunk_decal_data;
-        let mut data = empty_alpha_array();
+        let mut data = empty_alpha_array(chunk_grid);
         populate_alpha_data(
             &mut data,
             chunks
@@ -611,8 +621,9 @@ impl TerrainViewer {
                 .map(|chunk| (chunk.grid_x, chunk.grid_z, chunk.alpha_maps.as_slice())),
             4,
             4,
+            chunk_grid,
         );
-        create_alpha_texture(device, queue, "Decal Alpha Atlas Hi", &data)
+        create_alpha_texture(device, queue, "Decal Alpha Atlas Hi", &data, chunk_grid)
     }
 
     /// Uploads the actual decal diffuse and opacity resources as aligned arrays.

@@ -27,8 +27,8 @@ pub const GPU_TESS_SHADER: &str = include_wesl!("terrain_gpu");
 /// GPU compositing shader for pre-baking terrain textures (compiled from WESL).
 ///
 /// Port of the original gpuTerrainComposite.fx. Renders terrain splat layers
-/// to an 8K×8K atlas (16×16 chunks, 512×512 each) using the same splatting
-/// logic as the runtime shader.
+/// to a map-sized atlas with 512×512 pixels per decoded chunk, using the same
+/// splatting logic as the runtime shader.
 ///
 /// Original game uses multi-pass with hardware alpha blending (one layer per
 /// pass). We use single-pass with manual `mix()` which is mathematically

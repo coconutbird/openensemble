@@ -58,17 +58,27 @@ pub struct CompositingConfig {
 
 impl Default for CompositingConfig {
     fn default() -> Self {
-        Self {
-            chunk_texture_size: 512,
-            chunks_x: 16,
-            chunks_z: 16,
-            atlas_width: 8192,
-            atlas_height: 8192,
-        }
+        Self::for_chunk_grid(16, 16).expect("default compositor dimensions must be valid")
     }
 }
 
 impl CompositingConfig {
+    /// Creates a 512-pixel-per-chunk atlas for the supplied terrain grid.
+    #[must_use]
+    pub fn for_chunk_grid(chunks_x: u32, chunks_z: u32) -> Option<Self> {
+        const CHUNK_TEXTURE_SIZE: u32 = 512;
+        if chunks_x == 0 || chunks_z == 0 {
+            return None;
+        }
+        Some(Self {
+            chunk_texture_size: CHUNK_TEXTURE_SIZE,
+            chunks_x,
+            chunks_z,
+            atlas_width: chunks_x.checked_mul(CHUNK_TEXTURE_SIZE)?,
+            atlas_height: chunks_z.checked_mul(CHUNK_TEXTURE_SIZE)?,
+        })
+    }
+
     #[must_use]
     pub fn total_chunks(&self) -> u32 {
         self.chunks_x * self.chunks_z
@@ -77,6 +87,25 @@ impl CompositingConfig {
     #[must_use]
     pub fn mip_level_count(&self) -> u32 {
         self.chunk_texture_size.ilog2() + 1
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::CompositingConfig;
+
+    #[test]
+    fn tundra_atlas_follows_its_decoded_chunk_grid() {
+        let config = CompositingConfig::for_chunk_grid(14, 14).expect("valid chunk grid");
+        assert_eq!(config.total_chunks(), 196);
+        assert_eq!(config.atlas_width, 7168);
+        assert_eq!(config.atlas_height, 7168);
+    }
+
+    #[test]
+    fn empty_chunk_grids_are_rejected() {
+        assert!(CompositingConfig::for_chunk_grid(0, 14).is_none());
+        assert!(CompositingConfig::for_chunk_grid(14, 0).is_none());
     }
 }
 
@@ -90,7 +119,7 @@ pub struct CompositeParams {
     pub lod_level: u32,
     pub hdr_mode: u32,
     pub hdr_scale: f32,
-    pub padding: f32,
+    pub chunks_x: u32,
 }
 
 pub struct CompositeBindings<'a> {
@@ -471,7 +500,7 @@ impl CompositorResources {
                     lod_level: mip,
                     hdr_mode: u32::from(self.hdr_scale.is_some()),
                     hdr_scale: self.hdr_scale.unwrap_or(1.0),
-                    padding: 0.0,
+                    chunks_x: self.config.chunks_x,
                 };
                 queue.write_buffer(
                     &self.params_buffer,

@@ -10,7 +10,7 @@ use super::{
     create_terrain_samplers, create_uniform_buffer,
 };
 use crate::gpu::{create_depth_texture, xtd_packed_to_world};
-use crate::types::{AlbedoData, GpuResources, RawXtdData};
+use crate::types::{AlbedoData, GpuResources, RawXtdData, TerrainChunkGrid};
 use crate::viewer::TerrainViewer;
 
 mod gpu;
@@ -101,6 +101,7 @@ struct TessellationBuildConfig {
     surface_size: [u32; 2],
     num_patches: u32,
     total_patches: u32,
+    chunk_grid: TerrainChunkGrid,
 }
 
 struct PatchMesh {
@@ -297,6 +298,7 @@ impl TerrainViewer {
         queue: &wgpu::Queue,
         raw_data: &RawXtdData,
         albedo: Option<&AlbedoData>,
+        chunk_grid: TerrainChunkGrid,
     ) -> TessellationTextures {
         let num_verts = raw_data.num_verts_per_axis;
         let world_positions = xtd_packed_to_world(&raw_data.packed_positions, num_verts);
@@ -346,8 +348,8 @@ impl TerrainViewer {
         let (_, normal_map_array) = self.create_normal_map_array(device, queue);
         let (_, specular_map_array) = self.create_specular_map_array(device, queue);
         let (_, terrain_array) = self.create_terrain_texture_array(device, queue, albedo);
-        let (_, alpha_atlas) = self.create_alpha_atlas(device, queue);
-        let (_, alpha_atlas_hi) = self.create_alpha_atlas_hi(device, queue);
+        let (_, alpha_atlas) = self.create_alpha_atlas(device, queue, chunk_grid);
+        let (_, alpha_atlas_hi) = self.create_alpha_atlas_hi(device, queue, chunk_grid);
         let dynamic_alpha = create_dynamic_alpha_texture(device, queue, num_verts);
         TessellationTextures {
             position,
@@ -361,7 +363,7 @@ impl TerrainViewer {
             alpha_atlas,
             alpha_atlas_hi,
             dynamic_alpha,
-            chunk_layers: self.create_chunk_layers_buffer(device),
+            chunk_layers: self.create_chunk_layers_buffer(device, chunk_grid),
             samplers: create_terrain_samplers(device),
         }
     }
@@ -392,10 +394,24 @@ impl TerrainViewer {
         let total_patches = patches_per_axis
             .checked_mul(patches_per_axis)
             .expect("tessellation patch count must fit u32");
+        let chunk_grid = TerrainChunkGrid::from_terrain_dimension(raw_data.num_verts_per_axis)
+            .expect("terrain dimension must be a non-zero multiple of 64 cells");
+        if let Some(scene) = &self.scene
+            && scene.chunk_splat_data.len() != chunk_grid.total_chunks()
+        {
+            log::warn!(
+                "Decoded {} XTT chunks for a {}×{} XTD terrain grid ({} expected)",
+                scene.chunk_splat_data.len(),
+                chunk_grid.width(),
+                chunk_grid.height(),
+                chunk_grid.total_chunks(),
+            );
+        }
         let config = TessellationBuildConfig {
             surface_size,
             num_patches: patches_per_axis,
             total_patches,
+            chunk_grid,
         };
         let first = TessellationStageOne {
             patch_mesh: create_patch_mesh(VERTICES_PER_PATCH),
@@ -405,7 +421,8 @@ impl TerrainViewer {
                 patches_per_axis,
                 patches_per_axis,
             ),
-            textures: self.create_tessellation_textures(device, queue, raw_data, albedo),
+            textures: self
+                .create_tessellation_textures(device, queue, raw_data, albedo, chunk_grid),
         };
         self.create_gpu_tessellation_resources_part2(device, queue, raw_data, config, first);
     }
@@ -459,7 +476,7 @@ impl TerrainViewer {
             .map_or(Vec3::new(1024.0, 100.0, 1024.0), |scene| scene.mesh.size());
         let params = TerrainParams {
             terrain_size: [terrain_size.x, terrain_size.z],
-            chunk_count: [16.0, 16.0],
+            chunk_count: config.chunk_grid.dimensions_f32(),
             texture_tile_scale: 32.0,
             debug_mode: self.debug_mode.to_f32().expect("debug mode must fit f32"),
             bump_power: self.bump_power,
@@ -483,8 +500,9 @@ impl TerrainViewer {
                 terrain_sampler: &first.textures.samplers.terrain,
                 alpha_sampler: &first.textures.samplers.alpha,
             },
+            config.chunk_grid,
         );
-        self.calculate_chunk_centers();
+        self.calculate_chunk_centers(config.chunk_grid);
         let lighting_buffer =
             create_uniform_buffer(device, "Lighting Params Buffer", &LightingParams::default());
         let second = TessellationStageTwo {
@@ -552,9 +570,26 @@ impl TerrainViewer {
         config: TessellationBuildConfig,
         second: TessellationStageTwo,
     ) {
+        let textures = &second.first.textures;
+        let mut auxiliary = self.create_tessellation_auxiliary(
+            device,
+            queue,
+            raw_data,
+            &ShadowResourceBindings {
+                position: &textures.position_for_shadow,
+                position_sampler: &textures.samplers.position,
+                alpha: &textures.alpha,
+                alpha_sampler: &textures.samplers.alpha,
+                dynamic_alpha: &textures.dynamic_alpha,
+                camera_layout: &second.camera.layout,
+                num_patches: config.num_patches,
+            },
+        );
+        let texture_bind_group =
+            self.create_tessellation_texture_bind_group(device, &second, &auxiliary);
         let TessellationStageTwo {
             first,
-            tess_params_buffer,
+            tess_params_buffer: _,
             params_buffer,
             camera,
             terrain_size,
@@ -566,55 +601,6 @@ impl TerrainViewer {
             instance_buffer,
             textures,
         } = first;
-        let mut auxiliary = self.create_tessellation_auxiliary(
-            device,
-            queue,
-            raw_data,
-            &ShadowResourceBindings {
-                position: &textures.position_for_shadow,
-                position_sampler: &textures.samplers.position,
-                alpha: &textures.alpha,
-                alpha_sampler: &textures.samplers.alpha,
-                dynamic_alpha: &textures.dynamic_alpha,
-                camera_layout: &camera.layout,
-                num_patches: config.num_patches,
-            },
-        );
-        let compositor = self
-            .compositor
-            .as_ref()
-            .expect("compositor was initialized in tessellation stage two");
-        let composited_albedo = compositor.albedo_atlas_view();
-        let composited_normal = compositor.normal_atlas_view();
-        let composited_specular = compositor.specular_atlas_view();
-        let texture_bind_group = create_gpu_texture_bind_group(
-            device,
-            &texture_layout,
-            &GpuTessBindings {
-                tess_params: &tess_params_buffer,
-                position: &textures.position,
-                normal: &textures.normal,
-                position_sampler: &textures.samplers.position,
-                terrain_sampler: &textures.samplers.terrain,
-                params: &params_buffer,
-                ao: &textures.ao,
-                alpha: &textures.alpha,
-                composited_albedo,
-                lighting: &lighting_buffer,
-                shadow: &auxiliary.shadow.shadow_view,
-                blackmap: &auxiliary.blackmap,
-                unexplored: &auxiliary.unexplored,
-                local_lights: auxiliary.local_lights.buffer(),
-                lighting_sampler: &textures.samplers.lighting,
-                light: &auxiliary.light,
-                dynamic_alpha: &textures.dynamic_alpha,
-                composited_normal,
-                composited_specular,
-                local_shadow: &auxiliary.local_shadow,
-                light_volume_color: &auxiliary.light_volume_color,
-                light_volume_vector: &auxiliary.light_volume_vector,
-            },
-        );
         let pipeline =
             create_gpu_pipeline(device, self.scene_format, &camera.layout, &texture_layout);
         let [width, height] = config.surface_size;
@@ -641,6 +627,7 @@ impl TerrainViewer {
             lighting_buffer: Some(lighting_buffer),
             local_lights: auxiliary.local_lights.clone(),
             terrain_size: [terrain_size.x, terrain_size.z],
+            chunk_grid: config.chunk_grid,
             tile_scale: raw_data.tile_scale,
             num_patch_instances: config.total_patches,
         });
@@ -652,6 +639,50 @@ impl TerrainViewer {
             &auxiliary.unexplored,
             auxiliary.local_lights.buffer(),
         );
+    }
+
+    fn create_tessellation_texture_bind_group(
+        &self,
+        device: &wgpu::Device,
+        second: &TessellationStageTwo,
+        auxiliary: &TessellationAuxiliary,
+    ) -> wgpu::BindGroup {
+        let textures = &second.first.textures;
+        let compositor = self
+            .compositor
+            .as_ref()
+            .expect("compositor was initialized in tessellation stage two");
+        let composited_albedo = compositor.albedo_atlas_view();
+        let composited_normal = compositor.normal_atlas_view();
+        let composited_specular = compositor.specular_atlas_view();
+        create_gpu_texture_bind_group(
+            device,
+            &second.texture_layout,
+            &GpuTessBindings {
+                tess_params: &second.tess_params_buffer,
+                position: &textures.position,
+                normal: &textures.normal,
+                position_sampler: &textures.samplers.position,
+                terrain_sampler: &textures.samplers.terrain,
+                params: &second.params_buffer,
+                ao: &textures.ao,
+                alpha: &textures.alpha,
+                composited_albedo,
+                lighting: &second.lighting_buffer,
+                shadow: &auxiliary.shadow.shadow_view,
+                blackmap: &auxiliary.blackmap,
+                unexplored: &auxiliary.unexplored,
+                local_lights: auxiliary.local_lights.buffer(),
+                lighting_sampler: &textures.samplers.lighting,
+                light: &auxiliary.light,
+                dynamic_alpha: &textures.dynamic_alpha,
+                composited_normal,
+                composited_specular,
+                local_shadow: &auxiliary.local_shadow,
+                light_volume_color: &auxiliary.light_volume_color,
+                light_volume_vector: &auxiliary.light_volume_vector,
+            },
+        )
     }
 
     fn init_tessellation_surface_features(
