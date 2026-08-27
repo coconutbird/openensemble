@@ -1,11 +1,13 @@
 //! GPU resources for foliage rendering.
 
 use super::FoliageConfig;
+use crate::gpu::xtd_packed_to_world;
 use crate::types::FoliageSet;
 use num_traits::ToPrimitive;
-use render::terrain::{FOLIAGE_SHADER, LightingParams};
+use render::terrain::{FOLIAGE_SHADER, LightingParams, generate_mipmaps, mip_level_count};
 use render::wgpu;
 use render::wgpu::util::DeviceExt;
+use std::collections::BTreeSet;
 
 /// A single foliage draw call (one per QN chunk × set pair).
 pub struct FoliageDrawCall {
@@ -83,10 +85,10 @@ pub struct FoliageSetResources {
 pub struct FoliageParamsUniform {
     /// `terrain_info`: `num_verts_per_axis`, `tile_scale`, `chunk_offset_x`, `chunk_offset_z`
     pub terrain_info: [f32; 4],
-    /// `world_min`: x, y, z, padding
-    pub world_min: [f32; 4],
-    /// `world_range`: x, y, z, padding
-    pub world_range: [f32; 4],
+    /// Position compression midpoint (`g_posCompMin`): x, y, z, padding.
+    pub position_mid: [f32; 4],
+    /// Position compression range (`g_posCompRange`): x, y, z, padding.
+    pub position_range: [f32; 4],
     /// `foliage_info`: `num_verts_per_blade`, `rcp_num_blades`, `fade_start`, `fade_end`
     pub foliage_info: [f32; 4],
     /// `camera_pos`: x, y, z, time
@@ -134,6 +136,24 @@ pub struct FoliageWorldBindings<'a> {
     pub local_lights: &'a wgpu::Buffer,
 }
 
+struct FallbackFoliageWorldResources {
+    shadow: wgpu::TextureView,
+    blackmap: wgpu::TextureView,
+    unexplored: wgpu::TextureView,
+    local_lights: wgpu::Buffer,
+}
+
+impl FallbackFoliageWorldResources {
+    fn bindings(&self) -> FoliageWorldBindings<'_> {
+        FoliageWorldBindings {
+            shadow: &self.shadow,
+            blackmap: &self.blackmap,
+            unexplored: &self.unexplored,
+            local_lights: &self.local_lights,
+        }
+    }
+}
+
 /// Per-chunk uniform data (must match shader `ChunkInfo` struct).
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -147,11 +167,47 @@ pub struct ChunkInfoUniform {
 }
 
 struct FoliageDrawInfo {
-    grid_x: u32,
-    grid_z: u32,
+    chunk_x: u32,
+    chunk_z: u32,
     set_index: usize,
     num_verts_per_blade: u32,
     blades: Vec<[u32; 2]>,
+}
+
+/// Extracts one (`local_grid_index`, `blade_type`) entry per foliage blade.
+///
+/// The fresh PC shader consumes a 32-bit index whose upper 16 bits select the
+/// blade geometry and whose lower 16 bits are
+/// `local_grid_index * 10 + vertex_in_blade`. The local XTT decoder has already
+/// converted the file's big-endian bytes into those words. The shader's decimal
+/// decomposition is hard-coded to ten vertices, so sets with any other geometry
+/// stride cannot use this path.
+pub(crate) fn parse_foliage_index_buffer(
+    indices: &[u32],
+    num_verts_per_blade: u32,
+) -> Vec<[u32; 2]> {
+    const INDEX_VERTICES_PER_BLADE: u32 = 10;
+    let mut blade_entries = Vec::new();
+    if indices.is_empty() || num_verts_per_blade != INDEX_VERTICES_PER_BLADE {
+        return blade_entries;
+    }
+
+    let mut seen = BTreeSet::new();
+    for &packed in indices {
+        let index_part = packed & 0xFFFF;
+        if index_part == 0xFFFF {
+            continue;
+        }
+
+        let vertex_in_blade = index_part % INDEX_VERTICES_PER_BLADE;
+        if vertex_in_blade == 0 {
+            let entry = [index_part / INDEX_VERTICES_PER_BLADE, packed >> 16];
+            if seen.insert(entry) {
+                blade_entries.push(entry);
+            }
+        }
+    }
+    blade_entries
 }
 
 fn uniform_layout_entry(
@@ -240,13 +296,13 @@ fn create_foliage_bind_group_layouts(
             texture_layout_entry(
                 2,
                 wgpu::ShaderStages::VERTEX,
-                wgpu::TextureSampleType::Float { filterable: false },
+                wgpu::TextureSampleType::Float { filterable: true },
                 wgpu::TextureViewDimension::D2,
             ),
             sampler_layout_entry(
                 3,
                 wgpu::ShaderStages::VERTEX,
-                wgpu::SamplerBindingType::NonFiltering,
+                wgpu::SamplerBindingType::Filtering,
             ),
             texture_layout_entry(
                 4,
@@ -440,6 +496,7 @@ fn create_uploaded_rgba_texture(
     format: wgpu::TextureFormat,
 ) -> (wgpu::Texture, wgpu::TextureView) {
     let [width, height] = size;
+    let mip_levels = mip_level_count(width, height);
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
@@ -447,32 +504,39 @@ fn create_uploaded_rgba_texture(
             height,
             depth_or_array_layers: 1,
         },
-        mip_level_count: 1,
+        mip_level_count: mip_levels,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        pixels,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(width * 4),
-            rows_per_image: Some(height),
-        },
-        wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-    );
+    let mips = generate_mipmaps(pixels, width, height);
+    let mut mip_width = width;
+    let mut mip_height = height;
+    for (mip_level, mip_pixels) in mips.iter().enumerate() {
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: u32::try_from(mip_level).expect("foliage mip level must fit u32"),
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            mip_pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(mip_width * 4),
+                rows_per_image: Some(mip_height),
+            },
+            wgpu::Extent3d {
+                width: mip_width,
+                height: mip_height,
+                depth_or_array_layers: 1,
+            },
+        );
+        mip_width = (mip_width / 2).max(1);
+        mip_height = (mip_height / 2).max(1);
+    }
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     (texture, view)
 }
@@ -592,16 +656,16 @@ fn initial_foliage_params(
             0.0,
             0.0,
         ],
-        world_min: [
-            terrain_data.mid[0] - terrain_data.range[0],
-            terrain_data.mid[1] - terrain_data.range[1],
-            terrain_data.mid[2] - terrain_data.range[2],
+        position_mid: [
+            terrain_data.mid[2],
+            terrain_data.mid[1],
+            terrain_data.mid[0],
             0.0,
         ],
-        world_range: [
-            terrain_data.range[0] * 2.0,
-            terrain_data.range[1] * 2.0,
-            terrain_data.range[2] * 2.0,
+        position_range: [
+            terrain_data.range[2],
+            terrain_data.range[1],
+            terrain_data.range[0],
             0.0,
         ],
         foliage_info: [
@@ -1050,6 +1114,24 @@ impl FoliageResources {
         self.blade_map_texture = Some(texture);
     }
 
+    fn create_fallback_world_resources(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> FallbackFoliageWorldResources {
+        let blackmap = Self::create_dummy_texture(device, queue, "Blackmap", [0, 0, 0, 0]);
+        let unexplored = Self::create_dummy_texture(device, queue, "Unexplored", [0, 0, 0, 0]);
+        FallbackFoliageWorldResources {
+            shadow: Self::create_dummy_shadow_view(device, queue),
+            blackmap: blackmap.create_view(&wgpu::TextureViewDescriptor::default()),
+            unexplored: unexplored.create_view(&wgpu::TextureViewDescriptor::default()),
+            local_lights: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Foliage Empty Local Lights"),
+                contents: &[0; 20 * 8 * 16],
+                usage: wgpu::BufferUsages::STORAGE,
+            }),
+        }
+    }
+
     pub fn create_params_bind_group(
         &mut self,
         device: &wgpu::Device,
@@ -1075,63 +1157,22 @@ impl FoliageResources {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
         self.ensure_chunk_info_buffer(device, queue, num_verts_per_blade);
         self.ensure_blade_map(device, queue);
 
-        let fallback_shadow = world
+        let fallback = world
             .is_none()
-            .then(|| Self::create_dummy_shadow_view(device, queue));
-        let fallback_blackmap = world.is_none().then(|| {
-            let texture = Self::create_dummy_texture(device, queue, "Blackmap", [0, 0, 0, 0]);
-            texture.create_view(&wgpu::TextureViewDescriptor::default())
-        });
-        let fallback_unexplored = world.is_none().then(|| {
-            let texture = Self::create_dummy_texture(device, queue, "Unexplored", [0, 0, 0, 0]);
-            texture.create_view(&wgpu::TextureViewDescriptor::default())
-        });
-        let fallback_lights = world.is_none().then(|| {
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Foliage Empty Local Lights"),
-                contents: &[0; 20 * 8 * 16],
-                usage: wgpu::BufferUsages::STORAGE,
-            })
-        });
-        let shadow = world.map_or_else(
-            || {
-                fallback_shadow
-                    .as_ref()
-                    .expect("fallback shadow was created")
-            },
-            |bindings| bindings.shadow,
-        );
-        let blackmap = world.map_or_else(
-            || {
-                fallback_blackmap
-                    .as_ref()
-                    .expect("fallback blackmap was created")
-            },
-            |bindings| bindings.blackmap,
-        );
-        let unexplored = world.map_or_else(
-            || {
-                fallback_unexplored
-                    .as_ref()
-                    .expect("fallback unexplored map was created")
-            },
-            |bindings| bindings.unexplored,
-        );
-        let local_lights = world.map_or_else(
-            || {
-                fallback_lights
-                    .as_ref()
-                    .expect("fallback lights were created")
-            },
-            |bindings| bindings.local_lights,
-        );
+            .then(|| Self::create_fallback_world_resources(device, queue));
+        let fallback_bindings = fallback
+            .as_ref()
+            .map(FallbackFoliageWorldResources::bindings);
+        let world = world
+            .or(fallback_bindings.as_ref())
+            .expect("world or fallback foliage bindings must exist");
         let chunk_buffer = self
             .chunk_info_buffer
             .as_ref()
@@ -1148,11 +1189,11 @@ impl FoliageResources {
                 chunk_buffer,
                 heightmap: &heightmap_view,
                 heightmap_sampler: &heightmap_sampler,
-                shadow,
-                blackmap,
-                unexplored,
+                shadow: world.shadow,
+                blackmap: world.blackmap,
+                unexplored: world.unexplored,
                 blade_map,
-                local_lights,
+                local_lights: world.local_lights,
             },
         ));
         let caster_shadow = Self::create_dummy_shadow_view(device, queue);
@@ -1165,10 +1206,10 @@ impl FoliageResources {
                 heightmap: &heightmap_view,
                 heightmap_sampler: &heightmap_sampler,
                 shadow: &caster_shadow,
-                blackmap,
-                unexplored,
+                blackmap: world.blackmap,
+                unexplored: world.unexplored,
                 blade_map,
-                local_lights,
+                local_lights: world.local_lights,
             },
         ));
         log::info!("Created foliage params bind group with {num_verts}x{num_verts} heightmap");
@@ -1250,53 +1291,9 @@ impl FoliageResources {
 
     /// Parse a QN chunk's index buffer for one set, extracting (`grid_position`, `blade_type`) pairs.
     ///
-    /// Index buffer format (from `XTT_FoliageExport.cs)`:
+    /// Index buffer format verified directly against the scenario XTT bytes:
     /// Each 32-bit entry: upper 16 bits = `blade_type`, lower 16 bits = localIndex * numVertsPerBlade + vert
     /// Entries for one blade are followed by a 0xFFFF strip reset marker.
-    fn parse_index_buffer(ib_data: &[u8], num_verts_per_blade: u32) -> Vec<[u32; 2]> {
-        let mut blade_entries = Vec::new();
-
-        if ib_data.len() < 4 || num_verts_per_blade == 0 {
-            return blade_entries;
-        }
-
-        // Index buffer is big-endian 32-bit integers (Xbox 360 format)
-        let num_indices = ib_data.len() / 4;
-        let mut i = 0;
-
-        while i < num_indices {
-            let packed = u32::from_be_bytes([
-                ib_data[i * 4],
-                ib_data[i * 4 + 1],
-                ib_data[i * 4 + 2],
-                ib_data[i * 4 + 3],
-            ]);
-
-            // Skip strip reset markers (0xFFFF in lower 16 bits or full 0x0000FFFF)
-            if (packed & 0xFFFF) == 0xFFFF {
-                i += 1;
-                continue;
-            }
-
-            // unpack_4_16: blade_type = upper 16 bits, index_part = lower 16 bits
-            let blade_type = packed >> 16;
-            let index_part = packed & 0xFFFF;
-
-            // index_part = localIndex * numVertsPerBlade + vertexInBlade
-            let local_index = index_part / num_verts_per_blade;
-            let vert_in_blade = index_part % num_verts_per_blade;
-
-            // Only record on first vertex of each blade to avoid duplicates
-            if vert_in_blade == 0 {
-                blade_entries.push([local_index, blade_type]);
-            }
-
-            i += 1;
-        }
-
-        blade_entries
-    }
-
     /// Build draw calls and chunk info buffer from QN chunk data.
     ///
     /// Parses index buffers to determine which blades are active and their types.
@@ -1308,11 +1305,27 @@ impl FoliageResources {
     ) -> Vec<FoliageDrawInfo> {
         let mut draw_infos = Vec::new();
         for (chunk_index, chunk) in qn_chunks.iter().enumerate() {
-            let grid_x = chunk.qn_parent_index / chunks_per_axis;
-            let grid_z = chunk.qn_parent_index % chunks_per_axis;
+            let (Ok(chunk_x), Ok(chunk_z)) =
+                (u32::try_from(chunk.grid_x), u32::try_from(chunk.grid_z))
+            else {
+                log::warn!(
+                    "Skipping foliage QN parent {} with negative XTD grid coordinates ({}, {})",
+                    chunk.qn_parent_index,
+                    chunk.grid_x,
+                    chunk.grid_z
+                );
+                continue;
+            };
+            if chunk_x >= chunks_per_axis || chunk_z >= chunks_per_axis {
+                log::warn!(
+                    "Skipping foliage QN parent {} outside {chunks_per_axis}x{chunks_per_axis} world grid: ({chunk_x}, {chunk_z})",
+                    chunk.qn_parent_index
+                );
+                continue;
+            }
             if chunk_index < 5 {
                 log::debug!(
-                    "  QN[{chunk_index}] parent_idx={}, grid=({grid_x},{grid_z}), sets={}, set_indices={:?}",
+                    "  QN[{chunk_index}] parent_idx={}, source_chunk=({chunk_x},{chunk_z}), sets={}, set_indices={:?}",
                     chunk.qn_parent_index,
                     chunk.num_sets,
                     chunk.set_indices
@@ -1335,11 +1348,11 @@ impl FoliageResources {
                     continue;
                 };
                 let blades =
-                    Self::parse_index_buffer(index_buffer, set_resources.num_verts_per_blade);
+                    parse_foliage_index_buffer(index_buffer, set_resources.num_verts_per_blade);
                 if !blades.is_empty() {
                     draw_infos.push(FoliageDrawInfo {
-                        grid_x,
-                        grid_z,
+                        chunk_x,
+                        chunk_z,
                         set_index,
                         num_verts_per_blade: set_resources.num_verts_per_blade,
                         blades,
@@ -1376,14 +1389,14 @@ impl FoliageResources {
                 .expect("foliage dynamic offset must fit u32");
             let byte_offset =
                 usize::try_from(dynamic_offset).expect("foliage offset must fit usize");
-            let east_offset = info
-                .grid_x
+            let north_offset = info
+                .chunk_x
                 .checked_mul(64)
                 .expect("foliage X offset must fit u32")
                 .to_f32()
                 .expect("foliage X offset must fit f32");
-            let north_offset = info
-                .grid_z
+            let east_offset = info
+                .chunk_z
                 .checked_mul(64)
                 .expect("foliage Z offset must fit u32")
                 .to_f32()
@@ -1564,67 +1577,27 @@ impl FoliageResources {
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(params));
     }
 
+    /// Overrides distance fading for a deterministic overview capture.
+    pub fn set_fade_distances(&mut self, queue: &wgpu::Queue, start: f32, end: f32) {
+        self.config.fade_start_distance = start;
+        self.config.max_render_distance = end;
+        let Some(params) = &mut self.params else {
+            return;
+        };
+        params.foliage_info[2] = start;
+        params.foliage_info[3] = end;
+        queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(params));
+    }
+
     /// Create a heightmap texture from terrain position data.
     ///
-    /// Stores full XYZ displacement (matching original `getTerrainDataAtPos`
-    /// which returns all three components, not just Y height).
+    /// Preserves the filterable `R10G10B10A2_UNORM` data consumed by the oracle.
     fn create_heightmap_texture(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         terrain_data: &crate::types::RawXtdData,
         num_verts: u32,
     ) -> wgpu::Texture {
-        // Decode packed positions to get XYZ displacement values
-        let texel_count = num_verts
-            .checked_mul(num_verts)
-            .expect("foliage heightmap dimensions must fit u32");
-        let mut positions = Vec::with_capacity(
-            usize::try_from(texel_count).expect("foliage heightmap size must fit usize"),
-        );
-
-        let mid = terrain_data.mid;
-        let range = terrain_data.range;
-
-        let mut min_height = f32::MAX;
-        let mut max_height = f32::MIN;
-
-        for packed in &terrain_data.packed_positions {
-            // R10G10B10A2 format: 10 bits each for X, Y, Z
-            let x_raw = (packed & 0x3FF)
-                .to_f32()
-                .expect("packed X position must fit f32")
-                / 1023.0;
-            let y_raw = ((packed >> 10) & 0x3FF)
-                .to_f32()
-                .expect("packed Y position must fit f32")
-                / 1023.0;
-            let z_raw = ((packed >> 20) & 0x3FF)
-                .to_f32()
-                .expect("packed Z position must fit f32")
-                / 1023.0;
-
-            // Decode to world displacement: norm * range - mid (matches game bytecode)
-            // The oracle consumes the sampled position as .zyx.
-            let x = z_raw * range[0] - mid[0];
-            let y = y_raw * range[1] - mid[1];
-            let z = x_raw * range[2] - mid[2];
-
-            min_height = min_height.min(y);
-            max_height = max_height.max(y);
-
-            positions.push([x, y, z, 0.0]);
-        }
-
-        log::info!(
-            "Heightmap: {} positions, height range [{:.1}, {:.1}], mid={:.1}, range_y={:.1}",
-            positions.len(),
-            min_height,
-            max_height,
-            mid[1],
-            range[1]
-        );
-
-        // Create Rgba32Float texture for full XYZ displacement
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Foliage Heightmap"),
             size: wgpu::Extent3d {
@@ -1635,11 +1608,12 @@ impl FoliageResources {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba32Float,
+            format: wgpu::TextureFormat::Rgb10a2Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
 
+        let world_positions = xtd_packed_to_world(&terrain_data.packed_positions, num_verts);
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &texture,
@@ -1647,10 +1621,10 @@ impl FoliageResources {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            bytemuck::cast_slice(&positions),
+            bytemuck::cast_slice(&world_positions),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(num_verts * 16), // 4 floats × 4 bytes per f32
+                bytes_per_row: Some(num_verts * 4),
                 rows_per_image: Some(num_verts),
             },
             wgpu::Extent3d {
@@ -1660,6 +1634,30 @@ impl FoliageResources {
             },
         );
 
+        log::info!("Foliage position texture: {num_verts}x{num_verts} R10G10B10A2_UNORM");
+
         texture
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_foliage_index_buffer;
+
+    #[test]
+    fn foliage_index_buffer_extracts_one_entry_per_blade() {
+        let indices = [
+            0x0002_0014_u32,
+            0x0002_0015,
+            0x0002_0014,
+            0x0000_FFFF,
+            0x0001_0028,
+        ];
+        assert_eq!(parse_foliage_index_buffer(&indices, 10), [[2, 2], [4, 1]]);
+    }
+
+    #[test]
+    fn foliage_index_buffer_rejects_geometry_that_cannot_match_the_oracle() {
+        assert!(parse_foliage_index_buffer(&[0x0002_0014], 8).is_empty());
     }
 }

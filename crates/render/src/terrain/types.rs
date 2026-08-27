@@ -121,7 +121,7 @@ pub struct ChunkDecalData {
 // ============================================================================
 
 /// A single foliage blade vertex (position + normal + UV).
-/// From the original XML format in TerrainFoliage.cpp.
+/// Decoded from the foliage asset XML/XMB data.
 #[derive(Clone, Debug)]
 pub struct FoliageBladeVertex {
     /// Local position relative to blade base.
@@ -198,15 +198,18 @@ impl Default for FoliageSet {
 pub struct FoliageQNChunk {
     /// Parent quad-node index (into terrain grid).
     pub qn_parent_index: u32,
+    /// XTD source-grid X coordinate from the parent visual quad node.
+    pub grid_x: i32,
+    /// XTD source-grid Z coordinate from the parent visual quad node.
+    pub grid_z: i32,
     /// Number of foliage sets used in this chunk.
     pub num_sets: u32,
     /// Indices into the foliage sets array.
     pub set_indices: Vec<i32>,
     /// Polygon count for each set (for `DrawIndexedPrimitive`).
     pub set_poly_counts: Vec<i32>,
-    /// Raw index buffer data for each set.
-    /// These are 32-bit indices used with triangle strips.
-    pub index_buffers: Vec<Vec<u8>>,
+    /// Packed 32-bit vertex IDs for each set's triangle strip.
+    pub index_buffers: Vec<Vec<u32>>,
 }
 
 // ============================================================================
@@ -230,11 +233,14 @@ pub struct RoadChunkData {
 
 /// Raw XTD vertex data for GPU tessellation (before decoding to world positions).
 pub struct RawXtdData {
-    /// Packed position data (R10G10B10A2 format).
+    /// Packed position data in the PC texture's native X-major storage order.
+    ///
+    /// Logical `(x, z)` is stored at `x * num_verts_per_axis + z`; the shader
+    /// addresses that word with texture coordinate `(z, x)`.
     pub packed_positions: Vec<u32>,
-    /// Packed normal data.
+    /// Packed normal data in the same native X-major storage order.
     pub packed_normals: Vec<u32>,
-    /// Number of vertices per axis (e.g., 1025).
+    /// Number of vertices per axis (e.g., 1024).
     pub num_verts_per_axis: u32,
     /// Atlas mid point for decoding.
     pub mid: [f32; 3],
@@ -242,10 +248,28 @@ pub struct RawXtdData {
     pub range: [f32; 3],
     /// Tile scale for world position.
     pub tile_scale: f32,
+    /// World-space minimum bounds from the XTD header.
+    pub world_min: [f32; 3],
+    /// World-space maximum bounds from the XTD header.
+    pub world_max: [f32; 3],
+    /// XTD patch tessellation levels in texture row-major order (X changes fastest).
+    ///
+    /// The PC hull shader converts levels 0, 1, 2, and 3 to subdivision
+    /// factors 16, 8, 4, and 2, then raises shared edges to the finer of the
+    /// two adjacent patches.
+    pub tessellation: Option<TerrainTessellationData>,
     /// Ambient occlusion data (R8 values, half resolution).
     pub ao_data: Option<AoTextureData>,
     /// Alpha/transparency data (R8 values, half resolution).
     pub alpha_data: Option<AlphaTextureData>,
+}
+
+/// Per-patch terrain tessellation metadata decoded from the XTD tess chunk.
+#[derive(Clone)]
+pub struct TerrainTessellationData {
+    pub patches_x: u32,
+    pub patches_z: u32,
+    pub levels: Vec<u8>,
 }
 
 /// Half-resolution AO texture data as decoded from the game.

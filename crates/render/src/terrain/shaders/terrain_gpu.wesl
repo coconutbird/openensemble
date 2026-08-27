@@ -40,13 +40,16 @@ struct TessParams {
 @group(1) @binding(0)
 var<uniform> tess_params: TessParams;
 
-// Position texture (R32Uint - packed R10G10B10A2)
+// Position texture in the oracle's filterable R10G10B10A2_UNORM format.
 @group(1) @binding(1)
-var t_positions: texture_2d<u32>;
+var t_positions: texture_2d<f32>;
 
-// Normal texture (R32Uint - packed)
+// Normal/basis texture in R10G10B10A2_UNORM format.
 @group(1) @binding(2)
-var t_normals: texture_2d<u32>;
+var t_normals: texture_2d<f32>;
+
+@group(1) @binding(3)
+var s_position: sampler;
 
 @group(1) @binding(4)
 var s_terrain: sampler;
@@ -144,6 +147,10 @@ struct VertexInput {
     @location(0) local_uv: vec2<f32>,
     // Per-instance: patch index (x + z * num_patches_x)
     @location(1) patch_index: u32,
+    // Neighbor-aware hull-shader factors: left, top, right, bottom.
+    @location(2) edge_factors: vec4<u32>,
+    // Hull-shader inside factors for the domain X and Z axes.
+    @location(3) inside_factors: vec2<u32>,
 };
 
 // Light texture (L8 luminance from XTD, pre-baked per-vertex lighting)
@@ -182,28 +189,6 @@ struct VertexOutput {
     @location(7) @interpolate(linear) bump_fadeout: f32, // normal map distance fadeout (HWDE v8.w)
 };
 
-// Decode packed R10G10B10A2 position
-fn unpack_position(
-    packed: u32,
-    mid: vec3<f32>,
-    range: vec3<f32>,
-    normalized_y_offset: f32,
-) -> vec3<f32> {
-    let x_bits = packed & 0x3FFu;
-    let y_bits = (packed >> 10u) & 0x3FFu;
-    let z_bits = (packed >> 20u) & 0x3FFu;
-
-    // The sampled R10G10B10 value is consumed as .zyx by the oracle.
-    // Consequently the high ten bits are world X and the low ten bits are Z.
-    let norm = vec3<f32>(
-        f32(z_bits) / 1023.0,
-        f32(y_bits) / 1023.0,
-        f32(x_bits) / 1023.0
-    );
-
-    return vec3<f32>(norm.x, norm.y - normalized_y_offset, norm.z) * range - mid;
-}
-
 fn dynamic_alpha_enabled(grid_coord: vec2<u32>) -> bool {
     let dimensions = textureDimensions(t_dynamic_alpha);
     let word_x = min(grid_coord.x >> 5u, dimensions.x - 1u);
@@ -212,19 +197,31 @@ fn dynamic_alpha_enabled(grid_coord: vec2<u32>) -> bool {
     return (word & (1u << (grid_coord.x & 31u))) != 0u;
 }
 
-// Decode packed normal (x=bits 22-31, y=bits 11-20, z=bits 0-9)
-fn unpack_normal(packed: u32) -> vec3<f32> {
-    let x_bits = (packed >> 22u) & 0x3FFu;
-    let y_bits = (packed >> 11u) & 0x3FFu;
-    let z_bits = packed & 0x3FFu;
+fn quantize_domain(value: f32, factor: u32) -> f32 {
+    let divisions = f32(max(factor, 1u));
+    return round(value * divisions) / divisions;
+}
 
-    let norm = vec3<f32>(
-        (f32(x_bits) / 1023.0) * 2.0 - 1.0,
-        (f32(y_bits) / 1023.0) * 2.0 - 1.0,
-        (f32(z_bits) / 1023.0) * 2.0 - 1.0
+fn tessellated_domain(in: VertexInput) -> vec2<f32> {
+    var domain = vec2<f32>(
+        quantize_domain(in.local_uv.x, in.inside_factors.x),
+        quantize_domain(in.local_uv.y, in.inside_factors.y),
     );
 
-    return normalize(norm);
+    // Preserve the independently tessellated boundary edges. The fixed 16x16
+    // carrier grid then stitches finer shared edges to a coarser patch interior
+    // with degenerate triangles, without opening cracks between patches.
+    if in.local_uv.y <= 0.0 {
+        domain.x = quantize_domain(in.local_uv.x, in.edge_factors.y);
+    } else if in.local_uv.y >= 1.0 {
+        domain.x = quantize_domain(in.local_uv.x, in.edge_factors.w);
+    }
+    if in.local_uv.x <= 0.0 {
+        domain.y = quantize_domain(in.local_uv.y, in.edge_factors.x);
+    } else if in.local_uv.x >= 1.0 {
+        domain.y = quantize_domain(in.local_uv.y, in.edge_factors.z);
+    }
+    return domain;
 }
 
 @vertex
@@ -235,29 +232,33 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let tile_scale = tess_params.terrain_info.y;
     let num_patches_x = u32(tess_params.terrain_info.z);
 
-    let patch_x = in.patch_index % num_patches_x;
-    let patch_z = in.patch_index / num_patches_x;
+    // Fresh domain shaders #23-#27 derive world X from PrimitiveID / patch
+    // count and world Z from PrimitiveID % patch count.
+    let patch_x = in.patch_index / num_patches_x;
+    let patch_z = in.patch_index % num_patches_x;
+    let domain = tessellated_domain(in);
 
     // The oracle advances 16 logical cells per patch.  Packed texture width is
     // the cell count, not the vertex count: the final edge vertex is at
     // `num_verts` and samples the last packed texel through clamping.
-    let cell_x = min(patch_x * 16u + u32(round(in.local_uv.x * 16.0)), num_verts);
-    let cell_z = min(patch_z * 16u + u32(round(in.local_uv.y * 16.0)), num_verts);
+    let cell_x = min(patch_x * 16u + u32(round(domain.x * 16.0)), num_verts);
+    let cell_z = min(patch_z * 16u + u32(round(domain.y * 16.0)), num_verts);
     let global_u = f32(cell_x) / f32(num_verts);
     let global_v = f32(cell_z) / f32(num_verts);
-    let tex_x = min(cell_x, num_verts - 1u);
-    let tex_z = min(cell_z, num_verts - 1u);
-
-    // Position and basis samplers use .yx coordinates in every oracle VS/DS.
-    let packed_pos = textureLoad(t_positions, vec2<u32>(tex_z, tex_x), 0).r;
-    let packed_norm = textureLoad(t_normals, vec2<u32>(tex_z, tex_x), 0).r;
-
-    let local_pos = unpack_position(
-        packed_pos,
-        tess_params.mid.xyz,
-        tess_params.range.xyz,
-        tess_params.mid.w,
-    );
+    // DS #23 samples the filterable position texture at .yx and, unusually,
+    // uses the global X UV as its explicit LOD. This blends mip 0 and mip 1
+    // across the map and is material to the breadth of terrain features.
+    let position_sample = textureSampleLevel(
+        t_positions,
+        s_position,
+        vec2<f32>(global_v, global_u),
+        global_u,
+    ).bgr;
+    let local_pos = vec3<f32>(
+        position_sample.x,
+        position_sample.y - tess_params.mid.w,
+        position_sample.z,
+    ) * tess_params.range.xyz - tess_params.mid.xyz;
     let grid_x = f32(cell_x);
     let grid_z = f32(cell_z);
 
@@ -267,7 +268,13 @@ fn vs_main(in: VertexInput) -> VertexOutput {
         grid_z * tile_scale + local_pos.z
     );
 
-    let normal = unpack_normal(packed_norm);
+    // The basis sampler is fixed at LOD 0 and consumed as .zyx * 2 - 1.
+    let normal = textureSampleLevel(
+        t_normals,
+        s_position,
+        vec2<f32>(global_v, global_u),
+        0.0,
+    ).bgr * 2.0 - 1.0;
 
     // Compute TBN from vertex normal (matches original GiveTBNFromNormal)
     let tbn = compute_tbn(normal);
@@ -322,6 +329,28 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     //   global_u = X direction, global_v = Z direction
     // So in.uv.y = X, in.uv.x = Z. We need sample_uv = (X, Z):
     let sample_uv = vec2<f32>(in.uv.y, in.uv.x);
+
+    if params.debug_mode > 13.5 && params.debug_mode < 14.5 {
+        // Debug mode 14: raw GPU geometry height. This intentionally runs
+        // before alpha/hole rejection and contains no material, road, foliage,
+        // lighting, or shadow contribution.
+        let height_range = max(tess_params.world_max.y - tess_params.world_min.y, 0.0001);
+        let height = saturate((in.world_pos.y - tess_params.world_min.y) / height_range);
+        return vec4<f32>(height, height, height, 1.0);
+    }
+    if params.debug_mode > 14.5 && params.debug_mode < 15.5 {
+        // Debug mode 15: registered material/geometry diagnostic. Magenta
+        // contours come from the packed GPU height while the underlying color
+        // comes from the canonical compositor.
+        let height_range = max(tess_params.world_max.y - tess_params.world_min.y, 0.0001);
+        let height = saturate((in.world_pos.y - tess_params.world_min.y) / height_range);
+        let contour_phase = fract(height * 32.0);
+        let contour_distance = min(contour_phase, 1.0 - contour_phase);
+        let contour_width = max(fwidth(height * 32.0) * 0.75, 0.001);
+        let contour = 1.0 - smoothstep(0.0, contour_width, contour_distance);
+        let albedo = textureSample(t_gpu_composited, s_terrain, sample_uv).rgb;
+        return vec4<f32>(mix(albedo, vec3<f32>(1.0, 0.0, 0.8), contour * 0.85), 1.0);
+    }
 
     let num_verts = u32(tess_params.terrain_info.x);
     // XTD/unique texture UV: same grid-based UV.

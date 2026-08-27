@@ -7,12 +7,12 @@ use glam::Vec3;
 use num_traits::ToPrimitive;
 use render::terrain::{
     CompositeBindings, CompositingConfig, CompositorResources, GPU_TESS_SHADER, GpuTessParams,
-    LightingParams, TerrainParams,
+    LightingParams, NORMALIZED_TERRAIN_Y_OFFSET, TerrainParams,
 };
 use render::wgpu;
 use wgpu::util::DeviceExt;
 
-use crate::gpu::create_depth_texture;
+use crate::gpu::{create_depth_texture, xtd_packed_to_world};
 use crate::types::{AlbedoData, GpuResources, RawXtdData};
 use crate::viewer::TerrainViewer;
 
@@ -23,6 +23,7 @@ struct CameraResources {
 }
 
 struct TerrainSamplers {
+    position: wgpu::Sampler,
     terrain: wgpu::Sampler,
     alpha: wgpu::Sampler,
     lighting: wgpu::Sampler,
@@ -148,6 +149,16 @@ fn create_uniform_buffer<T: bytemuck::Pod>(
 }
 
 fn create_terrain_samplers(device: &wgpu::Device) -> TerrainSamplers {
+    let position = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("Terrain Position Sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
     let terrain = device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("Terrain Sampler"),
         address_mode_u: wgpu::AddressMode::Repeat,
@@ -180,6 +191,7 @@ fn create_terrain_samplers(device: &wgpu::Device) -> TerrainSamplers {
         ..Default::default()
     });
     TerrainSamplers {
+        position,
         terrain,
         alpha,
         lighting,
@@ -403,6 +415,79 @@ impl TerrainViewer {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{
+        create_patch_instances, downsample_rgb10a2, tessellation_factor, world_patch_level,
+    };
+    use crate::types::RawXtdData;
+    use render::terrain::TerrainTessellationData;
+
+    fn raw_with_tessellation(levels: Vec<u8>, patches_x: u32, patches_z: u32) -> RawXtdData {
+        RawXtdData {
+            packed_positions: Vec::new(),
+            packed_normals: Vec::new(),
+            num_verts_per_axis: patches_x * 16,
+            mid: [0.0; 3],
+            range: [1.0; 3],
+            tile_scale: 1.0,
+            world_min: [0.0; 3],
+            world_max: [1.0; 3],
+            tessellation: Some(TerrainTessellationData {
+                patches_x,
+                patches_z,
+                levels,
+            }),
+            ao_data: None,
+            alpha_data: None,
+        }
+    }
+
+    #[test]
+    fn tessellation_levels_match_the_hull_shader_factors() {
+        assert_eq!(tessellation_factor(0), 16);
+        assert_eq!(tessellation_factor(1), 8);
+        assert_eq!(tessellation_factor(2), 4);
+        assert_eq!(tessellation_factor(3), 2);
+    }
+
+    #[test]
+    fn tessellation_levels_follow_the_xtd_world_axis_conversion() {
+        let levels = [0, 1, 2, 3];
+
+        assert_eq!(world_patch_level(&levels, 2, 0, 0), 0);
+        assert_eq!(world_patch_level(&levels, 2, 1, 0), 2);
+        assert_eq!(world_patch_level(&levels, 2, 0, 1), 1);
+        assert_eq!(world_patch_level(&levels, 2, 1, 1), 3);
+    }
+
+    #[test]
+    fn patch_instances_raise_shared_edges_to_the_finer_neighbor() {
+        let raw = raw_with_tessellation(vec![0, 3, 3, 3], 2, 2);
+        let instances = create_patch_instances(&raw, 2, 2);
+
+        assert_eq!(instances[0], [0, 16, 16, 16, 16, 16, 16, 0]);
+        assert_eq!(instances[1], [1, 2, 16, 2, 2, 2, 2, 0]);
+        assert_eq!(instances[2], [2, 16, 2, 2, 2, 2, 2, 0]);
+        assert_eq!(instances[3], [3, 2, 2, 2, 2, 2, 2, 0]);
+    }
+
+    #[test]
+    fn packed_position_mip_averages_each_unorm_channel() {
+        let pack = |red: u32, green: u32, blue: u32, alpha: u32| {
+            red | (green << 10) | (blue << 20) | (alpha << 30)
+        };
+        let source = [
+            pack(0, 100, 200, 0),
+            pack(4, 104, 204, 1),
+            pack(8, 108, 208, 2),
+            pack(12, 112, 212, 3),
+        ];
+
+        assert_eq!(downsample_rgb10a2(&source, 2), [pack(6, 106, 206, 2)]);
+    }
+}
+
 #[derive(Copy, Clone)]
 struct TessellationBuildConfig {
     surface_size: [u32; 2],
@@ -496,8 +581,100 @@ fn create_patch_mesh(vertices_per_axis: u32) -> PatchMesh {
     PatchMesh { vertices, indices }
 }
 
-fn create_instance_buffer(device: &wgpu::Device, total_patches: u32) -> wgpu::Buffer {
-    let instances: Vec<u32> = (0..total_patches).collect();
+fn tessellation_factor(level: u8) -> u32 {
+    const MAX_BASE_FACTOR: u32 = 8;
+    let exponent = 3_u32.saturating_sub(u32::from(level).min(3));
+    (1_u32 << exponent).min(MAX_BASE_FACTOR) * 2
+}
+
+fn patch_level(levels: &[u8], patches_x: u32, x: u32, z: u32) -> u8 {
+    let index = z
+        .checked_mul(patches_x)
+        .and_then(|row| row.checked_add(x))
+        .and_then(|index| usize::try_from(index).ok());
+    index
+        .and_then(|index| levels.get(index).copied())
+        .unwrap_or(0)
+}
+
+fn world_patch_level(levels: &[u8], patches_x: u32, world_x: u32, world_z: u32) -> u8 {
+    // Match the position/basis resource conversion: viewer (x, z) addresses
+    // XTD source (z, x).
+    patch_level(levels, patches_x, world_z, world_x)
+}
+
+fn create_patch_instances(raw_data: &RawXtdData, patches_x: u32, patches_z: u32) -> Vec<[u32; 8]> {
+    let levels = raw_data
+        .tessellation
+        .as_ref()
+        .filter(|tessellation| {
+            tessellation.patches_x == patches_x && tessellation.patches_z == patches_z
+        })
+        .map_or(&[][..], |tessellation| tessellation.levels.as_slice());
+    if levels.is_empty() {
+        log::warn!("No matching XTD tessellation metadata; using level 0 for every patch");
+    }
+
+    let last_x = patches_x - 1;
+    let last_z = patches_z - 1;
+    let mut instances = Vec::with_capacity(
+        patches_x
+            .checked_mul(patches_z)
+            .and_then(|count| usize::try_from(count).ok())
+            .expect("terrain patch count must fit usize"),
+    );
+    let mut factor_counts = [0_u32; 4];
+    for x in 0..patches_x {
+        for z in 0..patches_z {
+            let center_level = world_patch_level(levels, patches_x, x, z);
+            let center = tessellation_factor(center_level);
+            let left_x = x.checked_sub(1).unwrap_or(last_x);
+            let top_z = z.checked_sub(1).unwrap_or(last_z);
+            let left = center.max(tessellation_factor(world_patch_level(
+                levels, patches_x, left_x, z,
+            )));
+            let top = center.max(tessellation_factor(world_patch_level(
+                levels, patches_x, x, top_z,
+            )));
+            let right = center.max(tessellation_factor(world_patch_level(
+                levels,
+                patches_x,
+                (x + 1).min(last_x),
+                z,
+            )));
+            let bottom = center.max(tessellation_factor(world_patch_level(
+                levels,
+                patches_x,
+                x,
+                (z + 1).min(last_z),
+            )));
+            let inside_x = center.max(top.min(bottom));
+            let inside_z = center.max(left.min(right));
+            let patch_index = x
+                .checked_mul(patches_z)
+                .and_then(|row| row.checked_add(z))
+                .expect("terrain patch index must fit u32");
+            instances.push([patch_index, left, top, right, bottom, inside_x, inside_z, 0]);
+            factor_counts[usize::from(center_level.min(3))] += 1;
+        }
+    }
+    log::info!(
+        "XTD patch tessellation levels: 0={} 1={} 2={} 3={} (factors 16/8/4/2)",
+        factor_counts[0],
+        factor_counts[1],
+        factor_counts[2],
+        factor_counts[3]
+    );
+    instances
+}
+
+fn create_instance_buffer(
+    device: &wgpu::Device,
+    raw_data: &RawXtdData,
+    patches_x: u32,
+    patches_z: u32,
+) -> wgpu::Buffer {
+    let instances = create_patch_instances(raw_data, patches_x, patches_z);
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Tess Instance Buffer"),
         contents: bytemuck::cast_slice(&instances),
@@ -505,13 +682,54 @@ fn create_instance_buffer(device: &wgpu::Device, total_patches: u32) -> wgpu::Bu
     })
 }
 
-fn create_uint_texture(
+fn downsample_rgb10a2(values: &[u32], width: u32) -> Vec<u32> {
+    let next_width = (width / 2).max(1);
+    let next_len = next_width
+        .checked_mul(next_width)
+        .and_then(|count| usize::try_from(count).ok())
+        .expect("packed terrain mip size must fit usize");
+    let mut next = Vec::with_capacity(next_len);
+    for y in 0..next_width {
+        for x in 0..next_width {
+            let mut red = 0_u32;
+            let mut green = 0_u32;
+            let mut blue = 0_u32;
+            let mut alpha = 0_u32;
+            for offset_y in 0..2 {
+                for offset_x in 0..2 {
+                    let source_x = (x * 2 + offset_x).min(width - 1);
+                    let source_y = (y * 2 + offset_y).min(width - 1);
+                    let index = source_y
+                        .checked_mul(width)
+                        .and_then(|row| row.checked_add(source_x))
+                        .and_then(|index| usize::try_from(index).ok())
+                        .expect("packed terrain mip index must fit usize");
+                    let packed = values[index];
+                    red += packed & 0x3ff;
+                    green += (packed >> 10) & 0x3ff;
+                    blue += (packed >> 20) & 0x3ff;
+                    alpha += (packed >> 30) & 0x3;
+                }
+            }
+            let red = (red + 2) / 4;
+            let green = (green + 2) / 4;
+            let blue = (blue + 2) / 4;
+            let alpha = (alpha + 2) / 4;
+            next.push(red | (green << 10) | (blue << 20) | (alpha << 30));
+        }
+    }
+    next
+}
+
+fn create_rgb10a2_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     label: &str,
     width: u32,
     values: &[u32],
+    with_position_mip: bool,
 ) -> wgpu::Texture {
+    let mip_level_count = if with_position_mip && width > 1 { 2 } else { 1 };
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
@@ -519,10 +737,10 @@ fn create_uint_texture(
             height: width,
             depth_or_array_layers: 1,
         },
-        mip_level_count: 1,
+        mip_level_count,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::R32Uint,
+        format: wgpu::TextureFormat::Rgb10a2Unorm,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
@@ -545,6 +763,29 @@ fn create_uint_texture(
             depth_or_array_layers: 1,
         },
     );
+    if mip_level_count > 1 {
+        let mip = downsample_rgb10a2(values, width);
+        let mip_width = width / 2;
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 1,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(&mip),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(mip_width * 4),
+                rows_per_image: Some(mip_width),
+            },
+            wgpu::Extent3d {
+                width: mip_width,
+                height: mip_width,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
     texture
 }
 
@@ -668,18 +909,9 @@ fn create_gpu_texture_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
         label: Some("GPU Tess Texture Bind Group Layout"),
         entries: &[
             buffer_layout_entry(0, both, wgpu::BufferBindingType::Uniform),
-            texture_layout_entry(
-                1,
-                vertex,
-                wgpu::TextureViewDimension::D2,
-                wgpu::TextureSampleType::Uint,
-            ),
-            texture_layout_entry(
-                2,
-                both,
-                wgpu::TextureViewDimension::D2,
-                wgpu::TextureSampleType::Uint,
-            ),
+            texture_layout_entry(1, vertex, wgpu::TextureViewDimension::D2, filterable),
+            texture_layout_entry(2, both, wgpu::TextureViewDimension::D2, filterable),
+            sampler_layout_entry(3, vertex),
             sampler_layout_entry(4, both),
             buffer_layout_entry(5, fragment, wgpu::BufferBindingType::Uniform),
             texture_layout_entry(6, fragment, wgpu::TextureViewDimension::D2, filterable),
@@ -749,13 +981,25 @@ fn create_gpu_pipeline(
                     }],
                 },
                 wgpu::VertexBufferLayout {
-                    array_stride: 4,
+                    array_stride: 32,
                     step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &[wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Uint32,
-                        offset: 0,
-                        shader_location: 1,
-                    }],
+                    attributes: &[
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Uint32,
+                            offset: 0,
+                            shader_location: 1,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Uint32x4,
+                            offset: 4,
+                            shader_location: 2,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Uint32x2,
+                            offset: 20,
+                            shader_location: 3,
+                        },
+                    ],
                 },
             ],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -937,6 +1181,7 @@ fn create_local_lights_buffer(device: &wgpu::Device) -> wgpu::Buffer {
 
 struct ShadowResourceBindings<'a> {
     position: &'a wgpu::TextureView,
+    position_sampler: &'a wgpu::Sampler,
     alpha: &'a wgpu::TextureView,
     alpha_sampler: &'a wgpu::Sampler,
     dynamic_alpha: &'a wgpu::TextureView,
@@ -961,13 +1206,25 @@ fn create_shadow_resources(
             }],
         },
         wgpu::VertexBufferLayout {
-            array_stride: 4,
+            array_stride: 32,
             step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &[wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Uint32,
-                offset: 0,
-                shader_location: 1,
-            }],
+            attributes: &[
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Uint32,
+                    offset: 0,
+                    shader_location: 1,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Uint32x4,
+                    offset: 4,
+                    shader_location: 2,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Uint32x2,
+                    offset: 20,
+                    shader_location: 3,
+                },
+            ],
         },
     ];
     let mut shadow =
@@ -981,6 +1238,7 @@ fn create_shadow_resources(
         queue,
         &crate::shadow::ShadowSetup {
             position_texture_view: bindings.position,
+            position_sampler: bindings.position_sampler,
             alpha_texture_view: bindings.alpha,
             alpha_sampler: bindings.alpha_sampler,
             dynamic_alpha_view: bindings.dynamic_alpha,
@@ -1004,6 +1262,7 @@ struct GpuTessBindings<'a> {
     tess_params: &'a wgpu::Buffer,
     position: &'a wgpu::TextureView,
     normal: &'a wgpu::TextureView,
+    position_sampler: &'a wgpu::Sampler,
     terrain_sampler: &'a wgpu::Sampler,
     params: &'a wgpu::Buffer,
     ao: &'a wgpu::TextureView,
@@ -1036,6 +1295,7 @@ fn create_gpu_texture_bind_group(
             buffer_entry(0, bindings.tess_params),
             texture_entry(1, bindings.position),
             texture_entry(2, bindings.normal),
+            sampler_entry(3, bindings.position_sampler),
             sampler_entry(4, bindings.terrain_sampler),
             buffer_entry(5, bindings.params),
             texture_entry(6, bindings.ao),
@@ -1089,7 +1349,7 @@ fn log_tessellation_resources(config: TessellationBuildConfig, vertices_per_patc
         )
         .expect("tessellation triangle count must fit usize");
     log::info!(
-        "GPU tessellation resources created: {} patches, {vertices_per_patch} vertices per patch, {triangle_count} total triangles",
+        "GPU tessellation resources created: {} patches, {vertices_per_patch} vertices per patch, {triangle_count} carrier triangles",
         config.total_patches,
     );
 }
@@ -1103,22 +1363,26 @@ impl TerrainViewer {
         albedo: Option<&AlbedoData>,
     ) -> TessellationTextures {
         let num_verts = raw_data.num_verts_per_axis;
-        let position_texture = create_uint_texture(
+        let world_positions = xtd_packed_to_world(&raw_data.packed_positions, num_verts);
+        let world_normals = xtd_packed_to_world(&raw_data.packed_normals, num_verts);
+        let position_texture = create_rgb10a2_texture(
             device,
             queue,
             "Position Texture",
             num_verts,
-            &raw_data.packed_positions,
+            &world_positions,
+            true,
         );
         let position = position_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let position_for_shadow =
             position_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let normal_texture = create_uint_texture(
+        let normal_texture = create_rgb10a2_texture(
             device,
             queue,
             "Normal Texture",
             num_verts,
-            &raw_data.packed_normals,
+            &world_normals,
+            false,
         );
         let normal = normal_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let ao = create_mask_texture(
@@ -1199,7 +1463,12 @@ impl TerrainViewer {
         };
         let first = TessellationStageOne {
             patch_mesh: create_patch_mesh(VERTICES_PER_PATCH),
-            instance_buffer: create_instance_buffer(device, total_patches),
+            instance_buffer: create_instance_buffer(
+                device,
+                raw_data,
+                patches_per_axis,
+                patches_per_axis,
+            ),
             textures: self.create_tessellation_textures(device, queue, raw_data, albedo),
         };
         self.create_gpu_tessellation_resources_part2(device, queue, raw_data, config, first);
@@ -1218,8 +1487,13 @@ impl TerrainViewer {
             .to_f32()
             .expect("tessellation patch count must fit f32");
         let tess_params = GpuTessParams {
-            mid: [raw_data.mid[0], raw_data.mid[1], raw_data.mid[2], 0.0],
-            range: [raw_data.range[0], raw_data.range[1], raw_data.range[2], 0.0],
+            mid: [
+                raw_data.mid[2],
+                raw_data.mid[1],
+                raw_data.mid[0],
+                NORMALIZED_TERRAIN_Y_OFFSET,
+            ],
+            range: [raw_data.range[2], raw_data.range[1], raw_data.range[0], 0.0],
             terrain_info: [
                 raw_data
                     .num_verts_per_axis
@@ -1229,8 +1503,18 @@ impl TerrainViewer {
                 patch_count,
                 patch_count,
             ],
-            world_min: [0.0; 4],
-            world_max: [0.0; 4],
+            world_min: [
+                raw_data.world_min[2],
+                raw_data.world_min[1],
+                raw_data.world_min[0],
+                0.0,
+            ],
+            world_max: [
+                raw_data.world_max[2],
+                raw_data.world_max[1],
+                raw_data.world_max[0],
+                0.0,
+            ],
         };
         let tess_params_buffer = create_uniform_buffer(device, "Tess Params Buffer", &tess_params);
         let terrain_size = self
@@ -1352,6 +1636,7 @@ impl TerrainViewer {
             raw_data,
             &ShadowResourceBindings {
                 position: &textures.position_for_shadow,
+                position_sampler: &textures.samplers.position,
                 alpha: &textures.alpha,
                 alpha_sampler: &textures.samplers.alpha,
                 dynamic_alpha: &textures.dynamic_alpha,
@@ -1373,6 +1658,7 @@ impl TerrainViewer {
                 tess_params: &tess_params_buffer,
                 position: &textures.position,
                 normal: &textures.normal,
+                position_sampler: &textures.samplers.position,
                 terrain_sampler: &textures.samplers.terrain,
                 params: &params_buffer,
                 ao: &textures.ao,
@@ -1418,6 +1704,23 @@ impl TerrainViewer {
             num_patch_instances: config.total_patches,
         });
         log_tessellation_resources(config, expanded_vertex_count);
+        self.init_tessellation_surface_features(
+            device,
+            queue,
+            &auxiliary.blackmap,
+            &auxiliary.unexplored,
+            &auxiliary.local_lights,
+        );
+    }
+
+    fn init_tessellation_surface_features(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        blackmap: &wgpu::TextureView,
+        unexplored: &wgpu::TextureView,
+        local_lights: &wgpu::Buffer,
+    ) {
         let foliage_shadow = self
             .shadow_resources
             .as_ref()
@@ -1426,9 +1729,9 @@ impl TerrainViewer {
             .clone();
         let foliage_world = crate::foliage::FoliageWorldBindings {
             shadow: &foliage_shadow,
-            blackmap: &auxiliary.blackmap,
-            unexplored: &auxiliary.unexplored,
-            local_lights: &auxiliary.local_lights,
+            blackmap,
+            unexplored,
+            local_lights,
         };
         self.init_foliage_resources(device, queue, Some(&foliage_world));
         self.init_road_resources(device, queue);

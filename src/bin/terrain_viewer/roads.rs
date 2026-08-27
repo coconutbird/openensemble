@@ -5,6 +5,8 @@ use render::terrain::{LightingParams, ROADS_SHADER, RawXtdData};
 use render::wgpu;
 use render::wgpu::util::DeviceExt;
 
+use crate::gpu::xtd_packed_to_world;
+
 /// Per-material road geometry and textures.
 pub struct RoadBatch {
     vertex_buffer: wgpu::Buffer,
@@ -82,8 +84,8 @@ impl RoadParamsUniform {
                 0.0,
                 0.0,
             ],
-            position_mid: [raw.mid[0], raw.mid[1], raw.mid[2], 0.0],
-            position_range: [raw.range[0], raw.range[1], raw.range[2], 0.0],
+            position_mid: [raw.mid[2], raw.mid[1], raw.mid[0], 0.0],
+            position_range: [raw.range[2], raw.range[1], raw.range[0], 0.0],
             camera_position: [0.0; 4],
             dir_light_vector: [0.0; 4],
             dir_light_color: [0.0; 4],
@@ -478,31 +480,32 @@ fn create_material_bind_group(
     })
 }
 
-/// Create road GPU resources for every material batch.
-#[must_use]
-pub fn create_road_resources(
+fn create_world_bind_group(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     input: &RoadResourceInput<'_>,
-) -> RoadResources {
-    let params = RoadParamsUniform::new(input.raw_terrain, input.bump_power);
-    let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Road Params Buffer"),
-        contents: bytemuck::bytes_of(&params),
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-    });
+    params_buffer: &wgpu::Buffer,
+) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
+    let world_positions = xtd_packed_to_world(
+        &input.raw_terrain.packed_positions,
+        input.raw_terrain.num_verts_per_axis,
+    );
+    let world_normals = xtd_packed_to_world(
+        &input.raw_terrain.packed_normals,
+        input.raw_terrain.num_verts_per_axis,
+    );
     let terrain_position = create_packed_terrain_texture(
         device,
         queue,
         "Road Terrain Position",
-        &input.raw_terrain.packed_positions,
+        &world_positions,
         input.raw_terrain.num_verts_per_axis,
     );
     let terrain_basis = create_packed_terrain_texture(
         device,
         queue,
         "Road Terrain Basis",
-        &input.raw_terrain.packed_normals,
+        &world_normals,
         input.raw_terrain.num_verts_per_axis,
     );
     let terrain_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -518,10 +521,10 @@ pub fn create_road_resources(
         fallback_shadow = create_fallback_shadow_view(device, queue);
         &fallback_shadow
     };
-    let world_layout = create_world_layout(device);
-    let world_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let layout = create_world_layout(device);
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Road World Bind Group"),
-        layout: &world_layout,
+        layout: &layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
@@ -545,6 +548,24 @@ pub fn create_road_resources(
             },
         ],
     });
+    (layout, bind_group)
+}
+
+/// Create road GPU resources for every material batch.
+#[must_use]
+pub fn create_road_resources(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    input: &RoadResourceInput<'_>,
+) -> RoadResources {
+    let params = RoadParamsUniform::new(input.raw_terrain, input.bump_power);
+    let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Road Params Buffer"),
+        contents: bytemuck::bytes_of(&params),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+    let (world_layout, world_bind_group) =
+        create_world_bind_group(device, queue, input, &params_buffer);
 
     let material_layout = create_material_layout(device);
     let material_sampler = device.create_sampler(&wgpu::SamplerDescriptor {

@@ -17,6 +17,7 @@ use pipeline::xtt;
 use render::terrain::{Camera, CompositorResources, LodConfig, TerrainScene};
 use render::wgpu;
 
+use crate::capture::{CaptureConfig, CaptureState};
 use crate::types::GpuResources;
 
 /// The terrain viewer application.
@@ -34,7 +35,7 @@ pub struct TerrainViewer {
     pub load_error: Option<String>,
     pub gpu: Option<GpuResources>,
     pub surface_format: wgpu::TextureFormat,
-    /// Debug mode: 0=normal, 1=alpha values, 2=in-chunk UV, 3=raw atlas, 4=terrain UV
+    /// Display mode. Mode 12 is the canonical GPU-composited terrain view.
     pub debug_mode: u32,
     /// Normal map strength (gBumpPower in game, scales XY components).
     pub bump_power: f32,
@@ -54,6 +55,8 @@ pub struct TerrainViewer {
     pub shadow_resources: Option<crate::shadow::ShadowResources>,
     /// Road GPU resources (pipeline, vertex buffer, textures).
     pub road_resources: Option<crate::roads::RoadResources>,
+    /// Optional deterministic top-down capture-and-exit state.
+    pub capture: Option<CaptureState>,
 }
 
 impl TerrainViewer {
@@ -69,7 +72,7 @@ impl TerrainViewer {
             load_error: None,
             gpu: None,
             surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
-            debug_mode: 0,
+            debug_mode: 12,
             bump_power: 1.0,
             compositor: None,
             compositor_bind_group: None,
@@ -79,6 +82,7 @@ impl TerrainViewer {
             foliage_resources: None,
             shadow_resources: None,
             road_resources: None,
+            capture: None,
         }
     }
 
@@ -96,6 +100,14 @@ impl TerrainViewer {
             scenario_name: Some(scenario_name),
             ..Self::defaults()
         }
+    }
+
+    /// Configures this viewer to write one top-down GPU capture and exit.
+    #[must_use]
+    pub fn with_capture(mut self, config: CaptureConfig) -> Self {
+        self.show_info = false;
+        self.capture = Some(CaptureState::new(config));
+        self
     }
 
     fn load_terrain(&mut self) {

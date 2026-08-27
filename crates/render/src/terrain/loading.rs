@@ -14,6 +14,7 @@ use super::types::{
 };
 use pipeline::ddx::DdxTexture;
 use pipeline::source::{AssetSource, StdFileProvider};
+use pipeline::xtd::XtdVisualChunk;
 use pipeline::xtt::{ActiveDecalInfo, ActiveTextureInfo, FoliageSetInfo, XttFile};
 use rayon::prelude::*;
 
@@ -435,9 +436,11 @@ fn load_foliage_set(set_info: &FoliageSetInfo, data: &[Option<Vec<u8>>]) -> Foli
             Ok(ddx) => match ddx.decode_to_rgba() {
                 Ok(decoded) => {
                     log::info!(
-                        "    Decoded albedo: {}x{}, {} bytes",
+                        "    Decoded albedo: {}x{}, {:?} {:?}, {} bytes",
                         decoded.width,
                         decoded.height,
+                        ddx.info.data_format,
+                        ddx.info.platform,
                         decoded.pixels.len()
                     );
                     foliage_set.albedo_width = decoded.width;
@@ -457,10 +460,12 @@ fn load_foliage_set(set_info: &FoliageSetInfo, data: &[Option<Vec<u8>>]) -> Foli
         && let Ok(decoded) = ddx.decode_to_rgba()
     {
         log::info!(
-            "  Loaded foliage opacity: {} ({}x{})",
+            "  Loaded foliage opacity: {} ({}x{}, {:?} {:?})",
             set_info.filename,
             decoded.width,
-            decoded.height
+            decoded.height,
+            ddx.info.data_format,
+            ddx.info.platform,
         );
         foliage_set.opacity_width = decoded.width;
         foliage_set.opacity_height = decoded.height;
@@ -580,18 +585,48 @@ pub fn extract_decal_data(xtt: &XttFile) -> (Vec<DecalInstance>, Vec<ChunkDecalD
     (decal_instances, chunk_decal_data)
 }
 
+/// Resolve a foliage parent in raw XTD source-grid axes.
+fn foliage_parent_grid(visual_chunks: &[XtdVisualChunk], parent_index: u32) -> Option<(i32, i32)> {
+    let parent_index = usize::try_from(parent_index).ok()?;
+    let parent = visual_chunks.get(parent_index)?;
+    Some((parent.grid_x, parent.grid_z))
+}
+
 /// Extract foliage QN chunks from XTT.
 #[must_use]
-pub fn extract_foliage_chunks(xtt: &XttFile) -> Vec<FoliageQNChunk> {
+pub fn extract_foliage_chunks(
+    xtt: &XttFile,
+    visual_chunks: &[XtdVisualChunk],
+) -> Vec<FoliageQNChunk> {
     let mut foliage_chunks = Vec::new();
 
     for qn in &xtt.foliage.qn_chunks {
+        let Some((grid_x, grid_z)) = foliage_parent_grid(visual_chunks, qn.qn_parent_index) else {
+            log::warn!(
+                "Skipping foliage chunk whose parent {} is missing from {} XTD visual chunks",
+                qn.qn_parent_index,
+                visual_chunks.len()
+            );
+            continue;
+        };
+        let Some(index_buffers) = (0..qn.index_buffers.len())
+            .map(|set| qn.decode_indices(set))
+            .collect::<Option<Vec<_>>>()
+        else {
+            log::warn!(
+                "Skipping foliage chunk whose parent {} contains an invalid set index",
+                qn.qn_parent_index
+            );
+            continue;
+        };
         foliage_chunks.push(FoliageQNChunk {
             qn_parent_index: qn.qn_parent_index,
+            grid_x,
+            grid_z,
             num_sets: qn.num_sets,
             set_indices: qn.set_indices.clone(),
             set_poly_counts: qn.set_poly_counts.clone(),
-            index_buffers: qn.index_buffers.clone(),
+            index_buffers,
         });
     }
 
@@ -709,7 +744,7 @@ pub struct RoadTextures {
 
 /// Parse foliage blade geometry from an XMB (compiled XML) file.
 ///
-/// The XML format (from TerrainFoliage.cpp) is:
+/// The foliage asset XML/XMB format is:
 /// ```xml
 /// <foliageset typecount="N" numVertsPerType="10" backsideShadowScalar="1.0">
 ///   <setElements>
@@ -850,4 +885,35 @@ fn parse_vector2_attr(node: &pipeline::xmb::Node, attr_name: &str) -> [f32; 2] {
         }
     }
     [0.0, 0.0]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::foliage_parent_grid;
+    use pipeline::xtd::XtdVisualChunk;
+
+    #[test]
+    fn foliage_parent_preserves_raw_xtd_visual_chunk_coordinates() {
+        let chunks = [
+            XtdVisualChunk {
+                grid_x: 0,
+                grid_z: 0,
+                ..XtdVisualChunk::default()
+            },
+            XtdVisualChunk {
+                grid_x: 1,
+                grid_z: 0,
+                ..XtdVisualChunk::default()
+            },
+            XtdVisualChunk {
+                grid_x: 0,
+                grid_z: 1,
+                ..XtdVisualChunk::default()
+            },
+        ];
+
+        assert_eq!(foliage_parent_grid(&chunks, 1), Some((1, 0)));
+        assert_eq!(foliage_parent_grid(&chunks, 2), Some((0, 1)));
+        assert_eq!(foliage_parent_grid(&chunks, 3), None);
+    }
 }

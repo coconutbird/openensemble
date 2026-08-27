@@ -26,10 +26,10 @@ struct CameraUniform {
 struct FoliageParams {
     // Terrain info: num_verts_per_axis, tile_scale, chunk_offset_x, chunk_offset_z
     terrain_info: vec4<f32>,
-    // World bounds for terrain height sampling
-    world_min: vec3<f32>,
+    // Position compression constants used by the terrain position texture.
+    position_mid: vec3<f32>,
     _pad0: f32,
-    world_range: vec3<f32>,
+    position_range: vec3<f32>,
     _pad1: f32,
     // Foliage params: num_verts_per_blade, rcp_num_blades, fade_start, fade_end
     foliage_info: vec4<f32>,
@@ -148,14 +148,10 @@ struct VertexOutput {
     @location(4) world_pos: vec3<f32>,
 };
 
-// Deterministic pseudo-random function (matching original shader)
-const M_PI: f32 = 3.14159265358979323846;
-
-fn our_rand(ij: vec2<f32>) -> vec2<f32> {
-    let xy0 = ij / M_PI;
-    let xym = (xy0 % 257.0) + 1.0;
-    let xym2 = fract(xym * xym);
-    return xym2;
+// Exact scalar sequence from terrainFoliage VS #0/#2.
+fn foliage_random(blade_index: f32) -> f32 {
+    let seed = fract(blade_index * 0.0012385598) * 257.0 + 1.0;
+    return fract(seed * seed);
 }
 
 fn rotate_2d(input: vec2<f32>, theta: f32) -> vec2<f32> {
@@ -169,12 +165,13 @@ fn rotate_2d(input: vec2<f32>, theta: f32) -> vec2<f32> {
 
 // Sample terrain displacement at given UV position.
 // Game samples full XYZ displacement from position texture (getTerrainDataAtPos).
-// Our heightmap stores the same XYZ in an Rgba32Float texture.
 fn get_terrain_offset(uv: vec2<f32>) -> vec3<f32> {
     let clamped_uv = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
     // terrainFoliage VS #0/#2 samples the position texture at .yx.
     let sample = textureSampleLevel(t_heightmap, s_heightmap, clamped_uv.yx, 0.0);
-    return sample.xyz;
+    // The oracle consumes R10G10B10A2_UNORM as .zyx, and foliage deliberately
+    // does not subtract the terrain-only g_yOffset.
+    return sample.bgr * params.position_range - params.position_mid;
 }
 
 @vertex
@@ -205,43 +202,49 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let pos_sample = textureLoad(t_blade_positions, vec2<u32>(pixel_x, 0u), 0);
     let norm_sample = textureLoad(t_blade_normals, vec2<u32>(pixel_x, 0u), 0);
 
-    // Blade geometry from texture (no scaling — matches game: pos = pos0)
-    // Game HLSL: uv0.x = pos0.w; uv0.y = 1-norm0.w;  (V is flipped!)
+    // Blade geometry and UV are passed through exactly as loaded by the oracle.
     var pos = pos_sample.xyz;
-    let blade_uv = vec2<f32>(pos_sample.w, 1.0 - norm_sample.w);
+    let blade_uv = vec2<f32>(pos_sample.w, norm_sample.w);
     var normal = norm_sample.xyz;
 
-    // Random values per blade (deterministic based on LOCAL blade index within chunk)
-    // Game uses bladeIndex (the grid position 0-4095), NOT instance_index
-    let rnd = our_rand(vec2<f32>(f32(blade_index), f32(blade_index)));
+    // The oracle derives one scalar from the local 0..4095 blade index and reuses
+    // it for both jitter axes, rotation, and blade-height variation.
+    let rnd = foliage_random(f32(blade_index));
 
-    // Grid position within chunk
-    // Game HLSL: trns = float2(bladeIndex / 64 + 0.5, bladeIndex % 64)
-    // Then trns += g_terrainVals.zw (chunk offset)
-    var trns_x = f32(blade_index / num_blades_per_node) + 0.5 + chunk_offset_x;
-    var trns_z = f32(blade_index % num_blades_per_node) + chunk_offset_z;
+    // Fresh PC VS #0/#2: source X is bladeIndex >> 6 and source Z is
+    // bladeIndex & 63. The chunk constants come from the parent XTD visual
+    // quad node in those same source axes.
+    var source_trns_x = f32(blade_index / num_blades_per_node) + 0.5 + chunk_offset_x;
+    var source_trns_z = f32(blade_index % num_blades_per_node) + chunk_offset_z;
 
     // Jitter
-    trns_x += (rnd.x * 2.0 - 1.0) * 0.9;
-    trns_z += (rnd.y * 2.0 - 1.0) * 0.9;
+    source_trns_x += (rnd * 2.0 - 1.0) * 0.9;
+    source_trns_z += (rnd * 2.0 - 1.0) * 0.9;
+
+    // XTD source space is diagonally mirrored relative to the XTT material
+    // world used by the viewer. Preserve the oracle's source-index/RNG math,
+    // then convert the complete X/Z position rather than only swapping the
+    // chunk origin.
+    let trns_x = source_trns_z;
+    let trns_z = source_trns_x;
 
     // Rotate blade around Y axis
-    let rot_angle = rnd.y * 360.0;
+    let rot_angle = rnd * 360.0;
     let pos_rot = rotate_2d(pos.xz, rot_angle);
     let norm_rot = rotate_2d(normal.xz, rot_angle);
-    normal.x = norm_rot.x;
-    normal.z = norm_rot.y;
+    normal.x = norm_rot.y;
+    normal.z = norm_rot.x;
     normal = normalize(normal);
 
-    pos.x = pos_rot.x;
-    pos.z = pos_rot.y;
+    pos.x = pos_rot.y;
+    pos.z = pos_rot.x;
     let tile_scale = params.terrain_info.y;
     pos.x += trns_x * tile_scale;
     pos.z += trns_z * tile_scale;
-    pos.y *= max(0.25, rnd.x);
+    pos.y *= max(0.25, rnd);
 
     // Terrain heightmap UV
-    // Original HLSL: getTerrainDataAtPos(trns * g_terrainVals.x) where .x = 1/numVerts
+    // Fresh PC VS #0/#2: getTerrainDataAtPos(trns * g_terrainVals.x), where .x = 1/numVerts.
     let num_verts = params.terrain_info.x;
     let terrain_uv = vec2<f32>(trns_x, trns_z) / num_verts;
     let terrain_offset = get_terrain_offset(terrain_uv);

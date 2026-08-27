@@ -5,14 +5,8 @@
 use num_traits::ToPrimitive;
 use render::wgpu;
 
+use crate::types::terrain_chunk_index;
 use crate::viewer::TerrainViewer;
-
-fn chunk_index(grid_x: i32, grid_z: i32) -> Option<usize> {
-    grid_x
-        .checked_mul(16)
-        .and_then(|value| value.checked_add(grid_z))
-        .and_then(|value| usize::try_from(value).ok())
-}
 
 impl TerrainViewer {
     pub(crate) fn create_chunk_layers_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
@@ -24,8 +18,8 @@ impl TerrainViewer {
         let mut layer_data = vec![0u32; 256 * 8];
 
         for chunk in chunk_splat_data {
-            // X-major indexing (game convention): gridX * 16 + gridZ
-            let Some(chunk_idx) = chunk_index(chunk.grid_x, chunk.grid_z) else {
+            // XTT axes are transposed into the unique atlas by the PC shaders.
+            let Some(chunk_idx) = terrain_chunk_index(chunk.grid_x, chunk.grid_z) else {
                 continue;
             };
             let base = chunk_idx * 8;
@@ -43,7 +37,7 @@ impl TerrainViewer {
         // Log first few chunks for debugging
         log::info!("=== First 5 chunk layer IDs in buffer ===");
         for chunk in chunk_splat_data.iter().take(5) {
-            let Some(chunk_idx) = chunk_index(chunk.grid_x, chunk.grid_z) else {
+            let Some(chunk_idx) = terrain_chunk_index(chunk.grid_x, chunk.grid_z) else {
                 continue;
             };
             log::info!(
@@ -108,7 +102,7 @@ impl TerrainViewer {
         let mut layer_data = vec![0u32; 256 * 8];
 
         for chunk in &scene.chunk_decal_data {
-            let Some(chunk_idx) = chunk_index(chunk.grid_x, chunk.grid_z) else {
+            let Some(chunk_idx) = terrain_chunk_index(chunk.grid_x, chunk.grid_z) else {
                 continue;
             };
             if chunk_idx >= 256 {

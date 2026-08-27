@@ -8,10 +8,10 @@ import package::shared::shadows::compute_dir_shadow;
 import package::shared::blackmap::apply_blackmap;
 import package::shared::local_lights::evaluate_spot_specular;
 
-// Heightfield/Decal patch shader - WGSL implementation of terrainHeightField.fx
+// Heightfield/decal patch implementation derived from the fresh PC decompile.
 //
 // Renders instanced quad patches ("decals") projected onto terrain.
-// Features from original HLSL:
+// Implemented features:
 //   - Bilinear quad interpolation with forward/right vectors
 //   - Terrain-conforming via heightfield texture sampling
 //   - Full lit pipeline: directional + SH ambient

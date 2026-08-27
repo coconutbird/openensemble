@@ -10,24 +10,17 @@ use crate::camera::CameraInput;
 
 fn debug_mode_name(mode: u32) -> &'static str {
     match mode {
-        0 => "0: Normal",
-        1 => "1: Alpha Values",
-        2 => "2: In-Chunk UVs",
-        3 => "3: Raw Atlas",
-        4 => "4: Terrain UVs",
-        5 => "5: Pre-Composited",
-        6 => "6: Layer IDs",
-        7 => "7: Chunk Grid",
-        8 => "8: L1 Info",
-        9 => "9: XTT Albedo",
-        10 => "10: Tex Test",
+        0 => "0: Lit Debug",
+        1 => "1: Patch Edges",
+        7 => "7: Unique Normal",
+        8 => "8: Ambient Occlusion",
+        9 => "9: Specular",
+        10 => "10: Solid Test",
         11 => "11: Terrain UV Viz",
-        12 => "12: GPU Composited",
-        13 => "13: Layer 0 Only",
-        14 => "14: Layer 1 ID",
-        15 => "15: Layer 1 Only",
-        16 => "16: Rock",
-        17 => "17: Reserved",
+        12 => "12: GPU Composited (Canonical)",
+        13 => "13: Chunk Orientation",
+        14 => "14: GPU Height Map",
+        15 => "15: Height/Albedo Alignment",
         _ => "Unknown",
     }
 }
@@ -65,26 +58,13 @@ impl TerrainViewer {
 
     fn update_debug_keys(&mut self, input: &Input) {
         let bindings = [
-            (KeyCode::Q, 0, "oracle unique-map material"),
-            (KeyCode::Key1, 1, "alpha values"),
-            (KeyCode::Key2, 2, "in-chunk UVs"),
-            (KeyCode::Key3, 3, "raw atlas"),
-            (KeyCode::Key4, 4, "terrain UVs"),
-            (KeyCode::Key5, 5, "pre-composited albedo - correct blending"),
-            (KeyCode::Key6, 6, "layer IDs as colors"),
-            (KeyCode::Key7, 7, "chunk grid positions"),
-            (KeyCode::Key8, 8, "chunk_idx + layer0"),
-            (KeyCode::Key0, 12, "GPU composited - default"),
-            (
-                KeyCode::Key9,
-                9,
-                "Alpha - terrain holes/transparency, white=solid, black=hole",
-            ),
-            (
-                KeyCode::Backspace,
-                10,
-                "Direct texture array test - left=layer0, right=layer1",
-            ),
+            (KeyCode::Q, 0, "lit debug path"),
+            (KeyCode::Key1, 1, "patch edges"),
+            (KeyCode::Key7, 7, "unique-map normal"),
+            (KeyCode::Key8, 8, "ambient occlusion"),
+            (KeyCode::Key9, 9, "specular map"),
+            (KeyCode::Backspace, 10, "solid-color pipeline test"),
+            (KeyCode::Key0, 12, "GPU composited - canonical default"),
         ];
         for (key, mode, description) in bindings {
             if input.is_key_pressed(key) {
@@ -197,34 +177,28 @@ impl TerrainViewer {
         debug_button_row(
             ui,
             &mut self.debug_mode,
-            &[("0: GPUComp", 12), ("1: Alpha", 1), ("2: UV", 2)],
+            &[("12: GPUComp (Default)", 12), ("0: Lit Debug", 0)],
         );
         debug_button_row(
             ui,
             &mut self.debug_mode,
-            &[("3: Atlas", 3), ("4: TerrUV", 4), ("5: Comp", 5)],
+            &[("1: Patch Edges", 1), ("7: Unique Normal", 7)],
         );
         debug_button_row(
             ui,
             &mut self.debug_mode,
-            &[("6: LayerID", 6), ("7: ChunkPos", 7), ("8: L1Info", 8)],
+            &[("8: AO", 8), ("9: Specular", 9), ("10: Solid", 10)],
         );
         debug_button_row(
             ui,
             &mut self.debug_mode,
-            &[("9: XTT", 9), ("10: TexTest", 10)],
+            &[
+                ("11: Terrain UV", 11),
+                ("13: Orientation", 13),
+                ("14: Height", 14),
+                ("15: Alignment", 15),
+            ],
         );
-        debug_button_row(
-            ui,
-            &mut self.debug_mode,
-            &[("11: TerrUV", 11), ("12: GPUComp", 12)],
-        );
-        debug_button_row(
-            ui,
-            &mut self.debug_mode,
-            &[("13: L0 Only", 13), ("14: L1 ID", 14), ("15: L1 Only", 15)],
-        );
-        debug_button_row(ui, &mut self.debug_mode, &[("16: Rock", 16)]);
     }
 
     fn draw_controls(ui: &mut egui::Ui) {
@@ -264,6 +238,14 @@ impl Application for TerrainViewer {
         if input.is_key_pressed(KeyCode::Escape) {
             return false;
         }
+        if let Some(capture) = &self.capture {
+            if capture.is_finished() {
+                return false;
+            }
+            // A capture camera is fixed and must not inherit interactive input
+            // or compositor LOD changes from the normal viewer camera.
+            return self.load_error.is_none();
+        }
         self.update_display_toggles(input);
         self.update_debug_keys(input);
         self.update_compositor_controls(input);
@@ -274,6 +256,9 @@ impl Application for TerrainViewer {
     }
 
     fn ui(&mut self, ctx: &egui::Context) {
+        if self.capture.is_some() {
+            return;
+        }
         self.draw_hud(ctx);
         if self.show_info {
             self.draw_information_window(ctx);

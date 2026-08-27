@@ -39,6 +39,8 @@ pub use texture::{generate_mipmaps, mip_dimensions, mip_level_count};
 pub use types::{
     AlbedoData, AlphaTextureData, AoTextureData, ChunkDecalData, ChunkSplatData, DecalInstance,
     DecalTexture, FoliageBladeVertex, FoliageQNChunk, FoliageSet, NormalMapTexture, RawXtdData,
-    RoadChunkData, SpecularMapTexture, TerrainTexture,
+    RoadChunkData, SpecularMapTexture, TerrainTessellationData, TerrainTexture,
 };
-pub use uniforms::{CameraUniform, GpuTessParams, LightingParams, TerrainParams};
+pub use uniforms::{
+    CameraUniform, GpuTessParams, LightingParams, NORMALIZED_TERRAIN_Y_OFFSET, TerrainParams,
+};

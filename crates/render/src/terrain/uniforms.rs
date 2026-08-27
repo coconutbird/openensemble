@@ -7,6 +7,9 @@
 //! - `vec4<f32>` = 16 byte alignment
 //! - Struct total size must be multiple of largest member alignment
 
+/// Exact normalized height bias used by the PC terrain vertex/domain shaders.
+pub const NORMALIZED_TERRAIN_Y_OFFSET: f32 = 1.0 / 2048.0;
+
 /// Terrain shader parameters.
 ///
 /// Controls rendering options like debug mode and texture scaling.
@@ -52,7 +55,7 @@ unsafe impl bytemuck::Zeroable for TerrainParams {}
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct GpuTessParams {
-    /// Position decoding mid point [x, y, z, pad].
+    /// Position decoding minimum [x, y, z] and normalized Y bias in `w`.
     pub mid: [f32; 4],
     /// Position decoding range [x, y, z, pad].
     pub range: [f32; 4],

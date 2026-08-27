@@ -24,9 +24,9 @@ struct ShadowParams {
 @group(1) @binding(0)
 var<uniform> shadow_params: ShadowParams;
 
-// Terrain position data (packed R10G10B10A2)
+// Terrain position data (filterable R10G10B10A2_UNORM)
 @group(1) @binding(1)
-var t_positions: texture_2d<u32>;
+var t_positions: texture_2d<f32>;
 
 @group(1) @binding(2)
 var t_alpha: texture_2d<f32>;
@@ -37,11 +37,16 @@ var s_alpha: sampler;
 @group(1) @binding(4)
 var t_dynamic_alpha: texture_2d<u32>;
 
+@group(1) @binding(5)
+var s_position: sampler;
+
 struct VertexInput {
     // Per-vertex: local UV within patch [0, 1]
     @location(0) local_uv: vec2<f32>,
     // Per-instance: patch index (x + z * num_patches_x)
     @location(1) patch_index: u32,
+    @location(2) edge_factors: vec4<u32>,
+    @location(3) inside_factors: vec2<u32>,
 };
 
 struct VertexOutput {
@@ -49,33 +54,35 @@ struct VertexOutput {
     @location(0) alpha_uv: vec2<f32>,
 };
 
-// Decode packed R10G10B10A2 position (same as terrain_gpu.wesl)
-// Formula matches game bytecode: offset = texel * posCompRange - posCompMin
-fn unpack_position(
-    packed: u32,
-    mid: vec3<f32>,
-    range: vec3<f32>,
-    normalized_y_offset: f32,
-) -> vec3<f32> {
-    let x_bits = packed & 0x3FFu;
-    let y_bits = (packed >> 10u) & 0x3FFu;
-    let z_bits = (packed >> 20u) & 0x3FFu;
-
-    let norm = vec3<f32>(
-        f32(z_bits) / 1023.0,
-        f32(y_bits) / 1023.0,
-        f32(x_bits) / 1023.0
-    );
-
-    return vec3<f32>(norm.x, norm.y - normalized_y_offset, norm.z) * range - mid;
-}
-
 fn dynamic_alpha_enabled(grid_coord: vec2<u32>) -> bool {
     let dimensions = textureDimensions(t_dynamic_alpha);
     let word_x = min(grid_coord.x >> 5u, dimensions.x - 1u);
     let row = min(grid_coord.y, dimensions.y - 1u);
     let word = textureLoad(t_dynamic_alpha, vec2<u32>(word_x, row), 0).r;
     return (word & (1u << (grid_coord.x & 31u))) != 0u;
+}
+
+fn quantize_domain(value: f32, factor: u32) -> f32 {
+    let divisions = f32(max(factor, 1u));
+    return round(value * divisions) / divisions;
+}
+
+fn tessellated_domain(in: VertexInput) -> vec2<f32> {
+    var domain = vec2<f32>(
+        quantize_domain(in.local_uv.x, in.inside_factors.x),
+        quantize_domain(in.local_uv.y, in.inside_factors.y),
+    );
+    if in.local_uv.y <= 0.0 {
+        domain.x = quantize_domain(in.local_uv.x, in.edge_factors.y);
+    } else if in.local_uv.y >= 1.0 {
+        domain.x = quantize_domain(in.local_uv.x, in.edge_factors.w);
+    }
+    if in.local_uv.x <= 0.0 {
+        domain.y = quantize_domain(in.local_uv.y, in.edge_factors.x);
+    } else if in.local_uv.x >= 1.0 {
+        domain.y = quantize_domain(in.local_uv.y, in.edge_factors.z);
+    }
+    return domain;
 }
 
 @vertex
@@ -86,25 +93,26 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let tile_scale = shadow_params.terrain_info.y;
     let num_patches_x = u32(shadow_params.terrain_info.z);
 
-    let patch_x = in.patch_index % num_patches_x;
-    let patch_z = in.patch_index / num_patches_x;
+    let patch_x = in.patch_index / num_patches_x;
+    let patch_z = in.patch_index % num_patches_x;
+    let domain = tessellated_domain(in);
 
-    let cell_x = min(patch_x * 16u + u32(round(in.local_uv.x * 16.0)), num_verts);
-    let cell_z = min(patch_z * 16u + u32(round(in.local_uv.y * 16.0)), num_verts);
+    let cell_x = min(patch_x * 16u + u32(round(domain.x * 16.0)), num_verts);
+    let cell_z = min(patch_z * 16u + u32(round(domain.y * 16.0)), num_verts);
     let u = f32(cell_x) / f32(num_verts);
     let v = f32(cell_z) / f32(num_verts);
 
-    // Sample position from texture
-    let tex_x = min(cell_x, num_verts - 1u);
-    let tex_y = min(cell_z, num_verts - 1u);
-    let packed = textureLoad(t_positions, vec2<u32>(tex_y, tex_x), 0).r;
-
-    let local_pos = unpack_position(
-        packed,
-        shadow_params.mid.xyz,
-        shadow_params.range.xyz,
-        shadow_params.mid.w,
-    );
+    let position_sample = textureSampleLevel(
+        t_positions,
+        s_position,
+        vec2<f32>(v, u),
+        u,
+    ).bgr;
+    let local_pos = vec3<f32>(
+        position_sample.x,
+        position_sample.y - shadow_params.mid.w,
+        position_sample.z,
+    ) * shadow_params.range.xyz - shadow_params.mid.xyz;
 
     // Reconstruct world position: grid * tileScale + displacement (same as terrain_gpu.wesl)
     let grid_x = f32(cell_x);

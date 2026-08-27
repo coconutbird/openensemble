@@ -1,6 +1,7 @@
 //! Cascaded directional shadow-map generation.
 
 use glam::{Mat4, Vec3};
+use render::terrain::NORMALIZED_TERRAIN_Y_OFFSET;
 use render::wgpu;
 
 const SHADOW_MAP_SIZE: u32 = 2048;
@@ -36,6 +37,7 @@ pub struct ShadowParamsUniform {
 
 pub struct ShadowSetup<'a> {
     pub position_texture_view: &'a wgpu::TextureView,
+    pub position_sampler: &'a wgpu::Sampler,
     pub alpha_texture_view: &'a wgpu::TextureView,
     pub alpha_sampler: &'a wgpu::Sampler,
     pub dynamic_alpha_view: &'a wgpu::TextureView,
@@ -153,7 +155,7 @@ fn create_shadow_params(device: &wgpu::Device) -> (wgpu::BindGroupLayout, wgpu::
                 binding: 1,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Uint,
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     view_dimension: wgpu::TextureViewDimension::D2,
                     multisampled: false,
                 },
@@ -183,6 +185,12 @@ fn create_shadow_params(device: &wgpu::Device) -> (wgpu::BindGroupLayout, wgpu::
                     view_dimension: wgpu::TextureViewDimension::D2,
                     multisampled: false,
                 },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 5,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
             },
         ],
@@ -293,7 +301,12 @@ impl ShadowResources {
     ) {
         let params = ShadowParamsUniform {
             terrain_info: setup.terrain_info,
-            mid: [setup.mid[0], setup.mid[1], setup.mid[2], 0.0],
+            mid: [
+                setup.mid[0],
+                setup.mid[1],
+                setup.mid[2],
+                NORMALIZED_TERRAIN_Y_OFFSET,
+            ],
             range: [setup.range[0], setup.range[1], setup.range[2], 0.0],
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
@@ -321,6 +334,10 @@ impl ShadowResources {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::TextureView(setup.dynamic_alpha_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Sampler(setup.position_sampler),
                 },
             ],
         }));

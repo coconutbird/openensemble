@@ -13,7 +13,7 @@ use super::loading;
 use super::types::{
     AlbedoData, AlphaTextureData, AoTextureData, ChunkDecalData, ChunkSplatData, DecalInstance,
     DecalTexture, FoliageQNChunk, FoliageSet, LightingTextureData, NormalMapTexture, RawXtdData,
-    RoadChunkData, SpecularMapTexture, TerrainTexture,
+    RoadChunkData, SpecularMapTexture, TerrainTessellationData, TerrainTexture,
 };
 
 /// All decoded terrain data needed for rendering.
@@ -121,7 +121,7 @@ impl TerrainScene {
             foliage_qn_chunks,
             road_chunks,
         } = if let Some(xtt) = xtt {
-            Self::process_xtt(xtt, source)
+            Self::process_xtt(xtd, xtt, source)
         } else {
             XttAssets::default()
         };
@@ -148,6 +148,20 @@ impl TerrainScene {
     fn extract_raw_xtd(xtd: &XtdFile) -> Option<RawXtdData> {
         let raw = xtd.extract_raw_data().ok()?;
 
+        let tessellation = xtd.decode_tessellation().and_then(|tessellation| {
+            let patches_x = u32::try_from(tessellation.num_x_patches).ok()?;
+            let patches_z = u32::try_from(tessellation.num_z_patches).ok()?;
+            let expected_len = patches_x.checked_mul(patches_z)?;
+            if usize::try_from(expected_len).ok()? != tessellation.patch_tess_levels.len() {
+                return None;
+            }
+            Some(TerrainTessellationData {
+                patches_x,
+                patches_z,
+                levels: tessellation.patch_tess_levels,
+            })
+        });
+
         let ao_data = xtd.decode_ao().ok().and_then(|ao| {
             Some(AoTextureData {
                 values: ao.values,
@@ -171,6 +185,9 @@ impl TerrainScene {
             mid: raw.mid,
             range: raw.range,
             tile_scale: raw.tile_scale,
+            world_min: raw.world_min,
+            world_max: raw.world_max,
+            tessellation,
             ao_data,
             alpha_data,
         })
@@ -195,7 +212,11 @@ impl TerrainScene {
     }
 
     /// Process XTT file: extract all data and load textures from ERA.
-    fn process_xtt(xtt: &XttFile, source: Option<&mut AssetSource<StdFileProvider>>) -> XttAssets {
+    fn process_xtt(
+        xtd: &XtdFile,
+        xtt: &XttFile,
+        source: Option<&mut AssetSource<StdFileProvider>>,
+    ) -> XttAssets {
         log::info!(
             "XTT: {} textures, {} linker chunks",
             xtt.header.num_active_textures,
@@ -215,7 +236,7 @@ impl TerrainScene {
         // Extract splat, decal, foliage, road data
         let chunk_splat_data = loading::extract_chunk_splat_data(xtt);
         let (decal_instances, chunk_decal_data) = loading::extract_decal_data(xtt);
-        let foliage_qn_chunks = loading::extract_foliage_chunks(xtt);
+        let foliage_qn_chunks = loading::extract_foliage_chunks(xtt, &xtd.visual_chunks);
         let road_chunks = loading::extract_road_data(xtt);
 
         // Load textures from ERA (requires asset source)

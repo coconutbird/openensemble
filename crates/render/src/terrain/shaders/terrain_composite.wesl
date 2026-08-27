@@ -230,7 +230,7 @@ fn fs_main(in: VertexOutput) -> CompositeOutput {
     if params.debug_mode == 1u {
         albedo = vec3<f32>(in.uv, 0.0);
     } else if params.debug_mode == 2u {
-        albedo = vec3<f32>(f32(grid_z) / 16.0, f32(grid_x) / 16.0, 0.0);
+        albedo = vec3<f32>(f32(grid_x) / 16.0, f32(grid_z) / 16.0, 0.0);
     } else if params.debug_mode == 3u {
         albedo = alpha_low.rgb;
     } else if params.debug_mode == 4u {

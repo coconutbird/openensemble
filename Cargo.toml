@@ -62,6 +62,17 @@ bytemuck = { version = "1.19", features = ["derive"] }
 # XML parsing
 quick-xml = "0.37"
 
+[patch."https://github.com/coconutbird/ensemble-formats.git"]
+bdt = { path = "../ensemble-formats/crates/bdt" }
+bdt-serde = { path = "../ensemble-formats/crates/bdt-serde" }
+ddx = { path = "../ensemble-formats/crates/ddx" }
+era = { path = "../ensemble-formats/crates/era" }
+uax = { path = "../ensemble-formats/crates/uax" }
+ugx = { path = "../ensemble-formats/crates/ugx" }
+xmb = { path = "../ensemble-formats/crates/xmb" }
+xtd = { path = "../ensemble-formats/crates/xtd" }
+xtt = { path = "../ensemble-formats/crates/xtt" }
+
 [package]
 name = "openensemble"
 version.workspace = true

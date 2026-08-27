@@ -8,7 +8,7 @@ use render::terrain::{
 };
 use render::wgpu;
 
-use crate::types::AlbedoData;
+use crate::types::{AlbedoData, terrain_chunk_index};
 use crate::viewer::TerrainViewer;
 
 const ALPHA_CHUNK_SIZE: u32 = 64;
@@ -377,15 +377,6 @@ fn create_decal_array(
     (texture, view)
 }
 
-fn alpha_chunk_index(grid_x: i32, grid_z: i32) -> Option<usize> {
-    let grid_x = usize::try_from(grid_x).ok()?;
-    let grid_z = usize::try_from(grid_z).ok()?;
-    grid_x
-        .checked_mul(16)?
-        .checked_add(grid_z)
-        .filter(|&index| index < ALPHA_CHUNK_COUNT_USIZE)
-}
-
 fn empty_alpha_array() -> Vec<u8> {
     vec![0; ALPHA_SLICE_BYTES * ALPHA_CHUNK_COUNT_USIZE]
 }
@@ -397,7 +388,7 @@ fn populate_alpha_data<'a>(
     channel_count: usize,
 ) {
     for (grid_x, grid_z, alpha_maps) in chunks {
-        let Some(chunk_index) = alpha_chunk_index(grid_x, grid_z) else {
+        let Some(chunk_index) = terrain_chunk_index(grid_x, grid_z) else {
             continue;
         };
         let slice_offset = chunk_index * ALPHA_SLICE_BYTES;
