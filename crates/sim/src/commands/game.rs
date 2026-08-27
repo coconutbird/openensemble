@@ -1,4 +1,4 @@
-//! Game command matching vanilla BGameCommand.
+//! Game command matching vanilla `BGameCommand`.
 
 use crate::command::Command;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -86,7 +86,7 @@ impl GameCommandType {
     }
 }
 
-/// Game command matching vanilla BGameCommand.
+/// Game command matching vanilla `BGameCommand`.
 #[derive(Debug, Clone, Default)]
 pub struct GameCommand {
     /// Base command data.
@@ -105,26 +105,32 @@ pub struct GameCommand {
 
 impl GameCommand {
     /// Get data as f32.
+    #[must_use]
     pub fn data_float(&self) -> f32 {
-        f32::from_bits(self.data as u32)
+        f32::from_bits(self.data.cast_unsigned())
     }
 
     /// Set data as f32.
     pub fn set_data_float(&mut self, value: f32) {
-        self.data = value.to_bits() as i32;
+        self.data = value.to_bits().cast_signed();
     }
 
     /// Get data2 as f32.
+    #[must_use]
     pub fn data2_float(&self) -> f32 {
-        f32::from_bits(self.data2 as u32)
+        f32::from_bits(self.data2.cast_unsigned())
     }
 
     /// Set data2 as f32.
     pub fn set_data2_float(&mut self, value: f32) {
-        self.data2 = value.to_bits() as i32;
+        self.data2 = value.to_bits().cast_signed();
     }
 
     /// Serialize the game-specific fields (after base command).
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if the writer cannot accept the serialized fields.
     pub fn serialize_fields<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         let mut game_flags: u8 = 0;
 
@@ -176,13 +182,17 @@ impl GameCommand {
     }
 
     /// Deserialize the game-specific fields (after base command).
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if the reader does not contain a complete command.
     pub fn deserialize_fields<R: Read>(&mut self, reader: &mut R) -> io::Result<()> {
         let type_byte = reader.read_u8()?;
         self.game_type = if type_byte == 255 {
             // -1 as u8
             GameCommandType::QuickBuild // or handle as invalid
         } else {
-            GameCommandType::from_i32(type_byte as i32).unwrap_or_default()
+            GameCommandType::from_i32(i32::from(type_byte)).unwrap_or_default()
         };
 
         let game_flags = reader.read_u8()?;

@@ -16,6 +16,7 @@ pub enum QueuedCommand {
 
 impl QueuedCommand {
     /// Get the player ID from the base command.
+    #[must_use]
     pub fn player_id(&self) -> i32 {
         match self {
             QueuedCommand::Work(cmd) => cmd.base.player_id,
@@ -40,10 +41,10 @@ pub struct CommandEntry {
 
 /// Command queue with time-ordered execution.
 ///
-/// Uses BTreeMap for deterministic ordering by (exec_time, sequence).
+/// Uses `BTreeMap` for deterministic ordering by (`exec_time`, sequence).
 #[derive(Debug, Default)]
 pub struct CommandQueue {
-    /// Commands ordered by (exec_time, sequence).
+    /// Commands ordered by (`exec_time`, sequence).
     queue: BTreeMap<(u32, u64), CommandEntry>,
     /// Next sequence number.
     next_sequence: u64,
@@ -53,6 +54,7 @@ pub struct CommandQueue {
 
 impl CommandQueue {
     /// Create a new command queue.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -109,21 +111,25 @@ impl CommandQueue {
     }
 
     /// Peek at the next command without removing it.
+    #[must_use]
     pub fn peek(&self) -> Option<&CommandEntry> {
         self.queue.values().next()
     }
 
     /// Get the execution time of the next command.
+    #[must_use]
     pub fn next_exec_time(&self) -> Option<u32> {
         self.queue.keys().next().map(|(time, _)| *time)
     }
 
     /// Get the number of queued commands.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.queue.len()
     }
 
     /// Check if the queue is empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.queue.is_empty()
     }
@@ -139,6 +145,7 @@ impl CommandQueue {
     }
 
     /// Get the current game time.
+    #[must_use]
     pub fn current_time(&self) -> u32 {
         self.current_time
     }

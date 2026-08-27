@@ -2,15 +2,18 @@
 //!
 //! These structures must match the WGSL shader definitions exactly.
 //! Be careful with alignment - WGSL has strict rules:
-//! - vec2<f32> = 8 byte alignment
-//! - vec3<f32> = 16 byte alignment
-//! - vec4<f32> = 16 byte alignment
+//! - `vec2<f32>` = 8 byte alignment
+//! - `vec3<f32>` = 16 byte alignment
+//! - `vec4<f32>` = 16 byte alignment
 //! - Struct total size must be multiple of largest member alignment
+
+/// Exact normalized height bias used by the PC terrain vertex/domain shaders.
+pub const NORMALIZED_TERRAIN_Y_OFFSET: f32 = 1.0 / 2048.0;
 
 /// Terrain shader parameters.
 ///
 /// Controls rendering options like debug mode and texture scaling.
-/// Must match the TerrainParams struct in WGSL shaders.
+/// Must match the `TerrainParams` struct in WGSL shaders.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct TerrainParams {
@@ -24,8 +27,8 @@ pub struct TerrainParams {
     pub debug_mode: f32,
     /// Normal map intensity (1.0 = default).
     pub bump_power: f32,
-    /// Padding for 16-byte alignment.
-    pub _padding: f32,
+    /// Padding required by the WGSL uniform layout.
+    pub padding: f32,
 }
 
 impl Default for TerrainParams {
@@ -36,7 +39,7 @@ impl Default for TerrainParams {
             texture_tile_scale: 1.0,
             debug_mode: 0.0,
             bump_power: 1.0,
-            _padding: 0.0,
+            padding: 0.0,
         }
     }
 }
@@ -48,15 +51,15 @@ unsafe impl bytemuck::Zeroable for TerrainParams {}
 /// GPU tessellation shader parameters.
 ///
 /// Contains data needed to decode packed positions/normals in the vertex shader.
-/// Must match the TessParams struct in WGSL shaders.
+/// Must match the `TessParams` struct in WGSL shaders.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct GpuTessParams {
-    /// Position decoding mid point [x, y, z, pad].
+    /// Position decoding minimum [x, y, z] and normalized Y bias in `w`.
     pub mid: [f32; 4],
     /// Position decoding range [x, y, z, pad].
     pub range: [f32; 4],
-    /// Terrain info [num_verts_per_axis, tile_scale, num_patches_x, num_patches_z].
+    /// Terrain info [`num_verts_per_axis`, `tile_scale`, `num_patches_x`, `num_patches_z`].
     pub terrain_info: [f32; 4],
     /// World bounds minimum [x, y, z, pad].
     pub world_min: [f32; 4],
@@ -112,13 +115,13 @@ unsafe impl bytemuck::Zeroable for CameraUniform {}
 /// Contains directional light, SH fill lighting, fog, AO, shadow,
 /// blackmap, and local light parameters.
 /// Matches the original Halo Wars cbShared lighting fields.
-/// Must match the LightingParams struct in WGSL shaders.
+/// Must match the `LightingParams` struct in WGSL shaders.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct LightingParams {
     /// Direction TO light in world space [x, y, z, enabled].
     pub dir_light_vec: [f32; 4],
-    /// Directional light color [r, g, b, shadow_darkness].
+    /// Directional light color [r, g, b, `shadow_darkness`].
     pub dir_light_color: [f32; 4],
     /// Camera world position [x, y, z, pad].
     pub world_camera_pos: [f32; 4],
@@ -144,7 +147,7 @@ pub struct LightingParams {
     pub planar_fog_color: [f32; 4],
     /// Planar fog params [enabled, start, density2, pad].
     pub planar_fog_params: [f32; 4],
-    /// AO params [ao_diffuse_intensity, pad, pad, pad].
+    /// AO params [`ao_diffuse_intensity`, pad, pad, pad].
     pub ao_params: [f32; 4],
 
     // --- Shadow params ---
@@ -156,20 +159,42 @@ pub struct LightingParams {
     pub shadow_vp_col2: [f32; 4],
     /// Shadow view-projection matrix column 3.
     pub shadow_vp_col3: [f32; 4],
-    /// Shadow params [csm_scale, num_passes, enabled, pad].
+    /// Shadow params [`csm_scale`, `num_passes`, enabled, pad].
     pub shadow_params: [f32; 4],
 
     // --- Blackmap params ---
-    /// Blackmap params0 [bg_r, bg_g, bg_b, fog_scalar].
+    /// Blackmap params0 [`bg_r`, `bg_g`, `bg_b`, `fog_scalar`].
     pub blackmap_params0: [f32; 4],
-    /// Blackmap params1 [unexplored_scalar, bounds_lo_x, bounds_lo_z, enabled].
+    /// Blackmap params1 [`unexplored_scalar`, `bounds_lo_x`, `bounds_lo_z`, enabled].
     pub blackmap_params1: [f32; 4],
-    /// Blackmap params2 [pad, bounds_hi_x, bounds_hi_z, bounds_falloff].
+    /// Blackmap params2 [pad, `bounds_hi_x`, `bounds_hi_z`, `bounds_falloff`].
     pub blackmap_params2: [f32; 4],
 
     // --- Local light params ---
-    /// Local light params [num_lights, spec_power, pad, pad].
+    /// Local light params [`num_lights`, `spec_power`, shadows enabled, lights enabled].
     pub local_light_params: [f32; 4],
+
+    // --- Bump fadeout params (HWDE cb4[35]) ---
+    /// Fadeout params [`fadeout_min`, `fadeout_max`, `fadeout_bias`, pad].
+    pub fadeout_params: [f32; 4],
+
+    // --- Blackmap UV scales (HWDE cb4[33-34]) ---
+    /// Blackmap UV scales [`scale_x`, `scale_z`, pad, pad].
+    pub blackmap_uv_scales: [f32; 4],
+
+    /// Secondary specular direction and power (HWDE cb4[37]).
+    pub fill_spec_direction_power: [f32; 4],
+    /// Secondary specular RGB and directional-shadow influence (HWDE cb4[38]).
+    pub fill_spec_color_shadow: [f32; 4],
+
+    /// Light-volume params [enabled, pad, pad, pad] (HWDE cb4[39]).
+    pub light_volume_params: [f32; 4],
+    /// World-to-light-volume transform row 0 (HWDE cb4[40]).
+    pub light_volume_row0: [f32; 4],
+    /// World-to-light-volume transform row 1 (HWDE cb4[41]).
+    pub light_volume_row1: [f32; 4],
+    /// World-to-light-volume transform row 2 (HWDE cb4[42]).
+    pub light_volume_row2: [f32; 4],
 }
 
 impl Default for LightingParams {
@@ -199,7 +224,7 @@ impl Default for LightingParams {
             shadow_vp_col1: [0.0, 1.0, 0.0, 0.0],
             shadow_vp_col2: [0.0, 0.0, 1.0, 0.0],
             shadow_vp_col3: [0.0, 0.0, 0.0, 1.0],
-            shadow_params: [1.0, 1.0, 0.0, 0.0], // csm_scale=1, num_passes=1, enabled=0
+            shadow_params: [8.0, 3.0, 0.0, 0.0], // scale=8, max cascade index=3
 
             // Blackmap: disabled by default
             blackmap_params0: [0.0, 0.0, 0.0, 0.5], // bg=black, fog_scalar=0.5
@@ -207,7 +232,23 @@ impl Default for LightingParams {
             blackmap_params2: [0.0, 1024.0, 1024.0, 0.01], // bounds_hi=(1024,1024), falloff=0.01
 
             // Local lights: none by default
-            local_light_params: [0.0, 16.0, 0.0, 0.0], // 0 lights, spec_power=16
+            local_light_params: [0.0, 16.0, 0.0, 0.0], // no local-light payload
+
+            // Bump fadeout: reasonable defaults (fade from 200 to 500 units)
+            fadeout_params: [200.0, 500.0, 50.0, 0.0],
+
+            // Blackmap UV scales: default 1/terrain_extent
+            blackmap_uv_scales: [1.0 / 1024.0, 1.0 / 1024.0, 0.0, 0.0],
+
+            // Secondary directional highlight is data-driven and absent by default.
+            fill_spec_direction_power: [0.4, 0.8, 0.3, 16.0],
+            fill_spec_color_shadow: [0.0; 4],
+
+            // Light volumes are disabled until a scene supplies both 3D buffers.
+            light_volume_params: [0.0; 4],
+            light_volume_row0: [1.0, 0.0, 0.0, 0.0],
+            light_volume_row1: [0.0, 1.0, 0.0, 0.0],
+            light_volume_row2: [0.0, 0.0, 1.0, 0.0],
         }
     }
 }

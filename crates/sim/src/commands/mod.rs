@@ -8,4 +8,6 @@ mod work;
 
 pub use game::GameCommand;
 pub use power::PowerCommand;
+pub use power::command_flags as power_command_flags;
 pub use work::WorkCommand;
+pub use work::command_flags as work_command_flags;

@@ -1,22 +1,22 @@
-//! VanillaLoader - parses .triggerscript XMB files into core trigger types.
+//! `VanillaLoader` - parses .triggerscript XMB files into core trigger types.
 //!
 //! This module handles loading vanilla Halo Wars trigger scripts from their
 //! binary XMB format into the internal representation used by the trigger engine.
 
-use std::io::{Read, Seek};
+use num_traits::ToPrimitive;
+use pipeline::xmb::{Document as XmbDocument, Reader as XmbReader};
 
-use data::xmb::{XmbData, XmbReader};
-
+use super::value::{Color, Cost, Vec3};
 use super::{
-    Condition, ConditionType, Effect, EffectType, Trigger, TriggerScript, TriggerValue, TriggerVar,
-    VarId, VarType,
+    Condition, ConditionMode, ConditionType, Effect, EffectType, Trigger, TriggerScript,
+    TriggerValue, TriggerVar, VarId, VarType,
 };
 
 /// Errors that can occur when loading trigger scripts.
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError {
     #[error("XMB parse error: {0}")]
-    XmbError(#[from] data::xmb::Error),
+    XmbError(#[from] pipeline::xmb::Error),
 
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
@@ -43,23 +43,26 @@ pub enum LoadError {
 /// Result type for loader operations.
 pub type LoadResult<T> = Result<T, LoadError>;
 
-/// Loads vanilla .triggerscript XMB files into TriggerScript instances.
+/// Loads vanilla .triggerscript XMB files into `TriggerScript` instances.
 pub struct VanillaLoader;
 
 impl VanillaLoader {
-    /// Load a trigger script from a reader (file, bytes, etc).
-    pub fn load<R: Read + Seek>(reader: R) -> LoadResult<TriggerScript> {
-        let xmb = XmbReader::read(reader)?;
+    /// Load a trigger script from raw bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the bytes are not valid XMB or the script is malformed.
+    pub fn load_bytes(data: &[u8]) -> LoadResult<TriggerScript> {
+        let xmb = XmbReader::read(data)?;
         Self::from_xmb(&xmb)
     }
 
-    /// Load a trigger script from raw bytes.
-    pub fn load_bytes(data: &[u8]) -> LoadResult<TriggerScript> {
-        Self::load(std::io::Cursor::new(data))
-    }
-
-    /// Convert parsed XMB data into a TriggerScript.
-    pub fn from_xmb(xmb: &XmbData) -> LoadResult<TriggerScript> {
+    /// Convert parsed XMB data into a `TriggerScript`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if required script elements or attributes are missing or invalid.
+    pub fn from_xmb(xmb: &XmbDocument) -> LoadResult<TriggerScript> {
         let root = xmb
             .root()
             .ok_or_else(|| LoadError::MissingElement("TriggerScript root".into()))?;
@@ -98,8 +101,8 @@ impl VanillaLoader {
         Ok(script)
     }
 
-    /// Parse a TriggerVar node.
-    fn parse_trigger_var(node: &data::xmb::Node) -> LoadResult<TriggerVar> {
+    /// Parse a `TriggerVar` node.
+    fn parse_trigger_var(node: &pipeline::xmb::Node) -> LoadResult<TriggerVar> {
         let id: VarId = get_attr_u32(node, "ID")?;
 
         let type_str = get_attr_string(node, "Type")?;
@@ -130,7 +133,7 @@ impl VanillaLoader {
     }
 
     /// Parse a Trigger node.
-    fn parse_trigger(node: &data::xmb::Node) -> LoadResult<Trigger> {
+    fn parse_trigger(node: &pipeline::xmb::Node) -> LoadResult<Trigger> {
         let id = get_attr_u32(node, "ID")?;
         let mut trigger = Trigger::new(id);
 
@@ -191,12 +194,12 @@ impl VanillaLoader {
         Ok(trigger)
     }
 
-    /// Parse TriggerConditions node (contains And or Or wrapper).
-    fn parse_conditions(node: &data::xmb::Node, trigger: &mut Trigger) -> LoadResult<()> {
+    /// Parse `TriggerConditions` node (contains And or Or wrapper).
+    fn parse_conditions(node: &pipeline::xmb::Node, trigger: &mut Trigger) -> LoadResult<()> {
         // Find the And or Or wrapper node
         for child in &node.children {
             if child.name == "Or" {
-                trigger.or_conditions = true;
+                trigger.condition_mode = ConditionMode::Any;
                 for cond_node in &child.children {
                     if cond_node.name == "Condition" {
                         let condition = Self::parse_condition(cond_node)?;
@@ -205,7 +208,7 @@ impl VanillaLoader {
                 }
                 break;
             } else if child.name == "And" {
-                trigger.or_conditions = false;
+                trigger.condition_mode = ConditionMode::All;
                 for cond_node in &child.children {
                     if cond_node.name == "Condition" {
                         let condition = Self::parse_condition(cond_node)?;
@@ -219,15 +222,15 @@ impl VanillaLoader {
     }
 
     /// Parse a Condition node.
-    fn parse_condition(node: &data::xmb::Node) -> LoadResult<Condition> {
+    fn parse_condition(node: &pipeline::xmb::Node) -> LoadResult<Condition> {
         let dbid = get_attr_i32(node, "DBID")?;
+        let raw_type = u16::try_from(dbid).map_err(|_| LoadError::UnknownConditionType(dbid))?;
         let condition_type =
-            ConditionType::from_u16(dbid as u16).ok_or(LoadError::UnknownConditionType(dbid))?;
+            ConditionType::from_u16(raw_type).ok_or(LoadError::UnknownConditionType(dbid))?;
 
         let id = node
             .get_attribute("ID")
-            .map(|a| a.value_string().parse().unwrap_or(0))
-            .unwrap_or(0);
+            .map_or(0, |a| a.value_string().parse().unwrap_or(0));
 
         let mut condition = Condition::new(id, condition_type);
 
@@ -244,21 +247,21 @@ impl VanillaLoader {
         }
 
         // Parse Var children - these reference script variables
-        Self::parse_var_refs(node, &mut condition.inputs, &mut condition.outputs)?;
+        Self::parse_var_refs(node, &mut condition.inputs, &mut condition.outputs);
 
         Ok(condition)
     }
 
     /// Parse an Effect node.
-    fn parse_effect(node: &data::xmb::Node) -> LoadResult<Effect> {
+    fn parse_effect(node: &pipeline::xmb::Node) -> LoadResult<Effect> {
         let dbid = get_attr_i32(node, "DBID")?;
+        let raw_type = u16::try_from(dbid).map_err(|_| LoadError::UnknownEffectType(dbid))?;
         let effect_type =
-            EffectType::from_u16(dbid as u16).ok_or(LoadError::UnknownEffectType(dbid))?;
+            EffectType::from_u16(raw_type).ok_or(LoadError::UnknownEffectType(dbid))?;
 
         let id = node
             .get_attribute("ID")
-            .map(|a| a.value_string().parse().unwrap_or(0))
-            .unwrap_or(0);
+            .map_or(0, |a| a.value_string().parse().unwrap_or(0));
 
         let mut effect = Effect::new(id, effect_type);
 
@@ -267,18 +270,18 @@ impl VanillaLoader {
         }
 
         // Parse Var children
-        Self::parse_var_refs(node, &mut effect.inputs, &mut effect.outputs)?;
+        Self::parse_var_refs(node, &mut effect.inputs, &mut effect.outputs);
 
         Ok(effect)
     }
 
     /// Parse Var children to extract input/output variable references.
-    /// Vars with SigID are inputs, vars with Output="true" are outputs.
+    /// Vars with `SigID` are inputs, vars with Output="true" are outputs.
     fn parse_var_refs(
-        node: &data::xmb::Node,
+        node: &pipeline::xmb::Node,
         inputs: &mut Vec<VarId>,
         outputs: &mut Vec<VarId>,
-    ) -> LoadResult<()> {
+    ) {
         for child in &node.children {
             if child.name == "Var" {
                 let var_id: VarId = child.text_string().parse().unwrap_or(0);
@@ -286,8 +289,7 @@ impl VanillaLoader {
                 // Check if this is an output variable
                 let is_output = child
                     .get_attribute("Output")
-                    .map(|a| a.value_string().eq_ignore_ascii_case("true"))
-                    .unwrap_or(false);
+                    .is_some_and(|a| a.value_string().eq_ignore_ascii_case("true"));
 
                 if is_output {
                     outputs.push(var_id);
@@ -296,7 +298,6 @@ impl VanillaLoader {
                 }
             }
         }
-        Ok(())
     }
 }
 
@@ -305,14 +306,14 @@ impl VanillaLoader {
 // ============================================================================
 
 /// Get a required string attribute.
-fn get_attr_string(node: &data::xmb::Node, name: &str) -> LoadResult<String> {
+fn get_attr_string(node: &pipeline::xmb::Node, name: &str) -> LoadResult<String> {
     node.get_attribute(name)
-        .map(|a| a.value_string())
+        .map(pipeline::xmb::Attribute::value_string)
         .ok_or_else(|| LoadError::MissingAttribute(name.into()))
 }
 
 /// Get a required u32 attribute.
-fn get_attr_u32(node: &data::xmb::Node, name: &str) -> LoadResult<u32> {
+fn get_attr_u32(node: &pipeline::xmb::Node, name: &str) -> LoadResult<u32> {
     let s = get_attr_string(node, name)?;
     s.parse().map_err(|_| LoadError::InvalidValue {
         field: name.into(),
@@ -321,7 +322,7 @@ fn get_attr_u32(node: &data::xmb::Node, name: &str) -> LoadResult<u32> {
 }
 
 /// Get a required i32 attribute.
-fn get_attr_i32(node: &data::xmb::Node, name: &str) -> LoadResult<i32> {
+fn get_attr_i32(node: &pipeline::xmb::Node, name: &str) -> LoadResult<i32> {
     let s = get_attr_string(node, name)?;
     s.parse().map_err(|_| LoadError::InvalidValue {
         field: name.into(),
@@ -405,6 +406,12 @@ fn parse_var_type(s: &str) -> Option<VarType> {
         "ExposedAction" => VarType::ExposedAction,
         "SquadMode" => VarType::SquadMode,
         "ExposedScript" => VarType::ExposedScript,
+        _ => return parse_extended_var_type(s),
+    })
+}
+
+fn parse_extended_var_type(s: &str) -> Option<VarType> {
+    Some(match s {
         "KBBase" => VarType::KBBase,
         "KBBaseList" => VarType::KBBaseList,
         "DataScalar" => VarType::DataScalar,
@@ -418,7 +425,7 @@ fn parse_var_type(s: &str) -> Option<VarType> {
         "CinematicTag" => VarType::CinematicTag,
         "IconType" => VarType::IconType,
         "Difficulty" => VarType::Difficulty,
-        "Integer" => VarType::Integer,
+        "Integer" | "Count" => VarType::Integer,
         "HUDItem" => VarType::HUDItem,
         "FlashableUIItem" => VarType::FlashableUIItem,
         "ControlType" => VarType::ControlType,
@@ -454,20 +461,14 @@ fn parse_var_type(s: &str) -> Option<VarType> {
         "Concept" => VarType::Concept,
         "ConceptList" => VarType::ConceptList,
         "UserClassType" => VarType::UserClassType,
-        // Location is stored as UILocation in vanilla
         "Location" => VarType::UILocation,
-        // Numeric types - stored as Float or Integer
-        "Count" => VarType::Integer,
-        "Distance" => VarType::Float,
-        "Percent" => VarType::Float,
-        "Hitpoints" => VarType::Float,
+        "Distance" | "Percent" | "Hitpoints" => VarType::Float,
         _ => return None,
     })
 }
 
 /// Parse a value from text based on variable type.
 fn parse_var_value(text: &str, var_type: VarType) -> TriggerValue {
-    use super::value::{Color, Cost, Vec3};
     use crate::EntityId;
 
     match var_type {
@@ -475,65 +476,10 @@ fn parse_var_value(text: &str, var_type: VarType) -> TriggerValue {
         VarType::Integer => TriggerValue::Int(text.parse().unwrap_or(0)),
         VarType::Float => TriggerValue::Float(text.parse().unwrap_or(0.0)),
         VarType::Time => TriggerValue::Time(text.parse().unwrap_or(0)),
-        VarType::String | VarType::LocStringID => TriggerValue::String(text.to_string()),
-        VarType::UILocation => {
-            // Format: "x,y,z"
-            let parts: Vec<&str> = text.split(',').collect();
-            if parts.len() >= 3 {
-                let x = parts[0].trim().parse().unwrap_or(0.0);
-                let y = parts[1].trim().parse().unwrap_or(0.0);
-                let z = parts[2].trim().parse().unwrap_or(0.0);
-                TriggerValue::Location(Vec3::new(x, y, z))
-            } else {
-                TriggerValue::default()
-            }
-        }
-        VarType::Vector => {
-            let parts: Vec<&str> = text.split(',').collect();
-            if parts.len() >= 3 {
-                let x = parts[0].trim().parse().unwrap_or(0.0);
-                let y = parts[1].trim().parse().unwrap_or(0.0);
-                let z = parts[2].trim().parse().unwrap_or(0.0);
-                TriggerValue::Vector(Vec3::new(x, y, z))
-            } else {
-                TriggerValue::default()
-            }
-        }
-        VarType::Color => {
-            // Format: "r,g,b,a" or "r,g,b"
-            let parts: Vec<&str> = text.split(',').collect();
-            if parts.len() >= 3 {
-                let r: f32 = parts[0].trim().parse().unwrap_or(0.0);
-                let g: f32 = parts[1].trim().parse().unwrap_or(0.0);
-                let b: f32 = parts[2].trim().parse().unwrap_or(0.0);
-                let a: f32 = parts
-                    .get(3)
-                    .and_then(|s| s.trim().parse().ok())
-                    .unwrap_or(1.0);
-                // Convert from 0-1 float to 0-255 u8
-                TriggerValue::Color(Color::new(
-                    (r * 255.0) as u8,
-                    (g * 255.0) as u8,
-                    (b * 255.0) as u8,
-                    (a * 255.0) as u8,
-                ))
-            } else {
-                TriggerValue::default()
-            }
-        }
-        VarType::Cost => {
-            // Format: "supplies,power,population"
-            let parts: Vec<&str> = text.split(',').collect();
-            if parts.len() >= 3 {
-                TriggerValue::Cost(Cost {
-                    supplies: parts[0].trim().parse().unwrap_or(0.0),
-                    power: parts[1].trim().parse().unwrap_or(0.0),
-                    population: parts[2].trim().parse().unwrap_or(0.0),
-                })
-            } else {
-                TriggerValue::default()
-            }
-        }
+        VarType::UILocation => parse_vec3_value(text, TriggerValue::Location),
+        VarType::Vector => parse_vec3_value(text, TriggerValue::Vector),
+        VarType::Color => parse_color_value(text),
+        VarType::Cost => parse_cost_value(text),
         // Entity references
         VarType::Unit => TriggerValue::Unit(EntityId::from_u32(text.parse().unwrap_or(0))),
         VarType::Squad => TriggerValue::Squad(EntityId::from_u32(text.parse().unwrap_or(0))),
@@ -553,4 +499,61 @@ fn parse_var_value(text: &str, var_type: VarType) -> TriggerValue {
         // Default to storing as string for unhandled types
         _ => TriggerValue::String(text.to_string()),
     }
+}
+
+fn parse_vec3_value(text: &str, wrap: fn(Vec3) -> TriggerValue) -> TriggerValue {
+    let parts: Vec<&str> = text.split(',').collect();
+    if parts.len() < 3 {
+        return TriggerValue::default();
+    }
+
+    wrap(Vec3::new(
+        parts[0].trim().parse().unwrap_or(0.0),
+        parts[1].trim().parse().unwrap_or(0.0),
+        parts[2].trim().parse().unwrap_or(0.0),
+    ))
+}
+
+fn parse_color_value(text: &str) -> TriggerValue {
+    let parts: Vec<&str> = text.split(',').collect();
+    if parts.len() < 3 {
+        return TriggerValue::default();
+    }
+
+    let channel = |index: usize, default: f32| {
+        parts
+            .get(index)
+            .and_then(|part| part.trim().parse::<f32>().ok())
+            .unwrap_or(default)
+    };
+    TriggerValue::Color(Color::new(
+        normalized_to_u8(channel(0, 0.0)),
+        normalized_to_u8(channel(1, 0.0)),
+        normalized_to_u8(channel(2, 0.0)),
+        normalized_to_u8(channel(3, 1.0)),
+    ))
+}
+
+fn normalized_to_u8(value: f32) -> u8 {
+    if value.is_nan() {
+        return 0;
+    }
+
+    (value.clamp(0.0, 1.0) * f32::from(u8::MAX))
+        .trunc()
+        .to_u8()
+        .expect("a normalized color channel must fit in u8")
+}
+
+fn parse_cost_value(text: &str) -> TriggerValue {
+    let parts: Vec<&str> = text.split(',').collect();
+    if parts.len() < 3 {
+        return TriggerValue::default();
+    }
+
+    TriggerValue::Cost(Cost {
+        supplies: parts[0].trim().parse().unwrap_or(0.0),
+        power: parts[1].trim().parse().unwrap_or(0.0),
+        population: parts[2].trim().parse().unwrap_or(0.0),
+    })
 }

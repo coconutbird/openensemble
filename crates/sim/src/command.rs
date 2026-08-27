@@ -21,6 +21,7 @@ pub enum CommandType {
 }
 
 impl CommandType {
+    #[must_use]
     pub fn from_u8(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::Work),
@@ -48,6 +49,7 @@ pub enum EntityType {
 }
 
 impl EntityType {
+    #[must_use]
     pub fn from_u8(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::Unit),
@@ -78,6 +80,7 @@ impl CommandFlags {
     pub const URGENCY_COUNT: u16 = 512;
     pub const CACHED_UNIT_SET: u16 = 1024;
 
+    #[must_use]
     pub fn has(self, flag: u16) -> bool {
         (self.0 & flag) != 0
     }
@@ -87,7 +90,7 @@ impl CommandFlags {
     }
 }
 
-/// Base command structure matching vanilla BCommand.
+/// Base command structure matching vanilla `BCommand`.
 #[derive(Debug, Clone)]
 pub struct Command {
     /// Player who issued the command (-1 for none).
@@ -96,7 +99,7 @@ pub struct Command {
     pub id: i32,
     /// Type of entities sending this command.
     pub sender_type: EntityType,
-    /// Entity IDs of senders (player IDs for EntityType::Player).
+    /// Entity IDs of senders (player IDs for `EntityType::Player`).
     pub senders: Vec<i32>,
     /// Type of entities receiving this command.
     pub recipient_type: EntityType,
@@ -131,13 +134,13 @@ impl Default for Command {
 
 impl Command {
     /// Check if a specific command flag bit is set.
+    #[must_use]
     pub fn has_flag(&self, bit: usize) -> bool {
         let byte_idx = bit / 8;
         let bit_idx = bit % 8;
         self.flags
             .get(byte_idx)
-            .map(|b| (b & (1 << bit_idx)) != 0)
-            .unwrap_or(false)
+            .is_some_and(|b| (b & (1 << bit_idx)) != 0)
     }
 
     /// Set a specific command flag bit.

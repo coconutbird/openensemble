@@ -118,6 +118,7 @@ impl Default for Session {
 
 impl Session {
     /// Create a new session.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -140,6 +141,7 @@ impl Session {
     }
 
     /// Get a player by ID.
+    #[must_use]
     pub fn get_player(&self, player_id: u8) -> Option<&PlayerInfo> {
         self.players.get(&player_id)
     }
@@ -150,6 +152,7 @@ impl Session {
     }
 
     /// Check if all players are ready.
+    #[must_use]
     pub fn all_players_ready(&self) -> bool {
         self.players
             .values()
@@ -157,6 +160,7 @@ impl Session {
     }
 
     /// Get the number of human players.
+    #[must_use]
     pub fn human_player_count(&self) -> usize {
         self.players.values().filter(|p| !p.is_ai).count()
     }

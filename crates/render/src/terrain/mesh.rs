@@ -5,7 +5,7 @@ use glam::Vec3;
 /// Terrain mesh data for rendering.
 ///
 /// Contains vertex data (positions, normals, UVs) and indices for rendering.
-/// Can be created from XTD data with different tessellation levels.
+/// The packed GPU path uses this decoded mesh for bounds and diagnostics.
 #[derive(Clone)]
 pub struct TerrainMesh {
     /// Vertex positions in world space.
@@ -26,6 +26,7 @@ pub struct TerrainMesh {
 
 impl TerrainMesh {
     /// Create a new terrain mesh from raw vertex data.
+    #[must_use]
     pub fn new(
         positions: Vec<[f32; 3]>,
         normals: Vec<[f32; 3]>,
@@ -47,15 +48,17 @@ impl TerrainMesh {
     }
 
     /// Get the center of the terrain in world space.
+    #[must_use]
     pub fn center(&self) -> Vec3 {
         Vec3::new(
-            (self.world_min[0] + self.world_max[0]) / 2.0,
-            (self.world_min[1] + self.world_max[1]) / 2.0,
-            (self.world_min[2] + self.world_max[2]) / 2.0,
+            f32::midpoint(self.world_min[0], self.world_max[0]),
+            f32::midpoint(self.world_min[1], self.world_max[1]),
+            f32::midpoint(self.world_min[2], self.world_max[2]),
         )
     }
 
     /// Get the size of the terrain in world space.
+    #[must_use]
     pub fn size(&self) -> Vec3 {
         Vec3::new(
             self.world_max[0] - self.world_min[0],
@@ -65,44 +68,14 @@ impl TerrainMesh {
     }
 
     /// Get the number of vertices.
+    #[must_use]
     pub fn vertex_count(&self) -> usize {
         self.positions.len()
     }
 
     /// Get the number of triangles.
+    #[must_use]
     pub fn triangle_count(&self) -> usize {
         self.indices.len() / 3
-    }
-}
-
-/// Tessellation mode for terrain rendering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum TessellationMode {
-    /// No tessellation - use raw XTD mesh.
-    None,
-    /// CPU tessellation - subdivide mesh on CPU (slow but accurate).
-    Cpu,
-    /// GPU tessellation - use instanced patches with vertex shader displacement (fast).
-    #[default]
-    Gpu,
-}
-
-impl TessellationMode {
-    /// Cycle to the next tessellation mode.
-    pub fn next(self) -> Self {
-        match self {
-            TessellationMode::None => TessellationMode::Gpu,
-            TessellationMode::Gpu => TessellationMode::Cpu,
-            TessellationMode::Cpu => TessellationMode::None,
-        }
-    }
-
-    /// Get the display name for this mode.
-    pub fn name(self) -> &'static str {
-        match self {
-            TessellationMode::None => "None",
-            TessellationMode::Gpu => "GPU",
-            TessellationMode::Cpu => "CPU",
-        }
     }
 }

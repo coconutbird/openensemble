@@ -1,4 +1,4 @@
-//! TriggerScript - a collection of triggers and shared variables.
+//! `TriggerScript` - a collection of triggers and shared variables.
 
 use std::collections::HashMap;
 
@@ -47,6 +47,7 @@ pub struct TriggerVar {
 
 impl TriggerVar {
     /// Create a new variable.
+    #[must_use]
     pub fn new(id: VarId, var_type: VarType) -> Self {
         Self {
             id,
@@ -60,24 +61,28 @@ impl TriggerVar {
     }
 
     /// Set the variable name.
+    #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
         self
     }
 
     /// Set the initial value.
+    #[must_use]
     pub fn with_value(mut self, value: TriggerValue) -> Self {
         self.value = value;
         self
     }
 
     /// Mark as input parameter.
+    #[must_use]
     pub fn as_input(mut self) -> Self {
         self.is_input = true;
         self
     }
 
     /// Mark as output parameter.
+    #[must_use]
     pub fn as_output(mut self) -> Self {
         self.is_output = true;
         self
@@ -137,6 +142,7 @@ impl Default for TriggerScript {
 
 impl TriggerScript {
     /// Create a new trigger script.
+    #[must_use]
     pub fn new(id: TriggerScriptId) -> Self {
         Self {
             id,
@@ -145,12 +151,14 @@ impl TriggerScript {
     }
 
     /// Set the script name.
+    #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
         self
     }
 
     /// Set the script type.
+    #[must_use]
     pub fn with_type(mut self, script_type: ScriptType) -> Self {
         self.script_type = script_type;
         self
@@ -173,6 +181,7 @@ impl TriggerScript {
     }
 
     /// Get a variable by ID.
+    #[must_use]
     pub fn get_variable(&self, id: VarId) -> Option<&TriggerVar> {
         self.variables.get(id as usize)
     }
@@ -183,6 +192,7 @@ impl TriggerScript {
     }
 
     /// Get a variable by editor ID.
+    #[must_use]
     pub fn get_variable_by_editor_id(&self, editor_id: VarId) -> Option<&TriggerVar> {
         self.var_editor_to_id
             .get(&editor_id)
@@ -190,6 +200,7 @@ impl TriggerScript {
     }
 
     /// Get a trigger by ID.
+    #[must_use]
     pub fn get_trigger(&self, id: TriggerId) -> Option<&Trigger> {
         self.trigger_id_to_index
             .get(&id)

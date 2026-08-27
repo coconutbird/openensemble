@@ -127,6 +127,7 @@ impl Default for TriggerValue {
 
 impl TriggerValue {
     /// Get as bool, returns None if wrong type.
+    #[must_use]
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             Self::Bool(v) => Some(*v),
@@ -135,6 +136,7 @@ impl TriggerValue {
     }
 
     /// Get as int, returns None if wrong type.
+    #[must_use]
     pub fn as_int(&self) -> Option<i32> {
         match self {
             Self::Int(v) => Some(*v),
@@ -143,6 +145,7 @@ impl TriggerValue {
     }
 
     /// Get as float, returns None if wrong type.
+    #[must_use]
     pub fn as_float(&self) -> Option<f32> {
         match self {
             Self::Float(v) => Some(*v),
@@ -151,6 +154,7 @@ impl TriggerValue {
     }
 
     /// Get as entity, returns None if wrong type.
+    #[must_use]
     pub fn as_entity(&self) -> Option<EntityId> {
         match self {
             Self::Entity(v) | Self::Unit(v) | Self::Squad(v) | Self::Object(v) => Some(*v),
@@ -159,6 +163,7 @@ impl TriggerValue {
     }
 
     /// Get as location, returns None if wrong type.
+    #[must_use]
     pub fn as_location(&self) -> Option<Vec3> {
         match self {
             Self::Location(v) | Self::Vector(v) => Some(*v),

@@ -354,6 +354,7 @@ pub enum EffectType {
 impl EffectType {
     /// Try to convert from a raw u16 value.
     /// Returns None for obsolete or unknown values.
+    #[must_use]
     pub fn from_u16(value: u16) -> Option<Self> {
         // This is a simplified check - in practice we'd have a complete match
         match value {
@@ -437,7 +438,7 @@ pub struct Effect {
     /// The type of effect to execute.
     pub effect_type: EffectType,
 
-    /// Input variable references (indices into TriggerScript's variable list).
+    /// Input variable references (indices into `TriggerScript`'s variable list).
     pub inputs: Vec<VarId>,
 
     /// Output variable references (for effects that produce values).
@@ -449,6 +450,7 @@ pub struct Effect {
 
 impl Effect {
     /// Create a new effect.
+    #[must_use]
     pub fn new(id: i32, effect_type: EffectType) -> Self {
         Self {
             id,
@@ -460,12 +462,14 @@ impl Effect {
     }
 
     /// Add an input variable reference.
+    #[must_use]
     pub fn with_input(mut self, var_id: VarId) -> Self {
         self.inputs.push(var_id);
         self
     }
 
     /// Add an output variable reference.
+    #[must_use]
     pub fn with_output(mut self, var_id: VarId) -> Self {
         self.outputs.push(var_id);
         self

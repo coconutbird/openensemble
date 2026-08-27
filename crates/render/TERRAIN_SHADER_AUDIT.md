@@ -1,105 +1,111 @@
 # Terrain Shader Parity Audit
 
-Comparison of original Halo Wars HLSL, disassembled PC DXBC binaries, and our WGSL implementations.
+This audit uses only fresh HLSL produced from the PC shader bundles with
+`d3dasm.exe --emit hlsl` and direct inspection of the XTD/XTT asset bytes. The
+legacy game source tree is deliberately not an input.
 
-## 1. `gputerraincomposite` — Texture Compositing
+## Oracle
 
-| Feature | Original HLSL | PC Binary | Our WGSL (`composite.wgsl`) |
-|---|---|---|---|
-| Per-layer UV scaling (`g_LayerData[].yz`) | ✅ | ✅ (2 shaders: VS+PS) | ✅ `texture_scales[]` |
-| Alpha lookup from 3D texture | ✅ `tex3D(alphasSampler)` | ✅ | ✅ (2D atlas + RGBA channels — equivalent) |
-| Multi-pass hardware alpha blend | ✅ (one draw per layer) | ✅ | ✅ (single-pass `mix()` — mathematically identical) |
-| sRGB→linear conversion | ✅ `srgbToLinear()` | ✅ | ❌ Missing |
-| Self-map / env-mask compositing | ✅ `CompsPixel_self`, `CompsPixel_envMask` | ✅ | ❌ Missing |
-| Normal map compositing | ✅ `CompsPixel_normal` | ✅ | ❌ Missing |
+| Bundle | Decompiled programs | Renderer implementation |
+|---|---:|---|
+| `gputerrainxbox.bin` | 28 | `terrain_gpu.wesl` |
+| `gputerraincomposite.bin` | 9 | `terrain_composite.wesl` |
+| `terrainfoliage.bin` | 8 | `foliage.wesl` |
+| `terrainheightfield.bin` | 13 | `terrain_heightfield.wesl` |
+| `terrainroads.bin` | 3 | `terrain_roads.wesl` |
 
-**Status**: Core albedo compositing works. Missing sRGB conversion, self-map, env-mask, and normal compositing passes.
+The captures used for this pass are in `target/shader-oracles/`. They were
+regenerated from `../d3dasm/shaders-pc/terrain/` with the local
+`../d3dasm/target/debug/d3dasm.exe`; checked-in approximations were not treated
+as evidence.
 
-## 2. `gputerrainxbox` — Main Terrain Rendering
+## Terrain
 
-| Feature | Original HLSL | PC Binary | Our WGSL (`gpu_tess.wgsl` + `terrain.wgsl`) |
-|---|---|---|---|
-| Instanced patch vertex displacement | ✅ `vfetch` from packed textures | ✅ (28 shaders) | ✅ R10G10B10A2 decode |
-| Packed position decode (posCompMin/Range) | ✅ | ✅ | ✅ |
-| Packed normal decode | ✅ | ✅ | ✅ |
-| Runtime texture splatting | ✅ | ✅ | ✅ (mode 9) |
-| GPU-composited atlas sampling | ✅ `UniqueAlbedoSampler` | ✅ | ✅ (mode 12) |
-| Normal map splatting (TBN) | ✅ `unpackDXNNormal`, TBN transform | ✅ | ✅ (partial) |
-| AO texture | ✅ | ✅ | ✅ |
-| Alpha/holes | ✅ | ✅ | ✅ |
-| Directional shadow mapping (CSM) | ✅ `calcDirShadowFactor` | ✅ | ❌ Missing |
-| SH fill lighting (ambient) | ✅ `computeSHFillLighting` | ✅ | ❌ Missing — hardcoded `0.4` |
-| Local omni lights | ✅ `omniIlluminate` loop | ✅ | ❌ Missing |
-| Specular lighting | ✅ `computeDirectionalLighting` | ✅ | ❌ Missing |
-| Fog (radial + planar) | ✅ `computeFog` | ✅ | ❌ Missing |
-| Blackmap | ✅ `computeBlackmap` | ✅ | ❌ Missing |
-| Self-map / env-map | ✅ `UniqueEnvMaskSampler`, `EnvSampler` | ✅ | ❌ Missing |
-| Bump power scaling | ✅ `gBumpPower` | ✅ | ✅ `bump_power` uniform |
+- Geometry stays on the packed GPU path. Positions and normals use the PC
+  shader's channel order and range/minimum reconstruction. Terrain height also
+  applies the exact `g_yOffset` default, `1/2048`, before range scaling.
+- A patch covers 16 cells and therefore reads 17×17 vertices. Boundary reads
+  clamp to the last valid XTD vertex.
+- XTD position/normal words are serialized in the PC texture's native source
+  layout: source grid `(x, z)` is linear index `x * width + z`, or texture
+  coordinate `(z, x)`. That source space is diagonally mirrored relative to
+  the XTT material world used by the viewer. Before upload, viewer `(x, z)`
+  therefore reads source `(z, x)`, and packed R/B plus the X/Z reconstruction
+  constants are swapped with the texel axes. The shader still performs the
+  oracle's `.yx` sample and `.zyx` decode unchanged. Repeating material UVs
+  retain the independent `(Z, X)` convention used by the PC shader.
+- XTD tessellation levels 0, 1, 2, and 3 select factors 16, 8, 4, and 2. Their
+  patch coordinates use the same source-to-world transpose as the packed
+  position atlas. Shared edges use the finer neighboring factor, and the fixed
+  carrier mesh is quantized to those fractional-even domain locations. The
+  main domain-shader variant's explicit global-X LOD is retained through the
+  generated position mip.
+- XTT linker axes are texture axes: XTT `grid_x` advances along world Z and
+  XTT `grid_z` advances along world X. The compositor therefore places a
+  linker at world `(grid_z, grid_x)`, or atlas slot `grid_x * 16 + grid_z`.
+- Up to eight splat layers, static/dynamic alpha, decals, albedo, normals,
+  colored specular, and the complete compositor mip chain are wired.
+- The lit diagnostic path includes AO, the XTD light texture, SH fill,
+  directional and local lighting, cascaded shadows, fog, and blackmap logic.
+- Display mode 12 is the canonical viewer path. It samples the GPU-composited
+  unique albedo atlas directly. Mode 0 remains an explicitly noncanonical lit
+  diagnostic while its presentation is being tuned.
 
-**Status**: Geometry pipeline is solid. Fragment shader has basic splatting + AO + normal mapping but missing the entire lighting pipeline.
+For Blood Gulch, every one of the 256 linkers requests the specular pass and
+none requests a self-illumination or environment-mask pass. Those inactive
+material variants are represented by the decompiled bundle but are not needed
+for this map's canonical comparison.
 
-## 3. `terrainfoliage` — Grass/Foliage
+## Foliage
 
-| Feature | Original HLSL | PC Binary | Our WGSL (`foliage/shader.rs`) |
-|---|---|---|---|
-| Blade geometry from texture fetch | ✅ `tfetch2D` | ✅ (8 shaders) | ✅ |
-| Deterministic random (`our_rand`) | ✅ `fmodp(xy/PI, 257)+1` | ✅ | ✅ |
-| Random rotation per blade | ✅ `rotate_2d(rnd.y * 360)` | ✅ | ✅ |
-| Random height scaling (0.25-1.0) | ✅ | ✅ | ✅ |
-| Grid positioning + jitter | ✅ | ✅ | ✅ |
-| Terrain height sampling | ✅ `tex2Dlod(vertSampler_pos)` | ✅ | ✅ |
-| Gerstner wave animation | ✅ `wavePos()` — sin/cos wind | ✅ | ❌ Missing |
-| Directional shadow mapping | ✅ `calcDirShadowFactorNoFilter` | ✅ | ❌ Missing |
-| SH fill lighting | ✅ | ✅ | ❌ Missing |
-| Local omni lights | ✅ | ✅ | ❌ Missing |
-| Backside shadow scalar | ✅ `gBacksideShadowScalar` | ✅ | ❌ Missing |
-| Two-sided normal flip | ✅ | ✅ | ✅ |
-| Distance alpha fade | ✅ (fog-based) | ✅ | ✅ |
-| Fog (radial + planar) | ✅ `computeFog` | ✅ | ❌ Missing |
+- XTT foliage indices are decoded as big-endian `u32`. The upper 16 bits select
+  the blade type; the lower 16 bits encode `blade_index * 10 + vertex`, with
+  `0xffff` strip-restart entries.
+- A foliage QN parent is an index into the XTD visual-chunk vector, not the XTT
+  material-linker vector. Its stored `(grid_x, grid_z)` already selects the
+  viewer's world chunk, so parent 96 remains chunk `(0, 6)`.
+- The PC vertex shader derives one scalar random value from the local blade
+  index and reuses it for X/Z jitter, rotation, and height variation. The WGSL
+  now does the same instead of generating two independent values.
+- Blade UVs are passed through exactly as stored. There is no V inversion.
+- The shader's packed local 64×64 blade index uses the opposite X/Z order from
+  the viewer. Only that local location, rotated blade geometry, and normal are
+  transposed; the already-resolved parent chunk origin stays fixed. Terrain
+  displacement samples the converted atlas at the oracle's `.yx` coordinate.
+- PC foliage albedo and opacity DDS resources use DXGI BC7 (98/99). The local
+  `../ensemble-formats` DDX decoder now identifies and decodes BC7 instead of
+  treating it as BC3/DXT5.
+- The pixel-lit variant supplies two-sided normals, directional/SH/local
+  lighting, cascaded shadows, blackmap, fog, the 0.6666 alpha test, and the
+  400–500 distance fade. The caster uses its separate alpha-tested path.
+- Albedo and opacity textures have complete mip chains so minified blades do
+  not sample an undefined mip range.
 
-**Status**: Core blade geometry, positioning, and randomization match well. Missing wind animation and full lighting pipeline.
+## Roads and heightfield variants
 
-## 4. `terrainheightfield` — Decal/Heightfield Rendering
+Road rendering is connected to the viewer and follows the freshly decompiled
+terrain-conforming, TBN, material, lighting, shadow, and fog behavior. The
+heightfield shader is retained as a reusable oracle-based implementation; XTT
+terrain decals used by the canonical viewer are applied in the compositor.
 
-| Feature | Original HLSL | PC Binary | Our WGSL |
-|---|---|---|---|
-| Debug heightfield visualization | ✅ | ✅ (13 shaders) | ❌ No shader |
-| Heightfield occlusion pass | ✅ | ✅ | ❌ No shader |
-| Quad-based patch rendering | ✅ `calcWeights`, `interpolate` | ✅ | ❌ No shader |
-| Conform-to-terrain (heightfield sampling) | ✅ | ✅ | ❌ No shader |
-| Dynamic alpha (terrain holes) | ✅ | ✅ | ❌ No shader |
-| Full lit pass (diffuse+normal+spec+opacity) | ✅ | ✅ | ❌ No shader |
-| Ribbon rendering | ✅ `vsRenderRibbonLit` | ✅ | ❌ No shader |
+## Runtime acceptance
 
-**Status**: Entirely unimplemented. Data types (`DecalTexture`, `DecalInstance`, `ChunkDecalData`) exist in Rust but no rendering shader.
+`terrain_viewer` loading Blood Gulch is the canonical integration test. A valid
+startup creates 256 compositor chunks, 4096 terrain patches, and 299 foliage
+draws containing 21,294 blades without a wgpu validation error, and begins in
+mode 12 with compositor debug mode 0. Blood Gulch contains no road data.
 
-## 5. `terrainroads` — Road Rendering
+The deterministic acceptance capture is:
 
-| Feature | Original HLSL | PC Binary | Our WGSL |
-|---|---|---|---|
-| Road vertex shader (terrain conform) | ✅ | ✅ (3 shaders) | ❌ No shader |
-| TBN from terrain normal | ✅ `GiveTBNFromNormal` | ✅ | ❌ No shader |
-| Road albedo/normal/specular sampling | ✅ | ✅ | ❌ No shader |
-| Full directional + local lighting | ✅ | ✅ | ❌ No shader |
-| Shadow mapping | ✅ | ✅ | ❌ No shader |
-| Fog | ✅ | ✅ | ❌ No shader |
+```text
+cargo run --locked --bin terrain_viewer -- --capture-top-down target/terrain-captures/complete-xz-transform.png --capture-size 2048
+```
 
-**Status**: Entirely unimplemented. Roads are terrain-conforming geometry with own textures and full lighting.
+It writes the canonical mode-12 image plus height, contour/alignment, decoded
+XTT, foliage placement/material, and per-set oblique foliage companions.
 
-## Summary
+The lower-right rock can be isolated with:
 
-| Shader | Geometry | Texturing | Lighting | Shadows | Fog | Overall |
-|---|---|---|---|---|---|---|
-| **gputerraincomposite** | ✅ | 🟡 | N/A | N/A | N/A | ~70% |
-| **gputerrainxbox** | ✅ | ✅ | ❌ | ❌ | ❌ | ~50% |
-| **terrainfoliage** | ✅ | ✅ | ❌ | ❌ | ❌ | ~45% |
-| **terrainheightfield** | ❌ | ❌ | ❌ | ❌ | ❌ | 0% |
-| **terrainroads** | ❌ | ❌ | ❌ | ❌ | ❌ | 0% |
-
-## Priority Gaps
-
-1. **Shared lighting pipeline** — SH fill lighting, directional shadows (CSM), local omni lights, specular, fog, blackmap. Needed by ALL shaders.
-2. **terrainheightfield** — Decal/patch rendering with terrain conformance. Data structures exist but no shader.
-3. **terrainroads** — Road rendering with terrain conformance. Similar to heightfield but simpler geometry.
-4. **Wind animation** — Gerstner wave for foliage.
-5. **Compositor completeness** — sRGB, self-map, env-mask, normal compositing.
+```text
+cargo run --locked --bin terrain_viewer -- --capture-top-down target/terrain-captures/bottom-right-landmark-complete-xz.png --capture-size 768 --capture-center 880 880 --capture-span 224
+```

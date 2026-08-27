@@ -1,23 +1,12 @@
 //! WGSL shader source code for terrain rendering.
 //!
-//! Contains shader code for both CPU-tessellated and GPU-tessellated terrain rendering,
-//! as well as the compositing shader for pre-baking terrain textures.
+//! Contains packed GPU terrain and compositor shader sources.
 //!
 //! Shaders using shared code (lighting, fog, TBN) are authored as `.wesl` files
 //! with `import` statements and compiled to WGSL at build time via the `wesl` crate.
 //! Plain WGSL shaders are loaded directly with `include_str!`.
 
 use wesl::include_wesl;
-
-/// Basic terrain shader for CPU-tessellated mesh (compiled from WESL).
-///
-/// Features:
-/// - Texture array splatting with up to 8 textures
-/// - Alpha blending between terrain layers
-/// - Normal mapping with BC5/DXN support
-/// - Multiple debug visualization modes (0-17)
-/// - Per-texture UV scaling
-pub const TERRAIN_SHADER: &str = include_wesl!("terrain");
 
 /// GPU terrain rendering shader using instanced patches (compiled from WESL).
 ///
@@ -42,7 +31,7 @@ pub const GPU_TESS_SHADER: &str = include_wesl!("terrain_gpu");
 /// logic as the runtime shader.
 ///
 /// Original game uses multi-pass with hardware alpha blending (one layer per
-/// pass). We use single-pass with manual mix() which is mathematically
+/// pass). We use single-pass with manual `mix()` which is mathematically
 /// equivalent.
 pub const COMPOSITE_SHADER: &str = include_wesl!("terrain_composite");
 
@@ -85,7 +74,7 @@ pub const ROADS_SHADER: &str = include_wesl!("terrain_roads");
 /// Shadow depth shader for rendering terrain from the light's perspective.
 ///
 /// Features:
-/// - Minimal vertex shader reusing gpu_tess vertex format
+/// - Minimal vertex shader reusing `gpu_tess` vertex format
 /// - Packed position decoding (R10G10B10A2)
 /// - Outputs depth + depth² for VSM filtering
 /// - No lighting, fog, or texturing (depth only)

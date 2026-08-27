@@ -43,6 +43,7 @@ impl Default for Camera {
 
 impl Camera {
     /// Create a new camera at the given position.
+    #[must_use]
     pub fn new(position: Vec3) -> Self {
         Self {
             position,
@@ -51,6 +52,7 @@ impl Camera {
     }
 
     /// Get the forward direction vector.
+    #[must_use]
     pub fn forward(&self) -> Vec3 {
         Vec3::new(
             self.yaw.cos() * self.pitch.cos(),
@@ -61,26 +63,31 @@ impl Camera {
     }
 
     /// Get the right direction vector.
+    #[must_use]
     pub fn right(&self) -> Vec3 {
         self.forward().cross(Vec3::Y).normalize()
     }
 
     /// Get the up direction vector.
+    #[must_use]
     pub fn up(&self) -> Vec3 {
         self.right().cross(self.forward()).normalize()
     }
 
     /// Get the view matrix.
+    #[must_use]
     pub fn view_matrix(&self) -> Mat4 {
         Mat4::look_at_rh(self.position, self.position + self.forward(), Vec3::Y)
     }
 
     /// Get the projection matrix for the given aspect ratio.
+    #[must_use]
     pub fn projection_matrix(&self, aspect: f32) -> Mat4 {
         Mat4::perspective_rh(self.fov, aspect, self.near, self.far)
     }
 
     /// Get the combined view-projection matrix.
+    #[must_use]
     pub fn view_projection_matrix(&self, aspect: f32) -> Mat4 {
         self.projection_matrix(aspect) * self.view_matrix()
     }

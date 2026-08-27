@@ -13,7 +13,10 @@ use crate::world::World;
 pub const TICK_RATE: u32 = 20;
 
 /// Milliseconds per tick.
-pub const MS_PER_TICK: u32 = 1000 / TICK_RATE;
+pub const MS_PER_TICK: u32 = 1_000 / TICK_RATE;
+
+const MS_PER_TICK_F32: f32 = 50.0;
+const SECONDS_PER_TICK: f32 = 0.05;
 
 /// Simulation state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -85,11 +88,13 @@ impl Default for Simulation {
 
 impl Simulation {
     /// Create a new simulation.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Create a simulation with a specific random seed.
+    #[must_use]
     pub fn with_seed(seed: u64) -> Self {
         let mut sim = Self::new();
         sim.rng.set_seed64(seed);
@@ -136,14 +141,14 @@ impl Simulation {
             return Vec::new();
         }
 
-        let dt_ms = dt_seconds * 1000.0 * self.speed;
+        let dt_ms = dt_seconds * 1_000.0 * self.speed;
         self.accumulated_ms += dt_ms;
 
         let mut all_commands = Vec::new();
 
         // Process fixed timestep ticks
-        while self.accumulated_ms >= MS_PER_TICK as f32 {
-            self.accumulated_ms -= MS_PER_TICK as f32;
+        while self.accumulated_ms >= MS_PER_TICK_F32 {
+            self.accumulated_ms -= MS_PER_TICK_F32;
             let commands = self.tick_once();
             all_commands.extend(commands);
         }
@@ -162,7 +167,8 @@ impl Simulation {
 
         // Update checksum with tick info
         self.checksum.hash_u32(self.game_time_ms);
-        self.checksum.set_update(self.tick as u32);
+        let wrapped_tick = u32::try_from(self.tick & u64::from(u32::MAX)).unwrap_or_default();
+        self.checksum.set_update(wrapped_tick);
 
         commands
     }
@@ -184,8 +190,7 @@ impl Simulation {
         executor.execute_all(world, &commands);
 
         // Update entities (movement, etc.)
-        let dt = MS_PER_TICK as f32 / 1000.0;
-        world.update_entities(dt);
+        world.update_entities(SECONDS_PER_TICK);
 
         // Sync world time
         world.game_time_ms = self.game_time_ms;
@@ -202,14 +207,14 @@ impl Simulation {
             return Vec::new();
         }
 
-        let dt_ms = dt_seconds * 1000.0 * self.speed;
+        let dt_ms = dt_seconds * 1_000.0 * self.speed;
         self.accumulated_ms += dt_ms;
 
         let mut all_commands = Vec::new();
 
         // Process fixed timestep ticks
-        while self.accumulated_ms >= MS_PER_TICK as f32 {
-            self.accumulated_ms -= MS_PER_TICK as f32;
+        while self.accumulated_ms >= MS_PER_TICK_F32 {
+            self.accumulated_ms -= MS_PER_TICK_F32;
             let commands = self.tick_with_world(world);
             all_commands.extend(commands);
         }

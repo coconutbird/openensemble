@@ -2,6 +2,16 @@
 
 use super::{Condition, Effect, TriggerId};
 
+/// How a trigger combines its conditions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConditionMode {
+    /// Every condition must be true.
+    #[default]
+    All,
+    /// At least one condition must be true.
+    Any,
+}
+
 /// A trigger that evaluates conditions and fires effects.
 ///
 /// Triggers are the core building block of the scripting system.
@@ -30,8 +40,8 @@ pub struct Trigger {
     /// Effects to fire when conditions evaluate to false.
     pub effects_on_false: Vec<Effect>,
 
-    /// Whether to OR conditions instead of AND.
-    pub or_conditions: bool,
+    /// How this trigger combines its conditions.
+    pub condition_mode: ConditionMode,
 
     /// Whether this trigger starts active.
     pub start_active: bool,
@@ -68,7 +78,7 @@ impl Default for Trigger {
             conditions: Vec::new(),
             effects_on_true: Vec::new(),
             effects_on_false: Vec::new(),
-            or_conditions: false,
+            condition_mode: ConditionMode::All,
             start_active: false,
             is_conditional: false,
             activated_time: 0,
@@ -83,6 +93,7 @@ impl Default for Trigger {
 
 impl Trigger {
     /// Create a new trigger with the given ID.
+    #[must_use]
     pub fn new(id: TriggerId) -> Self {
         Self {
             id,
@@ -91,30 +102,35 @@ impl Trigger {
     }
 
     /// Set the trigger name.
+    #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
         self
     }
 
     /// Add a condition.
+    #[must_use]
     pub fn with_condition(mut self, condition: Condition) -> Self {
         self.conditions.push(condition);
         self
     }
 
     /// Add an effect for when conditions are true.
+    #[must_use]
     pub fn with_effect_on_true(mut self, effect: Effect) -> Self {
         self.effects_on_true.push(effect);
         self
     }
 
     /// Add an effect for when conditions are false.
+    #[must_use]
     pub fn with_effect_on_false(mut self, effect: Effect) -> Self {
         self.effects_on_false.push(effect);
         self
     }
 
     /// Set to start active.
+    #[must_use]
     pub fn starts_active(mut self) -> Self {
         self.start_active = true;
         self.is_active = true;
@@ -122,12 +138,14 @@ impl Trigger {
     }
 
     /// Set evaluation frequency.
+    #[must_use]
     pub fn with_frequency(mut self, frequency_ms: u32) -> Self {
         self.evaluate_frequency = frequency_ms;
         self
     }
 
     /// Check if it's time to evaluate this trigger.
+    #[must_use]
     pub fn time_to_evaluate(&self, current_time: u32) -> bool {
         if !self.is_active {
             return false;
@@ -136,6 +154,7 @@ impl Trigger {
     }
 
     /// Check if there are evaluations remaining this frame.
+    #[must_use]
     pub fn has_evaluations_remaining(&self) -> bool {
         self.evaluate_limit == 0 || self.evaluate_count < self.evaluate_limit
     }

@@ -3,78 +3,36 @@
 //! This module contains GPU-specific types that remain in the viewer,
 //! and re-exports terrain types from the `render` crate.
 
-use data::xtd::{TerrainVertices, TessellatedMesh};
-use glam::Vec3;
 use render::wgpu;
 
 // Re-export terrain types from render crate
-pub use render::terrain::{
-    AlbedoData, ChunkDecalData, ChunkSplatData, DecalInstance, DecalTexture, FoliageQNChunk,
-    FoliageSet, NormalMapTexture, TerrainTexture,
-};
+pub use render::terrain::{AlbedoData, FoliageQNChunk, FoliageSet, RawXtdData};
 
-/// Terrain mesh data.
-pub struct TerrainMesh {
-    pub positions: Vec<[f32; 3]>,
-    pub normals: Vec<[f32; 3]>,
-    pub uvs: Vec<[f32; 2]>,
-    pub indices: Vec<u32>,
-    pub world_min: [f32; 3],
-    pub world_max: [f32; 3],
-    pub tile_scale: f32,
+pub const TERRAIN_CHUNKS_PER_AXIS: usize = 16;
+
+/// Converts the XTT linker's texture-grid axes into terrain world axes.
+///
+/// XTT `grid_x` advances along world Z, while XTT `grid_z` advances along
+/// world X. This is the same diagonal transpose used when placing linker data
+/// in the unique terrain atlas.
+pub fn terrain_world_chunk_coords(grid_x: i32, grid_z: i32) -> Option<(u32, u32)> {
+    let world_x = u32::try_from(grid_z).ok()?;
+    let world_z = u32::try_from(grid_x).ok()?;
+    let chunk_limit = u32::try_from(TERRAIN_CHUNKS_PER_AXIS).ok()?;
+    (world_x < chunk_limit && world_z < chunk_limit).then_some((world_x, world_z))
 }
 
-impl TerrainMesh {
-    pub fn from_xtd(
-        vertices: &TerrainVertices,
-        world_min: [f32; 3],
-        world_max: [f32; 3],
-        tile_scale: f32,
-    ) -> Self {
-        let indices = vertices.generate_indices();
-        Self {
-            positions: vertices.positions.clone(),
-            normals: vertices.normals.clone(),
-            uvs: vertices.uvs.clone(),
-            indices,
-            world_min,
-            world_max,
-            tile_scale,
-        }
-    }
-
-    pub fn from_tessellated(
-        tessellated: TessellatedMesh,
-        world_min: [f32; 3],
-        world_max: [f32; 3],
-        tile_scale: f32,
-    ) -> Self {
-        Self {
-            positions: tessellated.positions,
-            normals: tessellated.normals,
-            uvs: tessellated.uvs,
-            indices: tessellated.indices,
-            world_min,
-            world_max,
-            tile_scale,
-        }
-    }
-
-    pub fn center(&self) -> Vec3 {
-        Vec3::new(
-            (self.world_min[0] + self.world_max[0]) / 2.0,
-            (self.world_min[1] + self.world_max[1]) / 2.0,
-            (self.world_min[2] + self.world_max[2]) / 2.0,
-        )
-    }
-
-    pub fn size(&self) -> Vec3 {
-        Vec3::new(
-            self.world_max[0] - self.world_min[0],
-            self.world_max[1] - self.world_min[1],
-            self.world_max[2] - self.world_min[2],
-        )
-    }
+/// Converts XTT grid coordinates to the unique-atlas slot sampled by terrain.
+///
+/// The PC terrain shaders transpose XTT's grid axes: XTT `grid_z` advances
+/// across the unique atlas, while XTT `grid_x` advances down it.
+pub fn terrain_chunk_index(grid_x: i32, grid_z: i32) -> Option<usize> {
+    let (world_x, world_z) = terrain_world_chunk_coords(grid_x, grid_z)?;
+    let world_x = usize::try_from(world_x).ok()?;
+    let world_z = usize::try_from(world_z).ok()?;
+    world_z
+        .checked_mul(TERRAIN_CHUNKS_PER_AXIS)?
+        .checked_add(world_x)
 }
 
 /// GPU resources for terrain rendering.
@@ -93,52 +51,28 @@ pub struct GpuResources {
     pub lighting_buffer: Option<wgpu::Buffer>,
     pub terrain_size: [f32; 2],
     pub tile_scale: f32,
-    /// GPU tessellation mode - use instanced patch rendering.
-    pub use_gpu_tessellation: bool,
     /// Number of patch instances to draw (64x64 = 4096).
     pub num_patch_instances: u32,
 }
 
-/// Raw XTD vertex data for GPU tessellation (before decoding to world positions).
-pub struct RawXtdData {
-    /// Packed position data (R10G10B10A2 format).
-    pub packed_positions: Vec<u32>,
-    /// Packed normal data.
-    pub packed_normals: Vec<u32>,
-    /// Number of vertices per axis (e.g., 1025).
-    pub num_verts_per_axis: u32,
-    /// Atlas mid point for decoding.
-    pub mid: [f32; 3],
-    /// Atlas range for decoding.
-    pub range: [f32; 3],
-    /// Tile scale for world position.
-    pub tile_scale: f32,
-    /// Ambient occlusion data (R8 values, half resolution).
-    /// Based on IDA RE: stored at 1024×512 for a 1024×1024 terrain (full width, half height).
-    pub ao_data: Option<AoTextureData>,
-    /// Alpha/transparency data (R8 values, half resolution).
-    /// Same compression as AO. Used for terrain holes (water edges, cliffs).
-    /// Sampled via gVertSampler_alpha_Texture in the game's vertex shader.
-    pub alpha_data: Option<AlphaTextureData>,
-}
+#[cfg(test)]
+mod tests {
+    use super::{terrain_chunk_index, terrain_world_chunk_coords};
 
-/// Half-resolution AO texture data as decoded from the game.
-/// Dimensions: full width × half height (e.g., 1024×512 for 1024×1024 terrain).
-/// The game samples this with bilinear filtering via gVertSampler_ao_Texture.
-#[derive(Clone)]
-pub struct AoTextureData {
-    pub values: Vec<u8>,
-    pub width: u32,
-    pub height: u32,
-}
+    #[test]
+    fn xtt_chunk_axes_are_transposed_into_world_axes() {
+        assert_eq!(terrain_world_chunk_coords(2, 3), Some((3, 2)));
+        assert_eq!(terrain_world_chunk_coords(-1, 0), None);
+        assert_eq!(terrain_world_chunk_coords(0, 16), None);
+    }
 
-/// Half-resolution Alpha texture data as decoded from the game.
-/// Dimensions: full width × half height (same as AO).
-/// Used for terrain transparency (holes, cliff edges).
-/// 255 = fully opaque, 0 = fully transparent/hole.
-#[derive(Clone)]
-pub struct AlphaTextureData {
-    pub values: Vec<u8>,
-    pub width: u32,
-    pub height: u32,
+    #[test]
+    fn terrain_chunk_indices_follow_transposed_shader_axes() {
+        assert_eq!(terrain_chunk_index(0, 0), Some(0));
+        assert_eq!(terrain_chunk_index(0, 1), Some(1));
+        assert_eq!(terrain_chunk_index(1, 0), Some(16));
+        assert_eq!(terrain_chunk_index(15, 15), Some(255));
+        assert_eq!(terrain_chunk_index(16, 0), None);
+        assert_eq!(terrain_chunk_index(0, -1), None);
+    }
 }

@@ -6,7 +6,7 @@
 //! - Mesh: Terrain mesh generation and data structures
 //! - Texture: Mipmap generation and texture utilities
 //! - Shaders: WGSL shader code for terrain rendering
-//! - Uniforms: GPU uniform structs (TerrainParams, GpuTessParams)
+//! - Uniforms: GPU uniform structs (`TerrainParams`, `GpuTessParams`)
 //! - Types: Data types for terrain textures, decals, and foliage
 //! - Loading: Functions to load textures and extract data from XTT
 
@@ -14,26 +14,33 @@ mod camera;
 mod compositing;
 pub mod loading;
 mod mesh;
+mod scene;
 mod shaders;
 mod texture;
 pub mod types;
 mod uniforms;
 
 pub use camera::Camera;
-pub use compositing::{CompositeParams, CompositingConfig, CompositorResources, LodConfig};
+pub use compositing::{
+    CompositeBindings, CompositeParams, CompositingConfig, CompositorResources, LodConfig,
+};
 pub use loading::{
     RoadTextures, extract_chunk_splat_data, extract_decal_data, extract_foliage_chunks,
     extract_road_data, load_decal_textures, load_foliage_sets, load_road_textures,
     load_terrain_textures,
 };
-pub use mesh::{TerrainMesh, TessellationMode};
+pub use mesh::TerrainMesh;
+pub use scene::TerrainScene;
 pub use shaders::{
     COMPOSITE_SHADER, FOLIAGE_SHADER, GPU_TESS_SHADER, HEIGHTFIELD_SHADER, ROADS_SHADER,
-    SHADOW_DEPTH_SHADER, TERRAIN_SHADER,
+    SHADOW_DEPTH_SHADER,
 };
 pub use texture::{generate_mipmaps, mip_dimensions, mip_level_count};
 pub use types::{
-    AlbedoData, ChunkDecalData, ChunkSplatData, DecalInstance, DecalTexture, FoliageBladeVertex,
-    FoliageQNChunk, FoliageSet, NormalMapTexture, RoadChunkData, TerrainTexture,
+    AlbedoData, AlphaTextureData, AoTextureData, ChunkDecalData, ChunkSplatData, DecalInstance,
+    DecalTexture, FoliageBladeVertex, FoliageQNChunk, FoliageSet, NormalMapTexture, RawXtdData,
+    RoadChunkData, SpecularMapTexture, TerrainTessellationData, TerrainTexture,
 };
-pub use uniforms::{CameraUniform, GpuTessParams, LightingParams, TerrainParams};
+pub use uniforms::{
+    CameraUniform, GpuTessParams, LightingParams, NORMALIZED_TERRAIN_Y_OFFSET, TerrainParams,
+};

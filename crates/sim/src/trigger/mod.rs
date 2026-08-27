@@ -8,21 +8,21 @@
 //! through the same deterministic engine.
 
 mod condition;
+#[path = "trigger.rs"]
+mod definition;
 mod effect;
 mod engine;
 mod loader;
 mod script;
-#[allow(clippy::module_inception)]
-mod trigger;
 mod value;
 mod var_type;
 
 pub use condition::{Condition, ConditionType};
+pub use definition::{ConditionMode, Trigger};
 pub use effect::{Effect, EffectType};
-pub use engine::TriggerEngine;
+pub use engine::{ConditionResult, TriggerEngine};
 pub use loader::{LoadError, LoadResult, VanillaLoader};
 pub use script::{ScriptType, TriggerScript, TriggerVar};
-pub use trigger::Trigger;
 pub use value::TriggerValue;
 pub use var_type::VarType;
 
@@ -36,7 +36,7 @@ pub type TriggerScriptId = u32;
 pub type VarId = u32;
 
 /// Invalid trigger ID constant.
-pub const INVALID_TRIGGER_ID: TriggerId = 0xFFFFFFFF;
+pub const INVALID_TRIGGER_ID: TriggerId = 0xFFFF_FFFF;
 
 /// Invalid trigger script ID constant.
-pub const INVALID_TRIGGER_SCRIPT_ID: TriggerScriptId = 0xFFFFFFFF;
+pub const INVALID_TRIGGER_SCRIPT_ID: TriggerScriptId = 0xFFFF_FFFF;

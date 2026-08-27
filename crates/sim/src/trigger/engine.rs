@@ -1,4 +1,4 @@
-//! TriggerEngine - deterministic execution of trigger scripts.
+//! `TriggerEngine` - deterministic execution of trigger scripts.
 
 use std::collections::BTreeMap;
 
@@ -6,11 +6,10 @@ use super::{INVALID_TRIGGER_SCRIPT_ID, Trigger, TriggerScript, TriggerScriptId};
 
 /// Result of evaluating conditions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum ConditionResult {
     True,
     False,
-    /// Async condition waiting for input.
+    /// An asynchronous condition is waiting for external input.
     Waiting,
 }
 
@@ -21,7 +20,7 @@ pub enum ConditionResult {
 /// in the same order.
 #[derive(Debug, Default)]
 pub struct TriggerEngine {
-    /// Active trigger scripts (BTreeMap for deterministic iteration).
+    /// Active trigger scripts (`BTreeMap` for deterministic iteration).
     scripts: BTreeMap<TriggerScriptId, TriggerScript>,
 
     /// Next script ID to assign.
@@ -30,8 +29,7 @@ pub struct TriggerEngine {
     /// Performance tracking: number of evaluations this frame.
     evaluate_count: u32,
 
-    /// Performance threshold for warnings.
-    #[allow(dead_code)]
+    /// Evaluation count at which profiling should report an expensive frame.
     performance_warning_threshold: u32,
 
     /// Infinite loop detection threshold.
@@ -40,6 +38,7 @@ pub struct TriggerEngine {
 
 impl TriggerEngine {
     /// Create a new trigger engine.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             scripts: BTreeMap::new(),
@@ -71,6 +70,7 @@ impl TriggerEngine {
     }
 
     /// Get a script by ID.
+    #[must_use]
     pub fn get_script(&self, id: TriggerScriptId) -> Option<&TriggerScript> {
         self.scripts.get(&id)
     }
@@ -85,6 +85,17 @@ impl TriggerEngine {
         if let Some(script) = self.scripts.get_mut(&id) {
             script.activate(current_time);
         }
+    }
+
+    /// Configure the per-frame evaluation threshold used by profiling.
+    pub fn set_performance_warning_threshold(&mut self, threshold: u32) {
+        self.performance_warning_threshold = threshold;
+    }
+
+    /// Return whether the most recent update crossed the profiling threshold.
+    #[must_use]
+    pub fn performance_warning_reached(&self) -> bool {
+        self.evaluate_count >= self.performance_warning_threshold
     }
 
     /// Update all active trigger scripts.
@@ -148,7 +159,7 @@ impl TriggerEngine {
                         }
                     }
                     ConditionResult::Waiting => {
-                        // Async condition, don't update timing
+                        // Async conditions retain their current evaluation time.
                         continue;
                     }
                 }

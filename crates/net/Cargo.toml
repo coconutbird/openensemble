@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 description = "Network transport for Halo Wars multiplayer"
 
+[lints]
+workspace = true
+
 [dependencies]
 sim = { path = "../sim" }
 thiserror = { workspace = true }

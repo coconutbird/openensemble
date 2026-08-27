@@ -1,6 +1,6 @@
 //! World state container for the simulation.
 //!
-//! Based on BWorld from the original source.
+//! Based on `BWorld` from the original source.
 
 use crate::entities::Squad;
 use crate::entity::EntityManager;
@@ -35,6 +35,7 @@ impl Default for World {
 
 impl World {
     /// Create a new empty world.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             players: Vec::new(),
@@ -45,6 +46,7 @@ impl World {
     }
 
     /// Create a world with a specific random seed.
+    #[must_use]
     pub fn with_seed(seed: u64) -> Self {
         let mut world = Self::new();
         world.rng.set_seed64(seed);
@@ -71,18 +73,20 @@ impl World {
     }
 
     /// Get the number of players (including Gaia).
+    #[must_use]
     pub fn player_count(&self) -> usize {
         self.players.len()
     }
 
     /// Get a player by ID.
+    #[must_use]
     pub fn get_player(&self, id: PlayerId) -> Option<&Player> {
-        self.players.get(id as usize)
+        self.players.get(usize::from(id))
     }
 
     /// Get a mutable player by ID.
     pub fn get_player_mut(&mut self, id: PlayerId) -> Option<&mut Player> {
-        self.players.get_mut(id as usize)
+        self.players.get_mut(usize::from(id))
     }
 
     /// Iterate over all players.
@@ -106,6 +110,7 @@ impl World {
     }
 
     /// Get current game time in milliseconds.
+    #[must_use]
     pub fn game_time(&self) -> u32 {
         self.game_time_ms
     }
@@ -144,6 +149,7 @@ impl World {
     }
 
     /// Get a squad by ID.
+    #[must_use]
     pub fn get_squad(&self, id: crate::entity_id::EntityId) -> Option<&Squad> {
         self.squads.get(id)
     }
@@ -162,6 +168,7 @@ impl World {
     ///
     /// This hashes all deterministic state: game time, players, entities.
     /// Two simulations with the same inputs should produce identical checksums.
+    #[must_use]
     pub fn checksum(&self) -> u32 {
         let mut cs = SyncChecksum::new();
 
@@ -169,12 +176,12 @@ impl World {
         cs.hash_u32(self.game_time_ms);
 
         // Hash player count
-        cs.hash_u32(self.players.len() as u32);
+        cs.hash_u32(u32::try_from(self.players.len()).unwrap_or(u32::MAX));
 
         // Hash each player's state
         for player in &self.players {
-            cs.hash_u32(player.id as u32);
-            cs.hash_u32(player.team_id as u32);
+            cs.hash_u32(u32::from(player.id));
+            cs.hash_u32(u32::from(player.team_id));
             cs.hash_i32(player.civ_id);
             cs.hash_i32(player.leader_id);
             cs.hash_u32(player.state as u32);
@@ -195,13 +202,13 @@ impl World {
         }
 
         // Hash squad count
-        cs.hash_u32(self.squads.len() as u32);
+        cs.hash_u32(u32::try_from(self.squads.len()).unwrap_or(u32::MAX));
 
         // Hash each squad's state (iteration order is deterministic via BTreeMap)
         for (_id, squad) in self.squads.iter() {
             // Base entity data
             cs.hash_u32(squad.base.id.as_u32());
-            cs.hash_u32(squad.base.player_id as u32);
+            cs.hash_u32(u32::from(squad.base.player_id));
             cs.hash_vec3(
                 squad.base.position.x,
                 squad.base.position.y,
@@ -217,7 +224,7 @@ impl World {
                 squad.base.velocity.y,
                 squad.base.velocity.z,
             );
-            cs.hash_u32(squad.base.alive as u32);
+            cs.hash_u32(u32::from(squad.base.alive));
 
             // Squad-specific data
             cs.hash_u32(squad.state as u32);
@@ -240,6 +247,7 @@ impl World {
     ///
     /// This is useful for detecting divergence in the random number generator,
     /// which would cause future simulation divergence even if current state matches.
+    #[must_use]
     pub fn checksum_with_rng(&self) -> u32 {
         let mut cs = SyncChecksum::new();
 
@@ -261,26 +269,28 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scenario::{Scenario, load_scenario_into_world};
+    use crate::scenario::{ScenarioData, load_scenario_into_world};
     use crate::simulation::Simulation;
+    use pipeline::database::hw1::Database;
 
     /// Sample scenario for testing
     const TEST_SCENARIO: &str = r#"<?xml version="1.0"?>
 <Scenario>
   <Players>
-    <Player id="1" name="TestPlayer1" civ="UNSC" leader="Cutter" team="1" />
-    <Player id="2" name="TestPlayer2" civ="Covenant" leader="Arbiter" team="2" />
+    <Player Name="TestPlayer1" Civ="UNSC" Leader1="Cutter" Team="1" />
+    <Player Name="TestPlayer2" Civ="Covenant" Leader1="Arbiter" Team="2" />
   </Players>
   <Objects>
-    <Squad player="1" protoSquad="unsc_inf_marine_01" x="10.0" z="20.0" />
-    <Squad player="2" protoSquad="cov_inf_grunt_01" x="50.0" z="60.0" />
+    <Object IsSquad="true" Player="1" ID="0" Position="10.0,0.0,20.0">unsc_inf_marine_01</Object>
+    <Object IsSquad="true" Player="2" ID="1" Position="50.0,0.0,60.0">cov_inf_grunt_01</Object>
   </Objects>
 </Scenario>"#;
 
     /// Run a simulation for a given number of ticks and return the final checksum.
     fn run_simulation(seed: u64, ticks: u32) -> (u32, u32) {
-        let scenario = Scenario::from_xml_str(TEST_SCENARIO).unwrap();
-        let mut loaded = load_scenario_into_world(&scenario);
+        let scenario = ScenarioData::from_xml_str(TEST_SCENARIO).unwrap();
+        let db = Database::new();
+        let mut loaded = load_scenario_into_world(&scenario, &db);
         loaded.world.rng.set_seed64(seed);
 
         let mut sim = Simulation::with_seed(seed);
@@ -296,11 +306,11 @@ mod tests {
     #[test]
     fn test_world_checksum_deterministic() {
         // Same world should always produce same checksum
-        let mut world1 = World::with_seed(12345);
+        let mut world1 = World::with_seed(12_345);
         world1.init_players(2);
         world1.create_squad_at(1, glam::Vec3::new(10.0, 0.0, 20.0));
 
-        let mut world2 = World::with_seed(12345);
+        let mut world2 = World::with_seed(12_345);
         world2.init_players(2);
         world2.create_squad_at(1, glam::Vec3::new(10.0, 0.0, 20.0));
 
@@ -310,11 +320,11 @@ mod tests {
     #[test]
     fn test_world_checksum_different_state() {
         // Different state should produce different checksum
-        let mut world1 = World::with_seed(12345);
+        let mut world1 = World::with_seed(12_345);
         world1.init_players(2);
         world1.create_squad_at(1, glam::Vec3::new(10.0, 0.0, 20.0));
 
-        let mut world2 = World::with_seed(12345);
+        let mut world2 = World::with_seed(12_345);
         world2.init_players(2);
         world2.create_squad_at(1, glam::Vec3::new(15.0, 0.0, 25.0)); // Different position
 
@@ -330,11 +340,10 @@ mod tests {
         let (cs1, cs1_rng) = run_simulation(seed, ticks);
         let (cs2, cs2_rng) = run_simulation(seed, ticks);
 
-        assert_eq!(cs1, cs2, "World checksum mismatch after {} ticks", ticks);
+        assert_eq!(cs1, cs2, "World checksum mismatch after {ticks} ticks");
         assert_eq!(
             cs1_rng, cs2_rng,
-            "World+RNG checksum mismatch after {} ticks",
-            ticks
+            "World+RNG checksum mismatch after {ticks} ticks"
         );
     }
 
@@ -354,24 +363,23 @@ mod tests {
     #[test]
     fn test_simulation_determinism_long_run() {
         // Run for longer to catch subtle non-determinism
-        let seed = 99999;
-        let ticks = 1000;
+        let seed = 99_999;
+        let ticks = 1_000;
 
         let (cs1, cs1_rng) = run_simulation(seed, ticks);
         let (cs2, cs2_rng) = run_simulation(seed, ticks);
 
-        assert_eq!(cs1, cs2, "World checksum mismatch after {} ticks", ticks);
+        assert_eq!(cs1, cs2, "World checksum mismatch after {ticks} ticks");
         assert_eq!(
             cs1_rng, cs2_rng,
-            "World+RNG checksum mismatch after {} ticks",
-            ticks
+            "World+RNG checksum mismatch after {ticks} ticks"
         );
     }
 
     #[test]
     fn test_simulation_checksum_changes_over_time() {
         // Checksum should change as simulation progresses (state evolves)
-        let seed = 12345;
+        let seed = 12_345;
 
         let (cs_10, _) = run_simulation(seed, 10);
         let (cs_100, _) = run_simulation(seed, 100);
@@ -382,8 +390,9 @@ mod tests {
 
     /// Run simulation with movement commands for determinism testing.
     fn run_simulation_with_movement(seed: u64, ticks: u32) -> (u32, u32) {
-        let scenario = Scenario::from_xml_str(TEST_SCENARIO).unwrap();
-        let mut loaded = load_scenario_into_world(&scenario);
+        let scenario = ScenarioData::from_xml_str(TEST_SCENARIO).unwrap();
+        let db = Database::new();
+        let mut loaded = load_scenario_into_world(&scenario, &db);
         loaded.world.rng.set_seed64(seed);
 
         let mut sim = Simulation::with_seed(seed);
@@ -407,7 +416,7 @@ mod tests {
     #[test]
     fn test_simulation_determinism_with_movement() {
         // Run simulation with movement twice - must be identical
-        let seed = 7777;
+        let seed = 7_777;
         let ticks = 200;
 
         let (cs1, cs1_rng) = run_simulation_with_movement(seed, ticks);
@@ -415,24 +424,22 @@ mod tests {
 
         assert_eq!(
             cs1, cs2,
-            "World checksum mismatch with movement after {} ticks",
-            ticks
+            "World checksum mismatch with movement after {ticks} ticks"
         );
         assert_eq!(
             cs1_rng, cs2_rng,
-            "World+RNG checksum mismatch with movement after {} ticks",
-            ticks
+            "World+RNG checksum mismatch with movement after {ticks} ticks"
         );
     }
 
     #[test]
     fn test_movement_changes_checksum() {
         // Directly verify that issuing a move command changes the checksum
-        let mut world1 = World::with_seed(12345);
+        let mut world1 = World::with_seed(12_345);
         world1.init_players(2);
         let squad_id = world1.create_squad_at(1, glam::Vec3::new(10.0, 0.0, 20.0));
 
-        let mut world2 = World::with_seed(12345);
+        let mut world2 = World::with_seed(12_345);
         world2.init_players(2);
         let squad_id2 = world2.create_squad_at(1, glam::Vec3::new(10.0, 0.0, 20.0));
 

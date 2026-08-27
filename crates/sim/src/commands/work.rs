@@ -1,4 +1,4 @@
-//! Work command matching vanilla BWorkCommand.
+//! Work command matching vanilla `BWorkCommand`.
 
 use crate::EntityId;
 use crate::command::Command;
@@ -21,14 +21,13 @@ mod flags {
     pub const OVERRIDE_RANGE: u16 = 1024;
 }
 
-/// Work command flag bits (in the base command flags).
-#[allow(dead_code)]
+/// Work command flag bits in the base command flag set.
 pub mod command_flags {
-    /// Attack move flag (extends base command flags).
-    pub const ATTACK_MOVE: usize = 8; // cNumberCommandFlags
+    /// Attack-move flag (extends the base command flags).
+    pub const ATTACK_MOVE: usize = 8;
 }
 
-/// Work command matching vanilla BWorkCommand.
+/// Work command matching vanilla `BWorkCommand`.
 #[derive(Debug, Clone)]
 pub struct WorkCommand {
     /// Base command data.
@@ -78,6 +77,10 @@ impl Default for WorkCommand {
 
 impl WorkCommand {
     /// Serialize the work-specific fields (after base command).
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if the writer fails or a field does not fit the wire format.
     pub fn serialize_fields<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         let mut work_flags: u16 = 0;
 
@@ -137,22 +140,35 @@ impl WorkCommand {
             writer.write_f32::<LittleEndian>(self.speed_multiplier)?;
         }
         if work_flags & flags::SQUAD_MODE != 0 {
-            writer.write_u8(self.squad_mode as u8)?;
+            writer.write_u8(u8::try_from(self.squad_mode).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "squad mode does not fit in u8")
+            })?)?;
         }
         if work_flags & flags::ABILITY != 0 {
-            writer.write_u8(self.ability_id as u8)?;
+            writer.write_u8(u8::try_from(self.ability_id).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "ability ID does not fit in u8")
+            })?)?;
         }
         if work_flags & flags::ANGLE != 0 {
             writer.write_f32::<LittleEndian>(self.angle)?;
         }
         if work_flags & flags::HIT_ZONE != 0 {
-            writer.write_u8(self.hit_zone_index as u8)?;
+            writer.write_u8(u8::try_from(self.hit_zone_index).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "hit zone index does not fit in u8",
+                )
+            })?)?;
         }
 
         Ok(())
     }
 
     /// Deserialize the work-specific fields (after base command).
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if the reader does not contain a complete command.
     pub fn deserialize_fields<R: Read>(&mut self, reader: &mut R) -> io::Result<()> {
         let work_flags = reader.read_u16::<LittleEndian>()?;
 
@@ -192,13 +208,13 @@ impl WorkCommand {
         }
 
         if work_flags & flags::SQUAD_MODE != 0 {
-            self.squad_mode = reader.read_u8()? as i32;
+            self.squad_mode = i32::from(reader.read_u8()?);
         } else {
             self.squad_mode = -1;
         }
 
         if work_flags & flags::ABILITY != 0 {
-            self.ability_id = reader.read_u8()? as i32;
+            self.ability_id = i32::from(reader.read_u8()?);
         } else {
             self.ability_id = -1;
         }
@@ -210,7 +226,7 @@ impl WorkCommand {
         }
 
         if work_flags & flags::HIT_ZONE != 0 {
-            self.hit_zone_index = reader.read_u8()? as i32;
+            self.hit_zone_index = i32::from(reader.read_u8()?);
         } else {
             self.hit_zone_index = -1;
         }

@@ -16,6 +16,7 @@ pub struct CommandExecutor;
 
 impl CommandExecutor {
     /// Create a new command executor.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -30,31 +31,25 @@ impl CommandExecutor {
     /// Execute a single command against the world.
     pub fn execute(&self, world: &mut World, entry: &CommandEntry) {
         match &entry.command {
-            QueuedCommand::Work(cmd) => self.execute_work(world, cmd),
-            QueuedCommand::Power(cmd) => self.execute_power(world, cmd),
-            QueuedCommand::Game(cmd) => self.execute_game(world, cmd),
+            QueuedCommand::Work(cmd) => Self::execute_work(world, cmd),
+            QueuedCommand::Power(cmd) => Self::execute_power(world, cmd),
+            QueuedCommand::Game(cmd) => Self::execute_game(world, cmd),
         }
     }
 
     /// Execute a work command.
-    fn execute_work(&self, world: &mut World, cmd: &WorkCommand) {
+    fn execute_work(world: &mut World, cmd: &WorkCommand) {
         let order_type = OrderType::from_i32(cmd.base.id);
 
         match order_type {
-            Some(OrderType::Move) => self.execute_move(world, cmd),
-            Some(OrderType::Attack) => self.execute_attack(world, cmd),
-            Some(OrderType::None) | None => {
-                // No-op or unknown order type
-            }
-            Some(_) => {
-                // Other order types - not yet implemented
-                // TODO: Implement remaining order types as needed
-            }
+            Some(OrderType::Move) => Self::execute_move(world, cmd),
+            Some(OrderType::Attack) => Self::execute_attack(world, cmd),
+            _ => {}
         }
     }
 
     /// Execute a move order.
-    fn execute_move(&self, world: &mut World, cmd: &WorkCommand) {
+    fn execute_move(world: &mut World, cmd: &WorkCommand) {
         if let Some(target) = cmd.terrain_point {
             // Apply move order to all recipients
             for &recipient_id in &cmd.base.recipients {
@@ -66,7 +61,7 @@ impl CommandExecutor {
     }
 
     /// Execute an attack order.
-    fn execute_attack(&self, world: &mut World, cmd: &WorkCommand) {
+    fn execute_attack(world: &mut World, cmd: &WorkCommand) {
         // For now, attack just moves to position (combat not implemented)
         if let Some(target) = cmd.terrain_point {
             for &recipient_id in &cmd.base.recipients {
@@ -78,12 +73,12 @@ impl CommandExecutor {
     }
 
     /// Execute a power command.
-    fn execute_power(&self, _world: &mut World, _cmd: &PowerCommand) {
+    fn execute_power(_world: &mut World, _cmd: &PowerCommand) {
         // TODO: Implement power commands
     }
 
     /// Execute a game command.
-    fn execute_game(&self, _world: &mut World, _cmd: &GameCommand) {
+    fn execute_game(_world: &mut World, _cmd: &GameCommand) {
         // TODO: Implement game commands (resign, flare, etc.)
     }
 }

@@ -1,4 +1,4 @@
-//! Headless server for OpenEnsemble.
+//! Headless server for `OpenEnsemble`.
 //!
 //! Runs the game simulation without rendering, suitable for:
 //! - Dedicated server hosting
@@ -7,16 +7,18 @@
 //! - Replay validation
 
 use anyhow::{Context, Result};
-use data::{GameDatabase, Scenario};
+use data::GameDatabase;
+use num_traits::ToPrimitive;
+use pipeline::hw1::scenario::ScenarioData;
 use sim::{Session, SessionState, Simulation, World, load_scenario_into_world};
 use std::time::{Duration, Instant};
 
 /// Headless server configuration.
 #[derive(Debug, Clone)]
 pub struct HeadlessConfig {
-    /// Path to the game directory (defaults to OPENENSEMBLE_GAME_DIR or cwd).
+    /// Path to the game directory (defaults to `OPENENSEMBLE_GAME_DIR` or cwd).
     pub game_dir: Option<String>,
-    /// Map/scenario to load (e.g., "skirmish/blood_gulch").
+    /// Map/scenario to load (e.g., "`skirmish/blood_gulch`").
     pub map_name: Option<String>,
     /// Random seed for deterministic simulation.
     pub random_seed: u64,
@@ -57,6 +59,10 @@ pub struct HeadlessServer {
 
 impl HeadlessServer {
     /// Create a new headless server with the given configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the game database cannot be loaded.
     pub fn new(config: HeadlessConfig) -> Result<Self> {
         log::info!("Initializing headless server...");
 
@@ -66,16 +72,17 @@ impl HeadlessServer {
             None
         } else {
             log::info!("Loading game database...");
-            let db =
-                GameDatabase::load().context("Failed to load game database from game directory")?;
+            let mut src = data::load_game_assets();
+            let db = GameDatabase::load(&mut src)
+                .map_err(|e| anyhow::anyhow!("{e}"))
+                .context("Failed to load game database from game directory")?;
 
             log::info!(
-                "Loaded {} proto objects, {} civs, {} leaders",
-                db.proto.objects.len(),
+                "Loaded {} objects, {} civs, {} leaders",
+                db.objects.len(),
                 db.civs.len(),
                 db.leaders.len()
             );
-            log::info!("Loaded {} XMB files total", db.loaded_files.len());
             Some(db)
         };
 
@@ -101,19 +108,20 @@ impl HeadlessServer {
         })
     }
 
-    /// Load a scenario by name from ERA archives.
-    pub fn load_scenario(&mut self, scenario_name: &str) -> Result<()> {
-        let scenario = Scenario::load(scenario_name).context("Failed to load scenario from ERA")?;
-
-        let loaded = load_scenario_into_world(&scenario);
+    /// Load a scenario from a [`ScenarioData`] instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the scenario cannot initialize the simulation world.
+    pub fn load_scenario_data(&mut self, scenario: &ScenarioData) -> Result<()> {
+        let empty_db = GameDatabase::new();
+        let db = self.database.as_ref().unwrap_or(&empty_db);
+        let loaded = load_scenario_into_world(scenario, db);
         self.world = loaded.world;
 
-        log::info!(
-            "Scenario loaded: {} players, {} squads, {} objects",
-            scenario.players.len(),
-            scenario.squad_count(),
-            scenario.object_count()
-        );
+        let player_count = scenario.players.as_ref().map_or(0, |p| p.entries.len());
+        let object_count = scenario.objects.as_ref().map_or(0, |o| o.entries.len());
+        log::info!("Scenario loaded: {player_count} players, {object_count} objects");
 
         Ok(())
     }
@@ -121,18 +129,8 @@ impl HeadlessServer {
     /// Load a scenario from XML string (for testing).
     #[doc(hidden)]
     pub fn load_scenario_xml(&mut self, xml: &str) -> Result<()> {
-        let scenario = Scenario::from_xml_str(xml).context("Failed to parse scenario XML")?;
-
-        let loaded = load_scenario_into_world(&scenario);
-        self.world = loaded.world;
-
-        log::info!(
-            "Scenario loaded: {} players, {} squads",
-            scenario.players.len(),
-            scenario.squad_count()
-        );
-
-        Ok(())
+        let scenario = ScenarioData::from_xml_str(xml).context("Failed to parse scenario XML")?;
+        self.load_scenario_data(&scenario)
     }
 
     /// Start the simulation.
@@ -151,21 +149,25 @@ impl HeadlessServer {
     }
 
     /// Get the game database (if loaded).
+    #[must_use]
     pub fn database(&self) -> Option<&GameDatabase> {
         self.database.as_ref()
     }
 
     /// Get the current world state.
+    #[must_use]
     pub fn world(&self) -> &World {
         &self.world
     }
 
     /// Get the current tick count.
+    #[must_use]
     pub fn tick_count(&self) -> u64 {
         self.tick_count
     }
 
     /// Check if the server is running.
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.running
     }
@@ -201,16 +203,21 @@ impl HeadlessServer {
     }
 
     /// Run the simulation loop until stopped or max ticks reached.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the simulation loop cannot complete.
     pub fn run(&mut self) -> Result<()> {
         self.start();
 
-        let tick_duration = Duration::from_millis(1000 / self.config.tick_rate as u64);
+        let tick_rate = self.config.tick_rate.max(1);
+        let tick_duration = Duration::from_millis(1_000 / u64::from(tick_rate));
         let mut last_tick = Instant::now();
         let start_time = Instant::now();
 
         log::info!(
             "Running at {} ticks/second ({}ms per tick)",
-            self.config.tick_rate,
+            tick_rate,
             tick_duration.as_millis()
         );
 
@@ -226,7 +233,9 @@ impl HeadlessServer {
                 }
             } else {
                 // Sleep for remaining time
-                std::thread::sleep(tick_duration - elapsed);
+                if let Some(remaining) = tick_duration.checked_sub(elapsed) {
+                    std::thread::sleep(remaining);
+                }
             }
         }
 
@@ -235,7 +244,7 @@ impl HeadlessServer {
             "Simulation complete: {} ticks in {:.2}s ({:.1} ticks/sec)",
             self.tick_count,
             total_time.as_secs_f64(),
-            self.tick_count as f64 / total_time.as_secs_f64()
+            self.tick_count.to_f64().unwrap_or_default() / total_time.as_secs_f64()
         );
 
         Ok(())
@@ -312,8 +321,8 @@ fn main() -> Result<()> {
     let test_scenario = r#"<?xml version="1.0" encoding="utf-8"?>
 <Scenario>
     <Players>
-        <Player Name="Player1" Civ="UNSC" Leader="Cutter" Team="1" />
-        <Player Name="Player2" Civ="Covenant" Leader="Arbiter" Team="2" />
+        <Player Name="Player1" Civ="UNSC" Leader1="Cutter" Team="1" />
+        <Player Name="Player2" Civ="Covenant" Leader1="Arbiter" Team="2" />
     </Players>
     <Objects>
         <Object IsSquad="true" Player="1" ID="0" Position="100.0,0.0,100.0">unsc_inf_marine_01</Object>

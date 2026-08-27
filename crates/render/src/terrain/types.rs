@@ -14,7 +14,7 @@ pub struct AlbedoData {
 /// A single terrain texture loaded from ERA.
 #[derive(Clone)]
 pub struct TerrainTexture {
-    /// Texture name (e.g., "grass_01").
+    /// Texture name (e.g., "`grass_01`").
     pub name: String,
     /// Width in pixels.
     pub width: u32,
@@ -31,13 +31,26 @@ pub struct TerrainTexture {
 /// A normal map texture loaded from ERA (_nm.ddx files).
 #[derive(Clone)]
 pub struct NormalMapTexture {
-    /// Texture name (e.g., "grass_01").
+    /// Texture name (e.g., "`grass_01`").
     pub name: String,
     /// Width in pixels.
     pub width: u32,
     /// Height in pixels.
     pub height: u32,
     /// RGBA pixel data (normal map encoded as RGB, A may be height/unused).
+    pub pixels: Vec<u8>,
+}
+
+/// A specular map texture loaded from ERA (`_sp.ddx` files).
+#[derive(Clone)]
+pub struct SpecularMapTexture {
+    /// Texture name (for example, `grass_01`).
+    pub name: String,
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// RGBA pixel data. RGB stores the colored specular response.
     pub pixels: Vec<u8>,
 }
 
@@ -48,7 +61,7 @@ pub struct ChunkSplatData {
     pub grid_x: i32,
     /// Grid Z position (0-15 for 16x16 grid).
     pub grid_z: i32,
-    /// Indices into terrain_textures for this chunk's layers.
+    /// Indices into `terrain_textures` for this chunk's layers.
     pub layer_texture_ids: Vec<i32>,
     /// Alpha maps for layers 1..n (layer 0 has no alpha, it's the base).
     /// Each is 64x64 = 4096 bytes.
@@ -59,7 +72,7 @@ pub struct ChunkSplatData {
 /// Decals have separate diffuse (_df) and opacity (_op) textures.
 #[derive(Clone)]
 pub struct DecalTexture {
-    /// Decal name (e.g., "road_01").
+    /// Decal name (e.g., "`road_01`").
     pub name: String,
     /// Width in pixels.
     pub width: u32,
@@ -72,10 +85,10 @@ pub struct DecalTexture {
 }
 
 /// A decal instance to be rendered on the terrain.
-/// This corresponds to XTT's ActiveDecalInstance.
+/// This corresponds to XTT's `ActiveDecalInstance`.
 #[derive(Clone, Debug)]
 pub struct DecalInstance {
-    /// Index into the decal_textures array.
+    /// Index into the `decal_textures` array.
     pub decal_index: i32,
     /// Rotation angle in radians.
     pub rotation: f32,
@@ -96,7 +109,7 @@ pub struct ChunkDecalData {
     pub grid_x: i32,
     /// Grid Z position (0-15 for 16x16 grid).
     pub grid_z: i32,
-    /// Indices into decal_instances for this chunk's decals.
+    /// Indices into `decal_instances` for this chunk's decals.
     pub decal_layer_ids: Vec<i32>,
     /// Alpha maps for decal layers (if any).
     /// Each is 64x64 = 4096 bytes.
@@ -108,7 +121,7 @@ pub struct ChunkDecalData {
 // ============================================================================
 
 /// A single foliage blade vertex (position + normal + UV).
-/// From the original XML format in TerrainFoliage.cpp.
+/// Decoded from the foliage asset XML/XMB data.
 #[derive(Clone, Debug)]
 pub struct FoliageBladeVertex {
     /// Local position relative to blade base.
@@ -120,10 +133,10 @@ pub struct FoliageBladeVertex {
 }
 
 /// A foliage set containing textures and blade geometry.
-/// Corresponds to BTerrainFoliageSet in the original.
+/// Corresponds to `BTerrainFoliageSet` in the original.
 #[derive(Clone)]
 pub struct FoliageSet {
-    /// Set name (e.g., "foliage\\bg_grass_02").
+    /// Set name (e.g., "foliage\\`bg_grass_02`").
     pub name: String,
     /// Backside shadow scalar for lighting.
     pub backside_shadow_scalar: f32,
@@ -180,20 +193,23 @@ impl Default for FoliageSet {
 }
 
 /// Per quad-node foliage chunk data.
-/// Corresponds to BTerrainFoliageQNChunk in the original.
+/// Corresponds to `BTerrainFoliageQNChunk` in the original.
 #[derive(Clone)]
 pub struct FoliageQNChunk {
     /// Parent quad-node index (into terrain grid).
     pub qn_parent_index: u32,
+    /// World-grid X coordinate from the parent XTD visual quad node.
+    pub grid_x: i32,
+    /// World-grid Z coordinate from the parent XTD visual quad node.
+    pub grid_z: i32,
     /// Number of foliage sets used in this chunk.
     pub num_sets: u32,
     /// Indices into the foliage sets array.
     pub set_indices: Vec<i32>,
-    /// Polygon count for each set (for DrawIndexedPrimitive).
+    /// Polygon count for each set (for `DrawIndexedPrimitive`).
     pub set_poly_counts: Vec<i32>,
-    /// Raw index buffer data for each set.
-    /// These are 32-bit indices used with triangle strips.
-    pub index_buffers: Vec<Vec<u8>>,
+    /// Packed 32-bit vertex IDs for each set's triangle strip.
+    pub index_buffers: Vec<Vec<u32>>,
 }
 
 // ============================================================================
@@ -203,10 +219,82 @@ pub struct FoliageQNChunk {
 /// Decoded road data ready for rendering.
 #[derive(Clone, Debug)]
 pub struct RoadChunkData {
-    /// Road texture name (e.g., "roads\\road_01").
+    /// Road texture name (e.g., "roads\\`road_01`").
     pub texture_name: String,
     /// All road vertices (position + UV), flattened from all QN chunks.
     pub positions: Vec<[f32; 3]>,
     /// UV coordinates for each vertex.
     pub uvs: Vec<[f32; 2]>,
+}
+
+// ============================================================================
+// Raw XTD Types (for GPU tessellation)
+// ============================================================================
+
+/// Raw XTD vertex data for GPU tessellation (before decoding to world positions).
+pub struct RawXtdData {
+    /// Packed position data in the PC texture's native X-major storage order.
+    ///
+    /// Logical `(x, z)` is stored at `x * num_verts_per_axis + z`; the shader
+    /// addresses that word with texture coordinate `(z, x)`.
+    pub packed_positions: Vec<u32>,
+    /// Packed normal data in the same native X-major storage order.
+    pub packed_normals: Vec<u32>,
+    /// Number of vertices per axis (e.g., 1024).
+    pub num_verts_per_axis: u32,
+    /// Atlas mid point for decoding.
+    pub mid: [f32; 3],
+    /// Atlas range for decoding.
+    pub range: [f32; 3],
+    /// Tile scale for world position.
+    pub tile_scale: f32,
+    /// World-space minimum bounds from the XTD header.
+    pub world_min: [f32; 3],
+    /// World-space maximum bounds from the XTD header.
+    pub world_max: [f32; 3],
+    /// XTD patch tessellation levels in texture row-major order (X changes fastest).
+    ///
+    /// The PC hull shader converts levels 0, 1, 2, and 3 to subdivision
+    /// factors 16, 8, 4, and 2, then raises shared edges to the finer of the
+    /// two adjacent patches.
+    pub tessellation: Option<TerrainTessellationData>,
+    /// Ambient occlusion data (R8 values, half resolution).
+    pub ao_data: Option<AoTextureData>,
+    /// Alpha/transparency data (R8 values, half resolution).
+    pub alpha_data: Option<AlphaTextureData>,
+}
+
+/// Per-patch terrain tessellation metadata decoded from the XTD tess chunk.
+#[derive(Clone)]
+pub struct TerrainTessellationData {
+    pub patches_x: u32,
+    pub patches_z: u32,
+    pub levels: Vec<u8>,
+}
+
+/// Half-resolution AO texture data as decoded from the game.
+/// Dimensions: full width × half height (e.g., 1024×512 for 1024×1024 terrain).
+#[derive(Clone)]
+pub struct AoTextureData {
+    pub values: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Half-resolution Alpha texture data as decoded from the game.
+/// Dimensions: full width × half height (same as AO).
+/// Used for terrain transparency (holes, cliff edges).
+#[derive(Clone)]
+pub struct AlphaTextureData {
+    pub values: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Lighting texture data (L8/R8 luminance) at full terrain resolution.
+#[derive(Clone)]
+pub struct LightingTextureData {
+    pub values: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
 }

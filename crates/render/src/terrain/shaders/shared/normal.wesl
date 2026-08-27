@@ -1,7 +1,7 @@
 // Shared TBN and normal helpers
 //
 // TBN reconstruction from a normal vector, and DXN/BC5 normal map unpacking.
-// Matches GiveTBNFromNormal and DXN unpacking in the original HLSL.
+// Matches the TBN construction and DXN unpacking in the fresh PC decompile.
 
 /// Reconstruct TBN matrix from a normal vector.
 /// Tangent and binormal are derived assuming the normal is mostly Y-up.

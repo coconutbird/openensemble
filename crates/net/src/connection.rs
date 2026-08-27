@@ -40,6 +40,7 @@ pub struct Connection {
 
 impl Connection {
     /// Create a new connection.
+    #[must_use]
     pub fn new(addr: SocketAddr, client_id: u64) -> Self {
         let now = Instant::now();
         Self {
@@ -84,11 +85,13 @@ impl Connection {
     }
 
     /// Check if the connection has timed out.
+    #[must_use]
     pub fn is_timed_out(&self) -> bool {
         self.last_recv_time.elapsed() > self.timeout
     }
 
     /// Check if we should send a keepalive.
+    #[must_use]
     pub fn needs_keepalive(&self) -> bool {
         self.last_send_time.elapsed() > Duration::from_millis(500)
     }

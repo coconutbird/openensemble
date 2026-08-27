@@ -10,7 +10,6 @@ fn main() {
         "terrain_roads",
         "foliage",
         "terrain_composite",
-        "terrain",
         "shadow_depth",
     ] {
         compiler.build_artifact(&format!("package::{name}").parse().unwrap(), name);

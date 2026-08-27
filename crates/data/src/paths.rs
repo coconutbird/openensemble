@@ -41,13 +41,12 @@ pub fn game_dir() -> &'static PathBuf {
                     path.display()
                 );
                 return path;
-            } else {
-                log::warn!(
-                    "{} is set to '{}' but path does not exist, falling back to current directory",
-                    GAME_DIR_ENV_VAR,
-                    path.display()
-                );
             }
+            log::warn!(
+                "{} is set to '{}' but path does not exist, falling back to current directory",
+                GAME_DIR_ENV_VAR,
+                path.display()
+            );
         }
 
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -62,12 +61,13 @@ pub fn game_dir() -> &'static PathBuf {
 /// Get the full path to an ERA archive by name.
 ///
 /// # Arguments
-/// * `name` - The ERA archive name without extension (e.g., "root", "blood_gulch")
+/// * `name` - The ERA archive name without extension (e.g., "root", "`blood_gulch`")
 ///
 /// # Returns
 /// Full path to the ERA file (e.g., "/path/to/game/root.era")
+#[must_use]
 pub fn era_path(name: &str) -> PathBuf {
-    game_dir().join(format!("{}.era", name))
+    game_dir().join(format!("{name}.era"))
 }
 
 /// Get the full path to a file within the game directory.
@@ -77,6 +77,7 @@ pub fn era_path(name: &str) -> PathBuf {
 ///
 /// # Returns
 /// Full path to the file
+#[must_use]
 pub fn game_file(relative_path: &str) -> PathBuf {
     game_dir().join(relative_path)
 }
@@ -84,6 +85,7 @@ pub fn game_file(relative_path: &str) -> PathBuf {
 /// Check if the game directory appears to be valid.
 ///
 /// Looks for the presence of expected files like "root.era".
+#[must_use]
 pub fn is_valid_game_dir() -> bool {
     era_path("root").exists()
 }

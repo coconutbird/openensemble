@@ -41,7 +41,7 @@ pub use player::{
 };
 pub use random::Random;
 pub use scenario::{
-    LoadedScenario, Scenario, ScenarioError, ScenarioObject, ScenarioPlayer, ScenarioPosition,
+    LoadedScenario, ScenarioData, ScenarioObject, ScenarioPlayer, ScenarioPosition,
     load_scenario_into_world,
 };
 pub use serialize::{SerializeError, deserialize_command, serialize_command};
@@ -52,7 +52,7 @@ pub use simulation::{
 pub use sync::{SimpleChecksum, SyncChecksum};
 pub use time_sync::{ClientTimeHistory, TimeSync, TimingRecord};
 pub use trigger::{
-    Condition, ConditionType, Effect, EffectType, Trigger, TriggerEngine, TriggerId, TriggerScript,
-    TriggerScriptId, TriggerValue, VarId, VarType,
+    Condition, ConditionMode, ConditionResult, ConditionType, Effect, EffectType, Trigger,
+    TriggerEngine, TriggerId, TriggerScript, TriggerScriptId, TriggerValue, VarId, VarType,
 };
 pub use world::{MAX_PLAYERS, World};

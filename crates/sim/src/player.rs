@@ -1,6 +1,6 @@
 //! Player state for simulation.
 //!
-//! Based on BPlayer from the original source.
+//! Based on `BPlayer` from the original source.
 
 /// Player ID type (0-based index).
 pub type PlayerId = u8;
@@ -14,7 +14,7 @@ pub type CivId = i32;
 /// Leader ID.
 pub type LeaderId = i32;
 
-/// Maximum number of resource types (matches BCost::cMaxNumResources).
+/// Maximum number of resource types (matches `BCost::cMaxNumResources`).
 pub const MAX_RESOURCES: usize = 4;
 
 /// Maximum number of population types.
@@ -42,7 +42,7 @@ pub enum PlayerType {
     Human = 2,
 }
 
-/// Resource storage (equivalent to BCost).
+/// Resource storage (equivalent to `BCost`).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Resources {
     /// Individual resource amounts.
@@ -51,11 +51,13 @@ pub struct Resources {
 
 impl Resources {
     /// Create new empty resources.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Get a resource amount.
+    #[must_use]
     pub fn get(&self, id: usize) -> f32 {
         self.amounts.get(id).copied().unwrap_or(0.0)
     }
@@ -82,11 +84,13 @@ impl Resources {
     }
 
     /// Get the total of all resources.
+    #[must_use]
     pub fn total(&self) -> f32 {
         self.amounts.iter().sum()
     }
 
     /// Check if we have at least the given amounts.
+    #[must_use]
     pub fn can_afford(&self, cost: &Resources) -> bool {
         self.amounts
             .iter()
@@ -102,7 +106,7 @@ impl Resources {
     }
 }
 
-/// Population tracking (equivalent to BPlayerPop).
+/// Population tracking (equivalent to `BPlayerPop`).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Population {
     /// Current population count.
@@ -117,11 +121,13 @@ pub struct Population {
 
 impl Population {
     /// Create new empty population.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Check if we have room for more population.
+    #[must_use]
     pub fn has_room(&self, amount: f32) -> bool {
         self.count + self.future + amount <= self.cap
     }
@@ -168,6 +174,7 @@ pub struct Player {
 
 impl Player {
     /// Create a new player with the given ID.
+    #[must_use]
     pub fn new(id: PlayerId) -> Self {
         Self {
             id,
@@ -183,21 +190,25 @@ impl Player {
     }
 
     /// Check if player is still playing.
+    #[must_use]
     pub fn is_playing(&self) -> bool {
         self.state == PlayerState::Playing
     }
 
     /// Check if player is human.
+    #[must_use]
     pub fn is_human(&self) -> bool {
         self.player_type == PlayerType::Human
     }
 
     /// Check if player is AI.
+    #[must_use]
     pub fn is_ai(&self) -> bool {
         self.player_type == PlayerType::ComputerAi
     }
 
     /// Get a resource amount.
+    #[must_use]
     pub fn get_resource(&self, id: usize) -> f32 {
         self.resources.get(id)
     }
@@ -213,6 +224,7 @@ impl Player {
     }
 
     /// Get population for a type.
+    #[must_use]
     pub fn get_population(&self, pop_type: usize) -> Option<&Population> {
         self.population.get(pop_type)
     }

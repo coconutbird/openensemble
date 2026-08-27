@@ -1,4 +1,4 @@
-//! OpenEnsemble - Halo Wars Phoenix Engine Reimplementation
+//! `OpenEnsemble` - Halo Wars Phoenix Engine Reimplementation
 //!
 //! A Rust implementation of the Phoenix Engine from Halo Wars (2008).
 

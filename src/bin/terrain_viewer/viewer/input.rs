@@ -2,104 +2,79 @@
 //!
 //! Implements the `Application` trait: update (keyboard/mouse), UI (egui), and clear color.
 
-use render::terrain::TessellationMode;
 use xcore::app::{Application, FrameContext, Input, KeyCode};
 use xcore::prelude::*;
 
 use super::TerrainViewer;
 use crate::camera::CameraInput;
 
-impl Application for TerrainViewer {
-    fn init(&mut self) {
-        log::info!("Terrain Viewer initialized");
-        self.load_terrain();
+fn debug_mode_name(mode: u32) -> &'static str {
+    match mode {
+        0 => "0: Lit Debug",
+        1 => "1: Patch Edges",
+        7 => "7: Unique Normal",
+        8 => "8: Ambient Occlusion",
+        9 => "9: Specular",
+        10 => "10: Solid Test",
+        11 => "11: Terrain UV Viz",
+        12 => "12: GPU Composited (Canonical)",
+        13 => "13: Chunk Orientation",
+        14 => "14: GPU Height Map",
+        15 => "15: Height/Albedo Alignment",
+        _ => "Unknown",
     }
+}
 
-    fn update(&mut self, input: &Input, ctx: &FrameContext) -> bool {
-        if input.is_key_pressed(KeyCode::Escape) {
-            return false;
+fn compositor_mode_name(mode: u32) -> &'static str {
+    match mode {
+        0 => "Normal",
+        1 => "UV Gradient",
+        2 => "Chunk ID",
+        3 => "Alpha Viz",
+        4 => "Layer 0 Only",
+        _ => "Unknown",
+    }
+}
+
+fn debug_button_row(ui: &mut egui::Ui, debug_mode: &mut u32, buttons: &[(&str, u32)]) {
+    ui.horizontal(|ui| {
+        for &(label, mode) in buttons {
+            if ui.button(label).clicked() {
+                *debug_mode = mode;
+            }
         }
+    });
+}
 
+impl TerrainViewer {
+    fn update_display_toggles(&mut self, input: &Input) {
         if input.is_key_pressed(KeyCode::Tab) {
             self.show_info = !self.show_info;
         }
-
         if input.is_key_pressed(KeyCode::F) {
             self.wireframe = !self.wireframe;
         }
+    }
 
-        // Debug mode toggle: Q for mode 0 (runtime splatting), 0 for mode 12 (GPU composited)
-        if input.is_key_pressed(KeyCode::Q) {
-            self.debug_mode = 0;
-            log::info!("Debug mode: 0 (runtime splatting - HWDE ground truth)");
-        }
-        if input.is_key_pressed(KeyCode::Key1) {
-            self.debug_mode = 1;
-            log::info!("Debug mode: 1 (alpha values)");
-        }
-        if input.is_key_pressed(KeyCode::Key2) {
-            self.debug_mode = 2;
-            log::info!("Debug mode: 2 (in-chunk UVs)");
-        }
-        if input.is_key_pressed(KeyCode::Key3) {
-            self.debug_mode = 3;
-            log::info!("Debug mode: 3 (raw atlas)");
-        }
-        if input.is_key_pressed(KeyCode::Key4) {
-            self.debug_mode = 4;
-            log::info!("Debug mode: 4 (terrain UVs)");
-        }
-        if input.is_key_pressed(KeyCode::Key5) {
-            self.debug_mode = 5;
-            log::info!("Debug mode: 5 (pre-composited albedo - correct blending)");
-        }
-        if input.is_key_pressed(KeyCode::Key6) {
-            self.debug_mode = 6;
-            log::info!("Debug mode: 6 (layer IDs as colors)");
-        }
-        if input.is_key_pressed(KeyCode::Key7) {
-            self.debug_mode = 7;
-            log::info!("Debug mode: 7 (chunk grid positions)");
-        }
-        if input.is_key_pressed(KeyCode::Key8) {
-            self.debug_mode = 8;
-            log::info!("Debug mode: 8 (chunk_idx + layer0)");
-        }
-        if input.is_key_pressed(KeyCode::Key0) {
-            self.debug_mode = 12;
-            log::info!("Debug mode: 12 (GPU composited - default)");
-        }
-        if input.is_key_pressed(KeyCode::Key9) {
-            self.debug_mode = 9;
-            log::info!(
-                "Debug mode: 9 (Alpha - terrain holes/transparency, white=solid, black=hole)"
-            );
-        }
-        if input.is_key_pressed(KeyCode::Backspace) {
-            self.debug_mode = 10;
-            log::info!("Debug mode: 10 (Direct texture array test - left=layer0, right=layer1)");
-        }
-
-        // Toggle GPU compositing: C key
-        if input.is_key_pressed(KeyCode::C) {
-            self.use_gpu_compositing = !self.use_gpu_compositing;
-            if self.use_gpu_compositing {
-                // Mark all chunks as dirty so they get composited
-                if let Some(compositor) = &mut self.compositor {
-                    compositor.mark_all_dirty();
-                }
+    fn update_debug_keys(&mut self, input: &Input) {
+        let bindings = [
+            (KeyCode::Q, 0, "lit debug path"),
+            (KeyCode::Key1, 1, "patch edges"),
+            (KeyCode::Key7, 7, "unique-map normal"),
+            (KeyCode::Key8, 8, "ambient occlusion"),
+            (KeyCode::Key9, 9, "specular map"),
+            (KeyCode::Backspace, 10, "solid-color pipeline test"),
+            (KeyCode::Key0, 12, "GPU composited - canonical default"),
+        ];
+        for (key, mode, description) in bindings {
+            if input.is_key_pressed(key) {
+                self.debug_mode = mode;
+                log::info!("Debug mode: {mode} ({description})");
             }
-            log::info!(
-                "GPU compositing: {}",
-                if self.use_gpu_compositing {
-                    "ON"
-                } else {
-                    "OFF"
-                }
-            );
         }
+    }
 
-        // Cycle compositor debug mode: V key (0=normal, 1=UV, 2=chunkID, 3=alpha, 4=layer0, 5=base_uv)
+    fn update_compositor_controls(&mut self, input: &Input) {
         if input.is_key_pressed(KeyCode::V) {
             self.compositor_debug_mode = (self.compositor_debug_mode + 1) % 6;
             let mode_name = match self.compositor_debug_mode {
@@ -112,17 +87,16 @@ impl Application for TerrainViewer {
                 _ => "unknown",
             };
             log::info!(
-                "Compositor debug mode: {} ({})",
-                self.compositor_debug_mode,
-                mode_name
+                "Compositor debug mode: {} ({mode_name})",
+                self.compositor_debug_mode
             );
-            // Re-composite all chunks with the new debug mode
             if let Some(compositor) = &mut self.compositor {
                 compositor.mark_all_dirty();
             }
         }
+    }
 
-        // Bump power (normal map strength) adjustment: B to decrease, N to increase
+    fn update_bump_power(&mut self, input: &Input) {
         if input.is_key_pressed(KeyCode::B) {
             self.bump_power = (self.bump_power - 0.25).max(0.0);
             log::info!("Bump power: {:.2}", self.bump_power);
@@ -131,242 +105,167 @@ impl Application for TerrainViewer {
             self.bump_power = (self.bump_power + 0.25).min(4.0);
             log::info!("Bump power: {:.2}", self.bump_power);
         }
+    }
 
-        // Toggle tessellation mode (T key) - toggles between GPU and None
-        // (CPU mode is skipped because it takes ~30 seconds)
-        if input.is_key_pressed(KeyCode::T) {
-            // Save camera state before reloading
-            let saved_camera_pos = self.camera.position;
-            let saved_camera_yaw = self.camera.yaw;
-            let saved_camera_pitch = self.camera.pitch;
-
-            // Toggle between GPU and None only (skip slow CPU tessellation)
-            self.tessellation_mode = match self.tessellation_mode {
-                TessellationMode::Gpu => TessellationMode::None,
-                TessellationMode::None => TessellationMode::Gpu,
-                TessellationMode::Cpu => TessellationMode::Gpu, // Skip CPU, go to GPU
-            };
-            log::info!(
-                "Tessellation mode: {} (reloading terrain...)",
-                self.tessellation_mode.name()
+    fn update_compositor_lod(&mut self) {
+        if self.chunk_centers.is_empty() {
+            return;
+        }
+        let Some(compositor) = &mut self.compositor else {
+            return;
+        };
+        let camera_position = [
+            self.camera.position.x,
+            self.camera.position.y,
+            self.camera.position.z,
+        ];
+        if compositor.update_lod(camera_position, &self.chunk_centers, &self.lod_config) {
+            log::debug!(
+                "LOD updated: {} dirty chunks",
+                compositor.dirty_chunk_count()
             );
-            // Clear GPU resources so they get recreated with new mesh
-            self.gpu = None;
-            // Reload terrain with new tessellation setting
-            self.load_terrain();
-
-            // Restore camera state after reloading
-            self.camera.position = saved_camera_pos;
-            self.camera.yaw = saved_camera_yaw;
-            self.camera.pitch = saved_camera_pitch;
-
-            if let Some(ref terrain) = self.terrain {
-                log::info!(
-                    "Terrain reloaded: {} vertices, {} triangles",
-                    terrain.positions.len(),
-                    terrain.indices.len() / 3
-                );
-            }
         }
+    }
 
+    fn draw_hud(&self, ctx: &egui::Context) {
+        let debug_name = debug_mode_name(self.debug_mode);
+        let compositor_name = compositor_mode_name(self.compositor_debug_mode);
+        let screen_rect = ctx.screen_rect();
+        egui::Area::new(egui::Id::new("hud_overlay"))
+            .fixed_pos(egui::pos2(screen_rect.width() / 2.0 - 160.0, 8.0))
+            .interactable(false)
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(egui::Color32::from_black_alpha(180))
+                    .inner_margin(egui::Margin::same(8))
+                    .corner_radius(4.0)
+                    .show(ui, |ui| {
+                        ui.colored_label(
+                            egui::Color32::WHITE,
+                            format!("Mode: {debug_name}  |  Comp: {compositor_name} (V)"),
+                        );
+                    });
+            });
+    }
+
+    fn draw_scene_information(&self, ui: &mut egui::Ui) {
+        ui.label(format!(
+            "Camera: ({:.1}, {:.1}, {:.1})",
+            self.camera.position.x, self.camera.position.y, self.camera.position.z
+        ));
+        if let Some(scene) = &self.scene {
+            let size = scene.mesh.size();
+            ui.separator();
+            ui.label(format!("Vertices: {}", scene.mesh.positions.len()));
+            ui.label(format!("Triangles: {}", scene.mesh.indices.len() / 3));
+            ui.label(format!(
+                "World Size: {:.0} x {:.0} x {:.0}",
+                size.x, size.y, size.z
+            ));
+            ui.label("Terrain path: packed GPU patches");
+            ui.label("Material: oracle unique-map compositor");
+        }
+        if let Some(error) = &self.load_error {
+            ui.separator();
+            ui.colored_label(egui::Color32::RED, error);
+        }
+    }
+
+    fn draw_debug_buttons(&mut self, ui: &mut egui::Ui) {
+        ui.separator();
+        ui.label(format!("Debug Mode: {}", self.debug_mode));
+        debug_button_row(
+            ui,
+            &mut self.debug_mode,
+            &[("12: GPUComp (Default)", 12), ("0: Lit Debug", 0)],
+        );
+        debug_button_row(
+            ui,
+            &mut self.debug_mode,
+            &[("1: Patch Edges", 1), ("7: Unique Normal", 7)],
+        );
+        debug_button_row(
+            ui,
+            &mut self.debug_mode,
+            &[("8: AO", 8), ("9: Specular", 9), ("10: Solid", 10)],
+        );
+        debug_button_row(
+            ui,
+            &mut self.debug_mode,
+            &[
+                ("11: Terrain UV", 11),
+                ("13: Orientation", 13),
+                ("14: Height", 14),
+                ("15: Alignment", 15),
+            ],
+        );
+    }
+
+    fn draw_controls(ui: &mut egui::Ui) {
+        ui.separator();
+        ui.label("Controls:");
+        for control in [
+            "  WASD - Move",
+            "  Space/Ctrl - Up/Down",
+            "  Arrows - Look",
+            "  Shift - Fast",
+            "  Tab - Toggle info",
+            "  F - Toggle wireframe",
+            "  Escape - Quit",
+        ] {
+            ui.label(control);
+        }
+    }
+
+    fn draw_information_window(&mut self, ctx: &egui::Context) {
+        egui::Window::new("Terrain Info")
+            .default_pos([10.0, 10.0])
+            .show(ctx, |ui| {
+                self.draw_scene_information(ui);
+                self.draw_debug_buttons(ui);
+                Self::draw_controls(ui);
+            });
+    }
+}
+
+impl Application for TerrainViewer {
+    fn init(&mut self) {
+        log::info!("Terrain Viewer initialized");
+        self.load_terrain();
+    }
+
+    fn update(&mut self, input: &Input, ctx: &FrameContext) -> bool {
+        if input.is_key_pressed(KeyCode::Escape) {
+            return false;
+        }
+        if let Some(capture) = &self.capture {
+            if capture.is_finished() {
+                return false;
+            }
+            // A capture camera is fixed and must not inherit interactive input
+            // or compositor LOD changes from the normal viewer camera.
+            return self.load_error.is_none();
+        }
+        self.update_display_toggles(input);
+        self.update_debug_keys(input);
+        self.update_compositor_controls(input);
+        self.update_bump_power(input);
         self.camera.update(input, ctx.delta_time);
-
-        // Update LOD levels based on camera position (only when GPU compositing is enabled)
-        if self.use_gpu_compositing
-            && !self.chunk_centers.is_empty()
-            && let Some(compositor) = &mut self.compositor
-        {
-            let camera_pos = [
-                self.camera.position.x,
-                self.camera.position.y,
-                self.camera.position.z,
-            ];
-            let lod_changed =
-                compositor.update_lod(camera_pos, &self.chunk_centers, &self.lod_config);
-            if lod_changed {
-                // LOD changed - compositor will mark dirty chunks automatically
-                log::debug!(
-                    "LOD updated: {} dirty chunks",
-                    compositor.dirty_chunk_count()
-                );
-            }
-        }
-
+        self.update_compositor_lod();
         true
     }
 
     fn ui(&mut self, ctx: &egui::Context) {
-        // Always-visible HUD overlay at top-center of screen
-        {
-            let debug_name = match self.debug_mode {
-                0 => "0: Normal",
-                1 => "1: Alpha Values",
-                2 => "2: In-Chunk UVs",
-                3 => "3: Raw Atlas",
-                4 => "4: Terrain UVs",
-                5 => "5: Pre-Composited",
-                6 => "6: Layer IDs",
-                7 => "7: Chunk Grid",
-                8 => "8: L1 Info",
-                9 => "9: XTT Albedo",
-                10 => "10: Tex Test",
-                11 => "11: Terrain UV Viz",
-                12 => "12: GPU Composited",
-                13 => "13: Layer 0 Only",
-                14 => "14: Layer 1 ID",
-                15 => "15: Layer 1 Only",
-                16 => "16: Rock",
-                17 => "17: CPU Blend",
-                _ => "Unknown",
-            };
-            let comp_debug_name = match self.compositor_debug_mode {
-                0 => "Normal",
-                1 => "UV Gradient",
-                2 => "Chunk ID",
-                3 => "Alpha Viz",
-                4 => "Layer 0 Only",
-                _ => "Unknown",
-            };
-            let screen_rect = ctx.screen_rect();
-            egui::Area::new(egui::Id::new("hud_overlay"))
-                .fixed_pos(egui::pos2(screen_rect.width() / 2.0 - 160.0, 8.0))
-                .interactable(false)
-                .show(ctx, |ui| {
-                    egui::Frame::new()
-                        .fill(egui::Color32::from_black_alpha(180))
-                        .inner_margin(egui::Margin::same(8))
-                        .corner_radius(4.0)
-                        .show(ui, |ui| {
-                            ui.colored_label(
-                                egui::Color32::WHITE,
-                                format!("Mode: {}  |  Comp: {} (V)", debug_name, comp_debug_name),
-                            );
-                        });
-                });
+        if self.capture.is_some() {
+            return;
         }
-
+        self.draw_hud(ctx);
         if self.show_info {
-            egui::Window::new("Terrain Info")
-                .default_pos([10.0, 10.0])
-                .show(ctx, |ui| {
-                    ui.label(format!(
-                        "Camera: ({:.1}, {:.1}, {:.1})",
-                        self.camera.position.x, self.camera.position.y, self.camera.position.z
-                    ));
-
-                    if let Some(terrain) = &self.terrain {
-                        ui.separator();
-                        ui.label(format!("Vertices: {}", terrain.positions.len()));
-                        ui.label(format!("Triangles: {}", terrain.indices.len() / 3));
-                        ui.label(format!(
-                            "World Size: {:.0} x {:.0} x {:.0}",
-                            terrain.size().x,
-                            terrain.size().y,
-                            terrain.size().z
-                        ));
-                        ui.label(format!("Tessellation: {}", self.tessellation_mode.name()));
-                        ui.label(format!(
-                            "GPU Compositing: {} (C to toggle)",
-                            if self.use_gpu_compositing {
-                                "ON"
-                            } else {
-                                "OFF"
-                            }
-                        ));
-                    }
-
-                    if let Some(err) = &self.load_error {
-                        ui.separator();
-                        ui.colored_label(egui::Color32::RED, err);
-                    }
-
-                    ui.separator();
-                    ui.label(format!("Debug Mode: {}", self.debug_mode));
-                    ui.horizontal(|ui| {
-                        if ui.button("0: GPUComp").clicked() {
-                            self.debug_mode = 12;
-                        }
-                        if ui.button("1: Alpha").clicked() {
-                            self.debug_mode = 1;
-                        }
-                        if ui.button("2: UV").clicked() {
-                            self.debug_mode = 2;
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        if ui.button("3: Atlas").clicked() {
-                            self.debug_mode = 3;
-                        }
-                        if ui.button("4: TerrUV").clicked() {
-                            self.debug_mode = 4;
-                        }
-                        if ui.button("5: Comp").clicked() {
-                            self.debug_mode = 5;
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        if ui.button("6: LayerID").clicked() {
-                            self.debug_mode = 6;
-                        }
-                        if ui.button("7: ChunkPos").clicked() {
-                            self.debug_mode = 7;
-                        }
-                        if ui.button("8: L1Info").clicked() {
-                            self.debug_mode = 8;
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        if ui.button("9: XTT").clicked() {
-                            self.debug_mode = 9;
-                        }
-                        if ui.button("10: TexTest").clicked() {
-                            self.debug_mode = 10;
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        if ui.button("11: TerrUV").clicked() {
-                            self.debug_mode = 11;
-                        }
-                        if ui.button("12: GPUComp").clicked() {
-                            self.debug_mode = 12;
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        if ui.button("13: L0 Only").clicked() {
-                            self.debug_mode = 13;
-                        }
-                        if ui.button("14: L1 ID").clicked() {
-                            self.debug_mode = 14;
-                        }
-                        if ui.button("15: L1 Only").clicked() {
-                            self.debug_mode = 15;
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        if ui.button("16: Rock").clicked() {
-                            self.debug_mode = 16;
-                        }
-                        if ui.button("17: CPU Blend").clicked() {
-                            self.debug_mode = 17;
-                        }
-                    });
-
-                    ui.separator();
-                    ui.label("Controls:");
-                    ui.label("  WASD - Move");
-                    ui.label("  Space/Ctrl - Up/Down");
-                    ui.label("  Arrows - Look");
-                    ui.label("  Shift - Fast");
-                    ui.label("  Tab - Toggle info");
-                    ui.label("  F - Toggle wireframe");
-                    ui.label("  T - Toggle tessellation");
-                    ui.label("  Escape - Quit");
-                });
+            self.draw_information_window(ctx);
         }
     }
 
     fn render(&mut self, _ctx: &FrameContext) -> Color {
-        // Sky blue clear color
         Color::new(0.4, 0.6, 0.9, 1.0)
     }
 }

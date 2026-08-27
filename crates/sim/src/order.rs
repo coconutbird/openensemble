@@ -1,9 +1,9 @@
-//! Order types matching vanilla BSimOrder.
+//! Order types matching vanilla `BSimOrder`.
 //!
 //! Orders are the internal representation of what entities should do.
 //! Commands from the network are converted to orders.
 
-/// Order types matching BSimOrder::cType* from SimOrder.h
+/// Order types matching `BSimOrder::cType`* from SimOrder.h
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(i32)]
 pub enum OrderType {
@@ -46,6 +46,7 @@ pub enum OrderType {
 
 impl OrderType {
     /// Convert from i32 (command ID).
+    #[must_use]
     pub fn from_i32(value: i32) -> Option<Self> {
         match value {
             0 => Some(Self::None),

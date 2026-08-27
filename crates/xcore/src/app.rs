@@ -21,16 +21,19 @@ pub struct Input {
 
 impl Input {
     /// Check if a key is currently held
+    #[must_use]
     pub fn is_key_held(&self, key: KeyCode) -> bool {
         self.keys_held.contains(&key)
     }
 
     /// Check if a key was just pressed this frame
+    #[must_use]
     pub fn is_key_pressed(&self, key: KeyCode) -> bool {
         self.keys_pressed.contains(&key)
     }
 
     /// Check if a key was just released this frame
+    #[must_use]
     pub fn is_key_released(&self, key: KeyCode) -> bool {
         self.keys_released.contains(&key)
     }
@@ -61,11 +64,13 @@ pub struct GamepadState {
 
 impl GamepadState {
     /// Check if a button is currently held
+    #[must_use]
     pub fn is_button_held(&self, button: GamepadButton) -> bool {
         self.buttons_held.contains(&button)
     }
 
     /// Check if a button was just pressed this frame
+    #[must_use]
     pub fn is_button_pressed(&self, button: GamepadButton) -> bool {
         self.buttons_pressed.contains(&button)
     }
@@ -75,13 +80,13 @@ impl GamepadState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum GamepadButton {
-    /// A button (Xbox) / Cross (PlayStation)
+    /// A button (Xbox) / Cross (`PlayStation`)
     South,
-    /// B button (Xbox) / Circle (PlayStation)
+    /// B button (Xbox) / Circle (`PlayStation`)
     East,
-    /// X button (Xbox) / Square (PlayStation)
+    /// X button (Xbox) / Square (`PlayStation`)
     West,
-    /// Y button (Xbox) / Triangle (PlayStation)
+    /// Y button (Xbox) / Triangle (`PlayStation`)
     North,
     /// Left bumper (LB)
     LeftBumper,
@@ -205,7 +210,7 @@ pub trait Application {
     fn update(&mut self, input: &Input, ctx: &FrameContext) -> bool;
 
     /// Called each frame to build the UI using egui
-    /// This is called after update() and before render()
+    /// This is called after `update()` and before `render()`
     fn ui(&mut self, _ctx: &egui::Context) {}
 
     /// Called each frame to render

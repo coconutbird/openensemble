@@ -4,53 +4,85 @@ use super::FoliageResources;
 use crate::types::FoliageQNChunk;
 use render::wgpu;
 
-/// Render foliage for visible chunks.
+fn draw_foliage<'a>(
+    render_pass: &mut wgpu::RenderPass<'a>,
+    foliage: &'a FoliageResources,
+    params_bind_group: &'a wgpu::BindGroup,
+) {
+    for draw in &foliage.draw_calls {
+        let Some(set_res) = foliage.set_resources.get(draw.set_index) else {
+            continue;
+        };
+        if draw.num_active_blades == 0 {
+            continue;
+        }
+        render_pass.set_bind_group(1, params_bind_group, &[draw.dynamic_offset]);
+        render_pass.set_bind_group(2, &set_res.material_bind_group, &[]);
+        render_pass.draw(0..draw.num_verts_per_blade, 0..draw.num_active_blades);
+    }
+}
+
+/// Render foliage using pre-built per-chunk draw calls.
 ///
-/// This renders all foliage within the view frustum, using instanced
-/// rendering where each blade is an instance.
+/// Each draw call renders only the active blades parsed from the original
+/// index buffers, using a dynamic uniform offset for chunk position and
+/// a blade map texture for per-blade grid position and type lookup.
 pub fn render_foliage<'a>(
     render_pass: &mut wgpu::RenderPass<'a>,
     foliage: &'a FoliageResources,
     camera_bind_group: &'a wgpu::BindGroup,
     _qn_chunks: &[FoliageQNChunk],
 ) {
-    if !foliage.config.enabled || foliage.set_resources.is_empty() {
+    if !foliage.config.enabled || foliage.draw_calls.is_empty() {
         return;
     }
+    let Some(params_bind_group) = &foliage.params_bind_group else {
+        return;
+    };
 
-    // Set pipeline and camera bind group
     render_pass.set_pipeline(&foliage.pipeline);
     render_pass.set_bind_group(0, camera_bind_group, &[]);
+    draw_foliage(render_pass, foliage, params_bind_group);
+}
 
-    // Set params bind group if available
-    if let Some(params_bg) = &foliage.params_bind_group {
-        render_pass.set_bind_group(1, params_bg, &[]);
-    } else {
-        // For now, skip rendering if params aren't set up
-        // TODO: Create params bind group with heightmap
-        log::debug!("Foliage: skipping render - params_bind_group not set");
+/// Append foliage casters to every terrain cascade, preserving terrain depth.
+pub fn render_foliage_shadow(
+    encoder: &mut wgpu::CommandEncoder,
+    foliage: &FoliageResources,
+    shadow: &crate::shadow::ShadowResources,
+) {
+    if !foliage.config.enabled || foliage.draw_calls.is_empty() {
         return;
     }
-
-    // TODO: Implement per-chunk rendering based on QN data
-    // For now, render a test pattern to verify the pipeline works
-    for (set_idx, set_res) in foliage.set_resources.iter().enumerate() {
-        // Set material bind group for this set
-        render_pass.set_bind_group(2, &set_res.material_bind_group, &[]);
-
-        // Render test blades across a larger area
-        // Each "instance" represents a blade
-        // 64x64 = 4096 blades covers one terrain chunk (64 grid cells)
-        let verts_per_blade = set_res.num_verts_per_blade;
-        let num_blades = 4096u32; // 64x64 grid of blades
-
-        log::trace!(
-            "Rendering foliage set {}: {} blades x {} verts = {} total verts",
-            set_idx,
-            num_blades,
-            verts_per_blade,
-            num_blades * verts_per_blade
-        );
-        render_pass.draw(0..verts_per_blade, 0..num_blades);
+    let Some(params_bind_group) = &foliage.shadow_params_bind_group else {
+        return;
+    };
+    let cascade_count = usize::try_from(crate::shadow::SHADOW_CASCADE_COUNT)
+        .expect("shadow cascade count must fit usize");
+    for cascade in 0..cascade_count {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Foliage Shadow Cascade"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: shadow.cascade_shadow_view(cascade),
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: shadow.cascade_depth_view(cascade),
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&foliage.shadow_pipeline);
+        pass.set_bind_group(0, shadow.cascade_camera_bind_group(cascade), &[]);
+        draw_foliage(&mut pass, foliage, params_bind_group);
     }
 }

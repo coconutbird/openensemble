@@ -1,4 +1,4 @@
-//! OpenEnsemble Renderer
+//! `OpenEnsemble` Renderer
 //!
 //! Rendering subsystem using wgpu (pure Rust).
 //! Provides a fully abstracted window and rendering system with egui integration.
@@ -60,10 +60,14 @@ pub trait Application3D: Application {
 
     /// Called each frame to perform custom 3D rendering.
     /// This is called after the clear pass and before the egui pass.
-    fn render_3d(&mut self, _ctx: &mut RenderContext) {}
+    fn render_3d(&mut self, _ctx: &mut RenderContext<'_>) {}
 }
 
 /// Run an application with the given window configuration
+///
+/// # Errors
+///
+/// Returns an error if the event loop cannot be created or run.
 pub fn run<A: Application + 'static>(config: WindowConfig, app: A) -> anyhow::Result<()> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -75,6 +79,10 @@ pub fn run<A: Application + 'static>(config: WindowConfig, app: A) -> anyhow::Re
 }
 
 /// Run a 3D application with the given window configuration
+///
+/// # Errors
+///
+/// Returns an error if the event loop cannot be created or run.
 pub fn run_3d<A: Application3D + 'static>(config: WindowConfig, app: A) -> anyhow::Result<()> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -108,7 +116,7 @@ struct EguiState {
 impl<A: Application> Engine<A> {
     fn new(config: WindowConfig, app: A) -> Self {
         let gilrs = Gilrs::new().unwrap_or_else(|e| {
-            log::warn!("Failed to initialize gamepad support: {}", e);
+            log::warn!("Failed to initialize gamepad support: {e}");
             // Create a dummy gilrs that won't find any gamepads
             Gilrs::new().expect("Failed to initialize gilrs twice")
         });
@@ -218,8 +226,7 @@ impl<A: Application> ApplicationHandler for Engine<A> {
                 let window_size = self
                     .renderer
                     .as_ref()
-                    .map(|r| r.size())
-                    .unwrap_or((self.config.width, self.config.height));
+                    .map_or((self.config.width, self.config.height), Renderer::size);
 
                 let ctx = FrameContext {
                     delta_time,
@@ -265,10 +272,10 @@ impl<A: Application> ApplicationHandler for Engine<A> {
                     // Render with egui
                     match renderer.render_with_egui(
                         egui_state,
-                        full_output.textures_delta,
+                        &full_output.textures_delta,
                         full_output.shapes,
                     ) {
-                        Ok(_) => {}
+                        Ok(()) => {}
                         Err(wgpu::SurfaceError::Lost) => {
                             let size = renderer.size();
                             renderer.resize(size.0, size.1);
@@ -278,7 +285,7 @@ impl<A: Application> ApplicationHandler for Engine<A> {
                             self.app.shutdown();
                             event_loop.exit();
                         }
-                        Err(e) => log::warn!("Surface error: {:?}", e),
+                        Err(e) => log::warn!("Surface error: {e:?}"),
                     }
                 }
 
@@ -313,7 +320,7 @@ struct Engine3D<A: Application3D> {
 impl<A: Application3D> Engine3D<A> {
     fn new(config: WindowConfig, app: A) -> Self {
         let gilrs = Gilrs::new().unwrap_or_else(|e| {
-            log::warn!("Failed to initialize gamepad support: {}", e);
+            log::warn!("Failed to initialize gamepad support: {e}");
             Gilrs::new().expect("Failed to initialize gilrs twice")
         });
         Self {
@@ -427,8 +434,7 @@ impl<A: Application3D> ApplicationHandler for Engine3D<A> {
                 let window_size = self
                     .renderer
                     .as_ref()
-                    .map(|r| r.size())
-                    .unwrap_or((self.config.width, self.config.height));
+                    .map_or((self.config.width, self.config.height), Renderer::size);
 
                 let ctx = FrameContext {
                     delta_time,
@@ -466,11 +472,11 @@ impl<A: Application3D> ApplicationHandler for Engine3D<A> {
                     // Render with 3D callback
                     match renderer.render_with_egui_and_3d(
                         egui_state,
-                        full_output.textures_delta,
+                        &full_output.textures_delta,
                         full_output.shapes,
                         |ctx| self.app.render_3d(ctx),
                     ) {
-                        Ok(_) => {}
+                        Ok(()) => {}
                         Err(wgpu::SurfaceError::Lost) => {
                             let size = renderer.size();
                             renderer.resize(size.0, size.1);
@@ -480,7 +486,7 @@ impl<A: Application3D> ApplicationHandler for Engine3D<A> {
                             self.app.shutdown();
                             event_loop.exit();
                         }
-                        Err(e) => log::warn!("Surface error: {:?}", e),
+                        Err(e) => log::warn!("Surface error: {e:?}"),
                     }
                 }
 
@@ -871,17 +877,17 @@ impl Renderer {
 
     fn set_clear_color(&mut self, color: Color) {
         self.clear_color = wgpu::Color {
-            r: color.r as f64,
-            g: color.g as f64,
-            b: color.b as f64,
-            a: color.a as f64,
+            r: f64::from(color.r),
+            g: f64::from(color.g),
+            b: f64::from(color.b),
+            a: f64::from(color.a),
         };
     }
 
     fn render_with_egui(
         &mut self,
         egui_state: &mut EguiState,
-        textures_delta: egui::TexturesDelta,
+        textures_delta: &egui::TexturesDelta,
         shapes: Vec<egui::epaint::ClippedShape>,
     ) -> std::result::Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
@@ -980,12 +986,12 @@ impl Renderer {
     fn render_with_egui_and_3d<F>(
         &mut self,
         egui_state: &mut EguiState,
-        textures_delta: egui::TexturesDelta,
+        textures_delta: &egui::TexturesDelta,
         shapes: Vec<egui::epaint::ClippedShape>,
         render_3d: F,
     ) -> std::result::Result<(), wgpu::SurfaceError>
     where
-        F: FnOnce(&mut RenderContext),
+        F: FnOnce(&mut RenderContext<'_>),
     {
         let output = self.surface.get_current_texture()?;
         let view = output
@@ -1085,23 +1091,5 @@ impl Renderer {
         output.present();
 
         Ok(())
-    }
-
-    /// Get the wgpu device
-    #[allow(dead_code)]
-    pub fn device(&self) -> &wgpu::Device {
-        &self.device
-    }
-
-    /// Get the wgpu queue
-    #[allow(dead_code)]
-    pub fn queue(&self) -> &wgpu::Queue {
-        &self.queue
-    }
-
-    /// Get the surface format
-    #[allow(dead_code)]
-    pub fn format(&self) -> wgpu::TextureFormat {
-        self.config.format
     }
 }

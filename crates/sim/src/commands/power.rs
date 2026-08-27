@@ -1,4 +1,4 @@
-//! Power command matching vanilla BPowerCommand.
+//! Power command matching vanilla `BPowerCommand`.
 
 use crate::EntityId;
 use crate::command::Command;
@@ -31,15 +31,14 @@ impl PowerCommandType {
     }
 }
 
-/// Power command flag bits.
-#[allow(dead_code)]
+/// Power command flag bits in the base command flag set.
 pub mod command_flags {
-    pub const GENERIC_0: usize = 8; // cNumberCommandFlags
+    pub const GENERIC_0: usize = 8;
     pub const GENERIC_1: usize = 9;
     pub const NO_COST: usize = 10;
 }
 
-/// Power command matching vanilla BPowerCommand.
+/// Power command matching vanilla `BPowerCommand`.
 #[derive(Debug, Clone, Default)]
 pub struct PowerCommand {
     /// Base command data.
@@ -58,7 +57,7 @@ pub struct PowerCommand {
     pub ability_squads: Vec<EntityId>,
     /// Power units.
     pub power_units: Vec<EntityId>,
-    /// Target location (BVector has 4 components).
+    /// Target location (`BVector` has 4 components).
     pub target_location: Vec4,
     /// Multiple target locations.
     pub target_locations: Vec<Vec4>,
@@ -70,23 +69,31 @@ pub struct PowerCommand {
 
 impl PowerCommand {
     /// Serialize the power-specific fields (after base command).
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if the writer fails or a collection is too large for the wire format.
     pub fn serialize_fields<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         writer.write_i32::<LittleEndian>(self.power_type as i32)?;
         writer.write_i32::<LittleEndian>(self.num_uses)?;
         writer.write_i32::<LittleEndian>(self.proto_power_id)?;
         writer.write_i32::<LittleEndian>(self.power_level)?;
         writer.write_i32::<LittleEndian>(self.ability_id)?;
-        writer.write_i32::<LittleEndian>(self.squad_id.as_u32() as i32)?;
-        writer.write_u32::<LittleEndian>(self.power_user_id as u32)?;
+        writer.write_i32::<LittleEndian>(self.squad_id.as_u32().cast_signed())?;
+        writer.write_u32::<LittleEndian>(self.power_user_id.cast_unsigned())?;
 
         // Ability squads
-        writer.write_u32::<LittleEndian>(self.ability_squads.len() as u32)?;
+        writer.write_u32::<LittleEndian>(u32::try_from(self.ability_squads.len()).map_err(
+            |_| io::Error::new(io::ErrorKind::InvalidInput, "too many ability squads"),
+        )?)?;
         for squad in &self.ability_squads {
-            writer.write_i32::<LittleEndian>(squad.as_u32() as i32)?;
+            writer.write_i32::<LittleEndian>(squad.as_u32().cast_signed())?;
         }
 
         // Target locations
-        writer.write_u32::<LittleEndian>(self.target_locations.len() as u32)?;
+        writer.write_u32::<LittleEndian>(u32::try_from(self.target_locations.len()).map_err(
+            |_| io::Error::new(io::ErrorKind::InvalidInput, "too many target locations"),
+        )?)?;
         for loc in &self.target_locations {
             writer.write_f32::<LittleEndian>(loc.x)?;
             writer.write_f32::<LittleEndian>(loc.y)?;
@@ -101,15 +108,22 @@ impl PowerCommand {
         writer.write_f32::<LittleEndian>(self.target_location.w)?;
 
         // Power units
-        writer.write_u32::<LittleEndian>(self.power_units.len() as u32)?;
+        writer
+            .write_u32::<LittleEndian>(u32::try_from(self.power_units.len()).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "too many power units")
+            })?)?;
         for unit in &self.power_units {
-            writer.write_i32::<LittleEndian>(unit.as_u32() as i32)?;
+            writer.write_i32::<LittleEndian>(unit.as_u32().cast_signed())?;
         }
 
         Ok(())
     }
 
     /// Deserialize the power-specific fields (after base command).
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if the reader does not contain a complete command.
     pub fn deserialize_fields<R: Read>(&mut self, reader: &mut R) -> io::Result<()> {
         let power_type = reader.read_i32::<LittleEndian>()?;
         self.power_type = PowerCommandType::from_i32(power_type).unwrap_or_default();
@@ -118,15 +132,16 @@ impl PowerCommand {
         self.power_level = reader.read_i32::<LittleEndian>()?;
         self.ability_id = reader.read_i32::<LittleEndian>()?;
         let squad_id = reader.read_i32::<LittleEndian>()?;
-        self.squad_id = EntityId::from_u32(squad_id as u32);
-        self.power_user_id = reader.read_u32::<LittleEndian>()? as i32;
+        self.squad_id = EntityId::from_u32(squad_id.cast_unsigned());
+        self.power_user_id = reader.read_u32::<LittleEndian>()?.cast_signed();
 
         // Ability squads
         let num_squads = reader.read_u32::<LittleEndian>()? as usize;
         self.ability_squads.clear();
         for _ in 0..num_squads {
             let id = reader.read_i32::<LittleEndian>()?;
-            self.ability_squads.push(EntityId::from_u32(id as u32));
+            self.ability_squads
+                .push(EntityId::from_u32(id.cast_unsigned()));
         }
 
         // Target locations
@@ -155,7 +170,8 @@ impl PowerCommand {
         self.power_units.clear();
         for _ in 0..num_units {
             let id = reader.read_i32::<LittleEndian>()?;
-            self.power_units.push(EntityId::from_u32(id as u32));
+            self.power_units
+                .push(EntityId::from_u32(id.cast_unsigned()));
         }
 
         Ok(())
