@@ -25,8 +25,7 @@ pub enum SquadState {
 
 /// Squad entity - the primary controllable unit in Halo Wars.
 ///
-/// Squads contain one or more units that move and act together.
-/// For MVP, we treat the squad as a single entity with position/velocity.
+/// Squads contain unit-pool IDs and provide the controllable group transform.
 #[derive(Debug, Clone)]
 pub struct Squad {
     /// Base entity data.
@@ -39,6 +38,8 @@ pub struct Squad {
     pub speed: f32,
     /// Proto squad ID (type of squad).
     pub proto_squad_id: i32,
+    /// Units in this squad, sorted by entity ID for deterministic iteration.
+    pub unit_ids: Vec<EntityId>,
 }
 
 impl Default for Squad {
@@ -49,6 +50,7 @@ impl Default for Squad {
             move_target: None,
             speed: 10.0, // Default speed
             proto_squad_id: -1,
+            unit_ids: Vec::new(),
         }
     }
 }
@@ -93,6 +95,34 @@ impl Squad {
     #[must_use]
     pub fn is_moving(&self) -> bool {
         self.state == SquadState::Moving
+    }
+
+    /// Add a unit ID while preserving deterministic sorted order.
+    ///
+    /// Returns `true` when the unit was newly added.
+    pub fn add_unit(&mut self, unit_id: EntityId) -> bool {
+        match self.unit_ids.binary_search(&unit_id) {
+            Ok(_) => false,
+            Err(index) => {
+                self.unit_ids.insert(index, unit_id);
+                true
+            }
+        }
+    }
+
+    /// Remove a unit ID from this squad.
+    pub fn remove_unit(&mut self, unit_id: EntityId) -> bool {
+        let Ok(index) = self.unit_ids.binary_search(&unit_id) else {
+            return false;
+        };
+        self.unit_ids.remove(index);
+        true
+    }
+
+    /// Check whether this squad contains a unit.
+    #[must_use]
+    pub fn contains_unit(&self, unit_id: EntityId) -> bool {
+        self.unit_ids.binary_search(&unit_id).is_ok()
     }
 
     /// Update movement for one tick.

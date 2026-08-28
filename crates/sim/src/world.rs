@@ -2,12 +2,14 @@
 //!
 //! Based on `BWorld` from the original source.
 
-use crate::entities::Squad;
-use crate::entity::EntityManager;
-use crate::entity_id::EntityClass;
+use crate::entities::{Base, BaseEntity, BaseId, Squad, Unit};
+use crate::entity::{Entity, EntityManager};
+use crate::entity_id::{EntityClass, EntityId};
 use crate::player::{GAIA_PLAYER, Player, PlayerId};
 use crate::random::Random;
 use crate::sync::SyncChecksum;
+use glam::Vec3;
+use std::collections::BTreeMap;
 
 /// Maximum supported players.
 pub const MAX_PLAYERS: usize = 8;
@@ -23,8 +25,14 @@ pub struct World {
     pub game_time_ms: u32,
     /// Deterministic RNG for the world.
     pub rng: Random,
+    /// Unit pool. Mobile units and buildings both use vanilla class 1.
+    pub units: EntityManager<Unit>,
     /// Squad entity manager.
     pub squads: EntityManager<Squad>,
+    /// Base ownership records, which are not standalone vanilla entities.
+    bases: BTreeMap<BaseId, Base>,
+    /// Next candidate base number.
+    next_base_id: u16,
 }
 
 impl Default for World {
@@ -41,7 +49,10 @@ impl World {
             players: Vec::new(),
             game_time_ms: 0,
             rng: Random::new(),
+            units: EntityManager::new(EntityClass::Unit),
             squads: EntityManager::new(EntityClass::Squad),
+            bases: BTreeMap::new(),
+            next_base_id: 0,
         }
     }
 
@@ -124,23 +135,19 @@ impl World {
     pub fn reset(&mut self) {
         self.players.clear();
         self.game_time_ms = 0;
+        self.units.clear();
         self.squads.clear();
+        self.bases.clear();
+        self.next_base_id = 0;
     }
 
     /// Create a new squad for the given player.
-    pub fn create_squad(&mut self, player_id: PlayerId) -> crate::entity_id::EntityId {
-        let id = self.squads.allocate_id();
-        let squad = Squad::new(id, player_id);
-        self.squads.insert(id, squad);
-        id
+    pub fn create_squad(&mut self, player_id: PlayerId) -> EntityId {
+        self.create_squad_at(player_id, Vec3::ZERO)
     }
 
     /// Create a new squad at a specific position.
-    pub fn create_squad_at(
-        &mut self,
-        player_id: PlayerId,
-        position: glam::Vec3,
-    ) -> crate::entity_id::EntityId {
+    pub fn create_squad_at(&mut self, player_id: PlayerId, position: Vec3) -> EntityId {
         let id = self.squads.allocate_id();
         let mut squad = Squad::new(id, player_id);
         squad.set_position(position);
@@ -150,18 +157,309 @@ impl World {
 
     /// Get a squad by ID.
     #[must_use]
-    pub fn get_squad(&self, id: crate::entity_id::EntityId) -> Option<&Squad> {
+    pub fn get_squad(&self, id: EntityId) -> Option<&Squad> {
         self.squads.get(id)
     }
 
     /// Get a mutable squad by ID.
-    pub fn get_squad_mut(&mut self, id: crate::entity_id::EntityId) -> Option<&mut Squad> {
+    pub fn get_squad_mut(&mut self, id: EntityId) -> Option<&mut Squad> {
         self.squads.get_mut(id)
+    }
+
+    /// Remove a squad and detach its surviving units.
+    pub fn remove_squad(&mut self, id: EntityId) -> Option<Squad> {
+        let squad = self.squads.remove(id)?;
+        for unit_id in &squad.unit_ids {
+            if let Some(unit) = self.units.get_mut(*unit_id)
+                && unit.squad_id == Some(id)
+            {
+                unit.squad_id = None;
+                unit.stop();
+            }
+        }
+        Some(squad)
+    }
+
+    /// Create a standalone mobile unit at the origin.
+    pub fn create_unit(&mut self, player_id: PlayerId) -> EntityId {
+        self.create_unit_at(player_id, Vec3::ZERO)
+    }
+
+    /// Create a standalone mobile unit.
+    pub fn create_unit_at(&mut self, player_id: PlayerId, position: Vec3) -> EntityId {
+        let id = self.units.allocate_id();
+        let mut unit = Unit::new(id, player_id);
+        unit.base.set_position(position);
+        self.units.insert(id, unit);
+        id
+    }
+
+    /// Create a building at the origin. Buildings occupy the unit pool.
+    pub fn create_building(&mut self, player_id: PlayerId) -> EntityId {
+        self.create_building_at(player_id, Vec3::ZERO)
+    }
+
+    /// Create an immobile building in the unit pool.
+    pub fn create_building_at(&mut self, player_id: PlayerId, position: Vec3) -> EntityId {
+        let id = self.units.allocate_id();
+        let mut building = Unit::new_building(id, player_id);
+        building.base.set_position(position);
+        self.units.insert(id, building);
+        id
+    }
+
+    /// Get a mobile unit or building by its current generational ID.
+    #[must_use]
+    pub fn get_unit(&self, id: EntityId) -> Option<&Unit> {
+        self.units.get(id)
+    }
+
+    /// Mutably get a mobile unit or building.
+    pub fn get_unit_mut(&mut self, id: EntityId) -> Option<&mut Unit> {
+        self.units.get_mut(id)
+    }
+
+    /// Get a unit only when it is a building.
+    #[must_use]
+    pub fn get_building(&self, id: EntityId) -> Option<&Unit> {
+        self.units.get(id).filter(|unit| unit.is_building())
+    }
+
+    /// Mutably get a unit only when it is a building.
+    pub fn get_building_mut(&mut self, id: EntityId) -> Option<&mut Unit> {
+        self.units.get_mut(id).filter(|unit| unit.is_building())
+    }
+
+    /// Remove a unit or building and clean up squad/base membership.
+    pub fn remove_unit(&mut self, id: EntityId) -> Option<Unit> {
+        let unit = self.units.remove(id)?;
+        if let Some(squad_id) = unit.squad_id
+            && let Some(squad) = self.squads.get_mut(squad_id)
+        {
+            squad.remove_unit(id);
+        }
+        if let Some(base_id) = unit.base_id {
+            self.detach_removed_building(base_id, id);
+        }
+        Some(unit)
+    }
+
+    /// Attach a mobile unit to a same-player squad.
+    pub fn attach_unit_to_squad(&mut self, unit_id: EntityId, squad_id: EntityId) -> bool {
+        let Some(unit) = self.units.get(unit_id) else {
+            return false;
+        };
+        let Some(squad) = self.squads.get(squad_id) else {
+            return false;
+        };
+        if unit.is_building() || unit.base.player_id != squad.base.player_id {
+            return false;
+        }
+        let old_squad_id = unit.squad_id;
+        let formation_offset = unit.base.position - squad.base.position;
+        if old_squad_id == Some(squad_id) {
+            return true;
+        }
+        if let Some(old_id) = old_squad_id
+            && let Some(old_squad) = self.squads.get_mut(old_id)
+        {
+            old_squad.remove_unit(unit_id);
+        }
+        let Some(squad) = self.squads.get_mut(squad_id) else {
+            return false;
+        };
+        squad.add_unit(unit_id);
+        let Some(unit) = self.units.get_mut(unit_id) else {
+            if let Some(squad) = self.squads.get_mut(squad_id) {
+                squad.remove_unit(unit_id);
+            }
+            return false;
+        };
+        unit.squad_id = Some(squad_id);
+        unit.formation_offset = formation_offset;
+        unit.stop();
+        true
+    }
+
+    /// Detach a unit from its current squad.
+    pub fn detach_unit_from_squad(&mut self, unit_id: EntityId) -> bool {
+        let Some(squad_id) = self.units.get(unit_id).and_then(|unit| unit.squad_id) else {
+            return false;
+        };
+        if let Some(squad) = self.squads.get_mut(squad_id) {
+            squad.remove_unit(unit_id);
+        }
+        let Some(unit) = self.units.get_mut(unit_id) else {
+            return false;
+        };
+        unit.squad_id = None;
+        unit.stop();
+        true
+    }
+
+    /// Create a generic anchor building and register it as a base.
+    pub fn create_base(&mut self, player_id: PlayerId, position: Vec3) -> BaseId {
+        let anchor_id = self.create_building_at(player_id, position);
+        let base_id = self.allocate_base_id();
+        self.bases
+            .insert(base_id, Base::new(base_id, player_id, anchor_id, position));
+        if let Some(anchor) = self.units.get_mut(anchor_id) {
+            anchor.base_id = Some(base_id);
+        }
+        base_id
+    }
+
+    /// Register an existing unassigned building as a base anchor.
+    pub fn register_base(&mut self, anchor_id: EntityId) -> Option<BaseId> {
+        let anchor = self.get_building(anchor_id)?;
+        if anchor.base_id.is_some() {
+            return None;
+        }
+        let player_id = anchor.base.player_id;
+        let position = anchor.base.position;
+        let base_id = self.allocate_base_id();
+        self.bases
+            .insert(base_id, Base::new(base_id, player_id, anchor_id, position));
+        let Some(anchor) = self.units.get_mut(anchor_id) else {
+            self.bases.remove(&base_id);
+            return None;
+        };
+        anchor.base_id = Some(base_id);
+        Some(base_id)
+    }
+
+    /// Add an unassigned, same-player building to a base.
+    pub fn add_building_to_base(&mut self, base_id: BaseId, building_id: EntityId) -> bool {
+        let Some(base) = self.bases.get(&base_id) else {
+            return false;
+        };
+        let Some(building) = self.get_building(building_id) else {
+            return false;
+        };
+        if building.base_id.is_some() || building.base.player_id != base.player_id {
+            return false;
+        }
+        let Some(base) = self.bases.get_mut(&base_id) else {
+            return false;
+        };
+        base.add_building(building_id);
+        let Some(building) = self.units.get_mut(building_id) else {
+            if let Some(base) = self.bases.get_mut(&base_id) {
+                base.remove_building(building_id);
+            }
+            return false;
+        };
+        building.base_id = Some(base_id);
+        true
+    }
+
+    /// Get a base record.
+    #[must_use]
+    pub fn get_base(&self, id: BaseId) -> Option<&Base> {
+        self.bases.get(&id)
+    }
+
+    /// Iterate over bases in deterministic base-number order.
+    pub fn bases(&self) -> impl Iterator<Item = (&BaseId, &Base)> {
+        self.bases.iter()
+    }
+
+    /// Destroy a base and all buildings currently assigned to it.
+    pub fn destroy_base(&mut self, id: BaseId) -> bool {
+        let Some(base) = self.bases.remove(&id) else {
+            return false;
+        };
+        let building_ids: Vec<_> = base.buildings().collect();
+        for building_id in building_ids {
+            let _removed = self.remove_unit(building_id);
+        }
+        true
     }
 
     /// Update all entities for one tick.
     pub fn update_entities(&mut self, dt: f32) {
-        self.squads.update_all(dt);
+        for (_, squad) in self.squads.iter_mut() {
+            squad.update(dt);
+        }
+        let dead_squads: Vec<_> = self
+            .squads
+            .iter()
+            .filter_map(|(id, squad)| (!squad.is_alive()).then_some(id))
+            .collect();
+        for id in dead_squads {
+            let _removed = self.remove_squad(id);
+        }
+
+        for (_, unit) in self.units.iter_mut() {
+            unit.update(dt);
+        }
+        let dead_units: Vec<_> = self
+            .units
+            .iter()
+            .filter_map(|(id, unit)| (!unit.is_alive()).then_some(id))
+            .collect();
+        for id in dead_units {
+            let _removed = self.remove_unit(id);
+        }
+        self.sync_squad_units();
+    }
+
+    fn allocate_base_id(&mut self) -> BaseId {
+        for _ in 0..=u32::from(u16::MAX) {
+            let id = BaseId::new(self.next_base_id);
+            self.next_base_id = self.next_base_id.wrapping_add(1);
+            if !self.bases.contains_key(&id) {
+                return id;
+            }
+        }
+        panic!("base ID space exhausted");
+    }
+
+    fn detach_removed_building(&mut self, base_id: BaseId, building_id: EntityId) {
+        let is_anchor = self
+            .bases
+            .get(&base_id)
+            .is_some_and(|base| base.anchor_building_id == building_id);
+        if is_anchor {
+            if let Some(base) = self.bases.remove(&base_id) {
+                for other_id in base.buildings() {
+                    if let Some(other) = self.units.get_mut(other_id) {
+                        other.base_id = None;
+                    }
+                }
+            }
+        } else if let Some(base) = self.bases.get_mut(&base_id) {
+            base.remove_building(building_id);
+        }
+    }
+
+    fn sync_squad_units(&mut self) {
+        let squads: Vec<_> = self
+            .squads
+            .iter()
+            .map(|(id, squad)| {
+                (
+                    id,
+                    squad.base.position,
+                    squad.base.forward,
+                    squad.base.velocity,
+                    squad.unit_ids.clone(),
+                )
+            })
+            .collect();
+        for (squad_id, position, forward, velocity, unit_ids) in squads {
+            for unit_id in unit_ids {
+                let Some(unit) = self.units.get_mut(unit_id) else {
+                    continue;
+                };
+                if unit.squad_id != Some(squad_id) {
+                    continue;
+                }
+                unit.base.position = position + unit.formation_offset;
+                unit.base.forward = forward;
+                unit.base.velocity = velocity;
+            }
+        }
     }
 
     /// Compute a checksum of the entire world state for sync verification.
@@ -171,75 +469,11 @@ impl World {
     #[must_use]
     pub fn checksum(&self) -> u32 {
         let mut cs = SyncChecksum::new();
-
-        // Hash game time
         cs.hash_u32(self.game_time_ms);
-
-        // Hash player count
-        cs.hash_u32(u32::try_from(self.players.len()).unwrap_or(u32::MAX));
-
-        // Hash each player's state
-        for player in &self.players {
-            cs.hash_u32(u32::from(player.id));
-            cs.hash_u32(u32::from(player.team_id));
-            cs.hash_i32(player.civ_id);
-            cs.hash_i32(player.leader_id);
-            cs.hash_u32(player.state as u32);
-            cs.hash_u32(player.player_type as u32);
-
-            // Hash resources
-            for &amount in &player.resources.amounts {
-                cs.hash_f32(amount);
-            }
-
-            // Hash population
-            for pop in &player.population {
-                cs.hash_f32(pop.count);
-                cs.hash_f32(pop.max);
-                cs.hash_f32(pop.cap);
-                cs.hash_f32(pop.future);
-            }
-        }
-
-        // Hash squad count
-        cs.hash_u32(u32::try_from(self.squads.len()).unwrap_or(u32::MAX));
-
-        // Hash each squad's state (iteration order is deterministic via BTreeMap)
-        for (_id, squad) in self.squads.iter() {
-            // Base entity data
-            cs.hash_u32(squad.base.id.as_u32());
-            cs.hash_u32(u32::from(squad.base.player_id));
-            cs.hash_vec3(
-                squad.base.position.x,
-                squad.base.position.y,
-                squad.base.position.z,
-            );
-            cs.hash_vec3(
-                squad.base.forward.x,
-                squad.base.forward.y,
-                squad.base.forward.z,
-            );
-            cs.hash_vec3(
-                squad.base.velocity.x,
-                squad.base.velocity.y,
-                squad.base.velocity.z,
-            );
-            cs.hash_u32(u32::from(squad.base.alive));
-
-            // Squad-specific data
-            cs.hash_u32(squad.state as u32);
-            cs.hash_f32(squad.speed);
-            cs.hash_i32(squad.proto_squad_id);
-
-            // Move target (if any)
-            if let Some(target) = squad.move_target {
-                cs.hash_u32(1); // has target
-                cs.hash_vec3(target.x, target.y, target.z);
-            } else {
-                cs.hash_u32(0); // no target
-            }
-        }
-
+        hash_players(&mut cs, &self.players);
+        hash_units(&mut cs, &self.units);
+        hash_squads(&mut cs, &self.squads);
+        hash_bases(&mut cs, &self.bases);
         cs.value()
     }
 
@@ -264,6 +498,105 @@ impl World {
 
         cs.value()
     }
+}
+
+fn hash_players(cs: &mut SyncChecksum, players: &[Player]) {
+    cs.hash_u32(u32::try_from(players.len()).unwrap_or(u32::MAX));
+    for player in players {
+        cs.hash_u32(u32::from(player.id));
+        cs.hash_u32(u32::from(player.team_id));
+        cs.hash_i32(player.civ_id);
+        cs.hash_i32(player.leader_id);
+        cs.hash_u32(player.state as u32);
+        cs.hash_u32(player.player_type as u32);
+        for &amount in &player.resources.amounts {
+            cs.hash_f32(amount);
+        }
+        for population in &player.population {
+            cs.hash_f32(population.count);
+            cs.hash_f32(population.max);
+            cs.hash_f32(population.cap);
+            cs.hash_f32(population.future);
+        }
+    }
+}
+
+fn hash_units(cs: &mut SyncChecksum, units: &EntityManager<Unit>) {
+    cs.hash_u32(u32::try_from(units.len()).unwrap_or(u32::MAX));
+    for (_, unit) in units.iter() {
+        hash_base_entity(cs, &unit.base);
+        cs.hash_u32(unit.kind as u32);
+        cs.hash_u32(unit.state as u32);
+        cs.hash_i32(unit.proto_object_id);
+        cs.hash_u32(u32::try_from(unit.proto_object_name.len()).unwrap_or(u32::MAX));
+        cs.hash_bytes(unit.proto_object_name.as_bytes());
+        cs.hash_f32(unit.hitpoints);
+        cs.hash_f32(unit.max_hitpoints);
+        cs.hash_f32(unit.speed);
+        hash_optional_vec3(cs, unit.move_target);
+        hash_optional_entity_id(cs, unit.squad_id);
+        hash_optional_base_id(cs, unit.base_id);
+        cs.hash_vec3(
+            unit.formation_offset.x,
+            unit.formation_offset.y,
+            unit.formation_offset.z,
+        );
+    }
+}
+
+fn hash_squads(cs: &mut SyncChecksum, squads: &EntityManager<Squad>) {
+    cs.hash_u32(u32::try_from(squads.len()).unwrap_or(u32::MAX));
+    for (_, squad) in squads.iter() {
+        hash_base_entity(cs, &squad.base);
+        cs.hash_u32(squad.state as u32);
+        cs.hash_f32(squad.speed);
+        cs.hash_i32(squad.proto_squad_id);
+        hash_optional_vec3(cs, squad.move_target);
+        cs.hash_u32(u32::try_from(squad.unit_ids.len()).unwrap_or(u32::MAX));
+        for &unit_id in &squad.unit_ids {
+            cs.hash_u32(unit_id.as_u32());
+        }
+    }
+}
+
+fn hash_bases(cs: &mut SyncChecksum, bases: &BTreeMap<BaseId, Base>) {
+    cs.hash_u32(u32::try_from(bases.len()).unwrap_or(u32::MAX));
+    for (id, base) in bases {
+        cs.hash_u32(u32::from(id.as_u16()));
+        cs.hash_u32(u32::from(base.player_id));
+        cs.hash_u32(base.anchor_building_id.as_u32());
+        cs.hash_vec3(base.position.x, base.position.y, base.position.z);
+        cs.hash_u32(u32::try_from(base.building_count()).unwrap_or(u32::MAX));
+        for building_id in base.buildings() {
+            cs.hash_u32(building_id.as_u32());
+        }
+    }
+}
+
+fn hash_base_entity(cs: &mut SyncChecksum, entity: &BaseEntity) {
+    cs.hash_u32(entity.id.as_u32());
+    cs.hash_u32(u32::from(entity.player_id));
+    cs.hash_vec3(entity.position.x, entity.position.y, entity.position.z);
+    cs.hash_vec3(entity.forward.x, entity.forward.y, entity.forward.z);
+    cs.hash_vec3(entity.velocity.x, entity.velocity.y, entity.velocity.z);
+    cs.hash_u32(u32::from(entity.alive));
+}
+
+fn hash_optional_vec3(cs: &mut SyncChecksum, value: Option<Vec3>) {
+    if let Some(value) = value {
+        cs.hash_u32(1);
+        cs.hash_vec3(value.x, value.y, value.z);
+    } else {
+        cs.hash_u32(0);
+    }
+}
+
+fn hash_optional_entity_id(cs: &mut SyncChecksum, value: Option<EntityId>) {
+    cs.hash_u32(value.map_or(EntityId::INVALID.as_u32(), EntityId::as_u32));
+}
+
+fn hash_optional_base_id(cs: &mut SyncChecksum, value: Option<BaseId>) {
+    cs.hash_u32(value.map_or(u32::MAX, |id| u32::from(id.as_u16())));
 }
 
 #[cfg(test)]
@@ -471,5 +804,85 @@ mod tests {
             squad1_pos, squad2_pos,
             "Squad should have moved after update"
         );
+    }
+
+    #[test]
+    fn buildings_share_the_unit_pool() {
+        let mut world = World::new();
+        let building_id = world.create_building_at(1, Vec3::new(4.0, 0.0, 8.0));
+
+        assert_eq!(building_id.class(), Some(EntityClass::Unit));
+        assert!(world.get_building(building_id).is_some());
+        assert!(!world.get_unit_mut(building_id).unwrap().move_to(Vec3::X));
+    }
+
+    #[test]
+    fn squad_members_follow_the_squad_transform() {
+        let mut world = World::new();
+        let squad_id = world.create_squad_at(1, Vec3::ZERO);
+        let unit_id = world.create_unit_at(1, Vec3::X);
+        assert!(world.attach_unit_to_squad(unit_id, squad_id));
+
+        world
+            .get_squad_mut(squad_id)
+            .unwrap()
+            .move_to(Vec3::new(10.0, 0.0, 0.0));
+        world.update_entities(0.1);
+
+        let squad_x = world.get_squad(squad_id).unwrap().base.position.x;
+        let unit_x = world.get_unit(unit_id).unwrap().base.position.x;
+        assert!((unit_x - squad_x - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn detached_units_stop_inheriting_squad_motion() {
+        let mut world = World::new();
+        let squad_id = world.create_squad_at(1, Vec3::ZERO);
+        let unit_id = world.create_unit_at(1, Vec3::X);
+        assert!(world.attach_unit_to_squad(unit_id, squad_id));
+        world
+            .get_squad_mut(squad_id)
+            .unwrap()
+            .move_to(Vec3::X * 10.0);
+        world.update_entities(0.1);
+
+        assert!(world.detach_unit_from_squad(unit_id));
+        let detached_position = world.get_unit(unit_id).unwrap().base.position;
+        assert_eq!(world.get_unit(unit_id).unwrap().base.velocity, Vec3::ZERO);
+        assert!(world.get_unit_mut(unit_id).unwrap().move_to(Vec3::X * 20.0));
+        world.update_entities(0.1);
+
+        assert_ne!(
+            world.get_unit(unit_id).unwrap().base.position,
+            detached_position
+        );
+    }
+
+    #[test]
+    fn removing_an_anchor_dissolves_base_membership() {
+        let mut world = World::new();
+        let anchor_id = world.create_building(1);
+        let base_id = world.register_base(anchor_id).unwrap();
+        let second_id = world.create_building(1);
+        assert!(world.add_building_to_base(base_id, second_id));
+
+        let removed = world.remove_unit(anchor_id);
+
+        assert!(removed.is_some());
+        assert!(world.get_base(base_id).is_none());
+        assert_eq!(world.get_building(second_id).unwrap().base_id, None);
+    }
+
+    #[test]
+    fn dead_units_are_removed_and_stale_ids_fail() {
+        let mut world = World::new();
+        let old_id = world.create_unit(1);
+        world.get_unit_mut(old_id).unwrap().kill();
+        world.update_entities(0.05);
+        let replacement_id = world.create_unit(1);
+
+        assert!(world.get_unit(old_id).is_none());
+        assert_eq!(old_id.pool_index(), replacement_id.pool_index());
+        assert_ne!(old_id.generation(), replacement_id.generation());
     }
 }

@@ -55,6 +55,8 @@ impl CommandExecutor {
             for &recipient_id in &cmd.base.recipients {
                 if let Some(squad) = world.get_squad_mut(recipient_id) {
                     squad.move_to(target);
+                } else if let Some(unit) = world.get_unit_mut(recipient_id) {
+                    unit.move_to(target);
                 }
             }
         }
@@ -67,6 +69,8 @@ impl CommandExecutor {
             for &recipient_id in &cmd.base.recipients {
                 if let Some(squad) = world.get_squad_mut(recipient_id) {
                     squad.move_to(target);
+                } else if let Some(unit) = world.get_unit_mut(recipient_id) {
+                    unit.move_to(target);
                 }
             }
         }
@@ -150,5 +154,32 @@ mod tests {
         assert!(squad.position().x > 0.0);
         assert!(squad.position().x < 100.0);
         assert_eq!(squad.state, SquadState::Moving);
+    }
+
+    #[test]
+    fn test_move_command_moves_standalone_unit() {
+        let mut world = World::new();
+        let unit_id = world.create_unit(1);
+        let target = Vec3::new(25.0, 0.0, 10.0);
+        let work_cmd = WorkCommand {
+            base: Command {
+                id: OrderType::Move as i32,
+                player_id: 1,
+                recipients: vec![unit_id],
+                ..Default::default()
+            },
+            terrain_point: Some(target),
+            ..Default::default()
+        };
+        let entry = CommandEntry {
+            command: QueuedCommand::Work(work_cmd),
+            exec_time: 0,
+            sequence: 0,
+            source_client: 1,
+        };
+
+        CommandExecutor::new().execute(&mut world, &entry);
+
+        assert_eq!(world.get_unit(unit_id).unwrap().move_target, Some(target));
     }
 }

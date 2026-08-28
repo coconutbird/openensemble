@@ -10,10 +10,14 @@
 //!   - `BPlatoon` - group of squads
 //!   - `BArmy` - player's forces
 //!
-//! For MVP, we implement Squad as the primary entity.
+//! The MVP implements mobile units, buildings, squads, and base ownership.
 
 mod base;
+mod base_site;
 mod squad;
+mod unit;
 
 pub use base::BaseEntity;
+pub use base_site::{Base, BaseId};
 pub use squad::{Squad, SquadState};
+pub use unit::{Unit, UnitKind, UnitState};
