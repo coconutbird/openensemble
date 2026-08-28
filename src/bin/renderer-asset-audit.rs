@@ -92,8 +92,10 @@ fn print_placement_height_oracle(world: &hw1::World) {
         }
         let proto = object.proto_name.to_ascii_lowercase();
         if proto.contains("teleporter") || proto.contains("base_socket") {
+            let world_position = render::ugx::scenario_object_position_to_world(position);
+            let terrain_position = terrain_position(&raw, world_position);
             println!(
-                "  id={} proto={:?} direct={direct:?} transposed={transposed:?}",
+                "  id={} proto={:?} direct={direct:?} transposed={transposed:?} terrain_position={terrain_position:?}",
                 object.id, object.proto_name,
             );
         }
@@ -105,6 +107,111 @@ fn print_placement_height_oracle(world: &hw1::World) {
             transposed_error / sample_count,
         );
     }
+    println!("  player-start height deltas (direct, transposed):");
+    for start in scenario.positions() {
+        let [x, y, z] = start.position_vec3();
+        let direct = height_delta(&raw, x, z, y);
+        let transposed = height_delta(&raw, z, x, y);
+        println!("    number={}: {direct:?}, {transposed:?}", start.number);
+    }
+    print_axis_height_oracle(scenario.objects(), &raw);
+    print_proto_height_oracle(scenario.objects(), &raw);
+}
+
+fn print_proto_height_oracle(
+    objects: &[pipeline::hw1::scenario::ScenarioObject],
+    raw: &pipeline::xtd::RawTerrainData,
+) {
+    let mut errors = BTreeMap::<String, (f32, f32, u32)>::new();
+    for object in objects {
+        let [x, y, z] = object.position_vec3();
+        let (Some(direct), Some(transposed)) =
+            (height_delta(raw, x, z, y), height_delta(raw, z, x, y))
+        else {
+            continue;
+        };
+        let proto_name = object.proto_name.trim();
+        let key = if proto_name.is_empty() {
+            format!("<{}>", object.editor_name)
+        } else {
+            proto_name.to_ascii_lowercase()
+        };
+        let entry = errors.entry(key).or_default();
+        entry.0 += direct.abs();
+        entry.1 += transposed.abs();
+        entry.2 += 1;
+    }
+
+    println!("  per-prototype mean absolute height deltas (direct, transposed):");
+    for (proto_name, (direct, transposed, count)) in errors {
+        let count = count.to_f32().unwrap_or(1.0);
+        println!(
+            "    {proto_name}: {:.3}, {:.3} ({count:.0})",
+            direct / count,
+            transposed / count,
+        );
+    }
+}
+
+fn print_axis_height_oracle(
+    objects: &[pipeline::hw1::scenario::ScenarioObject],
+    raw: &pipeline::xtd::RawTerrainData,
+) {
+    type AxisTransform = fn(f32, f32, f32) -> [f32; 2];
+    let extent = raw
+        .num_verts_per_axis
+        .saturating_sub(1)
+        .to_f32()
+        .unwrap_or_default()
+        * raw.tile_scale;
+    let transforms: [(&str, AxisTransform); 8] = [
+        ("x,z", |x: f32, z: f32, _extent: f32| [x, z]),
+        ("z,x", |x: f32, z: f32, _extent: f32| [z, x]),
+        ("-x,z", |x: f32, z: f32, extent: f32| [extent - x, z]),
+        ("x,-z", |x: f32, z: f32, extent: f32| [x, extent - z]),
+        ("-x,-z", |x: f32, z: f32, extent: f32| {
+            [extent - x, extent - z]
+        }),
+        ("-z,-x", |x: f32, z: f32, extent: f32| {
+            [extent - z, extent - x]
+        }),
+        ("-z,x", |x: f32, z: f32, extent: f32| [extent - z, x]),
+        ("z,-x", |x: f32, z: f32, extent: f32| [z, extent - x]),
+    ];
+    println!("  axis transform mean absolute height deltas:");
+    for (name, transform) in transforms {
+        let mut error = 0.0_f32;
+        let mut count = 0_u32;
+        for object in objects {
+            let [x, y, z] = object.position_vec3();
+            let [world_x, world_z] = transform(x, z, extent);
+            if let Some(delta) = height_delta(raw, world_x, world_z, y) {
+                error += delta.abs();
+                count += 1;
+            }
+        }
+        if let Some(count) = count.to_f32().filter(|count| *count > 0.0) {
+            println!("    {name}: {:.3}", error / count);
+        }
+    }
+}
+
+fn terrain_position(
+    raw: &pipeline::xtd::RawTerrainData,
+    grid_position: [f32; 3],
+) -> Option<[f32; 3]> {
+    let dimension = raw.num_verts_per_axis;
+    let last = dimension.checked_sub(1)?.to_f32()?;
+    let grid_x = grid_position[0].round().clamp(0.0, last).to_u32()?;
+    let grid_z = grid_position[2].round().clamp(0.0, last).to_u32()?;
+    let index = grid_z.checked_mul(dimension)?.checked_add(grid_x)?;
+    let packed = *raw.packed_positions.get(index.to_usize()?)?;
+    let displacement = pipeline::xtd::unpack_position(packed, &raw.mid, &raw.range);
+    Some([
+        grid_position[0] * raw.tile_scale + displacement[2],
+        grid_position[1],
+        grid_position[2] * raw.tile_scale + displacement[0],
+    ])
 }
 
 fn height_delta(
@@ -147,15 +254,41 @@ fn print_scenario_placements(world: &hw1::World) {
         println!("scenario has no decoded placement data");
         return;
     };
+    let max_players = world
+        .scenario
+        .as_ref()
+        .map(|descriptor| descriptor.max_players);
+    let position_axes = render::ugx::ScenarioPositionAxes::infer(scenario, max_players);
+    println!("scenario max players: {max_players:?}");
+    println!("scenario sim bounds: {:?}", scenario.sim_bounds());
+    println!("scenario object axes: Transposed");
+    println!("scenario player-start axes: {position_axes:?}");
+    if let Some(raw) = world
+        .terrain_data
+        .as_ref()
+        .and_then(|terrain| terrain.extract_raw_data().ok())
+    {
+        println!(
+            "terrain coordinates: dimension={} tile_scale={} world_min={:?} world_max={:?} mid={:?} range={:?}",
+            raw.num_verts_per_axis,
+            raw.tile_scale,
+            raw.world_min,
+            raw.world_max,
+            raw.mid,
+            raw.range,
+        );
+    }
     println!("player start positions:");
     for position in scenario.positions() {
         let authored_position = position.position_vec3();
+        let authored_forward = position.forward_vec3();
         println!(
-            "  player={} number={} authored={authored_position:?} world={:?} forward={:?}",
+            "  player={} number={} default_camera={} authored={authored_position:?} world={:?} authored_forward={authored_forward:?} world_forward={:?}",
             position.player,
             position.number,
-            authored_position,
-            position.forward_vec3(),
+            position.default_camera,
+            position_axes.position_to_world(authored_position),
+            position_axes.direction_to_world(authored_forward),
         );
     }
     println!("scenario objects:");

@@ -198,7 +198,9 @@ impl TerrainScene {
         let vertices = xtd
             .decode_vertices()
             .map_err(|e| format!("Failed to decode vertices: {e}"))?;
-        let indices = vertices.generate_indices();
+        let indices = vertices
+            .generate_indices()
+            .map_err(|e| format!("Failed to generate terrain indices: {e}"))?;
 
         Ok(TerrainMesh::new(
             vertices.positions,

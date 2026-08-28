@@ -336,6 +336,10 @@ fn load_scenario_inputs(scenario_name: &str) -> Result<TerrainLoadInputs, String
                 scenario,
                 &world.visuals,
                 &world.database.objects,
+                world
+                    .scenario
+                    .as_ref()
+                    .map(|descriptor| descriptor.max_players),
                 proto_name,
             )
         } else {

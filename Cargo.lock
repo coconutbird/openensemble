@@ -230,6 +230,7 @@ name = "bdt"
 version = "0.1.0"
 dependencies = [
  "hashbrown 0.16.1",
+ "nostdio",
  "num-traits",
  "thiserror 2.0.18",
  "zerocopy",
@@ -443,18 +444,9 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 [[package]]
 name = "cfglib"
 version = "0.1.0"
-source = "git+https://github.com/coconutbird/cfglib.git#e11c047cb4684e7109b18273217382ea58f1e06c"
+source = "git+https://github.com/coconutbird/cfglib.git?branch=dev%2Fil#605a6f639476259a45ef375c345d1567f88bbc8a"
 dependencies = [
  "smallvec",
-]
-
-[[package]]
-name = "cfglib-dxbc"
-version = "0.1.0"
-source = "git+https://github.com/coconutbird/cfglib.git#e11c047cb4684e7109b18273217382ea58f1e06c"
-dependencies = [
- "cfglib",
- "dxbc",
 ]
 
 [[package]]
@@ -628,10 +620,10 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 [[package]]
 name = "d3dasm"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83f8e63a97446e8ebcb1f5aeb3a5f79573b8db12b7b4eadc3d30db9d1cc6bd01"
+source = "git+https://github.com/coconutbird/d3dasm.git?branch=main#94ea541d331104c1bd0736d181bc0573813ff485"
 dependencies = [
  "dxbc",
+ "smallvec",
 ]
 
 [[package]]
@@ -660,6 +652,7 @@ version = "0.1.0"
 dependencies = [
  "ecf",
  "miniz_oxide",
+ "nostdio",
  "texture2ddecoder",
  "thiserror 2.0.18",
  "zerocopy",
@@ -764,8 +757,7 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 [[package]]
 name = "dxbc"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eba0f1e2b76b5c40dd1e2c55bd49f58d84dbca55cee202f00ddabda80454f4c2"
+source = "git+https://github.com/coconutbird/d3dasm.git?branch=main#94ea541d331104c1bd0736d181bc0573813ff485"
 dependencies = [
  "memchr",
  "nostdio",
@@ -1969,9 +1961,9 @@ checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
 
 [[package]]
 name = "nostdio"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4dd90a73af33ea00621a62c02e1c918457df504135180c959577099f043b9e2e"
+checksum = "e818b1435af48545c0f098dc3f267548c7c01640651c8f556f8123562df0be54"
 
 [[package]]
 name = "num-traits"
@@ -3409,7 +3401,6 @@ name = "ufx"
 version = "0.1.0"
 dependencies = [
  "cfglib",
- "cfglib-dxbc",
  "d3dasm",
  "nostdio",
 ]
@@ -3422,6 +3413,7 @@ dependencies = [
  "ecf",
  "half",
  "nostdio",
+ "num-traits",
  "thiserror 2.0.18",
  "ufx",
  "zerocopy",
@@ -4422,6 +4414,7 @@ version = "0.1.0"
 dependencies = [
  "bdt",
  "ecf",
+ "nostdio",
  "thiserror 2.0.18",
  "xml",
  "zerocopy",
@@ -4451,6 +4444,8 @@ name = "xtd"
 version = "0.1.0"
 dependencies = [
  "ecf",
+ "nostdio",
+ "num-traits",
  "thiserror 2.0.18",
  "zerocopy",
 ]
@@ -4461,6 +4456,7 @@ version = "0.1.0"
 dependencies = [
  "ecf",
  "half",
+ "nostdio",
  "texture2ddecoder",
  "thiserror 2.0.18",
  "zerocopy",

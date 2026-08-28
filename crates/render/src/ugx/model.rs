@@ -399,7 +399,12 @@ impl Model {
                             section: section_index,
                             reason: error.to_string(),
                         })?;
-                let indices = geometry.get_section_indices(section_index);
+                let indices = geometry
+                    .get_section_indices(section_index)
+                    .map_err(|error| LoadError::InvalidSection {
+                        section: section_index,
+                        reason: error.to_string(),
+                    })?;
                 if let Some(&invalid) = indices
                     .iter()
                     .find(|&&index| usize::from(index) >= unpacked.len())

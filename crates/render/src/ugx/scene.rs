@@ -15,6 +15,81 @@ use crate::environment::EnvironmentMap;
 use crate::terrain::LightingParams;
 use crate::{RenderPhase, WorldRenderer};
 
+/// Horizontal axis convention used by scenario `<Position>` records.
+///
+/// Persistent `<Object>` records always use the XTD storage transpose. Player
+/// positions vary between maps, so nearby transposed `sys_unitstart` object
+/// markers provide map-local evidence for their convention.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ScenarioPositionAxes {
+    /// Position X/Z values are already expressed in terrain-world order.
+    #[default]
+    AuthoredWorld,
+    /// Position X/Z values use the diagonally transposed terrain storage order.
+    Transposed,
+}
+
+impl ScenarioPositionAxes {
+    /// Infers the player-position convention from unit-start object markers.
+    ///
+    /// Maps without usable marker evidence retain the direct convention used
+    /// by Blood Gulch and the original player-start implementation.
+    #[must_use]
+    pub fn infer(scenario: &ScenarioData, max_players: Option<u32>) -> Self {
+        let mut authored_score = 0.0;
+        let mut transposed_score = 0.0;
+        let mut evidence_count = 0_u32;
+
+        for start in scenario
+            .positions()
+            .iter()
+            .filter(|start| is_player_start(start, max_players))
+        {
+            let authored = Self::AuthoredWorld.position_to_world(start.position_vec3());
+            let transposed = Self::Transposed.position_to_world(start.position_vec3());
+            let Some(authored_distance) = nearest_unit_start_distance_squared(scenario, authored)
+            else {
+                continue;
+            };
+            let Some(transposed_distance) =
+                nearest_unit_start_distance_squared(scenario, transposed)
+            else {
+                continue;
+            };
+            authored_score += authored_distance;
+            transposed_score += transposed_distance;
+            evidence_count += 1;
+        }
+
+        if evidence_count > 0 && transposed_score < authored_score {
+            Self::Transposed
+        } else {
+            Self::AuthoredWorld
+        }
+    }
+
+    /// Converts a scenario position into terrain-world coordinates.
+    #[must_use]
+    pub fn position_to_world(self, position: [f32; 3]) -> [f32; 3] {
+        match self {
+            Self::AuthoredWorld => position,
+            Self::Transposed => [position[2], position[1], position[0]],
+        }
+    }
+
+    /// Converts a scenario position direction into terrain-world axes.
+    #[must_use]
+    pub fn direction_to_world(self, direction: [f32; 3]) -> [f32; 3] {
+        self.position_to_world(direction)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PlayerStartLayout {
+    max_players: Option<u32>,
+    axes: ScenarioPositionAxes,
+}
+
 /// Authored source of a decoded world placement.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UnitPlacementOrigin {
@@ -233,16 +308,19 @@ impl UnitScene {
     /// `player_start_proto` should come from the decoded
     /// `SkirmishEmptyBaseObject` game-data mapping. Start placements share the
     /// same decoded unit as matching expansion sockets when one is already
-    /// present in `<Objects>`.
+    /// present in `<Objects>`. `max_players` limits numbered positions using
+    /// the active scenario descriptor and excludes editor-only extra positions.
     #[must_use]
     pub fn load_scenario(
         source: &mut AssetSource<StdFileProvider>,
         scenario: &ScenarioData,
         visuals: &HashMap<String, Visual>,
         proto_objects: &[ProtoObject],
+        max_players: Option<u32>,
         player_start_proto: &str,
     ) -> Self {
         let mut cache = UnitAssetCache::default();
+        let position_axes = ScenarioPositionAxes::infer(scenario, max_players);
         let mut scene = Self::load_with_cache(
             source,
             scenario.objects(),
@@ -250,11 +328,19 @@ impl UnitScene {
             proto_objects,
             &mut cache,
         );
-        scene.player_start_count = scenario.positions().len();
+        scene.player_start_count = scenario
+            .positions()
+            .iter()
+            .filter(|start| is_player_start(start, max_players))
+            .count();
         scene.append_player_starts(
             source,
             scenario.positions(),
             visuals,
+            PlayerStartLayout {
+                max_players,
+                axes: position_axes,
+            },
             player_start_proto,
             &mut cache,
         );
@@ -266,10 +352,15 @@ impl UnitScene {
         source: &mut AssetSource<StdFileProvider>,
         starts: &[ScenarioPosition],
         visuals: &HashMap<String, Visual>,
+        layout: PlayerStartLayout,
         proto_name: &str,
         asset_cache: &mut UnitAssetCache,
     ) {
-        if starts.is_empty() {
+        let start_count = starts
+            .iter()
+            .filter(|start| is_player_start(start, layout.max_players))
+            .count();
+        if start_count == 0 {
             return;
         }
         let proto_name = proto_name.trim();
@@ -285,7 +376,7 @@ impl UnitScene {
                 .iter()
                 .find(|(name, _)| name.eq_ignore_ascii_case(proto_name))
             else {
-                self.player_start_failure_count = starts.len();
+                self.player_start_failure_count = start_count;
                 self.issues.push(UnitSceneIssue {
                     proto_name: proto_name.to_owned(),
                     reason: "player-start visual definition not found".to_owned(),
@@ -298,7 +389,7 @@ impl UnitScene {
                     Arc::new(unit)
                 }
                 Err(error) => {
-                    self.player_start_failure_count = starts.len();
+                    self.player_start_failure_count = start_count;
                     self.issues.push(UnitSceneIssue {
                         proto_name: visual_name.clone(),
                         reason: error.to_string(),
@@ -308,8 +399,11 @@ impl UnitScene {
             }
         };
 
-        for start in starts {
-            let Some(transform) = player_start_transform(start) else {
+        for start in starts
+            .iter()
+            .filter(|start| is_player_start(start, layout.max_players))
+        {
+            let Some(transform) = player_start_transform(start, layout.axes) else {
                 self.invalid_transform_count += 1;
                 self.player_start_failure_count += 1;
                 continue;
@@ -432,11 +526,36 @@ fn scenario_proto_name(object: &ScenarioObject) -> Option<String> {
         .map(str::to_owned)
 }
 
+fn is_player_start(start: &ScenarioPosition, max_players: Option<u32>) -> bool {
+    u32::try_from(start.number)
+        .is_ok_and(|number| number > 0 && max_players.is_none_or(|maximum| number <= maximum))
+}
+
+fn nearest_unit_start_distance_squared(
+    scenario: &ScenarioData,
+    player_position: [f32; 3],
+) -> Option<f32> {
+    scenario
+        .objects()
+        .iter()
+        .filter(|object| {
+            scenario_proto_name(object)
+                .is_some_and(|name| name.to_ascii_lowercase().starts_with("sys_unitstart"))
+        })
+        .map(|marker| {
+            let position = scenario_object_position_to_world(marker.position_vec3());
+            let delta_x = position[0] - player_position[0];
+            let delta_z = position[2] - player_position[2];
+            delta_x.mul_add(delta_x, delta_z * delta_z)
+        })
+        .filter(|distance| distance.is_finite())
+        .min_by(f32::total_cmp)
+}
+
 /// Converts an authored SCN `<Object>` position into terrain-world coordinates.
 ///
 /// Object records use the same diagonally transposed X/Z storage axes as the
-/// XTD heightfield. Player-start `<Position>` records are a separate domain and
-/// are already expressed in terrain-world axes.
+/// XTD heightfield.
 #[must_use]
 pub fn scenario_object_position_to_world(position: [f32; 3]) -> [f32; 3] {
     [position[2], position[1], position[0]]
@@ -445,18 +564,18 @@ pub fn scenario_object_position_to_world(position: [f32; 3]) -> [f32; 3] {
 /// Converts an authored SCN `<Object>` direction into terrain-world axes.
 #[must_use]
 pub fn scenario_object_direction_to_world(direction: [f32; 3]) -> [f32; 3] {
-    [direction[2], direction[1], direction[0]]
+    scenario_object_position_to_world(direction)
 }
 
 fn scenario_transform(object: &ScenarioObject) -> Option<Mat4> {
     let position = Vec3::from_array(scenario_object_position_to_world(object.position_vec3()));
-    // Swapping X/Z reverses parity. Negating the right axis retains authored
-    // facing while keeping the rendered unit upright and right-handed.
     let mut right = -Vec3::from_array(scenario_object_direction_to_world(object.right_vec3()));
     let mut forward = Vec3::from_array(scenario_object_direction_to_world(object.forward_vec3()));
     if !position.is_finite() || !right.is_finite() || !forward.is_finite() {
         return None;
     }
+    // Swapping X/Z reverses parity. Negating the right axis retains authored
+    // facing while keeping the rendered unit upright and right-handed.
     right = right.try_normalize()?;
     forward = (forward - right * forward.dot(right)).try_normalize()?;
     let up = forward.cross(right).try_normalize()?;
@@ -469,13 +588,16 @@ fn scenario_transform(object: &ScenarioObject) -> Option<Mat4> {
     ))
 }
 
-fn player_start_transform(start: &ScenarioPosition) -> Option<Mat4> {
-    let position = Vec3::from_array(start.position_vec3());
-    let authored_forward = Vec3::from_array(start.forward_vec3());
-    if !position.is_finite() || !authored_forward.is_finite() {
+fn player_start_transform(
+    start: &ScenarioPosition,
+    position_axes: ScenarioPositionAxes,
+) -> Option<Mat4> {
+    let position = Vec3::from_array(position_axes.position_to_world(start.position_vec3()));
+    let world_forward = Vec3::from_array(position_axes.direction_to_world(start.forward_vec3()));
+    if !position.is_finite() || !world_forward.is_finite() {
         return None;
     }
-    let forward = Vec3::new(authored_forward.x, 0.0, authored_forward.z).try_normalize()?;
+    let forward = Vec3::new(world_forward.x, 0.0, world_forward.z).try_normalize()?;
     let right = Vec3::Y.cross(forward).try_normalize()?;
     Some(Mat4::from_cols(
         right.extend(0.0),
@@ -661,11 +783,14 @@ impl WorldRenderer for UnitSceneRenderer {
 mod tests {
     use glam::{Mat4, Vec3};
     use pipeline::database::hw1::ProtoObject;
-    use pipeline::hw1::scenario::{ScenarioObject, ScenarioPosition};
+    use pipeline::hw1::scenario::{
+        ObjectsWrapper, PositionsWrapper, ScenarioData, ScenarioObject, ScenarioPosition,
+    };
 
     use super::{
-        player_start_transform, prototype_is_hidden, scenario_object_direction_to_world,
-        scenario_object_position_to_world, scenario_proto_name, scenario_transform,
+        ScenarioPositionAxes, is_player_start, player_start_transform, prototype_is_hidden,
+        scenario_object_direction_to_world, scenario_object_position_to_world, scenario_proto_name,
+        scenario_transform,
     };
 
     #[test]
@@ -700,13 +825,64 @@ mod tests {
     }
 
     #[test]
+    fn unit_start_evidence_transposes_tundra_player_positions() {
+        let scenario = scenario_with_axis_evidence(
+            &[
+                ("181.5322,-1.0026,214.2044", "sys_unitstart_01"),
+                ("710.5275,-1.0232,682.3585", "sys_unitstart_01"),
+            ],
+            &["114.7806,-0.4714,222.1855", "777.4794,-0.6362,668.1328"],
+        );
+
+        assert_eq!(
+            ScenarioPositionAxes::infer(&scenario, Some(2)),
+            ScenarioPositionAxes::Transposed
+        );
+    }
+
+    #[test]
+    fn direct_player_positions_remain_direct_when_marker_evidence_matches() {
+        let scenario =
+            scenario_with_axis_evidence(&[("20,0,80", "sys_unitstart_01")], &["80,0,20"]);
+
+        assert_eq!(
+            ScenarioPositionAxes::infer(&scenario, Some(1)),
+            ScenarioPositionAxes::AuthoredWorld
+        );
+    }
+
+    #[test]
+    fn scenarios_without_marker_evidence_keep_direct_player_positions() {
+        assert_eq!(
+            ScenarioPositionAxes::infer(&ScenarioData::default(), None),
+            ScenarioPositionAxes::AuthoredWorld
+        );
+    }
+
+    #[test]
+    fn player_start_selection_uses_the_scenario_player_limit() {
+        let start = ScenarioPosition {
+            number: 3,
+            default_camera: true,
+            ..ScenarioPosition::default()
+        };
+        assert!(is_player_start(&start, None));
+        assert!(!is_player_start(&start, Some(2)));
+
+        let start = ScenarioPosition { number: 2, ..start };
+        assert!(is_player_start(&start, Some(2)));
+        assert!(!is_player_start(&ScenarioPosition::default(), None));
+    }
+
+    #[test]
     fn player_start_uses_authored_world_position_and_horizontal_facing() {
         let start = ScenarioPosition {
             position: "178.25,0,212.125".to_owned(),
             forward: "-0.6,0.2,0.8".to_owned(),
             ..ScenarioPosition::default()
         };
-        let transform = player_start_transform(&start).expect("valid player start");
+        let transform = player_start_transform(&start, ScenarioPositionAxes::AuthoredWorld)
+            .expect("valid player start");
         assert!(
             transform
                 .transform_point3(Vec3::ZERO)
@@ -721,6 +897,28 @@ mod tests {
             transform
                 .transform_vector3(Vec3::Y)
                 .abs_diff_eq(Vec3::Y, 1.0e-6)
+        );
+        assert!(transform.determinant() > 0.0);
+    }
+
+    #[test]
+    fn transposed_player_start_converts_position_and_facing() {
+        let start = ScenarioPosition {
+            position: "178.25,0,212.125".to_owned(),
+            forward: "-0.6,0.2,0.8".to_owned(),
+            ..ScenarioPosition::default()
+        };
+        let transform = player_start_transform(&start, ScenarioPositionAxes::Transposed)
+            .expect("valid player start");
+        assert!(
+            transform
+                .transform_point3(Vec3::ZERO)
+                .abs_diff_eq(Vec3::new(212.125, 0.0, 178.25), 1.0e-6)
+        );
+        assert!(
+            transform
+                .transform_vector3(Vec3::Z)
+                .abs_diff_eq(Vec3::new(0.8, 0.0, -0.6), 1.0e-6)
         );
         assert!(transform.determinant() > 0.0);
     }
@@ -762,5 +960,34 @@ mod tests {
         };
         assert!(prototype_is_hidden(&hidden));
         assert!(!prototype_is_hidden(&ProtoObject::default()));
+    }
+
+    fn scenario_with_axis_evidence(objects: &[(&str, &str)], positions: &[&str]) -> ScenarioData {
+        ScenarioData {
+            objects: Some(ObjectsWrapper {
+                entries: objects
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (position, proto_name))| ScenarioObject {
+                        id: i32::try_from(index).expect("test object index fits i32"),
+                        proto_name: (*proto_name).to_owned(),
+                        position: (*position).to_owned(),
+                        ..ScenarioObject::default()
+                    })
+                    .collect(),
+            }),
+            positions: Some(PositionsWrapper {
+                entries: positions
+                    .iter()
+                    .enumerate()
+                    .map(|(index, position)| ScenarioPosition {
+                        number: i32::try_from(index + 1).expect("test position index fits i32"),
+                        position: (*position).to_owned(),
+                        ..ScenarioPosition::default()
+                    })
+                    .collect(),
+            }),
+            ..ScenarioData::default()
+        }
     }
 }
