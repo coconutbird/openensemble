@@ -3,7 +3,7 @@
 //! Commands are received from the network with a target execution time.
 //! The queue holds them until the simulation reaches that time.
 
-use crate::commands::{GameCommand, PowerCommand, WorkCommand};
+use crate::commands::{BuildingCommand, GameCommand, PowerCommand, WorkCommand};
 use std::collections::BTreeMap;
 
 /// A command with its execution time.
@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 pub enum QueuedCommand {
     Work(WorkCommand),
     Power(PowerCommand),
+    Building(BuildingCommand),
     Game(GameCommand),
 }
 
@@ -21,6 +22,7 @@ impl QueuedCommand {
         match self {
             QueuedCommand::Work(cmd) => cmd.base.player_id,
             QueuedCommand::Power(cmd) => cmd.base.player_id,
+            QueuedCommand::Building(cmd) => cmd.base.player_id,
             QueuedCommand::Game(cmd) => cmd.base.player_id,
         }
     }
@@ -82,6 +84,11 @@ impl CommandQueue {
     /// Enqueue a power command.
     pub fn enqueue_power(&mut self, cmd: PowerCommand, exec_time: u32, source_client: u64) {
         self.enqueue(QueuedCommand::Power(cmd), exec_time, source_client);
+    }
+
+    /// Enqueue a building command.
+    pub fn enqueue_building(&mut self, cmd: BuildingCommand, exec_time: u32, source_client: u64) {
+        self.enqueue(QueuedCommand::Building(cmd), exec_time, source_client);
     }
 
     /// Enqueue a game command.

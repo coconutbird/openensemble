@@ -81,6 +81,8 @@ impl UnitSceneIssue {
 pub struct UnitScene {
     placements: Vec<UnitPlacement>,
     issues: Vec<UnitSceneIssue>,
+    decoded_visuals: HashMap<String, Option<Arc<Unit>>>,
+    simulation_entity_ids: Vec<EntityId>,
     simulation_entity_count: usize,
     unique_visual_count: usize,
     skipped_no_render_count: usize,
@@ -103,17 +105,59 @@ impl UnitScene {
         visuals: &HashMap<String, Visual>,
         proto_objects: &[ProtoObject],
     ) -> Self {
+        Self::load_world_reusing(source, world, visuals, proto_objects, HashMap::new())
+    }
+
+    /// Refresh presentation assets when the authoritative entity roster changes.
+    ///
+    /// Existing decoded visuals are retained by prototype name, so spawning
+    /// another instance normally allocates only per-instance presentation data.
+    /// Returns whether the roster changed.
+    pub fn sync_world(
+        &mut self,
+        source: &mut AssetSource<StdFileProvider>,
+        world: &SimWorld,
+        visuals: &HashMap<String, Visual>,
+        proto_objects: &[ProtoObject],
+    ) -> bool {
+        if self.roster_matches(world) {
+            return false;
+        }
+        let retained_units = self.decoded_visuals.clone();
+        *self = Self::load_world_reusing(source, world, visuals, proto_objects, retained_units);
+        true
+    }
+
+    /// Return whether this presentation roster matches all live sim visuals.
+    #[must_use]
+    pub fn roster_matches(&self, world: &SimWorld) -> bool {
+        self.simulation_entity_ids
+            .iter()
+            .copied()
+            .eq(simulation_entity_ids(world))
+    }
+
+    fn load_world_reusing(
+        source: &mut AssetSource<StdFileProvider>,
+        world: &SimWorld,
+        visuals: &HashMap<String, Visual>,
+        proto_objects: &[ProtoObject],
+        mut units: HashMap<String, Option<Arc<Unit>>>,
+    ) -> Self {
         let mut asset_cache = UnitAssetCache::default();
+        let simulation_entity_ids = simulation_entity_ids(world).collect::<Vec<_>>();
         let mut scene = Self {
-            simulation_entity_count: world.units.len(),
+            simulation_entity_count: simulation_entity_ids.len(),
+            simulation_entity_ids,
             ..Self::default()
         };
         let visual_names = visual_name_lookup(visuals);
         let no_render_objects = hidden_proto_names(proto_objects);
-        let mut units = HashMap::<String, Option<Arc<Unit>>>::new();
+        let mut used_visuals = HashSet::new();
 
-        for (entity_id, entity) in world.units.iter() {
-            let proto_name = entity.proto_object_name.trim();
+        for entity in simulation_visuals(world) {
+            let entity_id = entity.id;
+            let proto_name = entity.proto_name.trim();
             if proto_name.is_empty() {
                 scene.missing_proto_count += 1;
                 continue;
@@ -127,7 +171,7 @@ impl UnitScene {
                 scene.missing_visual_count += 1;
                 continue;
             };
-            let Some(transform) = simulation_unit_transform(entity) else {
+            let Some(transform) = entity.transform else {
                 scene.invalid_transform_count += 1;
                 continue;
             };
@@ -138,10 +182,7 @@ impl UnitScene {
                 &mut asset_cache,
                 &mut units,
             ) {
-                Ok((unit, newly_loaded)) => {
-                    scene.unique_visual_count += usize::from(newly_loaded);
-                    unit
-                }
+                Ok(unit) => unit,
                 Err(reason) => {
                     if let Some(reason) = reason {
                         scene.issues.push(UnitSceneIssue {
@@ -159,7 +200,13 @@ impl UnitScene {
                 transform,
                 unit,
             });
+            used_visuals.insert(lookup_name);
         }
+        scene.unique_visual_count = used_visuals.len();
+        scene.decoded_visuals = units
+            .into_iter()
+            .filter(|(_, decoded)| decoded.is_some())
+            .collect();
         scene
     }
 
@@ -175,7 +222,7 @@ impl UnitScene {
         &self.issues
     }
 
-    /// Return the number of unit-pool entities considered from the sim world.
+    /// Return the number of unit and projectile entities considered from the sim world.
     #[must_use]
     pub const fn simulation_entity_count(&self) -> usize {
         self.simulation_entity_count
@@ -245,15 +292,15 @@ fn load_cached_unit(
     lookup_name: &str,
     asset_cache: &mut UnitAssetCache,
     units: &mut HashMap<String, Option<Arc<Unit>>>,
-) -> Result<(Arc<Unit>, bool), Option<String>> {
+) -> Result<Arc<Unit>, Option<String>> {
     if let Some(cached) = units.get(lookup_name) {
-        return cached.clone().map(|unit| (unit, false)).ok_or(None);
+        return cached.clone().ok_or(None);
     }
     match Unit::load_variant_with_cache(source, visual, None, asset_cache) {
         Ok(unit) => {
             let unit = Arc::new(unit);
             units.insert(lookup_name.to_owned(), Some(Arc::clone(&unit)));
-            Ok((unit, true))
+            Ok(unit)
         }
         Err(error) => {
             units.insert(lookup_name.to_owned(), None);
@@ -267,6 +314,50 @@ fn prototype_is_hidden(proto: &ProtoObject) -> bool {
         .flags
         .iter()
         .any(|flag| flag.eq_ignore_ascii_case("NoRender"))
+}
+
+struct SimulationVisual<'a> {
+    id: EntityId,
+    proto_name: &'a str,
+    transform: Option<Mat4>,
+}
+
+fn simulation_entity_ids(world: &SimWorld) -> impl Iterator<Item = EntityId> + '_ {
+    world.units.ids().chain(world.projectiles.ids())
+}
+
+fn simulation_visuals(world: &SimWorld) -> impl Iterator<Item = SimulationVisual<'_>> {
+    world
+        .units
+        .iter()
+        .map(|(id, unit)| SimulationVisual {
+            id,
+            proto_name: &unit.proto_object_name,
+            transform: simulation_unit_transform(unit),
+        })
+        .chain(
+            world
+                .projectiles
+                .iter()
+                .map(|(id, projectile)| SimulationVisual {
+                    id,
+                    proto_name: &projectile.proto_object_name,
+                    transform: simulation_projectile_transform(projectile),
+                }),
+        )
+}
+
+/// Resolve a render transform for any sim entity represented by this scene.
+#[must_use]
+pub fn simulation_entity_transform(world: &SimWorld, entity_id: EntityId) -> Option<Mat4> {
+    world
+        .get_unit(entity_id)
+        .and_then(simulation_unit_transform)
+        .or_else(|| {
+            world
+                .get_projectile(entity_id)
+                .and_then(simulation_projectile_transform)
+        })
 }
 
 /// Build a model-to-world matrix solely from authoritative simulation state.
@@ -287,10 +378,37 @@ pub fn simulation_unit_transform(unit: &sim::Unit) -> Option<Mat4> {
     ))
 }
 
+/// Build a projectile transform including authored vertical flight direction.
+#[must_use]
+pub fn simulation_projectile_transform(projectile: &sim::Projectile) -> Option<Mat4> {
+    let position = projectile.base.position;
+    let forward = projectile.base.forward;
+    if !position.is_finite() || !forward.is_finite() {
+        return None;
+    }
+    let forward = forward.try_normalize()?;
+    let reference_up = if forward.dot(Vec3::Y).abs() > 0.999 {
+        Vec3::Z
+    } else {
+        Vec3::Y
+    };
+    let right = reference_up.cross(forward).try_normalize()?;
+    let up = forward.cross(right).try_normalize()?;
+    Some(Mat4::from_cols(
+        right.extend(0.0),
+        up.extend(0.0),
+        forward.extend(0.0),
+        position.extend(1.0),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use glam::Vec3;
     use pipeline::database::hw1::ProtoObject;
+    use pipeline::source::{AssetSource, StdFileProvider};
 
     use super::{prototype_is_hidden, simulation_unit_transform};
 
@@ -333,5 +451,45 @@ mod tests {
         };
         assert!(prototype_is_hidden(&hidden));
         assert!(!prototype_is_hidden(&ProtoObject::default()));
+    }
+
+    #[test]
+    fn roster_matching_tracks_generational_sim_entity_ids() {
+        let mut world = sim::World::new();
+        let first = world.create_unit(0);
+        let mut scene = super::UnitScene {
+            simulation_entity_ids: vec![first],
+            simulation_entity_count: 1,
+            ..super::UnitScene::default()
+        };
+        assert!(scene.roster_matches(&world));
+
+        world.remove_unit(first).expect("first unit");
+        let replacement = world.create_unit(0);
+        assert_ne!(first, replacement);
+        assert!(!scene.roster_matches(&world));
+
+        scene.simulation_entity_ids = vec![replacement];
+        assert!(scene.roster_matches(&world));
+    }
+
+    #[test]
+    fn scene_sync_refreshes_roster_once_per_sim_change() {
+        let mut source = AssetSource::with_provider(StdFileProvider);
+        let mut world = sim::World::new();
+        let visuals = HashMap::new();
+        let proto_objects = Vec::new();
+        let mut scene = super::UnitScene::load_world(&mut source, &world, &visuals, &proto_objects);
+        assert!(!scene.sync_world(&mut source, &world, &visuals, &proto_objects));
+
+        let entity_id = world.create_unit(0);
+        world
+            .get_unit_mut(entity_id)
+            .expect("unit")
+            .proto_object_name = "missing_visual".to_owned();
+        assert!(scene.sync_world(&mut source, &world, &visuals, &proto_objects));
+        assert_eq!(scene.simulation_entity_count(), 1);
+        assert_eq!(scene.placement_count(), 0);
+        assert!(!scene.sync_world(&mut source, &world, &visuals, &proto_objects));
     }
 }

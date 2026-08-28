@@ -22,8 +22,9 @@ use crate::entities::squads::marine::{MarineSquadSpec, is_marine_squad};
 use crate::entities::squads::warthog::{WarthogSquadSpec, is_warthog_squad};
 use crate::entities::units::marine::{MARINE_HITPOINTS, MarineUnitSpec, is_marine_unit};
 use crate::entities::units::warthog::{WarthogUnitSpec, is_warthog_unit};
-use crate::entities::{BaseId, SquadArchetype, SquadFormation, UnitArchetype};
+use crate::entities::{BaseId, ShieldCoverage, SquadArchetype, SquadFormation, UnitArchetype};
 use crate::entity_id::EntityId;
+use crate::gameplay::GameplayCatalog;
 use crate::physics::{BoxCollider, PhysicsBody};
 use crate::player::{PlayerId, PlayerType};
 use crate::world::World;
@@ -45,6 +46,8 @@ pub use pipeline::hw1::scenario::{ScenarioData, ScenarioObject, ScenarioPlayer, 
 pub struct LoadedScenario {
     /// The populated simulation world.
     pub world: World,
+    /// Immutable gameplay definitions resolved from the scenario-layered source.
+    pub gameplay: GameplayCatalog,
     /// Mapping from scenario object IDs to simulation entity IDs.
     pub scenario_id_to_entity_id: HashMap<i32, EntityId>,
     /// Initial base assigned to each active player with a scenario start.
@@ -127,7 +130,10 @@ pub fn load_scenario_from_game_dir(
 
     // This must happen after load_scenario: Database::load resolves the highest
     // priority copy of every table, including scenario-local replacements.
-    let content = pipeline::hw1::World::load_from_source(&mut source)?;
+    let content = pipeline::hw1::World::load_from_source_with_options(
+        &mut source,
+        pipeline::hw1::WorldLoadOptions::runtime(),
+    )?;
     let scenario_data = content.scenario_data.as_ref().ok_or_else(|| {
         ScenarioAssetLoadError::ScenarioDataNotFound {
             scenario: scenario.to_owned(),
@@ -138,8 +144,13 @@ pub fn load_scenario_from_game_dir(
         .as_ref()
         .map(|descriptor| descriptor.max_players)
         .filter(|maximum| *maximum > 0);
-    let simulation =
-        load_scenario_into_world_with_max_players(scenario_data, &content.database, max_players);
+    let gameplay = GameplayCatalog::load_from_source(&content.database, &mut source);
+    let simulation = load_scenario_into_world_with_max_players(
+        scenario_data,
+        &content.database,
+        max_players,
+        gameplay,
+    );
 
     Ok(LoadedGameScenario {
         simulation,
@@ -167,13 +178,14 @@ pub fn load_scenario_from_game_dir(
 /// ```
 #[must_use]
 pub fn load_scenario_into_world(scenario: &ScenarioData, db: &Database) -> LoadedScenario {
-    load_scenario_into_world_with_max_players(scenario, db, None)
+    load_scenario_into_world_with_max_players(scenario, db, None, GameplayCatalog::default())
 }
 
 fn load_scenario_into_world_with_max_players(
     scenario: &ScenarioData,
     db: &Database,
     max_players: Option<u32>,
+    gameplay: GameplayCatalog,
 ) -> LoadedScenario {
     let mut world = World::new();
     let mut scenario_id_to_entity_id = HashMap::new();
@@ -197,6 +209,7 @@ fn load_scenario_into_world_with_max_players(
 
     LoadedScenario {
         world,
+        gameplay,
         scenario_id_to_entity_id,
         initial_base_ids,
     }
@@ -223,6 +236,7 @@ fn configure_players(world: &mut World, players: &[ScenarioPlayer], db: &Databas
             player.resources.set(1, scenario_player.power);
         }
     }
+    world.configure_standard_team_relations();
 }
 
 fn find_name_index<T>(values: &[T], name: &str, key: impl Fn(&T) -> &str) -> i32 {
@@ -247,13 +261,37 @@ fn create_scenario_object(
 fn create_scenario_squad(world: &mut World, object: &ScenarioObject, db: &Database) -> EntityId {
     let player_id = u8::try_from(object.player).unwrap_or_default();
     let position = scenario_position(object);
+    create_squad_from_prototype(
+        world,
+        player_id,
+        position,
+        scenario_forward(object),
+        object.proto_name.trim(),
+        db,
+    )
+}
+
+pub(crate) fn create_squad_from_prototype(
+    world: &mut World,
+    player_id: PlayerId,
+    position: Vec3,
+    forward: Vec3,
+    proto_name: &str,
+    db: &Database,
+) -> EntityId {
     let squad_id = world.create_squad_at(player_id, position);
-    let proto_name = object.proto_name.trim();
-    let proto = find_proto_squad(db, proto_name);
-    let forward = scenario_forward(object);
+    let logical_proto = find_proto_squad(db, proto_name);
+    let effective_proto_name = world
+        .get_player(player_id)
+        .map_or(proto_name, |player| {
+            player.technologies.resolved_squad_prototype(proto_name)
+        })
+        .to_owned();
+    let proto = find_proto_squad(db, &effective_proto_name).or(logical_proto);
     if let Some(squad) = world.get_squad_mut(squad_id) {
         squad.base.set_forward(forward);
-        squad.proto_squad_id = proto.map_or(-1, |(index, squad)| database_id(squad.dbid, index));
+        squad.proto_squad_id =
+            logical_proto.map_or(-1, |(index, squad)| database_id(squad.dbid, index));
         proto_name.clone_into(&mut squad.proto_squad_name);
         squad.archetype = if is_warthog_squad(proto_name) {
             SquadArchetype::Warthog
@@ -289,44 +327,51 @@ fn create_scenario_squad(world: &mut World, object: &ScenarioObject, db: &Databa
         }
     }
     if let Some((_, proto)) = proto {
-        create_squad_members(world, squad_id, player_id, position, proto, db);
+        create_squad_members(world, squad_id, proto, db);
     }
-    apply_squad_member_movement_settings(world, squad_id);
-    apply_squad_physics_settings(world, squad_id);
+    refresh_squad_member_settings(world, squad_id);
     squad_id
 }
 
-fn create_squad_members(
-    world: &mut World,
-    squad_id: EntityId,
-    player_id: u8,
-    position: Vec3,
-    proto: &ProtoSquad,
-    db: &Database,
-) {
+fn create_squad_members(world: &mut World, squad_id: EntityId, proto: &ProtoSquad, db: &Database) {
     let Some(units) = &proto.units else {
         return;
     };
-    let archetype = world
-        .get_squad(squad_id)
-        .map_or(SquadArchetype::Generic, |squad| squad.archetype);
-    let marine_squad = MarineSquadSpec::default();
-    let mut slot = 0_usize;
     for entry in &units.entries {
         for _ in 0..entry.count.max(0) {
-            let unit_id = world.create_unit_at(player_id, position);
-            configure_unit(world, unit_id, entry.proto_object.trim(), db);
-            let attached = world.attach_unit_to_squad(unit_id, squad_id);
-            debug_assert!(attached, "new squad member should attach");
-            if archetype == SquadArchetype::Marine
-                && let Some(offset) = marine_squad.initial_formation_offset(slot)
-            {
-                let assigned = world.set_squad_member_formation_offset(unit_id, offset);
-                debug_assert!(assigned, "attached Marine should accept a formation offset");
-            }
-            slot += 1;
+            let _unit_id =
+                add_squad_member_from_prototype(world, squad_id, entry.proto_object.trim(), db);
         }
     }
+}
+
+pub(crate) fn add_squad_member_from_prototype(
+    world: &mut World,
+    squad_id: EntityId,
+    proto_object_name: &str,
+    db: &Database,
+) -> Option<EntityId> {
+    let (player_id, position, archetype, slot) = world.get_squad(squad_id).map(|squad| {
+        (
+            squad.base.player_id,
+            squad.base.position,
+            squad.archetype,
+            squad.unit_ids.len(),
+        )
+    })?;
+    let unit_id = world.create_unit_at(player_id, position);
+    configure_unit(world, unit_id, proto_object_name, db);
+    if !world.attach_unit_to_squad(unit_id, squad_id) {
+        let _removed = world.remove_unit(unit_id);
+        return None;
+    }
+    if archetype == SquadArchetype::Marine
+        && let Some(offset) = MarineSquadSpec::default().initial_formation_offset(slot)
+    {
+        let assigned = world.set_squad_member_formation_offset(unit_id, offset);
+        debug_assert!(assigned, "attached Marine should accept a formation offset");
+    }
+    Some(unit_id)
 }
 
 fn create_scenario_unit(
@@ -334,10 +379,25 @@ fn create_scenario_unit(
     object: &ScenarioObject,
     db: &Database,
 ) -> Option<EntityId> {
-    let proto_name = object.proto_name.trim();
+    create_object_from_prototype(
+        world,
+        u8::try_from(object.player).unwrap_or_default(),
+        scenario_position(object),
+        scenario_forward(object),
+        object.proto_name.trim(),
+        db,
+    )
+}
+
+pub(crate) fn create_object_from_prototype(
+    world: &mut World,
+    player_id: PlayerId,
+    position: Vec3,
+    forward: Vec3,
+    proto_name: &str,
+    db: &Database,
+) -> Option<EntityId> {
     let (proto_index, proto) = find_proto_object(db, proto_name)?;
-    let player_id = u8::try_from(object.player).unwrap_or_default();
-    let position = scenario_position(object);
     let kind = classify_proto_object(proto)?;
     let unit_id = match kind {
         PlacedUnitKind::Mobile => world.create_unit_at(player_id, position),
@@ -345,7 +405,7 @@ fn create_scenario_unit(
     };
     configure_unit_from_proto(world, unit_id, proto_name, proto_index, proto);
     if let Some(unit) = world.get_unit_mut(unit_id) {
-        unit.base.set_forward(scenario_forward(object));
+        unit.base.set_forward(forward);
     }
     if kind == PlacedUnitKind::Building && creates_base(proto) {
         let _base_id = world.register_base(unit_id);
@@ -376,14 +436,49 @@ fn configure_unit_from_proto(
     proto_index: usize,
     proto: &ProtoObject,
 ) {
+    let shield_coverage = if proto
+        .damage_type
+        .as_deref()
+        .is_some_and(|damage_type| damage_type.eq_ignore_ascii_case("Shielded"))
+    {
+        ShieldCoverage::Full
+    } else {
+        ShieldCoverage::None
+    };
+    let adjusted_hitpoints = proto.hitpoints.map(|base| {
+        world
+            .get_unit(unit_id)
+            .and_then(|unit| world.get_player(unit.base.player_id))
+            .map_or(base, |player| {
+                player.technologies.hitpoints(proto_name, base)
+            })
+    });
+    let base_shieldpoints = valid_nonnegative(proto.shieldpoints)
+        .filter(|_| shield_coverage != ShieldCoverage::None)
+        .unwrap_or_default();
+    let shield_settings = world
+        .get_unit(unit_id)
+        .and_then(|unit| world.get_player(unit.base.player_id))
+        .map_or((base_shieldpoints, 1.0, 1.0), |player| {
+            (
+                player
+                    .technologies
+                    .shieldpoints(proto_name, base_shieldpoints),
+                player.technologies.unit_shield_regen_rate(proto_name),
+                player.technologies.unit_shield_regen_delay(proto_name),
+            )
+        });
     let Some(unit) = world.get_unit_mut(unit_id) else {
         return;
     };
     unit.proto_object_id = database_id(proto.dbid, proto_index);
     proto_name.clone_into(&mut unit.proto_object_name);
-    if let Some(hitpoints) = proto.hitpoints {
+    if let Some(hitpoints) = adjusted_hitpoints {
         unit.set_max_hitpoints(hitpoints);
     }
+    unit.shields.configure(shield_coverage, shield_settings.0);
+    unit.shields
+        .set_regen_scalars(shield_settings.1, shield_settings.2);
     if !unit.is_building()
         && let Some(speed) = proto.max_velocity.or(proto.velocity)
         && speed.is_finite()
@@ -483,6 +578,11 @@ fn apply_squad_member_movement_settings(world: &mut World, squad_id: EntityId) {
         squad.acceleration = acceleration;
         squad.turn_rate_degrees = turn_rate_degrees;
     }
+}
+
+pub(crate) fn refresh_squad_member_settings(world: &mut World, squad_id: EntityId) {
+    apply_squad_member_movement_settings(world, squad_id);
+    apply_squad_physics_settings(world, squad_id);
 }
 
 fn apply_squad_physics_settings(world: &mut World, squad_id: EntityId) {

@@ -1,4 +1,11 @@
-use sim::{ScenarioAssetLoadError, load_scenario_from_game_dir};
+use sim::entities::squads::marine::MARINE_SQUAD_NAME;
+use sim::{
+    AttackQuery, BuildingCommand, CommandEntry, CommandExecutor, LoadedGameScenario, MS_PER_TICK,
+    PlayerId, QueuedCommand, RecoveryType, ScenarioAssetLoadError, ShieldCoverage, Simulation,
+    SquadMode, TechStatus, WorkCommand, load_scenario_from_game_dir, object_prototype_id,
+    spawn_object_at, spawn_squad_at, spawn_squad_from_base_by_name, squad_prototype_id,
+    technology_prototype_id,
+};
 
 const DATABASE_PATHS: [&str; 10] = [
     "data\\objects.xml.xmb",
@@ -12,6 +19,10 @@ const DATABASE_PATHS: [&str; 10] = [
     "data\\damagetypes.xml.xmb",
     "data\\gamedata.xml.xmb",
 ];
+
+fn nearly_equal(actual: f32, expected: f32) -> bool {
+    (actual - expected).abs() <= f32::EPSILON * expected.abs().max(1.0)
+}
 
 #[test]
 fn missing_scenario_archive_is_reported_before_database_loading() {
@@ -40,9 +51,198 @@ fn loads_real_scenario_database_and_simulation_together() {
     let scenario =
         std::env::var("OPENENSEMBLE_TEST_SCENARIO").unwrap_or_else(|_| "blood_gulch".to_owned());
 
-    let loaded = load_scenario_from_game_dir(&game_dir, &scenario)
+    let mut loaded = load_scenario_from_game_dir(&game_dir, &scenario)
         .expect("scenario, layered database, and simulation should load");
 
+    assert_database_and_archive_layers(&mut loaded);
+    assert_initial_base_state(&loaded);
+    assert_real_barracks_research(&mut loaded);
+    assert_real_shield_loading_and_recharge(&mut loaded);
+    assert_real_base_spawn_and_move(&mut loaded);
+}
+
+fn assert_real_barracks_research(loaded: &mut LoadedGameScenario) {
+    let database = &loaded.content.database;
+    let technology_id = technology_prototype_id(database, "unsc_marine_upgrade1")
+        .expect("real database should contain the first Marine upgrade");
+    let player_id = loaded
+        .simulation
+        .world
+        .active_players()
+        .find(|player| !player.technologies.is_active("unsc_marine_upgrade1"))
+        .map(|player| player.id)
+        .expect("the scenario should have a player without the test technology");
+    loaded
+        .simulation
+        .world
+        .get_player_mut(player_id)
+        .unwrap()
+        .resources
+        .amounts = [1_000.0, 10.0, 0.0, 0.0];
+    let barracks_proto_id = object_prototype_id(database, "unsc_bldg_barracks_01")
+        .expect("real database should contain the UNSC Barracks");
+    let barracks_id = spawn_object_at(
+        &mut loaded.simulation.world,
+        database,
+        player_id,
+        barracks_proto_id,
+        glam::Vec3::new(5_000.0, 0.0, 5_000.0),
+        glam::Vec3::Z,
+    )
+    .expect("real Barracks prototype should spawn as a building");
+    assert_eq!(
+        loaded
+            .simulation
+            .world
+            .technology_status(player_id, database, technology_id)
+            .unwrap(),
+        TechStatus::Available
+    );
+
+    let mut clock = Simulation::new();
+    clock.game_time_ms = loaded.simulation.world.game_time_ms;
+    clock.command_queue.enqueue_building(
+        BuildingCommand::research(i32::from(player_id), vec![barracks_id], technology_id, 1),
+        clock.game_time_ms.saturating_add(MS_PER_TICK),
+        u64::from(player_id),
+    );
+    clock.tick_with_scenario(&mut loaded.simulation, database);
+    let resources = loaded
+        .simulation
+        .world
+        .get_player(player_id)
+        .unwrap()
+        .resources
+        .amounts;
+    for (actual, expected) in resources.into_iter().zip([800.0, 9.0, 0.0, 0.0]) {
+        assert!((actual - expected).abs() <= 1.0e-6);
+    }
+    assert_eq!(
+        loaded
+            .simulation
+            .world
+            .technology_status(player_id, database, technology_id)
+            .unwrap(),
+        TechStatus::Researching
+    );
+
+    for _ in 0..900 {
+        clock.tick_with_scenario(&mut loaded.simulation, database);
+        if loaded
+            .simulation
+            .world
+            .technology_status(player_id, database, technology_id)
+            .unwrap()
+            == TechStatus::Active
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        loaded
+            .simulation
+            .world
+            .technology_status(player_id, database, technology_id)
+            .unwrap(),
+        TechStatus::Active
+    );
+    assert!(
+        loaded
+            .simulation
+            .world
+            .research_progress(player_id, database, technology_id)
+            .unwrap()
+            .is_none()
+    );
+}
+
+fn assert_real_shield_loading_and_recharge(loaded: &mut LoadedGameScenario) {
+    assert!(nearly_equal(
+        loaded.simulation.gameplay.shield_regen_delay(),
+        20.0
+    ));
+    assert!(nearly_equal(
+        loaded.simulation.gameplay.shield_regen_time(),
+        5.0
+    ));
+    let player_id = *loaded
+        .simulation
+        .initial_base_ids
+        .first_key_value()
+        .expect("the scenario should assign a player base")
+        .0;
+    let spartan_proto_id = squad_prototype_id(&loaded.content.database, "unsc_inf_spartan_01")
+        .expect("real database should contain the Spartan squad");
+    let squad_id = spawn_squad_at(
+        &mut loaded.simulation.world,
+        &loaded.content.database,
+        player_id,
+        spartan_proto_id,
+        glam::Vec3::ZERO,
+        glam::Vec3::Z,
+    )
+    .expect("real scenario database should spawn a Spartan squad");
+    let unit_id = loaded
+        .simulation
+        .world
+        .get_squad(squad_id)
+        .expect("spawned Spartan squad")
+        .unit_ids[0];
+    let unit = loaded
+        .simulation
+        .world
+        .get_unit(unit_id)
+        .expect("spawned Spartan unit");
+    assert_eq!(unit.shields.coverage, ShieldCoverage::Full);
+    assert!(nearly_equal(unit.shields.maximum, 5_000.0));
+    assert!(nearly_equal(unit.shields.current, 0.0));
+
+    loaded
+        .simulation
+        .world
+        .update_entities_with_gameplay(5.0, &loaded.simulation.gameplay);
+    assert!(nearly_equal(
+        loaded
+            .simulation
+            .world
+            .get_unit(unit_id)
+            .expect("charged Spartan")
+            .shields
+            .current,
+        5_000.0
+    ));
+    assert!(loaded.simulation.world.damage_unit(unit_id, 750.0));
+    loaded
+        .simulation
+        .world
+        .update_entities_with_gameplay(20.0, &loaded.simulation.gameplay);
+    assert!(nearly_equal(
+        loaded
+            .simulation
+            .world
+            .get_unit(unit_id)
+            .expect("delayed Spartan")
+            .shields
+            .current,
+        4_250.0
+    ));
+    loaded
+        .simulation
+        .world
+        .update_entities_with_gameplay(0.1, &loaded.simulation.gameplay);
+    assert!(
+        loaded
+            .simulation
+            .world
+            .get_unit(unit_id)
+            .expect("recharging Spartan")
+            .shields
+            .current
+            > 4_250.0
+    );
+}
+
+fn assert_database_and_archive_layers(loaded: &mut LoadedGameScenario) {
     let archives = loaded.source.files_per_archive();
     let (scenario_archive, scenario_files) = archives
         .last()
@@ -80,6 +280,141 @@ fn loads_real_scenario_database_and_simulation_together() {
     );
     assert!(loaded.content.scenario_data.is_some());
     assert!(loaded.simulation.world.player_count() > 1);
+    assert!(loaded.simulation.gameplay.referenced_tactic_count() > 0);
+    assert!(!loaded.simulation.gameplay.is_empty());
+    let marine = loaded
+        .simulation
+        .gameplay
+        .object("UNSC_INF_MARINE_01")
+        .expect("the scenario-layered source should resolve Marine tactics");
+    assert_eq!(marine.damage_type(), Some("Light"));
+    assert!(marine.ranged_actions().any(|action| {
+        action
+            .action
+            .name
+            .eq_ignore_ascii_case("AssaultRifleAttackAction")
+    }));
+    let rifle = marine
+        .attack_profile("AssaultRifleAttackAction")
+        .unwrap_or_else(|| {
+            let issue = loaded
+                .simulation
+                .gameplay
+                .timing_issues()
+                .iter()
+                .find(|issue| {
+                    issue
+                        .proto_object_name()
+                        .eq_ignore_ascii_case("unsc_inf_marine_01")
+                        && issue
+                            .action_name()
+                            .eq_ignore_ascii_case("AssaultRifleAttackAction")
+                })
+                .map_or("no timing diagnostic", |issue| issue.reason());
+            panic!("scenario-layered Marine rifle timing should resolve: {issue}")
+        });
+    assert_eq!(
+        loaded
+            .simulation
+            .gameplay
+            .initial_attack_profile("unsc_inf_marine_01")
+            .map(|profile| profile.action_name.as_str()),
+        Some("AssaultRifleAttackAction")
+    );
+    assert!(rifle.damage_per_attack > 0.0);
+    assert!(!rifle.animations.is_empty());
+    assert!(
+        rifle
+            .animations
+            .iter()
+            .any(|animation| !animation.attack_positions.is_empty())
+    );
+    assert!(
+        rifle
+            .animations
+            .iter()
+            .all(|animation| loaded.source.provenance(&animation.asset_path).is_some())
+    );
+    assert!(
+        loaded
+            .source
+            .provenance_data(marine.tactics_path())
+            .is_some()
+    );
+    assert_real_marine_action_selection(loaded);
+}
+
+fn assert_real_marine_action_selection(loaded: &mut LoadedGameScenario) {
+    let command_id = loaded
+        .content
+        .database
+        .abilities
+        .iter()
+        .position(|ability| ability.name.eq_ignore_ascii_case("Command"))
+        .and_then(|index| u8::try_from(index).ok())
+        .expect("real database should expose the Command ability on the wire");
+    let mut query = AttackQuery {
+        target_proto_object_name: Some("unsc_inf_marine_01"),
+        ..AttackQuery::default()
+    };
+    let player_id = *loaded
+        .simulation
+        .initial_base_ids
+        .first_key_value()
+        .expect("the scenario should assign a player base")
+        .0;
+
+    assert_eq!(
+        selected_marine_action(loaded, player_id, &query),
+        Some("AssaultRifleAttackAction")
+    );
+    query.ability_id = Some(command_id);
+    assert_eq!(
+        selected_marine_action(loaded, player_id, &query),
+        Some("GrenadeAttackAction")
+    );
+    query.squad_mode = SquadMode::Cover;
+    assert_eq!(
+        selected_marine_action(loaded, player_id, &query),
+        Some("InCoverGrenadeAttackAction")
+    );
+
+    for technology in ["unsc_marine_upgrade1", "unsc_marine_upgrade2"] {
+        assert!(
+            loaded
+                .simulation
+                .world
+                .activate_technology(player_id, &loaded.content.database, technology)
+                .expect("real Marine technology should activate")
+        );
+    }
+    query.squad_mode = SquadMode::Normal;
+    assert_eq!(
+        selected_marine_action(loaded, player_id, &query),
+        Some("RocketAttackAction")
+    );
+}
+
+fn selected_marine_action<'catalog>(
+    loaded: &'catalog LoadedGameScenario,
+    player_id: PlayerId,
+    query: &AttackQuery<'_>,
+) -> Option<&'catalog str> {
+    let technologies = &loaded.simulation.world.get_player(player_id)?.technologies;
+    loaded
+        .simulation
+        .gameplay
+        .select_ranged_action("unsc_inf_marine_01", query, |action| {
+            technologies.action_enabled(
+                "unsc_inf_marine_01",
+                &action.name,
+                action.start_disabled != Some(true),
+            )
+        })
+        .map(|action| action.action.name.as_str())
+}
+
+fn assert_initial_base_state(loaded: &LoadedGameScenario) {
     let scenario_data = loaded
         .content
         .scenario_data
@@ -126,4 +461,243 @@ fn loads_real_scenario_database_and_simulation_together() {
     assert!(
         !loaded.simulation.world.units.is_empty() || !loaded.simulation.world.squads.is_empty()
     );
+}
+
+fn assert_real_base_spawn_and_move(loaded: &mut LoadedGameScenario) {
+    let (&player_id, &base_id) = loaded
+        .simulation
+        .initial_base_ids
+        .first_key_value()
+        .expect("the skirmish scenario should assign at least one player base");
+    let units_before = loaded.simulation.world.units.len();
+    let squad_id = spawn_squad_from_base_by_name(
+        &mut loaded.simulation.world,
+        &loaded.content.database,
+        base_id,
+        MARINE_SQUAD_NAME,
+    )
+    .expect("the real layered database should spawn Marines from a sim base");
+    let squad = loaded
+        .simulation
+        .world
+        .get_squad(squad_id)
+        .expect("spawned Marine squad");
+    assert_eq!(squad.base.player_id, player_id);
+    assert!(loaded.simulation.world.units.len() > units_before);
+
+    let start = squad.base.position;
+    let target = start + squad.base.forward * 20.0;
+    let mut clock = Simulation::new();
+    clock.start();
+    clock.command_queue.enqueue_work(
+        WorkCommand::move_squads(i32::from(player_id), vec![squad_id], target),
+        MS_PER_TICK,
+        u64::from(player_id),
+    );
+    clock.tick_with_scenario(&mut loaded.simulation, &loaded.content.database);
+    let squad = loaded
+        .simulation
+        .world
+        .get_squad(squad_id)
+        .expect("moving Marine squad");
+    assert_eq!(squad.move_target, Some(target));
+    assert_ne!(squad.base.position, start);
+    assert_real_marine_combat(loaded, player_id, squad_id, &mut clock);
+}
+
+fn assert_real_marine_combat(
+    loaded: &mut LoadedGameScenario,
+    attacker_player_id: sim::PlayerId,
+    attacker_squad_id: sim::EntityId,
+    clock: &mut Simulation,
+) {
+    let enemy_player_id = loaded
+        .simulation
+        .world
+        .active_players()
+        .map(|player| player.id)
+        .find(|&player_id| {
+            loaded
+                .simulation
+                .world
+                .players_are_enemies(attacker_player_id, player_id)
+        })
+        .expect("the skirmish scenario should contain an enemy player");
+    let (attacker_position, attacker_forward) = loaded
+        .simulation
+        .world
+        .get_squad(attacker_squad_id)
+        .map(|attacker| (attacker.base.position, attacker.base.forward))
+        .expect("attacking Marine squad");
+    let target_position = attacker_position + attacker_forward * 10.0;
+    let marine_proto_id = squad_prototype_id(&loaded.content.database, MARINE_SQUAD_NAME)
+        .expect("real database should contain the Marine squad");
+    let target_squad_id = spawn_squad_at(
+        &mut loaded.simulation.world,
+        &loaded.content.database,
+        enemy_player_id,
+        marine_proto_id,
+        target_position,
+        -attacker_forward,
+    )
+    .expect("real database should spawn an enemy Marine squad");
+    let target_member_ids = loaded
+        .simulation
+        .world
+        .get_squad(target_squad_id)
+        .expect("target Marine squad")
+        .unit_ids
+        .clone();
+    let initial_hitpoints = squad_member_hitpoints(&loaded.simulation.world, &target_member_ids);
+    let command = WorkCommand::attack_squads(
+        i32::from(attacker_player_id),
+        vec![attacker_squad_id],
+        target_squad_id,
+    );
+    clock.command_queue.enqueue_work(
+        command,
+        clock.game_time_ms.saturating_add(MS_PER_TICK),
+        u64::from(attacker_player_id),
+    );
+
+    let mut saw_projectile = false;
+    let mut damaged_hitpoints = initial_hitpoints;
+    for _ in 0..600 {
+        clock.tick_with_scenario(&mut loaded.simulation, &loaded.content.database);
+        saw_projectile |= !loaded.simulation.world.projectiles.is_empty();
+        damaged_hitpoints = squad_member_hitpoints(&loaded.simulation.world, &target_member_ids);
+        if damaged_hitpoints < initial_hitpoints {
+            break;
+        }
+    }
+    assert!(
+        saw_projectile,
+        "Marine Attack tags should launch rifle projectiles"
+    );
+    assert!(
+        damaged_hitpoints < initial_hitpoints,
+        "Marine projectile impact should reduce authoritative sim hit points"
+    );
+    assert_real_marine_rocket_recovery(
+        loaded,
+        attacker_player_id,
+        attacker_squad_id,
+        target_squad_id,
+        clock,
+    );
+}
+
+fn assert_real_marine_rocket_recovery(
+    loaded: &mut LoadedGameScenario,
+    attacker_player_id: PlayerId,
+    attacker_squad_id: sim::EntityId,
+    target_squad_id: sim::EntityId,
+    clock: &mut Simulation,
+) {
+    let command_id = database_ability_id(&loaded.content.database, "Command");
+    let rocket_id = database_ability_id(&loaded.content.database, "UnscMarineRockets");
+    let mut command = WorkCommand::attack_squads(
+        i32::from(attacker_player_id),
+        vec![attacker_squad_id],
+        target_squad_id,
+    );
+    command.ability_id = i32::from(command_id);
+    clock.command_queue.enqueue_work(
+        command,
+        clock.game_time_ms.saturating_add(MS_PER_TICK),
+        u64::from(attacker_player_id),
+    );
+
+    let mut saw_rocket_action = false;
+    for _ in 0..600 {
+        clock.tick_with_scenario(&mut loaded.simulation, &loaded.content.database);
+        let squad = loaded
+            .simulation
+            .world
+            .get_squad(attacker_squad_id)
+            .expect("attacking Marine squad should remain alive");
+        saw_rocket_action |= squad.unit_ids.iter().any(|unit_id| {
+            loaded
+                .simulation
+                .world
+                .get_unit(*unit_id)
+                .and_then(|unit| unit.combat.action_name())
+                .is_some_and(|action| action.eq_ignore_ascii_case("RocketAttackAction"))
+        });
+        if squad.recovery.is_recovering() {
+            break;
+        }
+    }
+
+    let squad = loaded
+        .simulation
+        .world
+        .get_squad(attacker_squad_id)
+        .expect("Marine squad should enter ability recovery");
+    assert!(saw_rocket_action, "Marine upgrade 2 should select rockets");
+    assert_eq!(squad.recovery.recovery_type(), Some(RecoveryType::Ability));
+    assert_eq!(squad.recovery.ability_id(), Some(rocket_id));
+    assert!(squad.recovery.remaining() > 0.0);
+    assert!(squad.recovery.remaining() <= 20.0);
+
+    let previous_target = squad.attack_target;
+    let (target_player_id, target_position) = loaded
+        .simulation
+        .world
+        .get_squad(target_squad_id)
+        .map(|target| (target.base.player_id, target.base.position))
+        .expect("first target squad should remain alive");
+    let marine_proto_id = squad_prototype_id(&loaded.content.database, MARINE_SQUAD_NAME)
+        .expect("real database should contain the Marine squad");
+    let second_target = spawn_squad_at(
+        &mut loaded.simulation.world,
+        &loaded.content.database,
+        target_player_id,
+        marine_proto_id,
+        target_position,
+        glam::Vec3::NEG_Z,
+    )
+    .expect("real database should spawn a second target squad");
+    let mut blocked = WorkCommand::attack_squads(
+        i32::from(attacker_player_id),
+        vec![attacker_squad_id],
+        second_target,
+    );
+    blocked.ability_id = i32::from(command_id);
+    CommandExecutor::with_database(&loaded.content.database).execute(
+        &mut loaded.simulation.world,
+        &CommandEntry {
+            command: QueuedCommand::Work(blocked),
+            exec_time: clock.game_time_ms,
+            sequence: 0,
+            source_client: u64::from(attacker_player_id),
+        },
+    );
+    assert_eq!(
+        loaded
+            .simulation
+            .world
+            .get_squad(attacker_squad_id)
+            .expect("recovering Marine squad")
+            .attack_target,
+        previous_target,
+        "the active Ability recovery channel should reject Command reuse"
+    );
+}
+
+fn database_ability_id(database: &pipeline::database::hw1::Database, name: &str) -> u8 {
+    database
+        .abilities
+        .iter()
+        .position(|ability| ability.name.eq_ignore_ascii_case(name))
+        .and_then(|index| u8::try_from(index).ok())
+        .unwrap_or_else(|| panic!("real database should contain ability {name}"))
+}
+
+fn squad_member_hitpoints(world: &sim::World, member_ids: &[sim::EntityId]) -> f32 {
+    member_ids
+        .iter()
+        .filter_map(|&unit_id| world.get_unit(unit_id))
+        .map(|unit| unit.hitpoints)
+        .sum()
 }

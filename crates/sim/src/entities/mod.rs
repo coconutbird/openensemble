@@ -14,10 +14,18 @@
 
 mod base;
 mod base_site;
+pub mod projectiles;
 pub mod squads;
 pub mod units;
 
 pub use base::BaseEntity;
 pub use base_site::{Base, BaseId};
-pub use squads::{Squad, SquadArchetype, SquadFormation, SquadState};
-pub use units::{Unit, UnitArchetype, UnitKind, UnitState};
+pub use projectiles::Projectile;
+pub use squads::{
+    RecoveryType, Squad, SquadArchetype, SquadFormation, SquadMode, SquadRecovery, SquadShields,
+    SquadState,
+};
+pub use units::{
+    BuildingProduction, ResearchProgress, ResearchTask, ShieldCoverage, Unit, UnitActions,
+    UnitArchetype, UnitKind, UnitShields, UnitState,
+};

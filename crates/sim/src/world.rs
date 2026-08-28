@@ -3,17 +3,29 @@
 //! Based on `BWorld` from the original source.
 
 use crate::entities::squads::{formation_offset_to_local, formation_offset_to_world};
-use crate::entities::{Base, BaseEntity, BaseId, Squad, Unit};
+use crate::entities::{Base, BaseId, Projectile, Squad, Unit};
 use crate::entity::{Entity, EntityManager};
 use crate::entity_id::{EntityClass, EntityId};
 use crate::physics::{
     prepare_squad_movement, resolve_unit_collisions, substeps, sync_squad_members,
 };
-use crate::player::{GAIA_PLAYER, Player, PlayerId};
+use crate::player::{GAIA_PLAYER, MAX_TEAMS, Player, PlayerId, TeamRelation};
 use crate::random::Random;
-use crate::sync::SyncChecksum;
 use glam::Vec3;
 use std::collections::BTreeMap;
+
+mod ability;
+mod checksum;
+mod combat;
+mod research;
+mod shields;
+mod team;
+mod technology;
+
+pub use research::{ResearchError, ResearchQueueResult, technology_prototype_id};
+pub use technology::TechnologyError;
+
+use team::neutral_team_relations;
 
 /// Maximum supported players.
 pub const MAX_PLAYERS: usize = 8;
@@ -25,6 +37,8 @@ pub const MAX_PLAYERS: usize = 8;
 pub struct World {
     /// All players (index = player ID).
     players: Vec<Player>,
+    /// Directed team diplomacy matrix, matching vanilla `BWorld` state.
+    team_relations: [[TeamRelation; MAX_TEAMS]; MAX_TEAMS],
     /// Current game time in milliseconds.
     pub game_time_ms: u32,
     /// Deterministic RNG for the world.
@@ -33,6 +47,8 @@ pub struct World {
     pub units: EntityManager<Unit>,
     /// Squad entity manager.
     pub squads: EntityManager<Squad>,
+    /// Projectile pool. Projectiles use vanilla entity class 4.
+    pub projectiles: EntityManager<Projectile>,
     /// Base ownership records, which are not standalone vanilla entities.
     bases: BTreeMap<BaseId, Base>,
     /// Next candidate base number.
@@ -51,10 +67,12 @@ impl World {
     pub fn new() -> Self {
         Self {
             players: Vec::new(),
+            team_relations: neutral_team_relations(),
             game_time_ms: 0,
             rng: Random::new(),
             units: EntityManager::new(EntityClass::Unit),
             squads: EntityManager::new(EntityClass::Squad),
+            projectiles: EntityManager::new(EntityClass::Projectile),
             bases: BTreeMap::new(),
             next_base_id: 0,
         }
@@ -138,9 +156,11 @@ impl World {
     /// Reset the world to initial state.
     pub fn reset(&mut self) {
         self.players.clear();
+        self.team_relations = neutral_team_relations();
         self.game_time_ms = 0;
         self.units.clear();
         self.squads.clear();
+        self.projectiles.clear();
         self.bases.clear();
         self.next_base_id = 0;
     }
@@ -178,6 +198,7 @@ impl World {
                 && unit.squad_id == Some(id)
             {
                 unit.squad_id = None;
+                unit.shields.request_recharge();
                 unit.stop();
             }
         }
@@ -223,6 +244,22 @@ impl World {
         self.units.get_mut(id)
     }
 
+    /// Get a live projectile by its current generational ID.
+    #[must_use]
+    pub fn get_projectile(&self, id: EntityId) -> Option<&Projectile> {
+        self.projectiles.get(id)
+    }
+
+    /// Mutably get a live projectile.
+    pub fn get_projectile_mut(&mut self, id: EntityId) -> Option<&mut Projectile> {
+        self.projectiles.get_mut(id)
+    }
+
+    /// Remove a projectile and invalidate its entity ID.
+    pub fn remove_projectile(&mut self, id: EntityId) -> Option<Projectile> {
+        self.projectiles.remove(id)
+    }
+
     /// Get a unit only when it is a building.
     #[must_use]
     pub fn get_building(&self, id: EntityId) -> Option<&Unit> {
@@ -237,10 +274,18 @@ impl World {
     /// Remove a unit or building and clean up squad/base membership.
     pub fn remove_unit(&mut self, id: EntityId) -> Option<Unit> {
         let unit = self.units.remove(id)?;
+        self.refund_research_for_removed_unit(&unit);
+        let mut emptied_squad = None;
         if let Some(squad_id) = unit.squad_id
             && let Some(squad) = self.squads.get_mut(squad_id)
         {
             squad.remove_unit(id);
+            if squad.unit_ids.is_empty() {
+                emptied_squad = Some(squad_id);
+            }
+        }
+        if let Some(squad_id) = emptied_squad {
+            let _removed = self.remove_squad(squad_id);
         }
         if let Some(base_id) = unit.base_id {
             self.detach_removed_building(base_id, id);
@@ -259,6 +304,7 @@ impl World {
         if unit.is_building() || unit.base.player_id != squad.base.player_id {
             return false;
         }
+        let shielded = unit.shields.is_enabled();
         let old_squad_id = unit.squad_id;
         let formation_offset =
             formation_offset_to_local(squad.base.forward, unit.base.position - squad.base.position);
@@ -274,6 +320,9 @@ impl World {
             return false;
         };
         squad.add_unit(unit_id);
+        if shielded {
+            squad.shields.request_recharge();
+        }
         let Some(unit) = self.units.get_mut(unit_id) else {
             if let Some(squad) = self.squads.get_mut(squad_id) {
                 squad.remove_unit(unit_id);
@@ -281,6 +330,7 @@ impl World {
             return false;
         };
         unit.squad_id = Some(squad_id);
+        unit.shields.clear_recharge_request();
         unit.formation_offset = formation_offset;
         unit.stop();
         true
@@ -321,6 +371,7 @@ impl World {
             return false;
         };
         unit.squad_id = None;
+        unit.shields.request_recharge();
         unit.stop();
         true
     }
@@ -406,17 +457,43 @@ impl World {
 
     /// Update all entities for one tick.
     pub fn update_entities(&mut self, dt: f32) {
+        self.update_entities_internal(dt, None);
+    }
+
+    /// Update entities plus tactic-backed attack pursuit for one tick.
+    pub fn update_entities_with_gameplay(
+        &mut self,
+        dt: f32,
+        gameplay: &crate::gameplay::GameplayCatalog,
+    ) {
+        self.update_entities_internal(dt, Some(gameplay));
+    }
+
+    fn update_entities_internal(
+        &mut self,
+        dt: f32,
+        gameplay: Option<&crate::gameplay::GameplayCatalog>,
+    ) {
         let Some((step_count, step_duration)) = substeps(dt) else {
             return;
         };
         for _ in 0..step_count {
-            self.update_entity_substep(step_duration);
+            self.update_entity_substep(step_duration, gameplay);
         }
     }
 
-    fn update_entity_substep(&mut self, dt: f32) {
+    fn update_entity_substep(
+        &mut self,
+        dt: f32,
+        gameplay: Option<&crate::gameplay::GameplayCatalog>,
+    ) {
+        if let Some(gameplay) = gameplay {
+            self.update_combat_orders(dt, gameplay);
+            self.update_shields(dt, gameplay);
+        }
         let physics_anchors = prepare_squad_movement(&self.squads, &mut self.units);
         for (_, squad) in self.squads.iter_mut() {
+            squad.update_recovery(dt);
             if !physics_anchors.contains_key(&squad.base.id) {
                 squad.update(dt);
             }
@@ -433,6 +510,9 @@ impl World {
         for (_, unit) in self.units.iter_mut() {
             unit.update(dt);
         }
+        resolve_unit_collisions(&mut self.units);
+        sync_squad_members(&mut self.squads, &mut self.units, &physics_anchors);
+        self.update_projectiles(dt, gameplay);
         let dead_units: Vec<_> = self
             .units
             .iter()
@@ -441,8 +521,6 @@ impl World {
         for id in dead_units {
             let _removed = self.remove_unit(id);
         }
-        resolve_unit_collisions(&mut self.units);
-        sync_squad_members(&mut self.squads, &mut self.units, &physics_anchors);
     }
 
     fn allocate_base_id(&mut self) -> BaseId {
@@ -473,165 +551,6 @@ impl World {
             base.remove_building(building_id);
         }
     }
-
-    /// Compute a checksum of the entire world state for sync verification.
-    ///
-    /// This hashes all deterministic state: game time, players, entities.
-    /// Two simulations with the same inputs should produce identical checksums.
-    #[must_use]
-    pub fn checksum(&self) -> u32 {
-        let mut cs = SyncChecksum::new();
-        cs.hash_u32(self.game_time_ms);
-        hash_players(&mut cs, &self.players);
-        hash_units(&mut cs, &self.units);
-        hash_squads(&mut cs, &self.squads);
-        hash_bases(&mut cs, &self.bases);
-        cs.value()
-    }
-
-    /// Compute a full checksum that also includes RNG state.
-    ///
-    /// This is useful for detecting divergence in the random number generator,
-    /// which would cause future simulation divergence even if current state matches.
-    #[must_use]
-    pub fn checksum_with_rng(&self) -> u32 {
-        let mut cs = SyncChecksum::new();
-
-        // Start with regular world checksum
-        cs.hash_u32(self.checksum());
-
-        // Hash RNG state by sampling it (non-destructive check)
-        // We can't read internal RNG state directly, so we hash a characteristic
-        // We'll use a copy to sample without affecting the original
-        let mut rng_copy = self.rng.clone();
-        for _ in 0..8 {
-            cs.hash_u32(rng_copy.u_rand());
-        }
-
-        cs.value()
-    }
-}
-
-fn hash_players(cs: &mut SyncChecksum, players: &[Player]) {
-    cs.hash_u32(u32::try_from(players.len()).unwrap_or(u32::MAX));
-    for player in players {
-        cs.hash_u32(u32::from(player.id));
-        cs.hash_u32(u32::from(player.team_id));
-        cs.hash_i32(player.civ_id);
-        cs.hash_i32(player.leader_id);
-        cs.hash_u32(player.state as u32);
-        cs.hash_u32(player.player_type as u32);
-        for &amount in &player.resources.amounts {
-            cs.hash_f32(amount);
-        }
-        for population in &player.population {
-            cs.hash_f32(population.count);
-            cs.hash_f32(population.max);
-            cs.hash_f32(population.cap);
-            cs.hash_f32(population.future);
-        }
-    }
-}
-
-fn hash_units(cs: &mut SyncChecksum, units: &EntityManager<Unit>) {
-    cs.hash_u32(u32::try_from(units.len()).unwrap_or(u32::MAX));
-    for (_, unit) in units.iter() {
-        hash_base_entity(cs, &unit.base);
-        cs.hash_u32(unit.kind as u32);
-        cs.hash_u32(unit.archetype as u32);
-        cs.hash_u32(unit.state as u32);
-        cs.hash_i32(unit.proto_object_id);
-        cs.hash_u32(u32::try_from(unit.proto_object_name.len()).unwrap_or(u32::MAX));
-        cs.hash_bytes(unit.proto_object_name.as_bytes());
-        cs.hash_f32(unit.hitpoints);
-        cs.hash_f32(unit.max_hitpoints);
-        cs.hash_f32(unit.speed);
-        cs.hash_f32(unit.acceleration);
-        cs.hash_f32(unit.turn_rate_degrees);
-        cs.hash_vec3(
-            unit.obstruction_half_extents.x,
-            unit.obstruction_half_extents.y,
-            unit.obstruction_half_extents.z,
-        );
-        if let Some(body) = &unit.physics {
-            cs.hash_u32(1);
-            body.hash_state(cs);
-        } else {
-            cs.hash_u32(0);
-        }
-        hash_optional_vec3(cs, unit.move_target);
-        hash_optional_entity_id(cs, unit.squad_id);
-        hash_optional_base_id(cs, unit.base_id);
-        cs.hash_vec3(
-            unit.formation_offset.x,
-            unit.formation_offset.y,
-            unit.formation_offset.z,
-        );
-    }
-}
-
-fn hash_squads(cs: &mut SyncChecksum, squads: &EntityManager<Squad>) {
-    cs.hash_u32(u32::try_from(squads.len()).unwrap_or(u32::MAX));
-    for (_, squad) in squads.iter() {
-        hash_base_entity(cs, &squad.base);
-        cs.hash_u32(squad.state as u32);
-        cs.hash_u32(squad.archetype as u32);
-        cs.hash_u32(squad.formation as u32);
-        cs.hash_f32(squad.speed);
-        cs.hash_f32(squad.acceleration);
-        cs.hash_f32(squad.turn_rate_degrees);
-        cs.hash_i32(squad.proto_squad_id);
-        cs.hash_u32(u32::try_from(squad.proto_squad_name.len()).unwrap_or(u32::MAX));
-        cs.hash_bytes(squad.proto_squad_name.as_bytes());
-        cs.hash_f32(squad.turn_radius);
-        cs.hash_f32(squad.min_turn_radius);
-        cs.hash_f32(squad.max_turn_radius);
-        hash_optional_vec3(cs, squad.move_target);
-        cs.hash_u32(u32::try_from(squad.unit_ids.len()).unwrap_or(u32::MAX));
-        for &unit_id in &squad.unit_ids {
-            cs.hash_u32(unit_id.as_u32());
-        }
-    }
-}
-
-fn hash_bases(cs: &mut SyncChecksum, bases: &BTreeMap<BaseId, Base>) {
-    cs.hash_u32(u32::try_from(bases.len()).unwrap_or(u32::MAX));
-    for (id, base) in bases {
-        cs.hash_u32(u32::from(id.as_u16()));
-        cs.hash_u32(u32::from(base.player_id));
-        cs.hash_u32(base.anchor_building_id.as_u32());
-        cs.hash_vec3(base.position.x, base.position.y, base.position.z);
-        cs.hash_u32(u32::try_from(base.building_count()).unwrap_or(u32::MAX));
-        for building_id in base.buildings() {
-            cs.hash_u32(building_id.as_u32());
-        }
-    }
-}
-
-fn hash_base_entity(cs: &mut SyncChecksum, entity: &BaseEntity) {
-    cs.hash_u32(entity.id.as_u32());
-    cs.hash_u32(u32::from(entity.player_id));
-    cs.hash_vec3(entity.position.x, entity.position.y, entity.position.z);
-    cs.hash_vec3(entity.forward.x, entity.forward.y, entity.forward.z);
-    cs.hash_vec3(entity.velocity.x, entity.velocity.y, entity.velocity.z);
-    cs.hash_u32(u32::from(entity.alive));
-}
-
-fn hash_optional_vec3(cs: &mut SyncChecksum, value: Option<Vec3>) {
-    if let Some(value) = value {
-        cs.hash_u32(1);
-        cs.hash_vec3(value.x, value.y, value.z);
-    } else {
-        cs.hash_u32(0);
-    }
-}
-
-fn hash_optional_entity_id(cs: &mut SyncChecksum, value: Option<EntityId>) {
-    cs.hash_u32(value.map_or(EntityId::INVALID.as_u32(), EntityId::as_u32));
-}
-
-fn hash_optional_base_id(cs: &mut SyncChecksum, value: Option<BaseId>) {
-    cs.hash_u32(value.map_or(u32::MAX, |id| u32::from(id.as_u16())));
 }
 
 #[cfg(test)]

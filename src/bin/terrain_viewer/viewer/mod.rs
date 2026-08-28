@@ -35,6 +35,7 @@ struct TerrainLoadInputs {
     sky: Option<UgxUnit>,
     source: Option<AssetSource<StdFileProvider>>,
     simulation: Option<sim::LoadedScenario>,
+    content: Option<pipeline::hw1::World>,
     ugx_scene: Option<UgxUnitScene>,
 }
 
@@ -47,6 +48,10 @@ pub struct TerrainViewer {
     pub asset_source: Option<AssetSource<StdFileProvider>>,
     /// Authoritative game state loaded by `sim` from the scenario database.
     pub simulation: Option<sim::LoadedScenario>,
+    /// Database and presentation catalog layered for the active scenario.
+    pub game_content: Option<pipeline::hw1::World>,
+    /// Fixed-step clock and command queue advancing the authoritative world.
+    pub simulation_clock: sim::Simulation,
     /// All decoded terrain data (mesh, textures, splat, decals, foliage, roads).
     pub scene: Option<TerrainScene>,
     /// Scenario GLS/FLS constants used by every lit renderer.
@@ -94,6 +99,8 @@ pub struct TerrainViewer {
     pub ugx_scene: Option<UgxUnitScene>,
     /// Presentation-only GPU resources for simulation entity placements.
     pub ugx_scene_renderer: Option<UgxUnitSceneRenderer>,
+    /// Whether the GPU placement roster must be synchronized from `ugx_scene`.
+    pub ugx_roster_dirty: bool,
     /// Optional deterministic top-down capture-and-exit state.
     pub capture: Option<CaptureState>,
 }
@@ -105,6 +112,8 @@ impl TerrainViewer {
             scenario_name: None,
             asset_source: None,
             simulation: None,
+            game_content: None,
+            simulation_clock: sim::Simulation::new(),
             scene: None,
             lightset: None,
             local_lights: LocalLightSet::default(),
@@ -131,6 +140,7 @@ impl TerrainViewer {
             road_resources: None,
             ugx_scene: None,
             ugx_scene_renderer: None,
+            ugx_roster_dirty: false,
             capture: None,
         }
     }
@@ -179,6 +189,11 @@ impl TerrainViewer {
         // Store asset source for road texture loading later
         self.asset_source = inputs.source;
         self.simulation = inputs.simulation;
+        self.game_content = inputs.content;
+        self.simulation_clock.reset();
+        if self.simulation.is_some() {
+            self.simulation_clock.start();
+        }
         self.lightset = inputs.lightset;
         self.environment = inputs.environment;
         self.sky_unit = inputs.sky;
@@ -188,6 +203,7 @@ impl TerrainViewer {
         }
         self.ugx_scene = inputs.ugx_scene;
         self.ugx_scene_renderer = None;
+        self.ugx_roster_dirty = false;
 
         // Load entire terrain scene in one call
         let first_load = self.scene.is_none();
@@ -222,11 +238,12 @@ fn load_scenario_inputs(scenario_name: &str) -> Result<TerrainLoadInputs, String
     } = sim::load_scenario_from_game_dir(&dir_str, scenario_name)
         .map_err(|error| format!("Failed to load simulation scenario: {error}"))?;
     log::info!(
-        "Entered sim scenario with {} players, {} initial bases, {} squads, and {} units/buildings",
+        "Entered sim scenario with {} players, {} initial bases, {} squads, {} units/buildings, and {} projectiles",
         simulation.world.player_count(),
         simulation.initial_base_ids.len(),
         simulation.world.squads.len(),
         simulation.world.units.len(),
+        simulation.world.projectiles.len(),
     );
 
     let sky = content
@@ -260,6 +277,21 @@ fn load_scenario_inputs(scenario_name: &str) -> Result<TerrainLoadInputs, String
             environment.hdr_scale(),
         );
     }
+    let active_proto_names = simulation
+        .world
+        .units
+        .iter()
+        .map(|(_, unit)| unit.proto_object_name.as_str())
+        .chain(
+            simulation
+                .world
+                .projectiles
+                .iter()
+                .map(|(_, projectile)| projectile.proto_object_name.as_str()),
+        )
+        .collect::<Vec<_>>();
+    let loaded_visuals = content.load_visuals_for(&mut source, active_proto_names.iter().copied());
+    log::info!("Loaded {loaded_visuals} active proto visual definitions");
     let ugx_scene = UgxUnitScene::load_world(
         &mut source,
         &simulation.world,
@@ -279,6 +311,7 @@ fn load_scenario_inputs(scenario_name: &str) -> Result<TerrainLoadInputs, String
         sky,
         source: Some(source),
         simulation: Some(simulation),
+        content: Some(content),
         ugx_scene: Some(ugx_scene),
     })
 }
@@ -323,6 +356,7 @@ fn load_file_inputs(path: &Path) -> Result<TerrainLoadInputs, String> {
         sky: None,
         source: None,
         simulation: None,
+        content: None,
         ugx_scene: None,
     })
 }

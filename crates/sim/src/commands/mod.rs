@@ -2,11 +2,13 @@
 //!
 //! Each command type extends the base Command with additional fields.
 
+mod building;
 mod game;
 mod power;
 mod work;
 
-pub use game::GameCommand;
+pub use building::{BuildingCommand, BuildingCommandType};
+pub use game::{GameCommand, GameCommandType};
 pub use power::PowerCommand;
 pub use power::command_flags as power_command_flags;
 pub use work::WorkCommand;

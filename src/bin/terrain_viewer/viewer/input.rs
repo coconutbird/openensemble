@@ -47,6 +47,120 @@ fn debug_button_row(ui: &mut egui::Ui, debug_mode: &mut u32, buttons: &[(&str, u
 }
 
 impl TerrainViewer {
+    fn update_simulation_controls(&mut self, input: &Input) {
+        if input.is_key_pressed(KeyCode::M) {
+            self.spawn_player_marines(1);
+        }
+        if input.is_key_pressed(KeyCode::G) {
+            self.move_player_squads_to_camera(1);
+        }
+    }
+
+    fn spawn_player_marines(&mut self, player_id: sim::PlayerId) {
+        let (Some(simulation), Some(content)) = (&mut self.simulation, &self.game_content) else {
+            return;
+        };
+        let base_id = simulation.get_initial_base_id(player_id).or_else(|| {
+            simulation
+                .world
+                .bases()
+                .find_map(|(id, base)| (base.player_id == player_id).then_some(*id))
+        });
+        let Some(base_id) = base_id else {
+            log::warn!("Player {player_id} has no base for Marine spawning");
+            return;
+        };
+        let proto_name = sim::entities::squads::marine::MARINE_SQUAD_NAME;
+        match sim::spawn_squad_from_base_by_name(
+            &mut simulation.world,
+            &content.database,
+            base_id,
+            proto_name,
+        ) {
+            Ok(squad_id) => {
+                log::info!("Spawned Player {player_id} Marine squad {squad_id:?} from {base_id:?}");
+            }
+            Err(error) => log::warn!("Could not spawn Player {player_id} Marines: {error}"),
+        }
+    }
+
+    fn move_player_squads_to_camera(&mut self, player_id: sim::PlayerId) {
+        let Some(simulation) = &self.simulation else {
+            return;
+        };
+        let recipients = simulation
+            .world
+            .squads
+            .iter()
+            .filter_map(|(id, squad)| (squad.base.player_id == player_id).then_some(id))
+            .collect::<Vec<_>>();
+        let Some(y) = recipients
+            .first()
+            .and_then(|id| simulation.world.get_squad(*id))
+            .map(|squad| squad.base.position.y)
+        else {
+            log::warn!("Player {player_id} has no squads to move");
+            return;
+        };
+        let target = glam::Vec3::new(self.camera.position.x, y, self.camera.position.z);
+        let command = sim::WorkCommand::move_squads(i32::from(player_id), recipients, target);
+        let exec_time = self
+            .simulation_clock
+            .game_time_ms
+            .saturating_add(sim::MS_PER_TICK);
+        self.simulation_clock
+            .command_queue
+            .enqueue_work(command, exec_time, u64::from(player_id));
+        log::info!(
+            "Queued Player {player_id} squad move to ({:.1}, {:.1}, {:.1})",
+            target.x,
+            target.y,
+            target.z
+        );
+    }
+
+    fn advance_simulation(&mut self, dt_seconds: f32) {
+        let TerrainViewer {
+            simulation: Some(simulation),
+            game_content: Some(content),
+            simulation_clock,
+            asset_source: Some(source),
+            ugx_scene: Some(scene),
+            ugx_roster_dirty,
+            ..
+        } = self
+        else {
+            return;
+        };
+        simulation_clock.update_with_scenario(dt_seconds, simulation, &content.database);
+        if scene.roster_matches(&simulation.world) {
+            return;
+        }
+        let active_proto_names = simulation
+            .world
+            .units
+            .iter()
+            .map(|(_, unit)| unit.proto_object_name.as_str())
+            .chain(
+                simulation
+                    .world
+                    .projectiles
+                    .iter()
+                    .map(|(_, projectile)| projectile.proto_object_name.as_str()),
+            )
+            .collect::<Vec<_>>();
+        let loaded_visuals = content.load_visuals_for(source, active_proto_names.iter().copied());
+        if loaded_visuals > 0 {
+            log::info!("Loaded {loaded_visuals} visuals for the updated sim roster");
+        }
+        *ugx_roster_dirty |= scene.sync_world(
+            source,
+            &simulation.world,
+            &content.visuals,
+            &content.database.objects,
+        );
+    }
+
     fn update_display_toggles(&mut self, input: &Input) {
         if input.is_key_pressed(KeyCode::Tab) {
             self.show_info = !self.show_info;
@@ -180,11 +294,13 @@ impl TerrainViewer {
         if let Some(simulation) = &self.simulation {
             ui.separator();
             ui.label(format!(
-                "Simulation: {} players, {} initial bases, {} squads, {} units/buildings",
+                "Simulation: tick {}, {} players, {} initial bases, {} squads, {} units/buildings, {} projectiles",
+                self.simulation_clock.tick,
                 simulation.world.player_count(),
                 simulation.initial_base_ids.len(),
                 simulation.world.squads.len(),
                 simulation.world.units.len(),
+                simulation.world.projectiles.len(),
             ));
         }
         if let Some(scene) = &self.ugx_scene {
@@ -237,6 +353,8 @@ impl TerrainViewer {
             "  Shift - Fast",
             "  Tab - Toggle info",
             "  F - Toggle wireframe",
+            "  M - Spawn Player 1 Marines at base",
+            "  G - Move Player 1 squads to camera X/Z",
             "  Escape - Quit",
         ] {
             ui.label(control);
@@ -277,6 +395,8 @@ impl Application for TerrainViewer {
         self.update_debug_keys(input);
         self.update_compositor_controls(input);
         self.update_bump_power(input);
+        self.update_simulation_controls(input);
+        self.advance_simulation(ctx.delta_time);
         self.camera.update(input, ctx.delta_time);
         self.update_compositor_lod();
         true

@@ -186,7 +186,12 @@ impl HeadlessServer {
         }
 
         // Run simulation tick
-        let commands = self.simulation.tick_with_world(&mut self.world);
+        let commands = if let Some(database) = &self.database {
+            self.simulation
+                .tick_with_world_and_database(&mut self.world, database)
+        } else {
+            self.simulation.tick_with_world(&mut self.world)
+        };
         self.tick_count += 1;
 
         // Log periodic status

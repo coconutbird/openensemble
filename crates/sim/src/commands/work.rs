@@ -1,7 +1,7 @@
 //! Work command matching vanilla `BWorkCommand`.
 
 use crate::EntityId;
-use crate::command::Command;
+use crate::command::{Command, CommandType, EntityType};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use glam::Vec3;
 use std::io::{self, Read, Write};
@@ -76,6 +76,44 @@ impl Default for WorkCommand {
 }
 
 impl WorkCommand {
+    /// Build a move command for player-owned squads.
+    #[must_use]
+    pub fn move_squads(player_id: i32, recipients: Vec<EntityId>, target: Vec3) -> Self {
+        Self {
+            base: Command {
+                player_id,
+                id: crate::order::OrderType::Move as i32,
+                sender_type: EntityType::Player,
+                senders: vec![player_id],
+                recipient_type: EntityType::Squad,
+                recipients,
+                command_type: CommandType::Work,
+                ..Command::default()
+            },
+            terrain_point: Some(target),
+            ..Self::default()
+        }
+    }
+
+    /// Build an attack command for player-owned squads.
+    #[must_use]
+    pub fn attack_squads(player_id: i32, recipients: Vec<EntityId>, target: EntityId) -> Self {
+        Self {
+            base: Command {
+                player_id,
+                id: crate::order::OrderType::Attack as i32,
+                sender_type: EntityType::Player,
+                senders: vec![player_id],
+                recipient_type: EntityType::Squad,
+                recipients,
+                command_type: CommandType::Work,
+                ..Command::default()
+            },
+            unit_id: target,
+            ..Self::default()
+        }
+    }
+
     /// Serialize the work-specific fields (after base command).
     ///
     /// # Errors

@@ -1,16 +1,21 @@
 //! GPU presentation for unit visuals bound to simulation entities.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use glam::Mat4;
 use sim::{EntityId, World as SimWorld};
 
-use super::{UnitScene, simulation_unit_transform};
+use super::{UnitScene, simulation_entity_transform};
 use crate::environment::EnvironmentMap;
 use crate::terrain::LightingParams;
+use crate::ugx::renderer::SharedResources;
 use crate::ugx::{RendererResources, UnitRenderer, WorldBindings};
 use crate::{RenderPhase, WorldRenderer};
 
 struct RenderedPlacement {
     entity_id: EntityId,
+    proto_name: String,
     transform: Mat4,
     visible: bool,
     renderer: UnitRenderer,
@@ -22,6 +27,7 @@ struct RenderedPlacement {
 /// each frame. This type owns only GPU/UI state; it never advances gameplay.
 pub struct UnitSceneRenderer {
     placements: Vec<RenderedPlacement>,
+    shared: Arc<SharedResources>,
 }
 
 impl UnitSceneRenderer {
@@ -112,6 +118,7 @@ impl UnitSceneRenderer {
             .iter()
             .map(|placement| RenderedPlacement {
                 entity_id: placement.entity_id(),
+                proto_name: placement.proto_name().to_owned(),
                 transform: placement.transform,
                 visible: true,
                 renderer: UnitRenderer::new_with_shared(
@@ -123,7 +130,50 @@ impl UnitSceneRenderer {
                 ),
             })
             .collect();
-        Self { placements }
+        Self {
+            placements,
+            shared: Arc::clone(&resources.shared),
+        }
+    }
+
+    /// Synchronize uploaded instances with a refreshed simulation scene.
+    ///
+    /// Existing entity/prototype pairs retain their GPU resources. New entities
+    /// receive an instance renderer and removed entities are dropped.
+    pub fn sync_scene(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, scene: &UnitScene) {
+        let mut previous = self
+            .placements
+            .drain(..)
+            .map(|placement| (placement.entity_id, placement))
+            .collect::<HashMap<_, _>>();
+        self.placements = scene
+            .placements
+            .iter()
+            .map(|placement| {
+                if let Some(mut rendered) = previous.remove(&placement.entity_id())
+                    && rendered
+                        .proto_name
+                        .eq_ignore_ascii_case(placement.proto_name())
+                {
+                    rendered.transform = placement.transform;
+                    rendered.visible = true;
+                    return rendered;
+                }
+                RenderedPlacement {
+                    entity_id: placement.entity_id(),
+                    proto_name: placement.proto_name().to_owned(),
+                    transform: placement.transform,
+                    visible: true,
+                    renderer: UnitRenderer::new_with_shared(
+                        device,
+                        queue,
+                        &placement.unit,
+                        placement.transform,
+                        &self.shared,
+                    ),
+                }
+            })
+            .collect();
     }
 
     /// Present the latest authoritative simulation transforms.
@@ -147,10 +197,7 @@ impl UnitSceneRenderer {
         time_seconds: f32,
     ) {
         for placement in &mut self.placements {
-            let Some(transform) = world
-                .get_unit(placement.entity_id)
-                .and_then(simulation_unit_transform)
-            else {
+            let Some(transform) = simulation_entity_transform(world, placement.entity_id) else {
                 placement.visible = false;
                 continue;
             };

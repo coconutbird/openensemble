@@ -4,8 +4,17 @@
 //! vanilla's class-1 `BUnit` pool. [`UnitKind`] records the behavioral
 //! distinction without inventing a separate entity class.
 
+mod actions;
+mod building;
+mod combat;
 pub mod marine;
+mod shields;
 pub mod warthog;
+
+pub use actions::UnitActions;
+pub use building::{BuildingProduction, ResearchProgress, ResearchTask};
+pub use combat::UnitCombat;
+pub use shields::{ShieldCoverage, UnitShields};
 
 use super::{BaseEntity, BaseId};
 use crate::entity::Entity;
@@ -46,6 +55,8 @@ pub enum UnitState {
     Idle,
     /// Moving toward `move_target`.
     Moving,
+    /// Pursuing or engaging `attack_target`.
+    Attacking,
     /// Dead and ready for removal.
     Dead,
 }
@@ -69,6 +80,12 @@ pub struct Unit {
     pub hitpoints: f32,
     /// Maximum hit points.
     pub max_hitpoints: f32,
+    /// Integral energy-shield state.
+    pub shields: UnitShields,
+    /// Live outgoing damage multiplier (veterancy and tech effects layer here).
+    pub damage_multiplier: f32,
+    /// Live incoming damage multiplier.
+    pub damage_taken_multiplier: f32,
     /// Movement speed in world units per second.
     pub speed: f32,
     /// Acceleration in world units per second squared; zero means immediate.
@@ -81,6 +98,18 @@ pub struct Unit {
     pub physics: Option<PhysicsBody>,
     /// Standalone movement target.
     pub move_target: Option<Vec3>,
+    /// Standalone attack target, retained as a generational entity ID.
+    pub attack_target: Option<EntityId>,
+    /// Command-authored attack range override; zero selects tactic range.
+    pub attack_range: f32,
+    /// Ability database index requested by a standalone attack order.
+    pub attack_ability_id: Option<u8>,
+    /// Live enablement state for authored tactic actions.
+    pub actions: UnitActions,
+    /// Per-unit authored attack animation/cooldown state.
+    pub combat: UnitCombat,
+    /// Research/production work owned by building units.
+    pub production: BuildingProduction,
     /// Squad containing this unit, if any.
     pub squad_id: Option<EntityId>,
     /// Base containing this building, if any.
@@ -100,12 +129,21 @@ impl Default for Unit {
             proto_object_name: String::new(),
             hitpoints: 100.0,
             max_hitpoints: 100.0,
+            shields: UnitShields::default(),
+            damage_multiplier: 1.0,
+            damage_taken_multiplier: 1.0,
             speed: 10.0,
             acceleration: 0.0,
             turn_rate_degrees: 0.0,
             obstruction_half_extents: Vec3::ZERO,
             physics: None,
             move_target: None,
+            attack_target: None,
+            attack_range: 0.0,
+            attack_ability_id: None,
+            actions: UnitActions::default(),
+            combat: UnitCombat::default(),
+            production: BuildingProduction::default(),
             squad_id: None,
             base_id: None,
             formation_offset: Vec3::ZERO,
@@ -156,15 +194,19 @@ impl Unit {
         }
     }
 
-    /// Apply positive finite damage, killing the unit at zero hit points.
-    pub fn damage(&mut self, amount: f32) {
+    /// Apply positive finite damage through shields, then hit points.
+    ///
+    /// Returns whether the live unit accepted the damage event.
+    pub fn damage(&mut self, amount: f32) -> bool {
         if !amount.is_finite() || amount <= 0.0 || !self.is_alive() {
-            return;
+            return false;
         }
-        self.hitpoints = (self.hitpoints - amount).max(0.0);
+        let hitpoint_damage = self.shields.absorb_damage(amount);
+        self.hitpoints = (self.hitpoints - hitpoint_damage).max(0.0);
         if self.hitpoints == 0.0 {
             self.kill();
         }
+        true
     }
 
     /// Kill this unit or building.
@@ -172,6 +214,10 @@ impl Unit {
         self.hitpoints = 0.0;
         self.state = UnitState::Dead;
         self.base.kill();
+        self.attack_target = None;
+        self.attack_range = 0.0;
+        self.attack_ability_id = None;
+        self.combat.reset();
         self.stop();
     }
 
@@ -182,9 +228,63 @@ impl Unit {
         if self.is_building() || self.squad_id.is_some() || !self.is_alive() {
             return false;
         }
+        self.attack_target = None;
+        self.attack_range = 0.0;
+        self.attack_ability_id = None;
+        self.combat.reset();
         self.move_target = Some(target);
         self.state = UnitState::Moving;
         true
+    }
+
+    /// Issue a standalone attack order.
+    pub fn attack(&mut self, target: EntityId, range: f32, ability_id: Option<u8>) -> bool {
+        if self.squad_id.is_some() || !self.is_alive() || target.is_invalid() {
+            return false;
+        }
+        self.attack_target = Some(target);
+        self.attack_range = valid_attack_range(range);
+        self.attack_ability_id = ability_id;
+        self.combat.reset();
+        self.move_target = None;
+        self.base.velocity = Vec3::ZERO;
+        self.state = UnitState::Attacking;
+        true
+    }
+
+    /// Cancel the current standalone attack order.
+    pub fn clear_attack_order(&mut self) {
+        self.attack_target = None;
+        self.attack_range = 0.0;
+        self.attack_ability_id = None;
+        self.combat.reset();
+        self.move_target = None;
+        self.base.velocity = Vec3::ZERO;
+        if self.state == UnitState::Attacking {
+            self.state = UnitState::Idle;
+        }
+    }
+
+    pub(crate) fn chase_attack_target(&mut self, target: Vec3) {
+        if self.state == UnitState::Attacking && !self.is_building() {
+            self.move_target = Some(target);
+        }
+    }
+
+    pub(crate) fn hold_attack_position(&mut self, target: Vec3) {
+        if self.state == UnitState::Attacking {
+            self.move_target = None;
+            self.base.velocity = Vec3::ZERO;
+            let direction = Vec3::new(
+                target.x - self.base.position.x,
+                0.0,
+                target.z - self.base.position.z,
+            )
+            .normalize_or_zero();
+            if direction != Vec3::ZERO {
+                self.base.set_forward(direction);
+            }
+        }
     }
 
     /// Accumulate a force on this unit's physics body.
@@ -260,12 +360,22 @@ impl Entity for Unit {
     }
 
     fn update(&mut self, dt: f32) {
-        if self.state == UnitState::Moving {
+        if self.state == UnitState::Moving
+            || (self.state == UnitState::Attacking && self.move_target.is_some())
+        {
             self.update_movement(dt);
         }
     }
 
     fn is_alive(&self) -> bool {
         self.base.is_alive() && self.state != UnitState::Dead && self.hitpoints > 0.0
+    }
+}
+
+fn valid_attack_range(range: f32) -> f32 {
+    if range.is_finite() && range > 0.0 {
+        range
+    } else {
+        0.0
     }
 }

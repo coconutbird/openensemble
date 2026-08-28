@@ -4,7 +4,14 @@
 //! A squad is a group of units that move and act together.
 
 pub mod marine;
+mod mode;
+mod recovery;
+mod shields;
 pub mod warthog;
+
+pub use mode::SquadMode;
+pub use recovery::{RecoveryType, SquadRecovery};
+pub use shields::SquadShields;
 
 use super::BaseEntity;
 use crate::entity::Entity;
@@ -63,6 +70,18 @@ pub struct Squad {
     pub formation: SquadFormation,
     /// Movement target position (if moving).
     pub move_target: Option<Vec3>,
+    /// Unit or squad currently targeted by an attack order.
+    pub attack_target: Option<EntityId>,
+    /// Command-authored attack range override; zero selects tactic range.
+    pub attack_range: f32,
+    /// Current retail squad mode used by tactic target rules.
+    pub mode: SquadMode,
+    /// Ability database index requested by the current attack order.
+    pub attack_ability_id: Option<u8>,
+    /// Active movement, attack, or command-ability recovery channel.
+    pub recovery: SquadRecovery,
+    /// Shared post-damage timer for member shield recharge.
+    pub shields: SquadShields,
     /// Movement speed (units per second).
     pub speed: f32,
     /// Squad locomotion acceleration; zero means immediate.
@@ -81,6 +100,8 @@ pub struct Squad {
     pub max_turn_radius: f32,
     /// Units in this squad, sorted by entity ID for deterministic iteration.
     pub unit_ids: Vec<EntityId>,
+    /// Members that completed the current command-ability attack cycle.
+    ability_used_unit_ids: Vec<EntityId>,
 }
 
 impl Default for Squad {
@@ -91,6 +112,12 @@ impl Default for Squad {
             archetype: SquadArchetype::Generic,
             formation: SquadFormation::Generic,
             move_target: None,
+            attack_target: None,
+            attack_range: 0.0,
+            mode: SquadMode::Normal,
+            attack_ability_id: None,
+            recovery: SquadRecovery::default(),
+            shields: SquadShields::default(),
             speed: 10.0, // Default speed
             acceleration: 0.0,
             turn_rate_degrees: 0.0,
@@ -100,6 +127,7 @@ impl Default for Squad {
             min_turn_radius: 0.0,
             max_turn_radius: 0.0,
             unit_ids: Vec::new(),
+            ability_used_unit_ids: Vec::new(),
         }
     }
 }
@@ -127,8 +155,71 @@ impl Squad {
 
     /// Issue a move order to the given position.
     pub fn move_to(&mut self, target: Vec3) {
+        self.attack_target = None;
+        self.attack_range = 0.0;
+        self.attack_ability_id = None;
+        self.ability_used_unit_ids.clear();
         self.move_target = Some(target);
         self.state = SquadState::Moving;
+    }
+
+    /// Issue an attack order against a generational entity ID.
+    pub fn attack(
+        &mut self,
+        target: EntityId,
+        range: f32,
+        mode: Option<SquadMode>,
+        ability_id: Option<u8>,
+    ) -> bool {
+        if !self.is_alive() || target.is_invalid() {
+            return false;
+        }
+        self.attack_target = Some(target);
+        self.attack_range = valid_attack_range(range);
+        if let Some(mode) = mode {
+            self.mode = mode;
+        }
+        self.attack_ability_id = ability_id;
+        self.ability_used_unit_ids.clear();
+        self.move_target = None;
+        self.base.velocity = Vec3::ZERO;
+        self.state = SquadState::Attacking;
+        true
+    }
+
+    /// Cancel the active attack order.
+    pub fn clear_attack_order(&mut self) {
+        self.attack_target = None;
+        self.attack_range = 0.0;
+        self.attack_ability_id = None;
+        self.ability_used_unit_ids.clear();
+        self.move_target = None;
+        self.base.velocity = Vec3::ZERO;
+        if self.state == SquadState::Attacking {
+            self.state = SquadState::Idle;
+        }
+    }
+
+    pub(crate) fn chase_attack_target(&mut self, target: Vec3) {
+        if self.state == SquadState::Attacking {
+            self.move_target = Some(target);
+        }
+    }
+
+    pub(crate) fn hold_attack_position(&mut self, target: Vec3) {
+        if self.state == SquadState::Attacking {
+            self.move_target = None;
+            self.base.velocity = Vec3::ZERO;
+            let direction = Vec3::new(
+                target.x - self.base.position.x,
+                0.0,
+                target.z - self.base.position.z,
+            )
+            .normalize_or_zero();
+            if direction != Vec3::ZERO {
+                self.base.set_forward(direction);
+            }
+        }
     }
 
     /// Stop moving.
@@ -165,6 +256,9 @@ impl Squad {
             return false;
         };
         self.unit_ids.remove(index);
+        if let Ok(index) = self.ability_used_unit_ids.binary_search(&unit_id) {
+            self.ability_used_unit_ids.remove(index);
+        }
         true
     }
 
@@ -172,6 +266,48 @@ impl Squad {
     #[must_use]
     pub fn contains_unit(&self, unit_id: EntityId) -> bool {
         self.unit_ids.binary_search(&unit_id).is_ok()
+    }
+
+    pub(crate) fn unit_completed_ability(&self, unit_id: EntityId) -> bool {
+        self.ability_used_unit_ids.binary_search(&unit_id).is_ok()
+    }
+
+    pub(crate) fn mark_unit_ability_complete(&mut self, unit_id: EntityId) {
+        if let Err(index) = self.ability_used_unit_ids.binary_search(&unit_id) {
+            self.ability_used_unit_ids.insert(index, unit_id);
+        }
+    }
+
+    pub(crate) fn ability_complete_for(&self, participants: &[EntityId]) -> bool {
+        !participants.is_empty()
+            && participants
+                .iter()
+                .all(|unit_id| self.unit_completed_ability(*unit_id))
+    }
+
+    pub(crate) fn finish_ability_execution(
+        &mut self,
+        recovery_type: Option<RecoveryType>,
+        recovery_time: f32,
+        ability_id: Option<u8>,
+    ) {
+        self.attack_ability_id = None;
+        self.ability_used_unit_ids.clear();
+        if let Some(recovery_type) = recovery_type {
+            self.recovery
+                .start(recovery_type, recovery_time, ability_id);
+        }
+    }
+
+    pub(crate) fn update_recovery(&mut self, dt: f32) {
+        self.recovery.advance(dt);
+    }
+
+    pub(crate) fn hash_ability_execution(&self, checksum: &mut crate::sync::SyncChecksum) {
+        checksum.hash_u32(u32::try_from(self.ability_used_unit_ids.len()).unwrap_or(u32::MAX));
+        for unit_id in &self.ability_used_unit_ids {
+            checksum.hash_u32(unit_id.as_u32());
+        }
     }
 
     /// Update movement for one tick.
@@ -287,12 +423,22 @@ impl Entity for Squad {
     }
 
     fn update(&mut self, dt: f32) {
-        if self.state == SquadState::Moving {
+        if self.state == SquadState::Moving
+            || (self.state == SquadState::Attacking && self.move_target.is_some())
+        {
             self.update_movement(dt);
         }
     }
 
     fn is_alive(&self) -> bool {
         self.base.is_alive() && self.state != SquadState::Dead
+    }
+}
+
+fn valid_attack_range(range: f32) -> f32 {
+    if range.is_finite() && range > 0.0 {
+        range
+    } else {
+        0.0
     }
 }

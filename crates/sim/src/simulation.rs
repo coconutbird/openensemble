@@ -6,8 +6,10 @@
 use crate::command_queue::{CommandEntry, CommandQueue};
 use crate::executor::CommandExecutor;
 use crate::random::Random;
+use crate::scenario::LoadedScenario;
 use crate::sync::SyncChecksum;
 use crate::world::World;
+use pipeline::database::hw1::Database;
 
 /// Simulation tick rate (updates per second).
 pub const TICK_RATE: u32 = 20;
@@ -33,6 +35,8 @@ pub trait CommandHandler {
     fn handle_work(&mut self, cmd: &crate::commands::WorkCommand);
     /// Process a power command.
     fn handle_power(&mut self, cmd: &crate::commands::PowerCommand);
+    /// Process a building command.
+    fn handle_building(&mut self, cmd: &crate::commands::BuildingCommand);
     /// Process a game command.
     fn handle_game(&mut self, cmd: &crate::commands::GameCommand);
 }
@@ -198,6 +202,39 @@ impl Simulation {
         commands
     }
 
+    /// Process one tick with world state and the active game database.
+    ///
+    /// This variant also executes database-backed game commands such as
+    /// `CreateSquad` and `CreateObject`.
+    pub fn tick_with_world_and_database(
+        &mut self,
+        world: &mut World,
+        database: &Database,
+    ) -> Vec<CommandEntry> {
+        let commands = self.tick_once();
+        CommandExecutor::with_database(database).execute_all(world, &commands);
+        let _completed_research = world.update_research(SECONDS_PER_TICK, database);
+        world.update_entities(SECONDS_PER_TICK);
+        world.game_time_ms = self.game_time_ms;
+        commands
+    }
+
+    /// Process one authoritative scenario tick with its gameplay catalog.
+    pub fn tick_with_scenario(
+        &mut self,
+        scenario: &mut LoadedScenario,
+        database: &Database,
+    ) -> Vec<CommandEntry> {
+        let commands = self.tick_once();
+        CommandExecutor::with_database(database).execute_all(&mut scenario.world, &commands);
+        let _completed_research = scenario.world.update_research(SECONDS_PER_TICK, database);
+        scenario
+            .world
+            .update_entities_with_gameplay(SECONDS_PER_TICK, &scenario.gameplay);
+        scenario.world.game_time_ms = self.game_time_ms;
+        commands
+    }
+
     /// Update the simulation with world integration.
     ///
     /// This is the high-level API that processes multiple ticks
@@ -219,6 +256,46 @@ impl Simulation {
             all_commands.extend(commands);
         }
 
+        all_commands
+    }
+
+    /// Advance fixed ticks while executing commands with the active database.
+    pub fn update_with_world_and_database(
+        &mut self,
+        dt_seconds: f32,
+        world: &mut World,
+        database: &Database,
+    ) -> Vec<CommandEntry> {
+        if self.state != SimState::Running {
+            return Vec::new();
+        }
+
+        self.accumulated_ms += dt_seconds * 1_000.0 * self.speed;
+        let mut all_commands = Vec::new();
+        while self.accumulated_ms >= MS_PER_TICK_F32 {
+            self.accumulated_ms -= MS_PER_TICK_F32;
+            all_commands.extend(self.tick_with_world_and_database(world, database));
+        }
+        all_commands
+    }
+
+    /// Advance fixed ticks against an authoritative loaded scenario.
+    pub fn update_with_scenario(
+        &mut self,
+        dt_seconds: f32,
+        scenario: &mut LoadedScenario,
+        database: &Database,
+    ) -> Vec<CommandEntry> {
+        if self.state != SimState::Running {
+            return Vec::new();
+        }
+
+        self.accumulated_ms += dt_seconds * 1_000.0 * self.speed;
+        let mut all_commands = Vec::new();
+        while self.accumulated_ms >= MS_PER_TICK_F32 {
+            self.accumulated_ms -= MS_PER_TICK_F32;
+            all_commands.extend(self.tick_with_scenario(scenario, database));
+        }
         all_commands
     }
 }

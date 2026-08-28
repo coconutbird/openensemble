@@ -12,6 +12,7 @@ pub mod entities;
 pub mod entity;
 pub mod entity_id;
 pub mod executor;
+pub mod gameplay;
 pub mod order;
 pub mod packet;
 pub mod physics;
@@ -21,6 +22,7 @@ pub mod scenario;
 pub mod serialize;
 pub mod session;
 pub mod simulation;
+pub mod spawn;
 pub mod sync;
 pub mod time_sync;
 pub mod trigger;
@@ -28,21 +30,29 @@ pub mod world;
 
 pub use command::{Command, CommandType, EntityType};
 pub use command_queue::{CommandEntry, CommandQueue, QueuedCommand};
-pub use commands::{GameCommand, PowerCommand, WorkCommand};
+pub use commands::{
+    BuildingCommand, BuildingCommandType, GameCommand, GameCommandType, PowerCommand, WorkCommand,
+};
 pub use dispatcher::{CommandDispatcher, DispatchError, DispatchedCommand};
 pub use entities::{
-    Base, BaseEntity, BaseId, Squad, SquadArchetype, SquadFormation, SquadState, Unit,
-    UnitArchetype, UnitKind, UnitState,
+    Base, BaseEntity, BaseId, BuildingProduction, Projectile, RecoveryType, ResearchProgress,
+    ResearchTask, ShieldCoverage, Squad, SquadArchetype, SquadFormation, SquadMode, SquadRecovery,
+    SquadShields, SquadState, Unit, UnitActions, UnitArchetype, UnitKind, UnitShields, UnitState,
 };
 pub use entity::{Entity, EntityManager, MAX_ENTITY_SLOTS};
 pub use entity_id::{EntityClass, EntityId};
 pub use executor::CommandExecutor;
+pub use gameplay::{
+    AbilityGameplay, AbilityRecoveryStart, AttackQuery, AttackQueryFlags, GameplayCatalog,
+    GameplayLoadIssue, ObjectGameplay, RangedAction, TacticRelation,
+};
 pub use order::OrderType;
 pub use packet::{ChannelPacketHeader, PacketError};
 pub use physics::{BoxCollider, MotionType, PhysicsBody, PhysicsMaterial};
 pub use player::{
-    CivId, GAIA_PLAYER, LeaderId, MAX_POP_TYPES, MAX_RESOURCES, Player, PlayerId, PlayerState,
-    PlayerType, Population, Resources, TeamId,
+    CivId, GAIA_PLAYER, LeaderId, MAX_POP_TYPES, MAX_RESOURCES, MAX_TEAMS, Player, PlayerId,
+    PlayerResearchState, PlayerState, PlayerTechState, PlayerType, Population, Resources, TeamId,
+    TeamRelation, TechStatus,
 };
 pub use random::Random;
 pub use scenario::{
@@ -56,10 +66,17 @@ pub use session::{ClientState, PlayerInfo, Session, SessionState};
 pub use simulation::{
     CommandHandler, MS_PER_TICK, SimState, SimUpdateResult, Simulation, TICK_RATE,
 };
+pub use spawn::{
+    MAX_SPAWN_BATCH, SpawnError, object_prototype_id, spawn_object_at, spawn_squad_at,
+    spawn_squad_from_base, spawn_squad_from_base_by_name, spawn_squads_at, squad_prototype_id,
+};
 pub use sync::{SimpleChecksum, SyncChecksum};
 pub use time_sync::{ClientTimeHistory, TimeSync, TimingRecord};
 pub use trigger::{
     Condition, ConditionMode, ConditionResult, ConditionType, Effect, EffectType, Trigger,
     TriggerEngine, TriggerId, TriggerScript, TriggerScriptId, TriggerValue, VarId, VarType,
 };
-pub use world::{MAX_PLAYERS, World};
+pub use world::{
+    MAX_PLAYERS, ResearchError, ResearchQueueResult, TechnologyError, World,
+    technology_prototype_id,
+};

@@ -2445,6 +2445,7 @@ dependencies = [
  "database",
  "ddx",
  "era",
+ "memmap2",
  "serde",
  "serde_json",
  "uax",

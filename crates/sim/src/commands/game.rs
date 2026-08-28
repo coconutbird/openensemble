@@ -1,6 +1,6 @@
 //! Game command matching vanilla `BGameCommand`.
 
-use crate::command::Command;
+use crate::command::{Command, CommandType, EntityType};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use glam::Vec3;
 use std::io::{self, Read, Write};
@@ -51,6 +51,7 @@ pub enum GameCommandType {
 }
 
 impl GameCommandType {
+    #[must_use]
     pub fn from_i32(value: i32) -> Option<Self> {
         match value {
             0 => Some(Self::QuickBuild),
@@ -104,6 +105,51 @@ pub struct GameCommand {
 }
 
 impl GameCommand {
+    /// Build a vanilla-compatible debug command that creates squad prototypes.
+    #[must_use]
+    pub fn create_squads(player_id: i32, proto_squad_id: i32, count: i32, position: Vec3) -> Self {
+        Self {
+            base: Command {
+                player_id,
+                sender_type: EntityType::Player,
+                senders: vec![player_id],
+                recipient_type: EntityType::Game,
+                command_type: CommandType::Game,
+                ..Command::default()
+            },
+            game_type: GameCommandType::CreateSquad,
+            data: proto_squad_id,
+            data2: count,
+            position,
+            ..Self::default()
+        }
+    }
+
+    /// Build a vanilla-compatible debug command that creates object prototypes.
+    #[must_use]
+    pub fn create_objects(
+        player_id: i32,
+        proto_object_id: i32,
+        count: i32,
+        position: Vec3,
+    ) -> Self {
+        Self {
+            base: Command {
+                player_id,
+                sender_type: EntityType::Player,
+                senders: vec![player_id],
+                recipient_type: EntityType::Game,
+                command_type: CommandType::Game,
+                ..Command::default()
+            },
+            game_type: GameCommandType::CreateObject,
+            data: proto_object_id,
+            data2: count,
+            position,
+            ..Self::default()
+        }
+    }
+
     /// Get data as f32.
     #[must_use]
     pub fn data_float(&self) -> f32 {

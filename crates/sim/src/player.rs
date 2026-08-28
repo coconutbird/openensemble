@@ -2,11 +2,38 @@
 //!
 //! Based on `BPlayer` from the original source.
 
+mod research;
+mod technology;
+
+pub use research::{PlayerResearchState, TechStatus};
+pub(crate) use technology::AppliedSquadTransform;
+pub use technology::PlayerTechState;
+
 /// Player ID type (0-based index).
 pub type PlayerId = u8;
 
 /// Team ID type.
 pub type TeamId = u8;
+
+/// Maximum number of teams supported by the original game.
+pub const MAX_TEAMS: usize = 5;
+
+/// Diplomacy relation between two teams.
+///
+/// Numeric values match the concrete relation values in the original
+/// `BRelationType` enum. `Any` and `Self` are query filters rather than stored
+/// diplomacy, so they are intentionally omitted here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum TeamRelation {
+    /// Teams cooperate and may not be targeted as enemies.
+    Ally = 2,
+    /// Teams are hostile.
+    Enemy = 3,
+    /// Teams have no hostile or allied relationship.
+    #[default]
+    Neutral = 4,
+}
 
 /// Civilization ID.
 pub type CivId = i32;
@@ -104,6 +131,13 @@ impl Resources {
             *have -= need;
         }
     }
+
+    /// Refund a previously paid cost.
+    pub fn refund(&mut self, cost: &Resources) {
+        for (have, amount) in self.amounts.iter_mut().zip(cost.amounts.iter()) {
+            *have += amount;
+        }
+    }
 }
 
 /// Population tracking (equivalent to `BPlayerPop`).
@@ -170,6 +204,10 @@ pub struct Player {
     pub population: [Population; MAX_POP_TYPES],
     /// Player name.
     pub name: String,
+    /// Player-specific technology effects and transformed prototype state.
+    pub technologies: PlayerTechState,
+    /// Player-global technology work currently assigned to buildings.
+    pub research: PlayerResearchState,
 }
 
 impl Player {
@@ -186,6 +224,8 @@ impl Player {
             resources: Resources::new(),
             population: [Population::new(); MAX_POP_TYPES],
             name: String::new(),
+            technologies: PlayerTechState::default(),
+            research: PlayerResearchState::default(),
         }
     }
 

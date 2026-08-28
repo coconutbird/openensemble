@@ -87,13 +87,16 @@ save/load ordering; they are not original debug symbols.
 | Stock Warthog and Marine unit profiles | `entities/units/warthog.rs` and `entities/units/marine.rs` |
 | Class-2 squads and unit membership | `entities/squads/mod.rs`: `Squad::unit_ids` |
 | Stock Warthog and Marine squad profiles | `entities/squads/warthog.rs` and `entities/squads/marine.rs` |
+| Class-4 combat projectiles | `entities/projectiles/mod.rs`: `Projectile` and launch state |
 | Building-associated base numbers | `entities/base_site.rs`: `BaseId` and `Base` |
+| Building production and research state | `entities/units/building.rs`, `world/research.rs`, and `player/research.rs` |
 | World ownership and cleanup | `world.rs`: unit, squad, and base lifecycle APIs |
 | Layered scenario/database loading and entity expansion | `scenario.rs`, `scenario/coordinates.rs`, and `scenario/starts.rs` |
+| Target pursuit, firing, and damage | `world/combat.rs`, `entities/units/combat.rs`, and `gameplay.rs` |
 | Ground/vehicle integration and collision | `physics.rs` |
-| Deterministic state comparison | `world.rs`: unit/squad/base checksum helpers |
+| Deterministic state comparison | `world/checksum.rs`: unit/squad/projectile/base state |
 
-The MVP intentionally defers class-0 generic objects, Dopples, projectiles,
-platoons, armies, AirSpots, construction/economy rules, combat, powers, and full
-binary savegame compatibility. Those systems can be added as separate typed
-pools without changing the packed-ID contract.
+The MVP intentionally defers class-0 generic objects, Dopples, platoons,
+armies, AirSpots, construction/economy rules, advanced combat behaviors,
+powers, and full binary savegame compatibility. Those systems can be added as
+separate typed pools without changing the packed-ID contract.

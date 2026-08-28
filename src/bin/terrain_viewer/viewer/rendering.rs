@@ -116,6 +116,20 @@ impl TerrainViewer {
         }
     }
 
+    fn sync_ugx_renderer_roster(&mut self, ctx: &RenderContext<'_>) {
+        if !self.ugx_roster_dirty {
+            return;
+        }
+        if let (Some(renderer), Some(scene)) = (&mut self.ugx_scene_renderer, &self.ugx_scene) {
+            renderer.sync_scene(ctx.device, ctx.queue, scene);
+            log::info!(
+                "Synchronized {} simulation-backed UGX placements",
+                renderer.placement_count()
+            );
+        }
+        self.ugx_roster_dirty = false;
+    }
+
     fn write_decoded_capture_references(&self, raw_data: &RawXtdData) {
         let (Some(capture), Some(scene)) = (&self.capture, &self.scene) else {
             return;
@@ -627,6 +641,7 @@ impl Application3D for TerrainViewer {
         if self.gpu.is_none() {
             return;
         }
+        self.sync_ugx_renderer_roster(ctx);
         let capture_camera = self.capture_camera(ctx.size);
         let (view_projection, camera_position) = capture_camera.map_or_else(
             || {
