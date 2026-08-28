@@ -3,20 +3,22 @@
 //! Based on `BSquad` from the original source.
 //! A squad is a group of units that move and act together.
 
+mod garrison;
 pub mod marine;
 mod mode;
 mod recovery;
 mod shields;
 pub mod warthog;
 
+pub use garrison::{SquadContainmentState, SquadGarrison};
 pub use mode::SquadMode;
 pub use recovery::{RecoveryType, SquadRecovery};
 pub use shields::SquadShields;
 
-use super::BaseEntity;
+use super::{BaseEntity, EntityIdle};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
-use crate::player::PlayerId;
+use crate::player::{PlayerId, PopulationCost};
 use glam::Vec3;
 
 /// Squad state.
@@ -64,6 +66,8 @@ pub struct Squad {
     pub base: BaseEntity,
     /// Current state.
     pub state: SquadState,
+    /// Retail `EntityIdle` action presence and elapsed duration.
+    pub(crate) idle: EntityIdle,
     /// Gameplay implementation selected from the proto-squad name.
     pub archetype: SquadArchetype,
     /// Formation behavior selected from the proto-squad metadata.
@@ -82,6 +86,8 @@ pub struct Squad {
     pub recovery: SquadRecovery,
     /// Shared post-damage timer for member shield recharge.
     pub shields: SquadShields,
+    /// Game time of the most recent accepted member-damage event.
+    pub last_damaged_time: u32,
     /// Movement speed (units per second).
     pub speed: f32,
     /// Squad locomotion acceleration; zero means immediate.
@@ -100,6 +106,20 @@ pub struct Squad {
     pub max_turn_radius: f32,
     /// Units in this squad, sorted by entity ID for deterministic iteration.
     pub unit_ids: Vec<EntityId>,
+    /// Live population charged to this logical squad.
+    pub population_costs: Vec<PopulationCost>,
+    /// Building whose production queue created this squad.
+    pub trained_by: Option<EntityId>,
+    /// Shared authored train-limit bucket, when one linked this squad.
+    pub train_limit_bucket: Option<u8>,
+    /// Destination squad used by the retail hot-drop/teleporter action.
+    pub teleporter_destination: Option<EntityId>,
+    /// Towing squad this squad is currently hitched to.
+    pub(crate) towing_partner: Option<EntityId>,
+    /// Trailer squad currently hitched behind this towing squad.
+    pub(crate) trailer_partner: Option<EntityId>,
+    /// Logical containment order and passenger state.
+    pub garrison: SquadGarrison,
     /// Members that completed the current command-ability attack cycle.
     ability_used_unit_ids: Vec<EntityId>,
 }
@@ -109,6 +129,7 @@ impl Default for Squad {
         Self {
             base: BaseEntity::default(),
             state: SquadState::Idle,
+            idle: EntityIdle::default(),
             archetype: SquadArchetype::Generic,
             formation: SquadFormation::Generic,
             move_target: None,
@@ -118,6 +139,7 @@ impl Default for Squad {
             attack_ability_id: None,
             recovery: SquadRecovery::default(),
             shields: SquadShields::default(),
+            last_damaged_time: 0,
             speed: 10.0, // Default speed
             acceleration: 0.0,
             turn_rate_degrees: 0.0,
@@ -127,6 +149,13 @@ impl Default for Squad {
             min_turn_radius: 0.0,
             max_turn_radius: 0.0,
             unit_ids: Vec::new(),
+            population_costs: Vec::new(),
+            trained_by: None,
+            train_limit_bucket: None,
+            teleporter_destination: None,
+            towing_partner: None,
+            trailer_partner: None,
+            garrison: SquadGarrison::default(),
             ability_used_unit_ids: Vec::new(),
         }
     }
@@ -153,14 +182,65 @@ impl Squad {
         self.base.position
     }
 
+    /// Return whether this squad currently owns a retail idle action.
+    #[must_use]
+    pub fn has_idle_action(&self) -> bool {
+        self.idle.is_active()
+    }
+
+    /// Return the elapsed duration of the current idle action in milliseconds.
+    #[must_use]
+    pub fn idle_duration(&self) -> u32 {
+        self.idle.duration_ms()
+    }
+
+    pub(crate) fn reconcile_idle_action(&mut self, elapsed_ms: u32) {
+        let should_be_idle = self.is_alive() && self.state == SquadState::Idle;
+        self.idle.reconcile(should_be_idle, elapsed_ms);
+    }
+
+    pub(crate) fn cancel_idle_action(&mut self) {
+        self.idle.cancel();
+    }
+
     /// Issue a move order to the given position.
     pub fn move_to(&mut self, target: Vec3) {
+        if !self.base.is_mobile() || self.garrison.is_garrisoned() {
+            return;
+        }
+        self.garrison.cancel_pending();
+        self.move_to_internal(target);
+    }
+
+    pub(crate) fn move_to_garrison_target(&mut self, target: Vec3) {
+        if !self.garrison.is_garrisoned() {
+            self.move_to_internal(target);
+        }
+    }
+
+    fn move_to_internal(&mut self, target: Vec3) {
         self.attack_target = None;
         self.attack_range = 0.0;
         self.attack_ability_id = None;
         self.ability_used_unit_ids.clear();
+        self.cancel_idle_action();
         self.move_target = Some(target);
         self.state = SquadState::Moving;
+    }
+
+    /// Remove every authoritative movement, combat, and containment order.
+    pub(crate) fn remove_all_orders(&mut self) {
+        self.garrison.cancel_pending();
+        self.move_target = None;
+        self.attack_target = None;
+        self.attack_range = 0.0;
+        self.attack_ability_id = None;
+        self.ability_used_unit_ids.clear();
+        self.base.velocity = Vec3::ZERO;
+        if self.is_alive() {
+            self.state = SquadState::Idle;
+        }
+        self.cancel_idle_action();
     }
 
     /// Issue an attack order against a generational entity ID.
@@ -171,9 +251,10 @@ impl Squad {
         mode: Option<SquadMode>,
         ability_id: Option<u8>,
     ) -> bool {
-        if !self.is_alive() || target.is_invalid() {
+        if !self.is_alive() || self.garrison.is_garrisoned() || target.is_invalid() {
             return false;
         }
+        self.garrison.cancel_pending();
         self.attack_target = Some(target);
         self.attack_range = valid_attack_range(range);
         if let Some(mode) = mode {
@@ -181,6 +262,7 @@ impl Squad {
         }
         self.attack_ability_id = ability_id;
         self.ability_used_unit_ids.clear();
+        self.cancel_idle_action();
         self.move_target = None;
         self.base.velocity = Vec3::ZERO;
         self.state = SquadState::Attacking;
@@ -189,6 +271,7 @@ impl Squad {
 
     /// Cancel the active attack order.
     pub fn clear_attack_order(&mut self) {
+        self.cancel_idle_action();
         self.attack_target = None;
         self.attack_range = 0.0;
         self.attack_ability_id = None;
@@ -201,7 +284,7 @@ impl Squad {
     }
 
     pub(crate) fn chase_attack_target(&mut self, target: Vec3) {
-        if self.state == SquadState::Attacking {
+        if self.state == SquadState::Attacking && self.base.is_mobile() {
             self.move_target = Some(target);
         }
     }
@@ -224,17 +307,64 @@ impl Squad {
 
     /// Stop moving.
     pub fn stop(&mut self) {
+        let interrupted_movement = self.state == SquadState::Moving || self.move_target.is_some();
         self.move_target = None;
         self.base.velocity = Vec3::ZERO;
         if self.state == SquadState::Moving {
             self.state = SquadState::Idle;
         }
+        if interrupted_movement {
+            self.cancel_idle_action();
+        }
+    }
+
+    /// Mark the squad dead and cancel all authoritative orders.
+    pub fn kill(&mut self) {
+        self.state = SquadState::Dead;
+        self.base.kill();
+        self.move_target = None;
+        self.attack_target = None;
+        self.attack_range = 0.0;
+        self.attack_ability_id = None;
+        self.ability_used_unit_ids.clear();
+        self.base.velocity = Vec3::ZERO;
+        self.cancel_idle_action();
     }
 
     /// Check if the squad is moving.
     #[must_use]
     pub fn is_moving(&self) -> bool {
-        self.state == SquadState::Moving
+        !self.garrison.is_garrisoned() && self.state == SquadState::Moving
+    }
+
+    /// Link this source squad's hot-drop action to a destination squad.
+    pub fn set_teleporter_destination(&mut self, destination: EntityId) {
+        self.teleporter_destination = (!destination.is_invalid()).then_some(destination);
+    }
+
+    /// Clear a teleporter link that targets a removed squad.
+    pub(crate) fn clear_teleporter_destination(&mut self, removed: EntityId) {
+        if self.teleporter_destination == Some(removed) {
+            self.teleporter_destination = None;
+        }
+    }
+
+    /// Return whether this squad is a trailer attached to another squad.
+    #[must_use]
+    pub fn is_hitched(&self) -> bool {
+        self.towing_partner.is_some()
+    }
+
+    /// Return the towing squad this trailer is attached to.
+    #[must_use]
+    pub fn hitched_to_squad(&self) -> Option<EntityId> {
+        self.towing_partner
+    }
+
+    /// Return the trailer attached behind this towing squad.
+    #[must_use]
+    pub fn hitched_squad(&self) -> Option<EntityId> {
+        self.trailer_partner
     }
 
     /// Add a unit ID while preserving deterministic sorted order.
@@ -316,6 +446,10 @@ impl Squad {
     pub fn update_movement(&mut self, dt: f32) -> bool {
         const ARRIVAL_THRESHOLD: f32 = 0.5;
 
+        if !self.base.is_mobile() {
+            self.base.velocity = Vec3::ZERO;
+            return false;
+        }
         let Some(target) = self.move_target else {
             return false;
         };
@@ -423,8 +557,10 @@ impl Entity for Squad {
     }
 
     fn update(&mut self, dt: f32) {
-        if self.state == SquadState::Moving
-            || (self.state == SquadState::Attacking && self.move_target.is_some())
+        if self.base.is_mobile()
+            && !self.garrison.is_garrisoned()
+            && (self.state == SquadState::Moving
+                || (self.state == SquadState::Attacking && self.move_target.is_some()))
         {
             self.update_movement(dt);
         }

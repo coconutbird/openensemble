@@ -187,6 +187,11 @@ impl PhysicsBody {
         self.max_speed
     }
 
+    /// Replace the prototype-owned speed while preserving live scalar effects.
+    pub(crate) fn set_max_speed(&mut self, max_speed: f32) {
+        self.max_speed = finite_nonnegative(max_speed);
+    }
+
     /// Get the configured acceleration and braking rate.
     #[must_use]
     pub const fn acceleration(&self) -> f32 {
@@ -250,6 +255,7 @@ impl PhysicsBody {
         entity: &mut BaseEntity,
         move_target: Option<Vec3>,
         dt: f32,
+        velocity_scalar: f32,
     ) -> bool {
         if self.motion_type == MotionType::Static || !valid_step(dt) {
             self.clear_accumulators();
@@ -258,7 +264,7 @@ impl PhysicsBody {
         self.integrate_forces(entity, dt);
         let target_before = move_target.map(|target| planar(target - entity.position));
         if let Some(target) = move_target {
-            self.drive_toward(entity, target, dt);
+            self.drive_toward(entity, target, dt, velocity_scalar);
         }
         self.integrate_angular_velocity(entity, dt);
         entity.position += entity.velocity * dt;
@@ -315,7 +321,7 @@ impl PhysicsBody {
         entity.velocity *= damping_factor(self.material.linear_damping, dt);
     }
 
-    fn drive_toward(&self, entity: &mut BaseEntity, target: Vec3, dt: f32) {
+    fn drive_toward(&self, entity: &mut BaseEntity, target: Vec3, dt: f32, velocity_scalar: f32) {
         let delta = planar(target - entity.position);
         let distance = delta.length();
         if distance <= ARRIVAL_THRESHOLD {
@@ -325,29 +331,30 @@ impl PhysicsBody {
         }
         let desired_forward = delta / distance;
         let current_speed = planar(entity.velocity).length();
-        let acceleration = self.acceleration.max(MIN_ACCELERATION);
+        let acceleration = (self.acceleration * velocity_scalar).max(MIN_ACCELERATION);
         let braking_distance = 0.5 * current_speed * current_speed / acceleration;
         let desired_speed = if distance > braking_distance + ARRIVAL_THRESHOLD {
-            self.max_speed
+            self.max_speed * velocity_scalar
         } else {
             0.0
         };
         let next_speed = approach(current_speed, desired_speed, acceleration * dt);
-        let max_turn = self.maximum_turn_rate(next_speed) * dt;
+        let max_turn = self.maximum_turn_rate(next_speed, velocity_scalar) * dt;
         let forward = turn_toward(entity.forward, desired_forward, max_turn);
         entity.set_forward(forward);
         entity.velocity.x = entity.forward.x * next_speed;
         entity.velocity.z = entity.forward.z * next_speed;
     }
 
-    fn maximum_turn_rate(&self, speed: f32) -> f32 {
+    fn maximum_turn_rate(&self, speed: f32, velocity_scalar: f32) -> f32 {
         if speed <= 1.0 || self.max_turn_radius <= 0.0 {
             return self.turn_rate_radians;
         }
-        let speed_fraction = if self.max_speed <= 0.0 {
+        let scaled_max_speed = self.max_speed * velocity_scalar;
+        let speed_fraction = if scaled_max_speed <= 0.0 {
             0.0
         } else {
-            (speed / self.max_speed).clamp(0.0, 1.0)
+            (speed / scaled_max_speed).clamp(0.0, 1.0)
         };
         let radius = ((self.max_turn_radius - self.min_turn_radius)
             .mul_add(speed_fraction, self.min_turn_radius))
@@ -419,11 +426,21 @@ pub(crate) fn prepare_squad_movement(
 ) -> BTreeMap<EntityId, EntityId> {
     let mut anchors = BTreeMap::new();
     for (squad_id, squad) in squads.iter() {
-        let anchor_id = squad
-            .unit_ids
-            .iter()
-            .copied()
-            .find(|&unit_id| units.get(unit_id).is_some_and(Unit::is_physics_driven));
+        if squad.garrison.is_garrisoned() || !squad.base.is_mobile() {
+            for &unit_id in &squad.unit_ids {
+                if let Some(unit) = units.get_mut(unit_id)
+                    && unit.is_physics_driven()
+                {
+                    unit.stop();
+                }
+            }
+            continue;
+        }
+        let anchor_id = squad.unit_ids.iter().copied().find(|&unit_id| {
+            units
+                .get(unit_id)
+                .is_some_and(|unit| unit.is_physics_driven() && !unit.is_garrisoned())
+        });
         let Some(anchor_id) = anchor_id else {
             continue;
         };
@@ -547,7 +564,7 @@ fn collision_snapshots(units: &EntityManager<Unit>) -> Vec<BodySnapshot> {
         .iter()
         .filter_map(|(id, unit)| {
             let body = unit.physics.as_ref()?;
-            unit.is_alive().then_some(BodySnapshot {
+            (unit.is_alive() && !unit.is_garrisoned()).then_some(BodySnapshot {
                 id,
                 squad_id: unit.squad_id,
                 position: unit.base.position,
@@ -827,7 +844,7 @@ mod tests {
     #[test]
     fn vehicle_accelerates_and_turns_with_limits() {
         let (mut entity, mut body) = dynamic_body(Vec3::ZERO);
-        let arrived = body.update(&mut entity, Some(Vec3::new(100.0, 0.0, 0.0)), 0.05);
+        let arrived = body.update(&mut entity, Some(Vec3::new(100.0, 0.0, 0.0)), 0.05, 1.0);
 
         assert!(!arrived);
         assert!(entity.velocity.length() <= 3.0 + f32::EPSILON);

@@ -14,18 +14,21 @@
 
 mod base;
 mod base_site;
+mod idle;
 pub mod projectiles;
 pub mod squads;
 pub mod units;
 
 pub use base::BaseEntity;
 pub use base_site::{Base, BaseId};
+pub(crate) use idle::EntityIdle;
 pub use projectiles::Projectile;
 pub use squads::{
-    RecoveryType, Squad, SquadArchetype, SquadFormation, SquadMode, SquadRecovery, SquadShields,
-    SquadState,
+    RecoveryType, Squad, SquadArchetype, SquadContainmentState, SquadFormation, SquadGarrison,
+    SquadMode, SquadRecovery, SquadShields, SquadState,
 };
 pub use units::{
-    BuildingProduction, ResearchProgress, ResearchTask, ShieldCoverage, Unit, UnitActions,
-    UnitArchetype, UnitKind, UnitShields, UnitState,
+    BuildingProduction, ConstructionKind, ConstructionProgress, ConstructionTask, ResearchProgress,
+    ResearchTask, ShieldCoverage, TrainingKind, TrainingProgress, TrainingTask, Unit, UnitActions,
+    UnitArchetype, UnitDataScalar, UnitGarrison, UnitKind, UnitShields, UnitState,
 };

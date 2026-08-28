@@ -26,19 +26,31 @@ use crate::entities::{BaseId, ShieldCoverage, SquadArchetype, SquadFormation, Un
 use crate::entity_id::EntityId;
 use crate::gameplay::GameplayCatalog;
 use crate::physics::{BoxCollider, PhysicsBody};
-use crate::player::{PlayerId, PlayerType};
+use crate::player::{DEFAULT_PLAYER_DIFFICULTY, PlayerId, PlayerType};
 use crate::world::World;
 use glam::Vec3;
 use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad};
 use pipeline::source::{AssetSource, StdFileProvider};
 use std::collections::{BTreeMap, HashMap};
 
+mod garrison;
+
 mod coordinates;
+pub(crate) mod placed;
+pub(crate) mod population;
+mod prototypes;
+mod resources;
+mod sockets;
 mod starts;
+mod triggers;
 
 // Re-export scenario types from pipeline for convenience
 pub use coordinates::ScenarioPositionAxes;
 pub use pipeline::hw1::scenario::{ScenarioData, ScenarioObject, ScenarioPlayer, ScenarioPosition};
+use prototypes::{
+    PlacedUnitKind, classify_proto_object, creates_base, database_id, find_proto_object,
+    find_proto_squad, prototype_has_flag,
+};
 
 /// Result of loading a scenario into a world.
 ///
@@ -88,6 +100,15 @@ pub enum ScenarioAssetLoadError {
         /// Requested scenario identifier.
         scenario: String,
     },
+    /// The selected SCN could not be reopened to load its trigger systems.
+    #[error("selected scenario definition '{path}' was not found in the layered asset source")]
+    ScenarioDefinitionNotFound {
+        /// Canonical SCN path selected by the scenario descriptor.
+        path: String,
+    },
+    /// A scenario trigger system was malformed.
+    #[error("failed to load a scenario trigger system: {0}")]
+    Trigger(#[from] crate::trigger::LoadError),
 }
 
 impl LoadedScenario {
@@ -145,12 +166,25 @@ pub fn load_scenario_from_game_dir(
         .map(|descriptor| descriptor.max_players)
         .filter(|maximum| *maximum > 0);
     let gameplay = GameplayCatalog::load_from_source(&content.database, &mut source);
-    let simulation = load_scenario_into_world_with_max_players(
+    let scenario_path = content
+        .scenario
+        .as_ref()
+        .map(pipeline::hw1::scenario::ScenarioDescriptor::scn_path)
+        .ok_or_else(|| ScenarioAssetLoadError::ScenarioDataNotFound {
+            scenario: scenario.to_owned(),
+        })?;
+    let trigger_document = source.read_xmb(&scenario_path).ok_or_else(|| {
+        ScenarioAssetLoadError::ScenarioDefinitionNotFound {
+            path: scenario_path.clone(),
+        }
+    })?;
+    let mut simulation = load_scenario_into_world_with_max_players(
         scenario_data,
         &content.database,
         max_players,
         gameplay,
     );
+    triggers::load_trigger_systems(&mut simulation, &content.database, &trigger_document)?;
 
     Ok(LoadedGameScenario {
         simulation,
@@ -188,6 +222,12 @@ fn load_scenario_into_world_with_max_players(
     gameplay: GameplayCatalog,
 ) -> LoadedScenario {
     let mut world = World::new();
+    world.configure_prototype_catalogs(db);
+    world.set_construction_damage_multiplier(
+        db.game_data
+            .as_ref()
+            .and_then(|game_data| game_data.construction_damage_multiplier),
+    );
     let mut scenario_id_to_entity_id = HashMap::new();
     let players = scenario.players.as_ref().map_or(&[][..], |w| &w.entries);
     let objects = scenario.objects.as_ref().map_or(&[][..], |w| &w.entries);
@@ -216,6 +256,27 @@ fn load_scenario_into_world_with_max_players(
 }
 
 fn configure_players(world: &mut World, players: &[ScenarioPlayer], db: &Database) {
+    let default_difficulty = db
+        .game_data
+        .as_ref()
+        .map_or(DEFAULT_PLAYER_DIFFICULTY, |data| {
+            data.difficulty_default.unwrap_or(DEFAULT_PLAYER_DIFFICULTY)
+        });
+    let population_names = db
+        .game_data
+        .as_ref()
+        .and_then(|game_data| game_data.pops.as_ref())
+        .map_or(&[][..], |pops| pops.entries.as_slice());
+    let rate_count = db
+        .game_data
+        .as_ref()
+        .and_then(|game_data| game_data.rates.as_ref())
+        .map_or(0, |rates| rates.entries.len());
+    for player in world.players_mut() {
+        player.difficulty = default_difficulty;
+        player.configure_population_slots(population_names.len());
+        player.configure_rate_slots(rate_count);
+    }
     for (index, scenario_player) in players.iter().take(crate::world::MAX_PLAYERS).enumerate() {
         let player_id = u8::try_from(index + 1).unwrap_or(u8::MAX);
         let Some(player) = world.get_player_mut(player_id) else {
@@ -223,8 +284,11 @@ fn configure_players(world: &mut World, players: &[ScenarioPlayer], db: &Databas
         };
         player.name.clone_from(&scenario_player.name);
         player.civ_id = find_name_index(&db.civs, &scenario_player.civ, |civ| &civ.name);
-        player.leader_id =
+        let leader_id =
             find_name_index(&db.leaders, &scenario_player.leader1, |leader| &leader.name);
+        player.leader_id = leader_id;
+        apply_leader_population(player, db, leader_id, population_names);
+        resources::apply_leader_starting_resources(player, db, leader_id);
         player.team_id = u8::try_from(scenario_player.team).unwrap_or_default();
         player.player_type = if scenario_player.controllable {
             PlayerType::Human
@@ -235,8 +299,80 @@ fn configure_players(world: &mut World, players: &[ScenarioPlayer], db: &Databas
             player.resources.set(0, scenario_player.supplies);
             player.resources.set(1, scenario_player.power);
         }
+        player.initialize_resource_totals();
     }
     world.configure_standard_team_relations();
+}
+
+/// Apply a lobby-selected runtime leader and its authored population limits.
+///
+/// Skirmish SCN files contain player slots but generally leave civilization and
+/// leader selection to the pregame lobby. Call this before placing lobby-owned
+/// starting forces when `ScenarioPlayer/Leader1` did not provide the choice.
+#[must_use]
+pub fn configure_player_leader(
+    world: &mut World,
+    database: &Database,
+    player_id: PlayerId,
+    leader_id: i32,
+) -> bool {
+    let Some(leader) = usize::try_from(leader_id)
+        .ok()
+        .and_then(|index| database.leaders.get(index))
+    else {
+        return false;
+    };
+    let population_names = database
+        .game_data
+        .as_ref()
+        .and_then(|game_data| game_data.pops.as_ref())
+        .map_or(&[][..], |pops| pops.entries.as_slice());
+    let civilization_id = leader.civ.as_deref().map_or(-1, |civilization| {
+        find_name_index(&database.civs, civilization, |entry| &entry.name)
+    });
+    let live_cap_additions = world
+        .units
+        .iter()
+        .filter(|(_, unit)| unit.base.player_id == player_id && unit.built)
+        .flat_map(|(_, unit)| unit.population_cap_additions.iter().copied())
+        .collect::<Vec<_>>();
+    let Some(player) = world.get_player_mut(player_id) else {
+        return false;
+    };
+    player.configure_population_slots(population_names.len());
+    for population_id in 0..player.population.len() {
+        let _configured = player.set_population_limits(population_id, 0.0, 0.0);
+    }
+    player.leader_id = leader_id;
+    player.civ_id = civilization_id;
+    apply_leader_population(player, database, leader_id, population_names);
+    resources::apply_leader_starting_resources(player, database, leader_id);
+    player.adjust_population_cap(&live_cap_additions, true);
+    true
+}
+
+fn apply_leader_population(
+    player: &mut crate::player::Player,
+    database: &Database,
+    leader_id: i32,
+    population_names: &[String],
+) {
+    let Some(leader) = usize::try_from(leader_id)
+        .ok()
+        .and_then(|index| database.leaders.get(index))
+    else {
+        return;
+    };
+    for population in &leader.pops {
+        let Some(population_id) = population_names
+            .iter()
+            .position(|name| name.trim().eq_ignore_ascii_case(population.pop_type.trim()))
+        else {
+            continue;
+        };
+        let maximum = population.max.unwrap_or(population.count);
+        let _configured = player.set_population_limits(population_id, population.count, maximum);
+    }
 }
 
 fn find_name_index<T>(values: &[T], name: &str, key: impl Fn(&T) -> &str) -> i32 {
@@ -252,10 +388,7 @@ fn create_scenario_object(
     object: &ScenarioObject,
     db: &Database,
 ) -> Option<EntityId> {
-    if object.is_squad {
-        return Some(create_scenario_squad(world, object, db));
-    }
-    create_scenario_unit(world, object, db)
+    placed::create_scenario_object(world, object, db)
 }
 
 fn create_scenario_squad(world: &mut World, object: &ScenarioObject, db: &Database) -> EntityId {
@@ -328,6 +461,7 @@ pub(crate) fn create_squad_from_prototype(
     }
     if let Some((_, proto)) = proto {
         create_squad_members(world, squad_id, proto, db);
+        population::apply_squad_population(world, squad_id, db, proto);
     }
     refresh_squad_member_settings(world, squad_id);
     squad_id
@@ -371,6 +505,9 @@ pub(crate) fn add_squad_member_from_prototype(
         let assigned = world.set_squad_member_formation_offset(unit_id, offset);
         debug_assert!(assigned, "attached Marine should accept a formation offset");
     }
+    if let Some((_, prototype)) = find_proto_object(db, proto_object_name) {
+        sockets::materialize_authored_sockets(world, unit_id, prototype, db);
+    }
     Some(unit_id)
 }
 
@@ -404,12 +541,37 @@ pub(crate) fn create_object_from_prototype(
         PlacedUnitKind::Building => world.create_building_at(player_id, position),
     };
     configure_unit_from_proto(world, unit_id, proto_name, proto_index, proto);
+    population::apply_object_population(world, unit_id, db, proto);
     if let Some(unit) = world.get_unit_mut(unit_id) {
         unit.base.set_forward(forward);
     }
+    sockets::materialize_authored_sockets(world, unit_id, proto, db);
     if kind == PlacedUnitKind::Building && creates_base(proto) {
         let _base_id = world.register_base(unit_id);
     }
+    Some(unit_id)
+}
+
+pub(crate) fn create_unbuilt_building_from_prototype(
+    world: &mut World,
+    player_id: PlayerId,
+    position: Vec3,
+    forward: Vec3,
+    proto_name: &str,
+    db: &Database,
+) -> Option<EntityId> {
+    let (proto_index, proto) = find_proto_object(db, proto_name)?;
+    if classify_proto_object(proto) != Some(PlacedUnitKind::Building) {
+        return None;
+    }
+    let unit_id = world.create_building_at(player_id, position);
+    configure_unit_from_proto(world, unit_id, proto_name, proto_index, proto);
+    if let Some(unit) = world.get_unit_mut(unit_id) {
+        unit.built = false;
+        unit.base.set_forward(forward);
+    }
+    sockets::materialize_authored_sockets(world, unit_id, proto, db);
+    population::initialize_object_population(world, unit_id, db, proto, false);
     Some(unit_id)
 }
 
@@ -445,34 +607,34 @@ fn configure_unit_from_proto(
     } else {
         ShieldCoverage::None
     };
-    let adjusted_hitpoints = proto.hitpoints.map(|base| {
-        world
-            .get_unit(unit_id)
-            .and_then(|unit| world.get_player(unit.base.player_id))
-            .map_or(base, |player| {
-                player.technologies.hitpoints(proto_name, base)
-            })
-    });
+    let technologies = world
+        .get_unit(unit_id)
+        .and_then(|unit| world.get_player(unit.base.player_id))
+        .map(|player| &player.technologies);
+    let adjusted_hitpoints = proto
+        .hitpoints
+        .map(|base| technologies.map_or(base, |state| state.hitpoints(proto_name, base)));
     let base_shieldpoints = valid_nonnegative(proto.shieldpoints)
         .filter(|_| shield_coverage != ShieldCoverage::None)
         .unwrap_or_default();
-    let shield_settings = world
-        .get_unit(unit_id)
-        .and_then(|unit| world.get_player(unit.base.player_id))
-        .map_or((base_shieldpoints, 1.0, 1.0), |player| {
-            (
-                player
-                    .technologies
-                    .shieldpoints(proto_name, base_shieldpoints),
-                player.technologies.unit_shield_regen_rate(proto_name),
-                player.technologies.unit_shield_regen_delay(proto_name),
-            )
-        });
+    let shield_settings = technologies.map_or((base_shieldpoints, 1.0, 1.0), |state| {
+        (
+            state.shieldpoints(proto_name, base_shieldpoints),
+            state.unit_shield_regen_rate(proto_name),
+            state.unit_shield_regen_delay(proto_name),
+        )
+    });
+    let adjusted_velocity = valid_nonnegative(proto.max_velocity.or(proto.velocity))
+        .map(|base| technologies.map_or(base, |state| state.maximum_velocity(proto_name, base)));
     let Some(unit) = world.get_unit_mut(unit_id) else {
         return;
     };
     unit.proto_object_id = database_id(proto.dbid, proto_index);
     proto_name.clone_into(&mut unit.proto_object_name);
+    let prototype_non_mobile = unit.is_building() || prototype_has_flag(proto, "Immoveable");
+    unit.base.configure_prototype_mobility(prototype_non_mobile);
+    unit.set_auto_attackable(!prototype_has_flag(proto, "DontAutoAttackMe"));
+    garrison::configure_unit(unit, proto);
     if let Some(hitpoints) = adjusted_hitpoints {
         unit.set_max_hitpoints(hitpoints);
     }
@@ -480,9 +642,7 @@ fn configure_unit_from_proto(
     unit.shields
         .set_regen_scalars(shield_settings.1, shield_settings.2);
     if !unit.is_building()
-        && let Some(speed) = proto.max_velocity.or(proto.velocity)
-        && speed.is_finite()
-        && speed >= 0.0
+        && let Some(speed) = adjusted_velocity
     {
         unit.speed = speed;
     }
@@ -490,9 +650,9 @@ fn configure_unit_from_proto(
     unit.turn_rate_degrees = valid_nonnegative(proto.turn_rate).unwrap_or_default();
     unit.obstruction_half_extents = obstruction_half_extents(proto).unwrap_or(Vec3::ZERO);
     if is_warthog_unit(proto_name, proto.physics_info.as_deref()) {
-        configure_warthog(unit, warthog_spec_from_proto(proto));
+        configure_warthog(unit, warthog_spec_from_proto(proto, adjusted_velocity));
     } else if is_marine_unit(proto_name) {
-        configure_marine(unit, marine_spec_from_proto(proto));
+        configure_marine(unit, marine_spec_from_proto(proto, adjusted_velocity));
     } else if unit.is_building()
         && let Some(collider) = obstruction_collider(proto)
     {
@@ -518,10 +678,9 @@ fn configure_marine(unit: &mut crate::entities::Unit, spec: MarineUnitSpec) {
     unit.physics = None;
 }
 
-fn warthog_spec_from_proto(proto: &ProtoObject) -> WarthogUnitSpec {
+fn warthog_spec_from_proto(proto: &ProtoObject, max_speed: Option<f32>) -> WarthogUnitSpec {
     let mut spec = WarthogUnitSpec::default();
-    spec.max_speed =
-        valid_nonnegative(proto.max_velocity.or(proto.velocity)).unwrap_or(spec.max_speed);
+    spec.max_speed = max_speed.unwrap_or(spec.max_speed);
     spec.acceleration = valid_nonnegative(proto.acceleration).unwrap_or(spec.acceleration);
     spec.turn_rate_degrees = valid_nonnegative(proto.turn_rate).unwrap_or(spec.turn_rate_degrees);
     spec.half_extents.x = valid_positive(proto.obstruction_radius_x).unwrap_or(spec.half_extents.x);
@@ -530,10 +689,9 @@ fn warthog_spec_from_proto(proto: &ProtoObject) -> WarthogUnitSpec {
     spec
 }
 
-fn marine_spec_from_proto(proto: &ProtoObject) -> MarineUnitSpec {
+fn marine_spec_from_proto(proto: &ProtoObject, max_speed: Option<f32>) -> MarineUnitSpec {
     let mut spec = MarineUnitSpec::default();
-    spec.max_speed =
-        valid_nonnegative(proto.max_velocity.or(proto.velocity)).unwrap_or(spec.max_speed);
+    spec.max_speed = max_speed.unwrap_or(spec.max_speed);
     spec.acceleration = valid_nonnegative(proto.acceleration).unwrap_or(spec.acceleration);
     spec.turn_rate_degrees = valid_nonnegative(proto.turn_rate).unwrap_or(spec.turn_rate_degrees);
     spec.half_extents = obstruction_half_extents(proto).unwrap_or(spec.half_extents);
@@ -568,12 +726,16 @@ fn apply_squad_member_movement_settings(world: &mut World, squad_id: EntityId) {
     let mut speed = first.speed;
     let mut acceleration = first.acceleration;
     let mut turn_rate_degrees = first.turn_rate_degrees;
+    let prototype_non_mobile = !first.base.is_ever_mobile();
     for member in members {
         speed = speed.min(member.speed);
         acceleration = acceleration.min(member.acceleration);
         turn_rate_degrees = turn_rate_degrees.min(member.turn_rate_degrees);
     }
     if let Some(squad) = world.get_squad_mut(squad_id) {
+        squad
+            .base
+            .configure_prototype_mobility(prototype_non_mobile);
         squad.speed = speed;
         squad.acceleration = acceleration;
         squad.turn_rate_degrees = turn_rate_degrees;
@@ -613,57 +775,6 @@ fn valid_nonnegative(value: Option<f32>) -> Option<f32> {
     value.filter(|value| value.is_finite() && *value >= 0.0)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PlacedUnitKind {
-    Mobile,
-    Building,
-}
-
-fn classify_proto_object(proto: &ProtoObject) -> Option<PlacedUnitKind> {
-    if proto
-        .object_class
-        .as_deref()
-        .is_some_and(|class| class.eq_ignore_ascii_case("Building"))
-        || proto
-            .select_type
-            .as_deref()
-            .is_some_and(|kind| kind.eq_ignore_ascii_case("Building"))
-        || creates_base(proto)
-    {
-        return Some(PlacedUnitKind::Building);
-    }
-    proto
-        .object_class
-        .as_deref()
-        .is_some_and(|class| class.eq_ignore_ascii_case("Unit"))
-        .then_some(PlacedUnitKind::Mobile)
-}
-
-fn creates_base(proto: &ProtoObject) -> bool {
-    proto
-        .flags
-        .iter()
-        .any(|flag| flag.eq_ignore_ascii_case("KBCreatesBase"))
-}
-
-fn find_proto_object<'a>(db: &'a Database, name: &str) -> Option<(usize, &'a ProtoObject)> {
-    db.objects
-        .iter()
-        .enumerate()
-        .find(|(_, proto)| proto.name.eq_ignore_ascii_case(name))
-}
-
-fn find_proto_squad<'a>(db: &'a Database, name: &str) -> Option<(usize, &'a ProtoSquad)> {
-    db.squads
-        .iter()
-        .enumerate()
-        .find(|(_, proto)| proto.name.eq_ignore_ascii_case(name))
-}
-
-fn database_id(explicit: Option<i32>, index: usize) -> i32 {
-    explicit.unwrap_or_else(|| i32::try_from(index).unwrap_or(-1))
-}
-
 /// Convert an authored SCN object position into canonical terrain-world axes.
 #[must_use]
 pub const fn scenario_object_position_to_world(position: [f32; 3]) -> [f32; 3] {
@@ -685,121 +796,4 @@ fn scenario_forward(object: &ScenarioObject) -> Vec3 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const SAMPLE_SCENARIO: &str = r#"<?xml version="1.0" encoding="utf-8"?>
-<Scenario>
-    <Positions>
-        <Position Number="1" Position="100.0,0.0,100.0" Forward="0.0,0.0,1.0" />
-        <Position Number="2" Position="200.0,0.0,200.0" Forward="0.0,0.0,-1.0" />
-    </Positions>
-    <Players>
-        <Player Name="Player1" Civ="UNSC" Leader1="Cutter" Team="1" Color="0" />
-        <Player Name="Player2" Civ="Covenant" Leader1="Arbiter" Team="2" Color="1" />
-    </Players>
-    <Objects>
-        <Object IsSquad="true" Player="1" ID="0" Position="100.0,0.0,100.0" Forward="0.0,0.0,1.0">
-            unsc_inf_marine_01
-        </Object>
-        <Object IsSquad="true" Player="1" ID="1" Position="110.0,0.0,100.0">
-            unsc_inf_marine_01
-        </Object>
-        <Object IsSquad="true" Player="2" ID="2" Position="200.0,0.0,200.0">
-            cov_inf_grunt_01
-        </Object>
-    </Objects>
-</Scenario>"#;
-
-    #[test]
-    fn test_load_into_world() {
-        let scenario = ScenarioData::from_xml_str(SAMPLE_SCENARIO).unwrap();
-        let db = Database::new(); // empty db — names won't resolve
-        let loaded = load_scenario_into_world(&scenario, &db);
-
-        // Check players (Gaia + 2 players)
-        assert_eq!(loaded.world.player_count(), 3);
-
-        // Check player 1
-        let p1 = loaded.world.get_player(1).unwrap();
-        assert_eq!(p1.name, "Player1");
-        assert_eq!(p1.team_id, 1);
-        // civ_id/leader_id are -1 since db is empty (no civs/leaders loaded)
-        assert_eq!(p1.civ_id, -1);
-
-        // Check player 2
-        let p2 = loaded.world.get_player(2).unwrap();
-        assert_eq!(p2.name, "Player2");
-        assert_eq!(p2.team_id, 2);
-
-        // Check squads were created (count objects with is_squad=true)
-        let squad_count = scenario
-            .objects
-            .as_ref()
-            .map_or(0, |o| o.entries.iter().filter(|e| e.is_squad).count());
-        assert_eq!(squad_count, 3);
-        assert_eq!(loaded.world.squads.len(), squad_count);
-
-        // Check scenario ID mapping
-        let entity_id = loaded.get_entity_id(0).unwrap();
-        let squad = loaded.world.get_squad(entity_id).unwrap();
-        assert!((squad.position().x - 100.0).abs() < 0.01);
-    }
-
-    #[test]
-    fn loads_squad_members_buildings_and_base_anchors() {
-        use pipeline::database::hw1::squads::{UnitEntry, UnitsWrapper};
-
-        let scenario = ScenarioData::from_xml_str(
-            r#"<Scenario>
-                <Players><Player Name="P1" Team="1" /></Players>
-                <Objects>
-                    <Object IsSquad="true" Player="1" ID="10">marine_squad</Object>
-                    <Object Player="1" ID="20" Position="5,0,7">unsc_base</Object>
-                </Objects>
-            </Scenario>"#,
-        )
-        .unwrap();
-        let mut db = Database::new();
-        db.objects.push(ProtoObject {
-            name: "marine".to_owned(),
-            dbid: Some(101),
-            object_class: Some("Unit".to_owned()),
-            hitpoints: Some(75.0),
-            ..ProtoObject::default()
-        });
-        db.objects.push(ProtoObject {
-            name: "unsc_base".to_owned(),
-            dbid: Some(202),
-            object_class: Some("Building".to_owned()),
-            flags: vec!["KBCreatesBase".to_owned()],
-            hitpoints: Some(1_000.0),
-            ..ProtoObject::default()
-        });
-        db.squads.push(ProtoSquad {
-            name: "marine_squad".to_owned(),
-            dbid: Some(303),
-            units: Some(UnitsWrapper {
-                entries: vec![UnitEntry {
-                    proto_object: "marine".to_owned(),
-                    count: 2,
-                    role: None,
-                }],
-            }),
-            ..ProtoSquad::default()
-        });
-
-        let loaded = load_scenario_into_world(&scenario, &db);
-        let squad_id = loaded.get_entity_id(10).unwrap();
-        let building_id = loaded.get_entity_id(20).unwrap();
-        let squad = loaded.world.get_squad(squad_id).unwrap();
-        let building = loaded.world.get_building(building_id).unwrap();
-
-        assert_eq!(squad.proto_squad_id, 303);
-        assert_eq!(squad.unit_ids.len(), 2);
-        assert_eq!(building.proto_object_id, 202);
-        assert!((building.hitpoints - 1_000.0).abs() < f32::EPSILON);
-        assert_eq!(loaded.world.bases().count(), 1);
-        assert!(building.base_id.is_some());
-    }
-}
+mod tests;

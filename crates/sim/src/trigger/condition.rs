@@ -1,6 +1,6 @@
 //! Trigger conditions - evaluate game state to produce boolean results.
 
-use super::VarId;
+use super::{VarBinding, VarId};
 
 /// Vanilla condition type IDs.
 /// Values match `BTriggerCondition::cTC*` for file format compatibility.
@@ -390,11 +390,14 @@ pub struct Condition {
     /// The type of condition to evaluate.
     pub condition_type: ConditionType,
 
-    /// Input variable references (indices into `TriggerScript`'s variable list).
-    pub inputs: Vec<VarId>,
+    /// Original condition DBID, including IDs not implemented by this build.
+    pub raw_type: u16,
 
-    /// Output variable references (for conditions that produce values).
-    pub outputs: Vec<VarId>,
+    /// Input signature slots and their sparse script-variable IDs.
+    pub inputs: Vec<VarBinding>,
+
+    /// Output signature slots and their sparse script-variable IDs.
+    pub outputs: Vec<VarBinding>,
 
     /// Whether this is an async condition (UI input, etc).
     pub is_async: bool,
@@ -413,6 +416,7 @@ impl Condition {
         Self {
             id,
             condition_type,
+            raw_type: condition_type as u16,
             inputs: Vec::new(),
             outputs: Vec::new(),
             is_async: false,
@@ -424,15 +428,41 @@ impl Condition {
     /// Add an input variable reference.
     #[must_use]
     pub fn with_input(mut self, var_id: VarId) -> Self {
-        self.inputs.push(var_id);
+        let signature_id = u16::try_from(self.inputs.len() + 1).unwrap_or(u16::MAX);
+        self.inputs.push(VarBinding::new(signature_id, var_id));
+        self
+    }
+
+    /// Add an input variable at an explicit retail signature slot.
+    #[must_use]
+    pub fn with_input_at(mut self, signature_id: u16, var_id: VarId) -> Self {
+        self.inputs.push(VarBinding::new(signature_id, var_id));
         self
     }
 
     /// Add an output variable reference.
     #[must_use]
     pub fn with_output(mut self, var_id: VarId) -> Self {
-        self.outputs.push(var_id);
+        let signature_id = u16::try_from(self.outputs.len() + 1).unwrap_or(u16::MAX);
+        self.outputs.push(VarBinding::new(signature_id, var_id));
         self
+    }
+
+    /// Add an output variable at an explicit retail signature slot.
+    #[must_use]
+    pub fn with_output_at(mut self, signature_id: u16, var_id: VarId) -> Self {
+        self.outputs.push(VarBinding::new(signature_id, var_id));
+        self
+    }
+
+    /// Resolve a variable ID by its one-based retail signature slot.
+    #[must_use]
+    pub fn variable_id(&self, signature_id: u16) -> Option<VarId> {
+        self.inputs
+            .iter()
+            .chain(&self.outputs)
+            .find(|binding| binding.signature_id == signature_id)
+            .map(|binding| binding.variable_id)
     }
 
     /// Set as async condition.

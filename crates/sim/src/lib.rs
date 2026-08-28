@@ -31,13 +31,16 @@ pub mod world;
 pub use command::{Command, CommandType, EntityType};
 pub use command_queue::{CommandEntry, CommandQueue, QueuedCommand};
 pub use commands::{
-    BuildingCommand, BuildingCommandType, GameCommand, GameCommandType, PowerCommand, WorkCommand,
+    BuildingCommand, BuildingCommandType, GameCommand, GameCommandType, PowerCommand,
+    PowerCommandType, WorkCommand,
 };
 pub use dispatcher::{CommandDispatcher, DispatchError, DispatchedCommand};
 pub use entities::{
-    Base, BaseEntity, BaseId, BuildingProduction, Projectile, RecoveryType, ResearchProgress,
-    ResearchTask, ShieldCoverage, Squad, SquadArchetype, SquadFormation, SquadMode, SquadRecovery,
-    SquadShields, SquadState, Unit, UnitActions, UnitArchetype, UnitKind, UnitShields, UnitState,
+    Base, BaseEntity, BaseId, BuildingProduction, ConstructionKind, ConstructionProgress,
+    ConstructionTask, Projectile, RecoveryType, ResearchProgress, ResearchTask, ShieldCoverage,
+    Squad, SquadArchetype, SquadContainmentState, SquadFormation, SquadGarrison, SquadMode,
+    SquadRecovery, SquadShields, SquadState, TrainingKind, TrainingProgress, TrainingTask, Unit,
+    UnitActions, UnitArchetype, UnitDataScalar, UnitGarrison, UnitKind, UnitShields, UnitState,
 };
 pub use entity::{Entity, EntityManager, MAX_ENTITY_SLOTS};
 pub use entity_id::{EntityClass, EntityId};
@@ -50,15 +53,16 @@ pub use order::OrderType;
 pub use packet::{ChannelPacketHeader, PacketError};
 pub use physics::{BoxCollider, MotionType, PhysicsBody, PhysicsMaterial};
 pub use player::{
-    CivId, GAIA_PLAYER, LeaderId, MAX_POP_TYPES, MAX_RESOURCES, MAX_TEAMS, Player, PlayerId,
-    PlayerResearchState, PlayerState, PlayerTechState, PlayerType, Population, Resources, TeamId,
+    CivId, DEFAULT_PLAYER_DIFFICULTY, GAIA_PLAYER, LeaderId, MAX_POP_TYPES, MAX_RESOURCES,
+    MAX_TEAMS, Player, PlayerId, PlayerResearchState, PlayerState, PlayerTechState, PlayerType,
+    Population, PopulationCost, PowerEntry, PowerEntryItem, ProtoPowerId, Resources, TeamId,
     TeamRelation, TechStatus,
 };
 pub use random::Random;
 pub use scenario::{
     LoadedGameScenario, LoadedScenario, ScenarioAssetLoadError, ScenarioData, ScenarioObject,
-    ScenarioPlayer, ScenarioPosition, ScenarioPositionAxes, load_scenario_from_game_dir,
-    load_scenario_into_world, scenario_object_direction_to_world,
+    ScenarioPlayer, ScenarioPosition, ScenarioPositionAxes, configure_player_leader,
+    load_scenario_from_game_dir, load_scenario_into_world, scenario_object_direction_to_world,
     scenario_object_position_to_world,
 };
 pub use serialize::{SerializeError, deserialize_command, serialize_command};
@@ -73,10 +77,15 @@ pub use spawn::{
 pub use sync::{SimpleChecksum, SyncChecksum};
 pub use time_sync::{ClientTimeHistory, TimeSync, TimingRecord};
 pub use trigger::{
-    Condition, ConditionMode, ConditionResult, ConditionType, Effect, EffectType, Trigger,
-    TriggerEngine, TriggerId, TriggerScript, TriggerScriptId, TriggerValue, VarId, VarType,
+    AISquadAnalysis, AISquadAnalysisComponent, BuildingCommandState, Condition, ConditionMode,
+    ConditionResult, ConditionType, Effect, EffectType, Trigger, TriggerCost, TriggerEngine,
+    TriggerId, TriggerScript, TriggerScriptId, TriggerUpdate, TriggerValue, TriggerVec3, VarId,
+    VarType,
 };
 pub use world::{
-    MAX_PLAYERS, ResearchError, ResearchQueueResult, TechnologyError, World,
-    technology_prototype_id,
+    ChatRequest, CinematicRequest, ConstructionError, ConstructionQueueResult, CustomCommand,
+    CustomCommandFlags, GarrisonError, GeneralEvent, GeneralEventType, MAX_PLAYERS,
+    MAX_TRAIN_BATCH, PresentationRequest, ProductionUpdate, ResearchError, ResearchQueueResult,
+    TechnologyError, TrainingError, TrainingQueueResult, World, object_runtime_id,
+    power_prototype_id, squad_runtime_id, technology_prototype_id,
 };

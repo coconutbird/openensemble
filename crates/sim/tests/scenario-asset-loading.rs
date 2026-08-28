@@ -2,9 +2,9 @@ use sim::entities::squads::marine::MARINE_SQUAD_NAME;
 use sim::{
     AttackQuery, BuildingCommand, CommandEntry, CommandExecutor, LoadedGameScenario, MS_PER_TICK,
     PlayerId, QueuedCommand, RecoveryType, ScenarioAssetLoadError, ShieldCoverage, Simulation,
-    SquadMode, TechStatus, WorkCommand, load_scenario_from_game_dir, object_prototype_id,
-    spawn_object_at, spawn_squad_at, spawn_squad_from_base_by_name, squad_prototype_id,
-    technology_prototype_id,
+    SquadMode, TechStatus, TrainingKind, WorkCommand, configure_player_leader,
+    load_scenario_from_game_dir, object_prototype_id, spawn_object_at, spawn_squad_at,
+    spawn_squad_from_base_by_name, squad_prototype_id, squad_runtime_id, technology_prototype_id,
 };
 
 const DATABASE_PATHS: [&str; 10] = [
@@ -56,9 +56,287 @@ fn loads_real_scenario_database_and_simulation_together() {
 
     assert_database_and_archive_layers(&mut loaded);
     assert_initial_base_state(&loaded);
+    assert_real_barracks_training(&mut loaded);
     assert_real_barracks_research(&mut loaded);
     assert_real_shield_loading_and_recharge(&mut loaded);
     assert_real_base_spawn_and_move(&mut loaded);
+}
+
+fn assert_real_barracks_training(loaded: &mut LoadedGameScenario) {
+    let fixture = prepare_real_barracks_training(loaded);
+    let mut clock = start_real_barracks_training(loaded, &fixture);
+    assert_real_training_reserved(loaded, &fixture);
+    let trained_id = wait_for_trained_squad(loaded, &mut clock, fixture.barracks_id);
+    assert_real_trained_squad(loaded, &fixture, trained_id);
+    loaded.simulation.world.remove_squad(trained_id).unwrap();
+    loaded
+        .simulation
+        .world
+        .remove_unit(fixture.barracks_id)
+        .unwrap();
+}
+
+struct BarracksTrainingFixture {
+    player_id: PlayerId,
+    unit_population_id: usize,
+    population_before: sim::Population,
+    live_squad_count_before: u32,
+    future_squad_count_before: u32,
+    barracks_id: sim::EntityId,
+    marine_database_id: i32,
+    marine_id: i32,
+}
+
+fn prepare_real_barracks_training(loaded: &mut LoadedGameScenario) -> BarracksTrainingFixture {
+    let marine_id = squad_runtime_id(&loaded.content.database, MARINE_SQUAD_NAME)
+        .expect("real database should expose the Marine runtime squad ID");
+    let marine_database_id = squad_prototype_id(&loaded.content.database, MARINE_SQUAD_NAME)
+        .expect("real database should expose the Marine database squad ID");
+    let unit_population_id = loaded
+        .content
+        .database
+        .game_data
+        .as_ref()
+        .and_then(|game_data| game_data.pops.as_ref())
+        .and_then(|pops| {
+            pops.entries
+                .iter()
+                .position(|name| name.eq_ignore_ascii_case("Unit"))
+        })
+        .expect("real GameData should define Unit population");
+    let player_id = loaded
+        .simulation
+        .world
+        .active_players()
+        .next()
+        .map(|player| player.id)
+        .expect("the scenario should have an active lobby slot");
+    ensure_unit_population_room(loaded, player_id, unit_population_id);
+    loaded
+        .simulation
+        .world
+        .get_player_mut(player_id)
+        .unwrap()
+        .resources
+        .amounts = [1_000.0, 10.0, 0.0, 0.0];
+    let population_before = *loaded
+        .simulation
+        .world
+        .get_player(player_id)
+        .unwrap()
+        .get_population(unit_population_id)
+        .unwrap();
+    let database = &loaded.content.database;
+    let barracks_proto_id = object_prototype_id(database, "unsc_bldg_barracks_01")
+        .expect("real database should contain the UNSC Barracks");
+    let barracks_id = spawn_object_at(
+        &mut loaded.simulation.world,
+        database,
+        player_id,
+        barracks_proto_id,
+        glam::Vec3::new(4_900.0, 0.0, 5_000.0),
+        glam::Vec3::Z,
+    )
+    .expect("real Barracks prototype should spawn as a building");
+    let live_squad_count_before = loaded
+        .simulation
+        .world
+        .player_squad_count(player_id, Some(marine_database_id));
+    let future_squad_count_before = loaded
+        .simulation
+        .world
+        .player_future_squad_count(player_id, Some(marine_database_id));
+    BarracksTrainingFixture {
+        player_id,
+        unit_population_id,
+        population_before,
+        live_squad_count_before,
+        future_squad_count_before,
+        barracks_id,
+        marine_database_id,
+        marine_id,
+    }
+}
+
+fn ensure_unit_population_room(
+    loaded: &mut LoadedGameScenario,
+    player_id: PlayerId,
+    unit_population_id: usize,
+) {
+    let database = &loaded.content.database;
+    let has_room = loaded
+        .simulation
+        .world
+        .get_player(player_id)
+        .and_then(|player| player.get_population(unit_population_id))
+        .is_some_and(|population| {
+            population.count + population.future + 1.0 <= population.cap
+                && population.count + population.future + 1.0 <= population.max
+        });
+    if !has_room {
+        let cutter_id = database
+            .leaders
+            .iter()
+            .position(|leader| leader.name.eq_ignore_ascii_case("Cutter"))
+            .and_then(|index| i32::try_from(index).ok())
+            .expect("real database should contain Cutter for the lobby fixture");
+        assert!(configure_player_leader(
+            &mut loaded.simulation.world,
+            database,
+            player_id,
+            cutter_id,
+        ));
+    }
+    assert!(
+        loaded
+            .simulation
+            .world
+            .get_player(player_id)
+            .and_then(|player| player.get_population(unit_population_id))
+            .is_some_and(|population| {
+                population.count + population.future + 1.0 <= population.cap
+                    && population.count + population.future + 1.0 <= population.max
+            }),
+        "the lobby-selected Cutter should have one free Unit population"
+    );
+}
+
+fn start_real_barracks_training(
+    loaded: &mut LoadedGameScenario,
+    fixture: &BarracksTrainingFixture,
+) -> Simulation {
+    let mut clock = Simulation::new();
+    clock.game_time_ms = loaded.simulation.world.game_time_ms;
+    clock.command_queue.enqueue_building(
+        BuildingCommand::train_squads(
+            i32::from(fixture.player_id),
+            vec![fixture.barracks_id],
+            fixture.marine_id,
+            1,
+        ),
+        clock.game_time_ms.saturating_add(MS_PER_TICK),
+        u64::from(fixture.player_id),
+    );
+    clock.tick_with_scenario(&mut loaded.simulation, &loaded.content.database);
+    clock
+}
+
+fn assert_real_training_reserved(loaded: &LoadedGameScenario, fixture: &BarracksTrainingFixture) {
+    let player = loaded
+        .simulation
+        .world
+        .get_player(fixture.player_id)
+        .unwrap();
+    assert!(nearly_equal(player.resources.get(0), 900.0));
+    assert!(nearly_equal(
+        player.population[fixture.unit_population_id].future,
+        fixture.population_before.future + 1.0
+    ));
+    assert_eq!(
+        loaded
+            .simulation
+            .world
+            .player_future_squad_count(fixture.player_id, Some(fixture.marine_database_id)),
+        fixture.future_squad_count_before + 1
+    );
+    let progress = loaded
+        .simulation
+        .world
+        .training_progress(
+            fixture.player_id,
+            fixture.barracks_id,
+            &loaded.content.database,
+            TrainingKind::Squad,
+            fixture.marine_id,
+        )
+        .unwrap()
+        .expect("the paid Marine should be on the Barracks worker");
+    assert!(nearly_equal(progress.current_points, 0.0));
+    assert!(nearly_equal(progress.total_points, 8.0));
+}
+
+fn wait_for_trained_squad(
+    loaded: &mut LoadedGameScenario,
+    clock: &mut Simulation,
+    barracks_id: sim::EntityId,
+) -> sim::EntityId {
+    for _ in 0..200 {
+        clock.tick_with_scenario(&mut loaded.simulation, &loaded.content.database);
+        let trained_id = loaded
+            .simulation
+            .world
+            .squads
+            .iter()
+            .find_map(|(id, squad)| (squad.trained_by == Some(barracks_id)).then_some(id));
+        if let Some(trained_id) = trained_id {
+            return trained_id;
+        }
+    }
+    panic!("eight work points should complete a real Marine squad");
+}
+
+fn assert_real_trained_squad(
+    loaded: &LoadedGameScenario,
+    fixture: &BarracksTrainingFixture,
+    trained_id: sim::EntityId,
+) {
+    let database = &loaded.content.database;
+    let trained = loaded
+        .simulation
+        .world
+        .get_squad(trained_id)
+        .expect("completed Marine squad");
+    assert_eq!(trained.proto_squad_name, MARINE_SQUAD_NAME);
+    let effective_marine = loaded
+        .simulation
+        .world
+        .get_player(fixture.player_id)
+        .unwrap()
+        .technologies
+        .resolved_squad_prototype(MARINE_SQUAD_NAME);
+    let expected_members = database
+        .squads
+        .iter()
+        .find(|prototype| prototype.name.eq_ignore_ascii_case(effective_marine))
+        .and_then(|prototype| prototype.units.as_ref())
+        .map(|units| {
+            units
+                .entries
+                .iter()
+                .map(|entry| usize::try_from(entry.count.max(0)).unwrap_or_default())
+                .sum::<usize>()
+        })
+        .expect("effective Marine prototype should contain authored members");
+    assert_eq!(trained.unit_ids.len(), expected_members);
+    assert!(loaded.simulation.world.squad_is_at_max_size(trained_id));
+    let population = loaded
+        .simulation
+        .world
+        .get_player(fixture.player_id)
+        .unwrap()
+        .population[fixture.unit_population_id];
+    assert!(nearly_equal(
+        population.future,
+        fixture.population_before.future
+    ));
+    assert!(nearly_equal(
+        population.count,
+        fixture.population_before.count + 1.0
+    ));
+    assert_eq!(
+        loaded
+            .simulation
+            .world
+            .player_squad_count(fixture.player_id, Some(fixture.marine_database_id)),
+        fixture.live_squad_count_before + 1
+    );
+    assert_eq!(
+        loaded
+            .simulation
+            .world
+            .player_future_squad_count(fixture.player_id, Some(fixture.marine_database_id)),
+        fixture.future_squad_count_before
+    );
 }
 
 fn assert_real_barracks_research(loaded: &mut LoadedGameScenario) {
@@ -280,6 +558,7 @@ fn assert_database_and_archive_layers(loaded: &mut LoadedGameScenario) {
     );
     assert!(loaded.content.scenario_data.is_some());
     assert!(loaded.simulation.world.player_count() > 1);
+    assert_real_object_type_catalog(loaded);
     assert!(loaded.simulation.gameplay.referenced_tactic_count() > 0);
     assert!(!loaded.simulation.gameplay.is_empty());
     let marine = loaded
@@ -342,6 +621,20 @@ fn assert_database_and_archive_layers(loaded: &mut LoadedGameScenario) {
             .is_some()
     );
     assert_real_marine_action_selection(loaded);
+}
+
+fn assert_real_object_type_catalog(loaded: &LoadedGameScenario) {
+    let marine_proto_id = object_prototype_id(&loaded.content.database, "unsc_inf_marine_01")
+        .expect("the layered database should resolve the Marine proto-object ID");
+    for object_type in ["unsc_inf_marine_01", "Infantry"] {
+        assert!(
+            loaded
+                .simulation
+                .world
+                .prototype_is_object_type(marine_proto_id, object_type),
+            "Marine should retain retail object type {object_type}"
+        );
+    }
 }
 
 fn assert_real_marine_action_selection(loaded: &mut LoadedGameScenario) {

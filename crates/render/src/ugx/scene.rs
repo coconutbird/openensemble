@@ -333,7 +333,7 @@ fn simulation_visuals(world: &SimWorld) -> impl Iterator<Item = SimulationVisual
         .map(|(id, unit)| SimulationVisual {
             id,
             proto_name: &unit.proto_object_name,
-            transform: simulation_unit_transform(unit),
+            transform: simulation_unit_model_transform(unit),
         })
         .chain(
             world
@@ -363,6 +363,13 @@ pub fn simulation_entity_transform(world: &SimWorld, entity_id: EntityId) -> Opt
 /// Build a model-to-world matrix solely from authoritative simulation state.
 #[must_use]
 pub fn simulation_unit_transform(unit: &sim::Unit) -> Option<Mat4> {
+    if unit.is_garrisoned() {
+        return None;
+    }
+    simulation_unit_model_transform(unit)
+}
+
+fn simulation_unit_model_transform(unit: &sim::Unit) -> Option<Mat4> {
     let position = unit.base.position;
     let world_forward = unit.base.forward;
     if !position.is_finite() || !world_forward.is_finite() {
@@ -441,6 +448,36 @@ mod tests {
         unit.base.forward = Vec3::ZERO;
 
         assert!(simulation_unit_transform(unit).is_none());
+    }
+
+    #[test]
+    fn containment_state_alone_controls_simulation_visibility() {
+        let mut world = sim::World::new();
+        world.init_players(1);
+        let container_squad = world.create_squad_at(0, Vec3::ZERO);
+        let container_unit = world.create_building_at(0, Vec3::ZERO);
+        assert!(world.attach_unit_to_squad(container_unit, container_squad));
+        world.get_unit_mut(container_unit).unwrap().garrison =
+            sim::UnitGarrison::container(0.0, false, false, Vec::new());
+        let passenger_squad = world.create_squad_at(1, Vec3::ZERO);
+        let passenger_unit = world.create_unit_at(1, Vec3::ZERO);
+        assert!(world.attach_unit_to_squad(passenger_unit, passenger_squad));
+
+        world
+            .issue_garrison_order(1, passenger_squad, container_squad, 0.0)
+            .expect("garrison command");
+        world.advance_time(50);
+        world.update_entities(0.05);
+        assert!(world.get_unit(passenger_unit).unwrap().is_garrisoned());
+        assert!(simulation_unit_transform(world.get_unit(passenger_unit).unwrap()).is_none());
+
+        world
+            .issue_ungarrison_order(1, passenger_squad, None)
+            .expect("ungarrison command");
+        assert!(simulation_unit_transform(world.get_unit(passenger_unit).unwrap()).is_none());
+        world.advance_time(50);
+        world.update_entities(0.05);
+        assert!(simulation_unit_transform(world.get_unit(passenger_unit).unwrap()).is_some());
     }
 
     #[test]

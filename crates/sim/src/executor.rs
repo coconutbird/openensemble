@@ -4,11 +4,13 @@
 
 use crate::command_queue::{CommandEntry, QueuedCommand};
 use crate::commands::{
-    BuildingCommand, BuildingCommandType, GameCommand, GameCommandType, PowerCommand, WorkCommand,
+    BuildingCommand, BuildingCommandType, GameCommand, GameCommandType, PowerCommand,
+    PowerCommandType, WorkCommand,
 };
-use crate::entities::{RecoveryType, SquadMode};
+use crate::entities::{RecoveryType, SquadMode, TrainingKind};
 use crate::gameplay::resolve_database_ability;
 use crate::order::OrderType;
+use crate::player::PowerGrant;
 use crate::spawn::{MAX_SPAWN_BATCH, spawn_object_at, spawn_squads_at};
 use crate::world::World;
 use pipeline::database::hw1::Database;
@@ -48,7 +50,7 @@ impl<'database> CommandExecutor<'database> {
     pub fn execute(&self, world: &mut World, entry: &CommandEntry) {
         match &entry.command {
             QueuedCommand::Work(cmd) => self.execute_work(world, cmd),
-            QueuedCommand::Power(cmd) => Self::execute_power(world, cmd),
+            QueuedCommand::Power(cmd) => self.execute_power(world, cmd),
             QueuedCommand::Building(cmd) => self.execute_building(world, cmd),
             QueuedCommand::Game(cmd) => self.execute_game(world, cmd),
         }
@@ -61,6 +63,10 @@ impl<'database> CommandExecutor<'database> {
         match order_type {
             Some(OrderType::Move) => Self::execute_move(world, cmd),
             Some(OrderType::Attack) => self.execute_attack(world, cmd),
+            Some(OrderType::Garrison) => Self::execute_garrison(world, cmd),
+            Some(OrderType::Ungarrison) => Self::execute_ungarrison(world, cmd),
+            Some(OrderType::Hitch) => Self::execute_hitch(world, cmd),
+            Some(OrderType::Unhitch) => Self::execute_unhitch(world, cmd),
             _ => {}
         }
     }
@@ -119,6 +125,49 @@ impl<'database> CommandExecutor<'database> {
         }
     }
 
+    fn execute_garrison(world: &mut World, cmd: &WorkCommand) {
+        let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
+            return;
+        };
+        if cmd.unit_id.is_invalid() {
+            return;
+        }
+        for &recipient_id in &cmd.base.recipients {
+            let _result =
+                world.issue_garrison_order(player_id, recipient_id, cmd.unit_id, cmd.range);
+        }
+    }
+
+    fn execute_ungarrison(world: &mut World, cmd: &WorkCommand) {
+        let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
+            return;
+        };
+        for &recipient_id in &cmd.base.recipients {
+            let _result = world.issue_ungarrison_order(player_id, recipient_id, cmd.terrain_point);
+        }
+    }
+
+    fn execute_hitch(world: &mut World, cmd: &WorkCommand) {
+        let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
+            return;
+        };
+        if cmd.unit_id.is_invalid() {
+            return;
+        }
+        for &recipient_id in &cmd.base.recipients {
+            let _result = world.issue_hitch_order(player_id, recipient_id, cmd.unit_id);
+        }
+    }
+
+    fn execute_unhitch(world: &mut World, cmd: &WorkCommand) {
+        let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
+            return;
+        };
+        for &recipient_id in &cmd.base.recipients {
+            let _result = world.issue_unhitch_order(player_id, recipient_id, cmd.unit_id);
+        }
+    }
+
     fn ability_order_is_recovering(
         &self,
         world: &World,
@@ -153,43 +202,117 @@ impl<'database> CommandExecutor<'database> {
             return;
         };
         for &recipient_id in &cmd.base.recipients {
-            if world
-                .get_squad(recipient_id)
-                .is_some_and(|squad| squad.base.player_id == player_id)
-            {
-                if let Some(squad) = world.get_squad_mut(recipient_id) {
-                    squad.move_to(target);
-                }
-            } else if world
-                .get_unit(recipient_id)
-                .is_some_and(|unit| unit.base.player_id == player_id)
-                && let Some(unit) = world.get_unit_mut(recipient_id)
-            {
-                unit.move_to(target);
-            }
+            let _accepted = world.issue_move_order(player_id, recipient_id, target);
         }
     }
 
     /// Execute a power command.
-    fn execute_power(_world: &mut World, _cmd: &PowerCommand) {
-        // TODO: Implement power commands
-    }
-
-    /// Execute supported building production commands.
-    fn execute_building(&self, world: &mut World, cmd: &BuildingCommand) {
+    fn execute_power(&self, world: &mut World, cmd: &PowerCommand) {
         let (Some(database), Ok(player_id)) = (self.database, u8::try_from(cmd.base.player_id))
         else {
             return;
         };
-        if cmd.building_type != BuildingCommandType::Research || cmd.count == 0 {
+        if cmd.power_type == PowerCommandType::GrantPower {
+            let _granted = world.grant_player_power(
+                player_id,
+                database,
+                PowerGrant {
+                    proto_power_id: cmd.proto_power_id,
+                    squad_id: crate::EntityId::INVALID,
+                    uses: cmd.num_uses,
+                    icon_location: -1,
+                    ignore_cost: false,
+                    ignore_tech_prerequisites: false,
+                    ignore_population: false,
+                },
+            );
+        }
+    }
+
+    /// Execute supported building production commands.
+    fn execute_building(&self, world: &mut World, cmd: &BuildingCommand) {
+        let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
+            return;
+        };
+        if cmd.count == 0 {
             return;
         }
         for &building_id in &cmd.base.recipients {
-            if cmd.count > 0 {
-                let _result = world.queue_research(player_id, building_id, database, cmd.target_id);
-            } else {
-                let _result =
-                    world.cancel_research(player_id, building_id, database, cmd.target_id);
+            if cmd.building_type == BuildingCommandType::CustomCommand {
+                if cmd.count > 0 {
+                    let _queued = world.queue_custom_command(player_id, building_id, cmd.target_id);
+                } else {
+                    let _canceled =
+                        world.cancel_custom_command(player_id, building_id, cmd.target_id);
+                }
+                continue;
+            }
+            let Some(database) = self.database else {
+                continue;
+            };
+            match cmd.building_type {
+                BuildingCommandType::Research if cmd.count > 0 => {
+                    let _result =
+                        world.queue_research(player_id, building_id, database, cmd.target_id);
+                }
+                BuildingCommandType::Research => {
+                    let _result =
+                        world.cancel_research(player_id, building_id, database, cmd.target_id);
+                }
+                BuildingCommandType::TrainUnit | BuildingCommandType::TrainSquad => {
+                    let kind = if cmd.building_type == BuildingCommandType::TrainUnit {
+                        TrainingKind::Unit
+                    } else {
+                        TrainingKind::Squad
+                    };
+                    if cmd.count > 0 {
+                        let _result = world.queue_training(
+                            player_id,
+                            building_id,
+                            database,
+                            kind,
+                            cmd.target_id,
+                            cmd.count.cast_unsigned(),
+                        );
+                    } else {
+                        let _result = world.cancel_training(
+                            player_id,
+                            building_id,
+                            database,
+                            kind,
+                            cmd.target_id,
+                            cmd.count.unsigned_abs(),
+                        );
+                    }
+                }
+                BuildingCommandType::Build => {
+                    if cmd.count > 0 {
+                        let _result = world.start_build(
+                            player_id,
+                            building_id,
+                            database,
+                            cmd.target_id,
+                            cmd.target_position,
+                            cmd.socket_id,
+                        );
+                    } else {
+                        let _result = world.cancel_build(player_id, building_id, cmd.target_id);
+                    }
+                }
+                BuildingCommandType::BuildOther => {
+                    if cmd.count > 0 {
+                        let _result = world.queue_build_other(
+                            player_id,
+                            building_id,
+                            database,
+                            cmd.target_id,
+                        );
+                    } else {
+                        let _result =
+                            world.cancel_build_other(player_id, building_id, cmd.target_id);
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -256,6 +379,7 @@ mod tests {
     use crate::command_queue::QueuedCommand;
     use crate::entities::SquadState;
     use crate::order::OrderType;
+    use pipeline::database::hw1::Power;
 
     #[test]
     fn test_move_command_sets_squad_target() {
@@ -379,5 +503,39 @@ mod tests {
         assert_eq!(squad.mode, SquadMode::Cover);
         assert_eq!(squad.attack_ability_id, Some(3));
         assert_eq!(squad.attack_target, Some(target));
+    }
+
+    #[test]
+    fn grant_power_command_updates_authoritative_player_entry() {
+        let database = Database {
+            powers: vec![Power {
+                name: "test_power".to_owned(),
+                ..Power::default()
+            }],
+            ..Database::default()
+        };
+        let mut world = World::new();
+        world.init_players(1);
+        let command = PowerCommand {
+            base: Command {
+                player_id: 1,
+                ..Command::default()
+            },
+            power_type: PowerCommandType::GrantPower,
+            num_uses: 3,
+            proto_power_id: 0,
+            ..PowerCommand::default()
+        };
+        let entry = CommandEntry {
+            command: QueuedCommand::Power(command),
+            exec_time: 0,
+            sequence: 0,
+            source_client: 1,
+        };
+
+        CommandExecutor::with_database(&database).execute(&mut world, &entry);
+
+        let power = world.get_player(1).unwrap().power_entry(0).unwrap();
+        assert_eq!(power.finite_uses_remaining(), 3);
     }
 }

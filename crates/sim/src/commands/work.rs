@@ -114,6 +114,50 @@ impl WorkCommand {
         }
     }
 
+    /// Build a garrison command for player-owned squads.
+    #[must_use]
+    pub fn garrison_squads(player_id: i32, recipients: Vec<EntityId>, target: EntityId) -> Self {
+        Self {
+            base: squad_work_command(player_id, recipients, crate::order::OrderType::Garrison),
+            unit_id: target,
+            ..Self::default()
+        }
+    }
+
+    /// Build an ungarrison command for player-owned passenger squads.
+    #[must_use]
+    pub fn ungarrison_squads(
+        player_id: i32,
+        recipients: Vec<EntityId>,
+        rally_point: Option<Vec3>,
+    ) -> Self {
+        Self {
+            base: squad_work_command(player_id, recipients, crate::order::OrderType::Ungarrison),
+            terrain_point: rally_point,
+            ..Self::default()
+        }
+    }
+
+    /// Build a hitch command for player-owned towing squads.
+    #[must_use]
+    pub fn hitch_squads(player_id: i32, recipients: Vec<EntityId>, target: EntityId) -> Self {
+        Self {
+            base: squad_work_command(player_id, recipients, crate::order::OrderType::Hitch),
+            unit_id: target,
+            ..Self::default()
+        }
+    }
+
+    /// Build an unhitch command for player-owned towing squads.
+    #[must_use]
+    pub fn unhitch_squads(player_id: i32, recipients: Vec<EntityId>, target: EntityId) -> Self {
+        Self {
+            base: squad_work_command(player_id, recipients, crate::order::OrderType::Unhitch),
+            unit_id: target,
+            ..Self::default()
+        }
+    }
+
     /// Serialize the work-specific fields (after base command).
     ///
     /// # Errors
@@ -273,5 +317,22 @@ impl WorkCommand {
         self.override_range = work_flags & flags::OVERRIDE_RANGE != 0;
 
         Ok(())
+    }
+}
+
+fn squad_work_command(
+    player_id: i32,
+    recipients: Vec<EntityId>,
+    order_type: crate::order::OrderType,
+) -> Command {
+    Command {
+        player_id,
+        id: order_type as i32,
+        sender_type: EntityType::Player,
+        senders: vec![player_id],
+        recipient_type: EntityType::Squad,
+        recipients,
+        command_type: CommandType::Work,
+        ..Command::default()
     }
 }

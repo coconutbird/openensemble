@@ -4,9 +4,14 @@
 //! player. This compact representation preserves that ownership without
 //! cloning the complete database into every [`Player`](super::Player).
 
+mod proto_data;
+
+pub(crate) use proto_data::{ProtoDataModification, ProtoDataRelativity, ProtoDataType};
+
 use crate::sync::SyncChecksum;
 use pipeline::database::hw1::techs::TechEffect;
 use pipeline::database::hw1::{Database, Tech};
+use proto_data::RuntimeProtoData;
 use std::collections::BTreeMap;
 
 /// The technology state owned by one player.
@@ -14,6 +19,7 @@ use std::collections::BTreeMap;
 pub struct PlayerTechState {
     active_technologies: Vec<String>,
     action_effects: Vec<ActionEffect>,
+    command_effects: Vec<CommandEffect>,
     damage_effects: Vec<ProtoScalarEffect>,
     hitpoint_effects: Vec<ProtoScalarEffect>,
     shieldpoint_effects: Vec<ProtoScalarEffect>,
@@ -23,12 +29,21 @@ pub struct PlayerTechState {
     unit_shield_regen_delay_effects: Vec<ProtoScalarEffect>,
     ability_recovery_effects: Vec<AbilityScalarEffect>,
     squad_transforms: BTreeMap<String, String>,
+    runtime_proto_data: RuntimeProtoData,
 }
 
 #[derive(Debug, Clone)]
 struct ActionEffect {
     proto_object: String,
     action: Option<String>,
+    enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+struct CommandEffect {
+    proto_object: String,
+    command_type: String,
+    command_data: String,
     enabled: bool,
 }
 
@@ -101,22 +116,164 @@ impl PlayerTechState {
             .fold(authored_enabled, |_, effect| effect.enabled)
     }
 
+    /// Resolve one building command against authored state and active techs.
+    #[must_use]
+    pub fn command_enabled(
+        &self,
+        proto_object: &str,
+        command_type: &str,
+        command_data: &str,
+        authored_enabled: bool,
+    ) -> bool {
+        let enabled = self
+            .command_effects
+            .iter()
+            .filter(|effect| {
+                effect.proto_object.eq_ignore_ascii_case(proto_object)
+                    && effect.command_type.eq_ignore_ascii_case(command_type)
+                    && effect.command_data.eq_ignore_ascii_case(command_data)
+            })
+            .fold(authored_enabled, |_, effect| effect.enabled);
+        self.runtime_proto_data.command_state(
+            ProtoDataType::CommandEnable,
+            proto_object,
+            command_type,
+            command_data,
+            enabled,
+        )
+    }
+
+    /// Resolve whether a player-specific command remains selectable in the UI.
+    #[must_use]
+    pub fn command_selectable(
+        &self,
+        proto_object: &str,
+        command_type: &str,
+        command_data: &str,
+        authored_selectable: bool,
+    ) -> bool {
+        self.runtime_proto_data.command_state(
+            ProtoDataType::CommandSelectable,
+            proto_object,
+            command_type,
+            command_data,
+            authored_selectable,
+        )
+    }
+
     /// Apply player technology effects to one authored weapon damage value.
     #[must_use]
     pub fn weapon_damage(&self, proto_object: &str, weapon: &str, base: f32) -> f32 {
-        apply_proto_scalar_effects(&self.damage_effects, proto_object, Some(weapon), base)
+        let current =
+            apply_proto_scalar_effects(&self.damage_effects, proto_object, Some(weapon), base);
+        self.runtime_proto_data.scalar(
+            ProtoDataType::Damage,
+            proto_object,
+            Some(weapon),
+            base,
+            current,
+        )
+    }
+
+    /// Apply player-owned prototype changes to an authored weapon range.
+    #[must_use]
+    pub fn weapon_range(&self, proto_object: &str, weapon: &str, base: f32) -> f32 {
+        self.runtime_proto_data.scalar(
+            ProtoDataType::MaximumRange,
+            proto_object,
+            Some(weapon),
+            base,
+            base,
+        )
+    }
+
+    /// Apply player-owned prototype changes to authored weapon accuracy.
+    #[must_use]
+    pub fn weapon_accuracy(&self, proto_object: &str, weapon: &str, base: f32) -> f32 {
+        self.runtime_proto_data.scalar(
+            ProtoDataType::Accuracy,
+            proto_object,
+            Some(weapon),
+            base,
+            base,
+        )
+    }
+
+    /// Apply player-owned prototype changes to authored weapon deviation.
+    #[must_use]
+    pub fn weapon_max_deviation(&self, proto_object: &str, weapon: &str, base: f32) -> f32 {
+        self.runtime_proto_data.scalar(
+            ProtoDataType::MaxDeviation,
+            proto_object,
+            Some(weapon),
+            base,
+            base,
+        )
+    }
+
+    /// Apply player-owned prototype changes to primary-target AOE damage.
+    #[must_use]
+    pub fn weapon_aoe_primary_target_factor(
+        &self,
+        proto_object: &str,
+        weapon: &str,
+        base: f32,
+    ) -> f32 {
+        self.runtime_proto_data.scalar(
+            ProtoDataType::AoePrimaryTargetFactor,
+            proto_object,
+            Some(weapon),
+            base,
+            base,
+        )
     }
 
     /// Apply player technology effects to one authored maximum hitpoint value.
     #[must_use]
     pub fn hitpoints(&self, proto_object: &str, base: f32) -> f32 {
-        apply_proto_scalar_effects(&self.hitpoint_effects, proto_object, None, base)
+        let current = apply_proto_scalar_effects(&self.hitpoint_effects, proto_object, None, base);
+        self.runtime_proto_data
+            .scalar(ProtoDataType::Hitpoints, proto_object, None, base, current)
     }
 
     /// Apply player technology effects to a proto object's shield maximum.
     #[must_use]
     pub fn shieldpoints(&self, proto_object: &str, base: f32) -> f32 {
-        apply_proto_scalar_effects(&self.shieldpoint_effects, proto_object, None, base)
+        let current =
+            apply_proto_scalar_effects(&self.shieldpoint_effects, proto_object, None, base);
+        self.runtime_proto_data.scalar(
+            ProtoDataType::Shieldpoints,
+            proto_object,
+            None,
+            base,
+            current,
+        )
+    }
+
+    /// Apply player-owned prototype changes to authored line of sight.
+    #[must_use]
+    pub fn line_of_sight(&self, proto_object: &str, base: f32) -> f32 {
+        self.runtime_proto_data
+            .scalar(ProtoDataType::LineOfSight, proto_object, None, base, base)
+    }
+
+    /// Apply player-owned prototype changes to authored desired velocity.
+    #[must_use]
+    pub fn maximum_velocity(&self, proto_object: &str, base: f32) -> f32 {
+        self.runtime_proto_data.scalar(
+            ProtoDataType::MaximumVelocity,
+            proto_object,
+            None,
+            base,
+            base,
+        )
+    }
+
+    /// Apply player-owned prototype changes to authored construction work.
+    #[must_use]
+    pub fn build_points(&self, proto_object: &str, base: f32) -> f32 {
+        self.runtime_proto_data
+            .scalar(ProtoDataType::BuildPoints, proto_object, None, base, base)
     }
 
     /// Apply player-level technology effects to the base shield recharge rate.
@@ -162,6 +319,20 @@ impl PlayerTechState {
         self.squad_transforms
             .get(&normalize(logical_name))
             .map_or(logical_name, String::as_str)
+    }
+
+    pub(crate) fn modify_proto_data(
+        &mut self,
+        proto_object: &str,
+        modification: &ProtoDataModification,
+    ) {
+        self.runtime_proto_data.record(proto_object, modification);
+    }
+
+    /// Number of persistent trigger-authored prototype changes owned by this player.
+    #[must_use]
+    pub fn runtime_proto_modification_count(&self) -> usize {
+        self.runtime_proto_data.modification_count()
     }
 
     pub(crate) fn activate(
@@ -219,6 +390,7 @@ impl PlayerTechState {
 
     fn rebuild(&mut self, database: &Database) {
         self.action_effects.clear();
+        self.command_effects.clear();
         self.damage_effects.clear();
         self.hitpoint_effects.clear();
         self.shieldpoint_effects.clear();
@@ -256,6 +428,8 @@ impl PlayerTechState {
         };
         if subtype.eq_ignore_ascii_case("ActionEnable") {
             self.collect_action_effect(effect);
+        } else if subtype.eq_ignore_ascii_case("CommandEnable") {
+            self.collect_command_effect(effect);
         } else if subtype.eq_ignore_ascii_case("Damage") {
             if let Some(effect) = proto_scalar_effect(effect, true) {
                 self.damage_effects.push(effect);
@@ -307,6 +481,23 @@ impl PlayerTechState {
         });
     }
 
+    fn collect_command_effect(&mut self, effect: &TechEffect) {
+        let (Some(proto_object), Some(command_type), Some(command_data), Some(amount)) = (
+            effect_target(effect, "ProtoUnit"),
+            nonempty(effect.command_type.as_deref()),
+            nonempty(effect.command_data.as_deref()),
+            effect.amount.filter(|amount| amount.is_finite()),
+        ) else {
+            return;
+        };
+        self.command_effects.push(CommandEffect {
+            proto_object: normalize(proto_object),
+            command_type: normalize(command_type),
+            command_data: normalize(command_data),
+            enabled: amount != 0.0,
+        });
+    }
+
     fn collect_ability_recovery_effect(&mut self, effect: &TechEffect) {
         if !effect_target_is(effect, "Player") {
             return;
@@ -330,6 +521,7 @@ impl PlayerTechState {
             hash_string(checksum, from);
             hash_string(checksum, to);
         }
+        self.runtime_proto_data.hash_state(checksum);
     }
 }
 

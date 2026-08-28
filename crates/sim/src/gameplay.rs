@@ -11,6 +11,7 @@ use pipeline::source::{AssetSource, StdFileProvider};
 use std::collections::BTreeMap;
 
 mod abilities;
+mod analysis;
 mod projectiles;
 mod selection;
 mod timing;
@@ -27,8 +28,9 @@ pub struct GameplayCatalog {
     objects: BTreeMap<String, ObjectGameplay>,
     issues: Vec<GameplayLoadIssue>,
     timing_issues: Vec<GameplayTimingIssue>,
-    weapon_damage_modifiers: BTreeMap<String, BTreeMap<String, f32>>,
+    weapon_damage_modifiers: BTreeMap<String, BTreeMap<String, WeaponDamageModifier>>,
     damage_types: BTreeMap<String, String>,
+    damage_type_exemplars: BTreeMap<String, String>,
     ability_names: Vec<String>,
     abilities: Vec<AbilityGameplay>,
     command_ability_id: Option<u8>,
@@ -59,6 +61,12 @@ pub struct RangedAction<'a> {
     pub action: &'a Action,
     /// The authored weapon definition referenced by the action.
     pub weapon: &'a Weapon,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WeaponDamageModifier {
+    damage: f32,
+    rating: f32,
 }
 
 /// A tactic file that could not participate in the gameplay catalog.
@@ -96,6 +104,7 @@ impl GameplayCatalog {
             referenced_tactic_count,
             weapon_damage_modifiers: collect_weapon_damage_modifiers(database),
             damage_types: collect_damage_types(database),
+            damage_type_exemplars: analysis::collect_damage_type_exemplars(database),
             ability_names: selection::collect_ability_names(database),
             abilities: abilities::collect_abilities(database),
             command_ability_id: abilities::command_ability_id(database),
@@ -179,6 +188,7 @@ impl GameplayCatalog {
             referenced_tactic_count,
             weapon_damage_modifiers: collect_weapon_damage_modifiers(database),
             damage_types: collect_damage_types(database),
+            damage_type_exemplars: analysis::collect_damage_type_exemplars(database),
             ability_names: selection::collect_ability_names(database),
             abilities: abilities::collect_abilities(database),
             command_ability_id: abilities::command_ability_id(database),
@@ -259,6 +269,24 @@ impl GameplayCatalog {
         self.objects.get(&proto_object_name.to_ascii_lowercase())
     }
 
+    /// Resolve the work range of the object's enabled teleporter hot-drop action.
+    #[must_use]
+    pub fn teleporter_work_range(&self, proto_object_name: &str) -> Option<f32> {
+        self.object(proto_object_name)?
+            .tactics
+            .actions
+            .iter()
+            .find(|action| {
+                action
+                    .action_type
+                    .as_deref()
+                    .is_some_and(|kind| kind.eq_ignore_ascii_case("HotDrop"))
+                    && action.use_teleporter.unwrap_or(false)
+            })
+            .and_then(|action| action.work_range)
+            .filter(|range| range.is_finite() && *range >= 0.0)
+    }
+
     /// Iterate in normalized proto-object name order.
     pub fn objects(&self) -> impl Iterator<Item = &ObjectGameplay> {
         self.objects.values()
@@ -329,7 +357,7 @@ impl GameplayCatalog {
         self.weapon_damage_modifiers
             .get(&weapon_type.to_ascii_lowercase())
             .and_then(|modifiers| modifiers.get(damage_type))
-            .copied()
+            .map(|modifier| modifier.damage)
             .filter(|modifier| modifier.is_finite())
             .unwrap_or(1.0)
     }
@@ -491,7 +519,9 @@ impl GameplayTimingIssue {
     }
 }
 
-fn collect_weapon_damage_modifiers(database: &Database) -> BTreeMap<String, BTreeMap<String, f32>> {
+fn collect_weapon_damage_modifiers(
+    database: &Database,
+) -> BTreeMap<String, BTreeMap<String, WeaponDamageModifier>> {
     database
         .weapon_types
         .iter()
@@ -499,7 +529,15 @@ fn collect_weapon_damage_modifiers(database: &Database) -> BTreeMap<String, BTre
             let modifiers = weapon_type
                 .damage_modifiers
                 .iter()
-                .map(|modifier| (modifier.damage_type.to_ascii_lowercase(), modifier.modifier))
+                .map(|modifier| {
+                    (
+                        modifier.damage_type.to_ascii_lowercase(),
+                        WeaponDamageModifier {
+                            damage: modifier.modifier,
+                            rating: modifier.rating.unwrap_or(1.0),
+                        },
+                    )
+                })
                 .collect();
             (weapon_type.name.to_ascii_lowercase(), modifiers)
         })

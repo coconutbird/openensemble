@@ -19,6 +19,7 @@ pub enum PowerCommandType {
 }
 
 impl PowerCommandType {
+    #[must_use]
     pub fn from_i32(value: i32) -> Option<Self> {
         match value {
             0 => Some(Self::Undefined),

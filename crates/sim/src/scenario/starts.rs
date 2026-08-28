@@ -102,6 +102,7 @@ fn create_initial_base(
 
     let anchor_id = world.create_building_at(player_id, position);
     configure_unit_from_proto(world, anchor_id, proto.name.trim(), proto_index, proto);
+    super::population::apply_object_population(world, anchor_id, database, proto);
     if let Some(anchor) = world.get_building_mut(anchor_id) {
         anchor.base.set_forward(forward);
     }

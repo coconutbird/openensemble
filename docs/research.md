@@ -44,9 +44,10 @@ table, not the authored DBID, because retail data can contain duplicate DBIDs.
 - Costs resolve through the database resource table and are paid in full when
   work is accepted. Insufficient funds and malformed or unknown resource data
   reject the command without partial mutation.
-- Each building has one current item and a FIFO queue. Promotion consumes an
-  update without adding work; subsequent deterministic updates add one research
-  point per simulated second and reread the authored total while work is live.
+- Each building has one current item and a FIFO queue shared with unit/squad
+  training. Promotion consumes an update without adding work; subsequent
+  deterministic updates add one research point per simulated second and reread
+  the authored total while work is live.
 - Cancellation fully refunds queued or partially completed work. Destroying a
   research building clears and refunds all of its outstanding items.
 - Completion activates the existing simulation technology-effect pipeline.
@@ -77,11 +78,12 @@ cargo test -p sim --test scenario-asset-loading -- --ignored
 
 ## Deliberate next boundaries
 
-This slice implements normal player-global research, not every production
-path. Remaining retail work includes per-unit `UniqueProtoUnitInstance`
+This slice implements normal player-global research. Remaining retail work
+includes per-unit `UniqueProtoUnitInstance`
 technology state, automatic `Shadow` activation, cooperative per-player
 research slots, quick-build and AI work-rate modifiers, repeated `Perpetual`
 effects, research sound/events, research savegame compatibility, and the
-non-research `BBuildingCommand` subtypes such as training and construction.
-Unique and manual Shadow research are explicitly rejected until their correct
-ownership semantics exist.
+remaining non-research `BBuildingCommand` subtypes such as construction. Unit
+and squad training now share this worker; see `production.md`. Unique and
+manual Shadow research are explicitly rejected until their correct ownership
+semantics exist.

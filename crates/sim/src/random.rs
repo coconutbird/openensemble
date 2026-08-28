@@ -7,6 +7,51 @@ use std::num::Wrapping;
 
 use num_traits::ToPrimitive;
 
+/// Retail's synchronized `cSimRand` stream.
+///
+/// The shipping game keeps this legacy MSVC-style generator alongside the
+/// newer KISS generator below. Trigger-list shuffles consume this stream and
+/// use the same inclusive range reduction as `BRandomManager::_getRand`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SimRandom {
+    current: u32,
+}
+
+impl Default for SimRandom {
+    fn default() -> Self {
+        Self { current: 1 }
+    }
+}
+
+impl SimRandom {
+    #[must_use]
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn set_seed(&mut self, seed: u32) {
+        self.current = seed;
+    }
+
+    #[must_use]
+    pub(crate) fn seed(self) -> u32 {
+        self.current
+    }
+
+    fn next_15(&mut self) -> u32 {
+        self.current = self.current.wrapping_mul(214_013).wrapping_add(2_531_011);
+        (self.current >> 16) & 0x7fff
+    }
+
+    /// Return a value in the inclusive range `0..=maximum`.
+    pub(crate) fn index(&mut self, maximum: u32) -> u32 {
+        if maximum == 0 {
+            return 0;
+        }
+        self.next_15() / (32_767 / (maximum + 1) + 1)
+    }
+}
+
 /// Deterministic RNG matching vanilla `Random` class.
 ///
 /// Uses KISS (Keep It Simple Stupid) + SWB (Subtract With Borrow) generators.
@@ -294,5 +339,18 @@ mod tests {
             let v = rng.f_rand(0.0, 1.0);
             assert!((0.0..1.0).contains(&v));
         }
+    }
+
+    #[test]
+    fn sim_random_matches_retail_brandom3_and_inclusive_reduction() {
+        let mut rng = SimRandom::new();
+        assert_eq!(rng.next_15(), 41);
+        assert_eq!(rng.next_15(), 18_467);
+
+        rng.set_seed(1);
+        assert_eq!(
+            (0..4).map(|_| rng.index(3)).collect::<Vec<_>>(),
+            vec![0, 2, 0, 3]
+        );
     }
 }

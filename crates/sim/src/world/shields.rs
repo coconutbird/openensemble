@@ -34,6 +34,7 @@ impl World {
         if let Some(squad_id) = squad_id {
             if let Some(squad) = self.squads.get_mut(squad_id) {
                 squad.shields.notify_damaged();
+                squad.last_damaged_time = self.game_time_ms;
             }
         } else if let Some(unit) = self.units.get_mut(unit_id) {
             unit.shields.notify_damaged();

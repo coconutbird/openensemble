@@ -188,16 +188,17 @@ impl Simulation {
     pub fn tick_with_world(&mut self, world: &mut World) -> Vec<CommandEntry> {
         // Get commands for this tick
         let commands = self.tick_once();
+        world.game_time_ms = self.game_time_ms;
 
         // Execute commands
         let executor = CommandExecutor::new();
         executor.execute_all(world, &commands);
 
         // Update entities (movement, etc.)
+        world.update_player_resources(SECONDS_PER_TICK);
+        let _custom_commands = world.update_custom_commands(SECONDS_PER_TICK);
         world.update_entities(SECONDS_PER_TICK);
-
-        // Sync world time
-        world.game_time_ms = self.game_time_ms;
+        let _triggers = world.update_triggers();
 
         commands
     }
@@ -212,10 +213,13 @@ impl Simulation {
         database: &Database,
     ) -> Vec<CommandEntry> {
         let commands = self.tick_once();
-        CommandExecutor::with_database(database).execute_all(world, &commands);
-        let _completed_research = world.update_research(SECONDS_PER_TICK, database);
-        world.update_entities(SECONDS_PER_TICK);
         world.game_time_ms = self.game_time_ms;
+        CommandExecutor::with_database(database).execute_all(world, &commands);
+        world.update_player_resources(SECONDS_PER_TICK);
+        let _custom_commands = world.update_custom_commands(SECONDS_PER_TICK);
+        let _production = world.update_production(SECONDS_PER_TICK, database);
+        world.update_entities(SECONDS_PER_TICK);
+        let _triggers = world.update_triggers_with_database(database);
         commands
     }
 
@@ -226,12 +230,17 @@ impl Simulation {
         database: &Database,
     ) -> Vec<CommandEntry> {
         let commands = self.tick_once();
+        scenario.world.game_time_ms = self.game_time_ms;
         CommandExecutor::with_database(database).execute_all(&mut scenario.world, &commands);
-        let _completed_research = scenario.world.update_research(SECONDS_PER_TICK, database);
+        scenario.world.update_player_resources(SECONDS_PER_TICK);
+        let _custom_commands = scenario.world.update_custom_commands(SECONDS_PER_TICK);
+        let _production = scenario.world.update_production(SECONDS_PER_TICK, database);
         scenario
             .world
             .update_entities_with_gameplay(SECONDS_PER_TICK, &scenario.gameplay);
-        scenario.world.game_time_ms = self.game_time_ms;
+        let _triggers = scenario
+            .world
+            .update_triggers_with_gameplay(database, &scenario.gameplay);
         commands
     }
 

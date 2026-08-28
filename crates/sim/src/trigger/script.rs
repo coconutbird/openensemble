@@ -1,6 +1,6 @@
 //! `TriggerScript` - a collection of triggers and shared variables.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use super::{Trigger, TriggerId, TriggerScriptId, TriggerValue, VarId, VarType};
 
@@ -38,6 +38,9 @@ pub struct TriggerVar {
     /// The current value.
     pub value: TriggerValue,
 
+    /// Whether the authored variable is explicitly null/unused.
+    pub is_null: bool,
+
     /// Whether this variable is an input parameter.
     pub is_input: bool,
 
@@ -55,6 +58,7 @@ impl TriggerVar {
             name: String::new(),
             var_type,
             value: TriggerValue::default(),
+            is_null: false,
             is_input: false,
             is_output: false,
         }
@@ -71,6 +75,14 @@ impl TriggerVar {
     #[must_use]
     pub fn with_value(mut self, value: TriggerValue) -> Self {
         self.value = value;
+        self.is_null = false;
+        self
+    }
+
+    /// Mark this typed variable as null/unused.
+    #[must_use]
+    pub fn null(mut self) -> Self {
+        self.is_null = true;
         self
     }
 
@@ -102,16 +114,16 @@ pub struct TriggerScript {
     pub script_type: ScriptType,
 
     /// Variables shared across triggers.
-    pub variables: Vec<TriggerVar>,
+    pub variables: BTreeMap<VarId, TriggerVar>,
 
     /// Map from editor ID to runtime ID for variables.
-    pub var_editor_to_id: HashMap<VarId, VarId>,
+    pub var_editor_to_id: BTreeMap<VarId, VarId>,
 
     /// Triggers in this script.
     pub triggers: Vec<Trigger>,
 
     /// Map from trigger ID to index in triggers vec.
-    pub trigger_id_to_index: HashMap<TriggerId, usize>,
+    pub trigger_id_to_index: BTreeMap<TriggerId, usize>,
 
     /// Whether this script is active.
     pub is_active: bool,
@@ -129,10 +141,10 @@ impl Default for TriggerScript {
             id: super::INVALID_TRIGGER_SCRIPT_ID,
             name: String::new(),
             script_type: ScriptType::Invalid,
-            variables: Vec::new(),
-            var_editor_to_id: HashMap::new(),
+            variables: BTreeMap::new(),
+            var_editor_to_id: BTreeMap::new(),
             triggers: Vec::new(),
-            trigger_id_to_index: HashMap::new(),
+            trigger_id_to_index: BTreeMap::new(),
             is_active: false,
             is_paused: false,
             marked_for_cleanup: false,
@@ -168,7 +180,7 @@ impl TriggerScript {
     pub fn add_variable(&mut self, var: TriggerVar) {
         let editor_id = var.editor_id;
         let id = var.id;
-        self.variables.push(var);
+        self.variables.insert(id, var);
         self.var_editor_to_id.insert(editor_id, id);
     }
 
@@ -183,12 +195,12 @@ impl TriggerScript {
     /// Get a variable by ID.
     #[must_use]
     pub fn get_variable(&self, id: VarId) -> Option<&TriggerVar> {
-        self.variables.get(id as usize)
+        self.variables.get(&id)
     }
 
     /// Get a mutable variable by ID.
     pub fn get_variable_mut(&mut self, id: VarId) -> Option<&mut TriggerVar> {
-        self.variables.get_mut(id as usize)
+        self.variables.get_mut(&id)
     }
 
     /// Get a variable by editor ID.
@@ -219,6 +231,7 @@ impl TriggerScript {
     /// Activate this script.
     pub fn activate(&mut self, current_time: u32) {
         self.is_active = true;
+        self.marked_for_cleanup = false;
 
         // Activate all triggers that should start active
         for trigger in &mut self.triggers {

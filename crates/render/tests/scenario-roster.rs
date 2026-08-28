@@ -1,8 +1,9 @@
 use render::ugx::UnitScene;
 use sim::entities::squads::marine::MARINE_SQUAD_NAME;
 use sim::{
-    LoadedGameScenario, Simulation, load_scenario_from_game_dir, spawn_squad_at,
-    spawn_squad_from_base_by_name, squad_prototype_id,
+    BuildingCommand, LoadedGameScenario, MS_PER_TICK, Simulation, configure_player_leader,
+    load_scenario_from_game_dir, object_prototype_id, spawn_object_at, spawn_squad_at,
+    squad_prototype_id, squad_runtime_id,
 };
 
 /// Run with:
@@ -27,17 +28,7 @@ fn spawned_marines_and_projectiles_join_the_authoritative_render_roster() {
         &content.visuals,
         &content.database.objects,
     );
-    let (&_player_id, &base_id) = simulation
-        .initial_base_ids
-        .first_key_value()
-        .expect("skirmish scenario should assign a player base");
-    let squad_id = spawn_squad_from_base_by_name(
-        &mut simulation.world,
-        &content.database,
-        base_id,
-        MARINE_SQUAD_NAME,
-    )
-    .expect("real database should spawn Marines");
+    let squad_id = train_real_marine_squad(&mut simulation, &content.database);
     let member_ids = simulation
         .world
         .get_squad(squad_id)
@@ -52,15 +43,7 @@ fn spawned_marines_and_projectiles_join_the_authoritative_render_roster() {
         &content.visuals,
         &content.database.objects,
     ));
-    for member_id in member_ids {
-        assert!(
-            scene
-                .placements()
-                .iter()
-                .any(|placement| placement.entity_id() == member_id),
-            "spawned Marine {member_id:?} should have a presentation placement"
-        );
-    }
+    assert_member_placements(&scene, &member_ids);
 
     let projectile_ids =
         launch_real_marine_projectiles(&mut simulation, &content.database, squad_id);
@@ -71,6 +54,91 @@ fn spawned_marines_and_projectiles_join_the_authoritative_render_roster() {
         &content.visuals,
         &content.database.objects,
     ));
+    assert_projectile_roster(&scene, &simulation, &content, &projectile_ids);
+}
+
+fn train_real_marine_squad(
+    simulation: &mut sim::LoadedScenario,
+    database: &pipeline::database::hw1::Database,
+) -> sim::EntityId {
+    let (&player_id, &base_id) = simulation
+        .initial_base_ids
+        .first_key_value()
+        .expect("skirmish scenario should assign a player base");
+    let cutter_id = database
+        .leaders
+        .iter()
+        .position(|leader| leader.name.eq_ignore_ascii_case("Cutter"))
+        .and_then(|index| i32::try_from(index).ok())
+        .expect("real database should contain Cutter for the lobby fixture");
+    assert!(configure_player_leader(
+        &mut simulation.world,
+        database,
+        player_id,
+        cutter_id,
+    ));
+    simulation
+        .world
+        .get_player_mut(player_id)
+        .expect("base owner")
+        .resources
+        .set(0, 1_000.0);
+    let base_position = simulation.world.get_base(base_id).unwrap().position;
+    let barracks_proto_id = object_prototype_id(database, "unsc_bldg_barracks_01")
+        .expect("real database should contain a Barracks");
+    let barracks_id = spawn_object_at(
+        &mut simulation.world,
+        database,
+        player_id,
+        barracks_proto_id,
+        base_position + glam::Vec3::X * 50.0,
+        glam::Vec3::Z,
+    )
+    .expect("real database should spawn a Barracks");
+    let marine_runtime_id = squad_runtime_id(database, MARINE_SQUAD_NAME)
+        .expect("real database should expose the Marine runtime squad ID");
+    let mut clock = Simulation::new();
+    clock.game_time_ms = simulation.world.game_time_ms;
+    clock.command_queue.enqueue_building(
+        BuildingCommand::train_squads(
+            i32::from(player_id),
+            vec![barracks_id],
+            marine_runtime_id,
+            1,
+        ),
+        clock.game_time_ms.saturating_add(MS_PER_TICK),
+        u64::from(player_id),
+    );
+    (0..200)
+        .find_map(|_| {
+            clock.tick_with_scenario(simulation, database);
+            simulation
+                .world
+                .squads
+                .iter()
+                .find_map(|(id, squad)| (squad.trained_by == Some(barracks_id)).then_some(id))
+        })
+        .expect("authoritative Barracks production should complete a Marine squad")
+}
+
+fn assert_member_placements(scene: &UnitScene, member_ids: &[sim::EntityId]) {
+    for &member_id in member_ids {
+        assert!(
+            scene
+                .placements()
+                .iter()
+                .any(|placement| placement.entity_id() == member_id),
+            "spawned Marine {member_id:?} should have a presentation placement"
+        );
+    }
+}
+
+fn assert_projectile_roster(
+    scene: &UnitScene,
+    simulation: &sim::LoadedScenario,
+    content: &pipeline::hw1::World,
+    projectile_ids: &[sim::EntityId],
+) {
     assert!(scene.roster_matches(&simulation.world));
     assert_eq!(
         scene.simulation_entity_count(),
@@ -79,7 +147,7 @@ fn spawned_marines_and_projectiles_join_the_authoritative_render_roster() {
     for projectile_id in projectile_ids {
         let projectile = simulation
             .world
-            .get_projectile(projectile_id)
+            .get_projectile(*projectile_id)
             .expect("live projectile");
         let prototype = content
             .database
@@ -94,7 +162,7 @@ fn spawned_marines_and_projectiles_join_the_authoritative_render_roster() {
         let has_placement = scene
             .placements()
             .iter()
-            .any(|placement| placement.entity_id() == projectile_id);
+            .any(|placement| placement.entity_id() == *projectile_id);
         let has_asset_diagnostic = scene.issues().iter().any(|issue| {
             issue
                 .proto_name()

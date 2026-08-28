@@ -90,6 +90,10 @@ impl UnitShields {
         self.regen_delay_scalar = valid_nonnegative(delay).unwrap_or(1.0);
     }
 
+    pub(crate) fn set_regen_delay_scalar(&mut self, delay: f32) {
+        self.regen_delay_scalar = valid_nonnegative(delay).unwrap_or(1.0);
+    }
+
     pub(crate) fn regen_delay_scalar(self) -> f32 {
         self.regen_delay_scalar
     }

@@ -1,7 +1,8 @@
 //! Retail-style technology eligibility, payment, and building research queues.
 
 use super::{TechnologyError, World};
-use crate::entities::{ResearchProgress, ResearchTask, Unit};
+use crate::entities::units::TriggerCommandStateRef;
+use crate::entities::{ResearchProgress, ResearchTask};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::player::{MAX_RESOURCES, Player, PlayerId, Resources, TechStatus};
@@ -66,20 +67,14 @@ pub enum ResearchError {
     Activation(#[from] TechnologyError),
 }
 
-#[derive(Debug)]
-enum ResearchTick {
-    None,
-    Promoted {
-        player_id: PlayerId,
-        technology_id: i32,
-    },
-    Progress {
-        player_id: PlayerId,
-        technology_id: i32,
-        points: f32,
-    },
-    Complete(ResearchTask),
-    Invalid(ResearchTask),
+#[derive(Debug, Clone, Copy)]
+struct ResearchQueueRequest<'database> {
+    player_id: PlayerId,
+    building_id: EntityId,
+    database: &'database Database,
+    technology_id: i32,
+    no_cost: bool,
+    trigger_state: Option<TriggerCommandStateRef>,
 }
 
 impl World {
@@ -148,6 +143,47 @@ impl World {
         database: &Database,
         technology_id: i32,
     ) -> Result<ResearchQueueResult, ResearchError> {
+        self.queue_research_internal(ResearchQueueRequest {
+            player_id,
+            building_id,
+            database,
+            technology_id,
+            no_cost: false,
+            trigger_state: None,
+        })
+    }
+
+    pub(crate) fn queue_trigger_research(
+        &mut self,
+        player_id: PlayerId,
+        building_id: EntityId,
+        database: &Database,
+        technology_id: i32,
+        no_cost: bool,
+        trigger_state: Option<TriggerCommandStateRef>,
+    ) -> Result<ResearchQueueResult, ResearchError> {
+        self.queue_research_internal(ResearchQueueRequest {
+            player_id,
+            building_id,
+            database,
+            technology_id,
+            no_cost,
+            trigger_state,
+        })
+    }
+
+    fn queue_research_internal(
+        &mut self,
+        request: ResearchQueueRequest<'_>,
+    ) -> Result<ResearchQueueResult, ResearchError> {
+        let ResearchQueueRequest {
+            player_id,
+            building_id,
+            database,
+            technology_id,
+            no_cost,
+            trigger_state,
+        } = request;
         let technology = technology_by_id(database, technology_id)
             .ok_or(ResearchError::TechnologyNotFound(technology_id))?;
         self.validate_research_command(player_id, building_id, database, technology)?;
@@ -161,13 +197,21 @@ impl World {
         }
         let total_points = research_points(technology)?;
         let cost = technology_cost(database, technology)?;
-        self.pay_and_mark_research(player_id, building_id, technology_id, technology, &cost)?;
+        self.pay_and_mark_research(
+            player_id,
+            building_id,
+            technology_id,
+            technology,
+            &cost,
+            no_cost,
+        )?;
+        let charged_cost = if no_cost { Resources::new() } else { cost };
 
         if has_flag(technology, "Instant") {
             let activation = self.activate_technology(player_id, database, &technology.name);
             self.finish_research_assignment(player_id, building_id, technology_id);
             if let Err(error) = activation {
-                self.refund_cost(player_id, &cost);
+                self.refund_cost(player_id, &charged_cost);
                 return Err(error.into());
             }
             return Ok(ResearchQueueResult::CompletedInstantly);
@@ -179,7 +223,8 @@ impl World {
             technology_name: technology.name.clone(),
             current_points: 0.0,
             total_points,
-            cost,
+            cost: charged_cost,
+            trigger_state,
         };
         let Some(building) = self.get_building_mut(building_id) else {
             self.finish_research_assignment(player_id, building_id, technology_id);
@@ -224,54 +269,12 @@ impl World {
         self.finish_research_assignment(player_id, research_building_id, technology_id);
         if let Some(task) = task {
             self.refund_cost(player_id, &task.cost);
+            if let Some(trigger_state) = task.trigger_state {
+                self.notify_building_command_task(trigger_state, None);
+            }
             return Ok(true);
         }
         Ok(false)
-    }
-
-    /// Advance all building research by a deterministic number of seconds.
-    ///
-    /// Returns the number of technologies completed during this update.
-    pub fn update_research(&mut self, dt: f32, database: &Database) -> usize {
-        if !dt.is_finite() || dt <= 0.0 {
-            return 0;
-        }
-        let building_ids = self
-            .units
-            .iter()
-            .filter_map(|(id, unit)| {
-                (unit.is_building() && !unit.production.is_idle()).then_some(id)
-            })
-            .collect::<Vec<_>>();
-        let mut completed = Vec::new();
-        for building_id in building_ids {
-            match self.tick_building_research(building_id, dt, database) {
-                ResearchTick::Promoted {
-                    player_id,
-                    technology_id,
-                } => self.set_research_points(player_id, building_id, technology_id, 0.0),
-                ResearchTick::Progress {
-                    player_id,
-                    technology_id,
-                    points,
-                } => self.set_research_points(player_id, building_id, technology_id, points),
-                ResearchTick::Complete(task) => completed.push((building_id, task)),
-                ResearchTick::Invalid(task) => self.cancel_invalid_task(building_id, &task),
-                ResearchTick::None => {}
-            }
-        }
-        let completed_count = completed.len();
-        for (building_id, task) in completed {
-            self.complete_research(building_id, &task, database);
-        }
-        completed_count
-    }
-
-    pub(crate) fn refund_research_for_removed_unit(&mut self, unit: &Unit) {
-        for task in unit.production.tasks() {
-            self.finish_research_assignment(task.player_id, unit.base.id, task.technology_id);
-            self.refund_cost(task.player_id, &task.cost);
-        }
     }
 
     fn derive_technology_status(
@@ -307,9 +310,9 @@ impl World {
         database: &Database,
         technology: &Tech,
     ) -> Result<(), ResearchError> {
-        if self.get_player(player_id).is_none() {
-            return Err(ResearchError::PlayerNotFound(player_id));
-        }
+        let player = self
+            .get_player(player_id)
+            .ok_or(ResearchError::PlayerNotFound(player_id))?;
         let building = self
             .get_building(building_id)
             .ok_or(ResearchError::BuildingNotFound(building_id))?;
@@ -319,7 +322,13 @@ impl World {
                 player_id,
             });
         }
-        if !building_offers_research(database, building, technology) {
+        if !building.is_operational() {
+            return Err(ResearchError::CommandUnavailable {
+                building_id,
+                technology: technology.name.clone(),
+            });
+        }
+        if !building_offers_research(database, building, technology, player) {
             return Err(ResearchError::CommandUnavailable {
                 building_id,
                 technology: technology.name.clone(),
@@ -349,85 +358,26 @@ impl World {
         technology_id: i32,
         technology: &Tech,
         cost: &Resources,
+        no_cost: bool,
     ) -> Result<(), ResearchError> {
         let player = self
             .get_player_mut(player_id)
             .ok_or(ResearchError::PlayerNotFound(player_id))?;
-        if !player.resources.can_afford(cost) {
+        if !no_cost && !player.resources.can_afford(cost) {
             return Err(ResearchError::InsufficientResources {
                 player_id,
                 technology: technology.name.clone(),
             });
         }
-        player.resources.pay(cost);
+        if !no_cost {
+            player.resources.pay(cost);
+        }
         let inserted = player.research.start(technology_id, building_id);
         debug_assert!(inserted, "status validation rejected duplicate research");
         Ok(())
     }
 
-    fn tick_building_research(
-        &mut self,
-        building_id: EntityId,
-        dt: f32,
-        database: &Database,
-    ) -> ResearchTick {
-        let Some(building) = self.get_building_mut(building_id) else {
-            return ResearchTick::None;
-        };
-        if building.production.promote_research() {
-            let task = building
-                .production
-                .current_research
-                .as_ref()
-                .expect("promotion installs current research");
-            return ResearchTick::Promoted {
-                player_id: task.player_id,
-                technology_id: task.technology_id,
-            };
-        }
-        let Some(task) = building.production.current_research.as_mut() else {
-            return ResearchTick::None;
-        };
-        let Some(technology) = technology_by_id(database, task.technology_id) else {
-            return ResearchTick::Invalid(
-                building
-                    .production
-                    .current_research
-                    .take()
-                    .expect("current research exists"),
-            );
-        };
-        let Ok(total_points) = research_points(technology) else {
-            return ResearchTick::Invalid(
-                building
-                    .production
-                    .current_research
-                    .take()
-                    .expect("current research exists"),
-            );
-        };
-        task.total_points = total_points;
-        task.current_points += dt;
-        if task.current_points > total_points {
-            task.current_points = total_points;
-        }
-        if task.current_points >= total_points {
-            return ResearchTick::Complete(
-                building
-                    .production
-                    .current_research
-                    .take()
-                    .expect("completed research exists"),
-            );
-        }
-        ResearchTick::Progress {
-            player_id: task.player_id,
-            technology_id: task.technology_id,
-            points: task.current_points,
-        }
-    }
-
-    fn set_research_points(
+    pub(super) fn set_research_points(
         &mut self,
         player_id: PlayerId,
         building_id: EntityId,
@@ -441,7 +391,7 @@ impl World {
         }
     }
 
-    fn complete_research(
+    pub(super) fn complete_research(
         &mut self,
         building_id: EntityId,
         task: &ResearchTask,
@@ -456,12 +406,16 @@ impl World {
         }
     }
 
-    fn cancel_invalid_task(&mut self, building_id: EntityId, task: &ResearchTask) {
+    pub(super) fn cancel_invalid_research_task(
+        &mut self,
+        building_id: EntityId,
+        task: &ResearchTask,
+    ) {
         self.finish_research_assignment(task.player_id, building_id, task.technology_id);
         self.refund_cost(task.player_id, &task.cost);
     }
 
-    fn finish_research_assignment(
+    pub(super) fn finish_research_assignment(
         &mut self,
         player_id: PlayerId,
         building_id: EntityId,
@@ -472,7 +426,7 @@ impl World {
         }
     }
 
-    fn refund_cost(&mut self, player_id: PlayerId, cost: &Resources) {
+    pub(super) fn refund_cost(&mut self, player_id: PlayerId, cost: &Resources) {
         if let Some(player) = self.get_player_mut(player_id) {
             player.resources.refund(cost);
         }
@@ -489,13 +443,13 @@ pub fn technology_prototype_id(database: &Database, name: &str) -> Option<i32> {
         .and_then(|index| i32::try_from(index).ok())
 }
 
-fn technology_by_id(database: &Database, technology_id: i32) -> Option<&Tech> {
+pub(super) fn technology_by_id(database: &Database, technology_id: i32) -> Option<&Tech> {
     usize::try_from(technology_id)
         .ok()
         .and_then(|index| database.techs.get(index))
 }
 
-fn research_points(technology: &Tech) -> Result<f32, ResearchError> {
+pub(super) fn research_points(technology: &Tech) -> Result<f32, ResearchError> {
     let points = technology.research_points.unwrap_or(0.0);
     if points.is_finite() && points >= 0.0 {
         Ok(points)
@@ -642,8 +596,13 @@ fn type_count_met(
     }
 }
 
-fn building_offers_research(database: &Database, building: &Unit, technology: &Tech) -> bool {
-    database
+fn building_offers_research(
+    database: &Database,
+    building: &crate::entities::Unit,
+    technology: &Tech,
+    player: &Player,
+) -> bool {
+    let authored = database
         .objects
         .iter()
         .find(|proto| proto.name.eq_ignore_ascii_case(&building.proto_object_name))
@@ -655,5 +614,11 @@ fn building_offers_research(database: &Database, building: &Unit, technology: &T
                             || command_type.trim().eq_ignore_ascii_case("Research")
                     })
             })
-        })
+        });
+    player.technologies.command_enabled(
+        &building.proto_object_name,
+        "Research",
+        &technology.name,
+        authored,
+    )
 }

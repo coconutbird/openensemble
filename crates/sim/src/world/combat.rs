@@ -1,5 +1,7 @@
 //! Authoritative attack-order targeting and pursuit.
 
+mod helpers;
+
 use super::World;
 use crate::entities::projectiles::{ProjectileLaunch, ProjectileStep};
 use crate::entities::{Projectile, Squad, SquadMode, SquadState, Unit, UnitState};
@@ -10,6 +12,7 @@ use crate::gameplay::{
 };
 use crate::player::{PlayerId, TeamRelation};
 use glam::Vec3;
+use helpers::{face_position, scaled_launch_damage, selected_range, xz_distance_squared};
 
 const MIN_TARGET_RADIUS: f32 = 0.5;
 
@@ -42,6 +45,7 @@ struct ConcreteTargetSnapshot {
     collision_radius: f32,
     proto_object_name: String,
     damaged: bool,
+    unbuilt: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -231,22 +235,40 @@ impl World {
                 continue;
             };
             let ability_squad_id = self.active_ability_squad(engagement.attacker_id, gameplay);
-            let Some((source_player_id, source_position, damage_multiplier, source_proto)) = self
+            let Some((
+                source_player_id,
+                source_position,
+                damage_multiplier,
+                range_scalar,
+                authored_range,
+                source_proto,
+            )) = self
                 .units
                 .get(engagement.attacker_id)
-                .filter(|unit| unit.is_alive())
+                .filter(|unit| unit.is_alive() && !unit.is_garrisoned())
                 .map(|unit| {
+                    let authored_range =
+                        self.get_player(unit.base.player_id)
+                            .map_or(profile.max_range, |player| {
+                                player.technologies.weapon_range(
+                                    &unit.proto_object_name,
+                                    &profile.weapon_name,
+                                    profile.max_range,
+                                )
+                            });
                     (
                         unit.base.player_id,
                         unit.base.position,
                         unit.damage_multiplier,
+                        unit.weapon_range_scalar,
+                        authored_range,
                         unit.proto_object_name.clone(),
                     )
                 })
             else {
                 continue;
             };
-            let range = selected_range(engagement.range_override, profile);
+            let range = selected_range(engagement.range_override, authored_range, range_scalar);
             if !self.players_are_enemies(source_player_id, target.player_id)
                 || xz_distance_squared(source_position, target.position) > range * range
             {
@@ -342,7 +364,7 @@ impl World {
                 .projectiles
                 .get(projectile_id)
                 .and_then(|projectile| self.units.get(projectile.target_id))
-                .filter(|unit| unit.is_alive())
+                .filter(|unit| unit.is_alive() && !unit.is_garrisoned())
                 .map(|unit| unit.base.position);
             let Some(projectile) = self.projectiles.get_mut(projectile_id) else {
                 continue;
@@ -380,13 +402,23 @@ impl World {
         weapon_type: Option<&str>,
         gameplay: Option<&GameplayCatalog>,
     ) {
-        let Some(target) = self.units.get(target_id).filter(|target| target.is_alive()) else {
+        let Some(target) = self
+            .units
+            .get(target_id)
+            .filter(|target| target.is_alive() && !target.is_garrisoned())
+        else {
             return;
         };
         let weapon_modifier = gameplay.map_or(1.0, |catalog| {
             catalog.weapon_damage_modifier(weapon_type, &target.proto_object_name)
         });
-        let final_damage = damage * weapon_modifier * target.damage_taken_multiplier;
+        let construction_modifier = if target.is_building() && !target.built {
+            self.construction_damage_multiplier
+        } else {
+            1.0
+        };
+        let final_damage =
+            damage * weapon_modifier * construction_modifier * target.damage_taken_multiplier;
         if !final_damage.is_finite() || final_damage <= 0.0 {
             return;
         }
@@ -426,7 +458,7 @@ impl World {
     }
 
     fn unit_combat_motion(&self, unit_id: EntityId, gameplay: &GameplayCatalog) -> CombatMotion {
-        let Some(unit) = self.units.get(unit_id) else {
+        let Some(unit) = self.units.get(unit_id).filter(|unit| unit.is_operational()) else {
             return CombatMotion::Clear;
         };
         let Some(target_id) = unit.attack_target else {
@@ -450,13 +482,17 @@ impl World {
     }
 
     fn concrete_attack_target(&self, requested_id: EntityId) -> Option<ConcreteTargetSnapshot> {
-        if let Some(unit) = self.units.get(requested_id).filter(|unit| unit.is_alive()) {
+        if let Some(unit) = self
+            .units
+            .get(requested_id)
+            .filter(|unit| unit.is_alive() && !unit.is_garrisoned())
+        {
             return Some(concrete_target_snapshot(requested_id, unit));
         }
         let squad = self
             .squads
             .get(requested_id)
-            .filter(|squad| squad.is_alive())?;
+            .filter(|squad| squad.is_alive() && !squad.garrison.is_garrisoned())?;
         squad
             .unit_ids
             .iter()
@@ -464,7 +500,7 @@ impl World {
             .filter_map(|unit_id| {
                 self.units
                     .get(unit_id)
-                    .filter(|unit| unit.is_alive())
+                    .filter(|unit| unit.is_alive() && !unit.is_garrisoned())
                     .map(|unit| (unit_id, unit))
             })
             .min_by_key(|(unit_id, _)| *unit_id)
@@ -472,12 +508,17 @@ impl World {
     }
 
     fn attack_target_snapshot(&self, requested_id: EntityId) -> Option<TargetSnapshot> {
-        if let Some(unit) = self.units.get(requested_id).filter(|unit| unit.is_alive()) {
+        if let Some(unit) = self
+            .units
+            .get(requested_id)
+            .filter(|unit| unit.is_alive() && !unit.is_garrisoned())
+        {
             if let Some(squad_id) = unit.squad_id
-                && let Some(squad) = self
-                    .squads
-                    .get(squad_id)
-                    .filter(|squad| squad.is_alive() && !squad.unit_ids.is_empty())
+                && let Some(squad) = self.squads.get(squad_id).filter(|squad| {
+                    squad.is_alive()
+                        && !squad.garrison.is_garrisoned()
+                        && !squad.unit_ids.is_empty()
+                })
             {
                 return Some(TargetSnapshot {
                     id: squad_id,
@@ -491,10 +532,9 @@ impl World {
                 position: unit.base.position,
             });
         }
-        let squad = self
-            .squads
-            .get(requested_id)
-            .filter(|squad| squad.is_alive() && !squad.unit_ids.is_empty())?;
+        let squad = self.squads.get(requested_id).filter(|squad| {
+            squad.is_alive() && !squad.garrison.is_garrisoned() && !squad.unit_ids.is_empty()
+        })?;
         Some(TargetSnapshot {
             id: requested_id,
             player_id: squad.base.player_id,
@@ -522,10 +562,22 @@ impl World {
         target: &ConcreteTargetSnapshot,
         gameplay: &GameplayCatalog,
     ) -> Option<f32> {
-        self.selected_ranged_action(unit, target, gameplay)?
+        let action = self.selected_ranged_action(unit, target, gameplay)?;
+        let range = action
             .weapon
             .max_range
             .filter(|range| range.is_finite() && *range >= 0.0)
+            .map(|range| {
+                self.get_player(unit.base.player_id)
+                    .map_or(range, |player| {
+                        player.technologies.weapon_range(
+                            &unit.proto_object_name,
+                            &action.weapon.name,
+                            range,
+                        )
+                    })
+            })?;
+        Some(range * unit.weapon_range_scalar)
     }
 
     fn selected_unit_attack_profile<'gameplay>(
@@ -569,6 +621,9 @@ impl World {
         }
         if target.damaged {
             flags.insert(AttackQueryFlags::TARGET_DAMAGED);
+        }
+        if target.unbuilt {
+            flags.insert(AttackQueryFlags::TARGET_UNBUILT);
         }
         let query = AttackQuery {
             relation: self.tactic_relation(unit.base.player_id, target.player_id),
@@ -632,50 +687,7 @@ fn concrete_target_snapshot(id: EntityId, unit: &Unit) -> ConcreteTargetSnapshot
             .max(MIN_TARGET_RADIUS),
         proto_object_name: unit.proto_object_name.clone(),
         damaged: unit.hitpoints < unit.max_hitpoints,
-    }
-}
-
-fn selected_range(range_override: f32, profile: &AttackProfile) -> f32 {
-    if range_override.is_finite() && range_override > 0.0 {
-        range_override
-    } else {
-        profile.max_range
-    }
-}
-
-fn xz_distance_squared(left: Vec3, right: Vec3) -> f32 {
-    Vec3::new(left.x - right.x, 0.0, left.z - right.z).length_squared()
-}
-
-fn face_position(unit: &mut Unit, target: Vec3) {
-    let direction = Vec3::new(
-        target.x - unit.base.position.x,
-        0.0,
-        target.z - unit.base.position.z,
-    )
-    .normalize_or_zero();
-    if direction != Vec3::ZERO {
-        unit.base.set_forward(direction);
-    }
-}
-
-fn scaled_launch_damage(
-    authored_damage: f32,
-    damage_multiplier: f32,
-    source_position: Vec3,
-    target_position: Vec3,
-    uses_height_bonus_damage: bool,
-    height_bonus_factor: f32,
-) -> f32 {
-    let mut damage = authored_damage * damage_multiplier;
-    if uses_height_bonus_damage {
-        let height_difference = (source_position.y - target_position.y).max(0.0);
-        damage *= 1.0 + height_difference * height_bonus_factor;
-    }
-    if damage.is_finite() && damage > 0.0 {
-        damage
-    } else {
-        0.0
+        unbuilt: unit.is_building() && !unit.built,
     }
 }
 
@@ -808,6 +820,22 @@ mod tests {
                 .abs()
                 < f32::EPSILON
         );
+    }
+
+    #[test]
+    fn unbuilt_targets_use_the_database_construction_damage_multiplier() {
+        let mut world = World::new();
+        let target_id = world.create_building(1);
+        let target = world.get_building_mut(target_id).unwrap();
+        target.built = false;
+        world.set_construction_damage_multiplier(Some(3.0));
+
+        world.apply_weapon_damage(target_id, 10.0, None, None);
+        assert!((world.get_building(target_id).unwrap().hitpoints - 70.0).abs() < f32::EPSILON);
+
+        world.get_building_mut(target_id).unwrap().built = true;
+        world.apply_weapon_damage(target_id, 10.0, None, None);
+        assert!((world.get_building(target_id).unwrap().hitpoints - 60.0).abs() < f32::EPSILON);
     }
 
     #[test]

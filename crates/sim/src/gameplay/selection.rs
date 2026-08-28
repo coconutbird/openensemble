@@ -419,6 +419,17 @@ pub(super) fn collect_target_traits(database: &Database) -> BTreeMap<String, Obj
         .collect()
 }
 
+pub(super) fn proto_matches_type(
+    catalog: &GameplayCatalog,
+    proto_object_name: &str,
+    expected_type: &str,
+) -> bool {
+    catalog
+        .target_traits
+        .get(&proto_object_name.to_ascii_lowercase())
+        .is_some_and(|traits| traits.is_type(expected_type))
+}
+
 fn has_flag(object: &ProtoObject, name: &str) -> bool {
     object
         .flags

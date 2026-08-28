@@ -117,7 +117,8 @@ fn sample_values(
         } => {
             // A null Granny curve is represented as identity dimension zero.
             // It is valid for every transform component.
-            if *stored_dimension != 0 && usize::from(*stored_dimension) != dimension {
+            if *stored_dimension != 0 && usize::try_from(*stored_dimension).ok() != Some(dimension)
+            {
                 return Err(format!(
                     "identity dimension {stored_dimension} does not match {dimension}"
                 ));
@@ -192,7 +193,7 @@ fn sample_values(
             decode_identity_quantized_vec3(control_scales, control_offsets, knots_controls)
                 .map(|values| values.to_vec())
         }
-        CurvePayload::Unknown { .. } => Err(format!("unsupported curve format {}", curve.format)),
+        _ => Err(format!("unsupported curve format {}", curve.format)),
     }
 }
 
@@ -217,53 +218,49 @@ fn require_dimension(actual: usize, expected: usize, label: &str) -> Result<(), 
 }
 
 trait Quantized: Copy {
-    const BYTE_WIDTH: usize;
     const CONTROL_MASK: u16;
     const CONTROL_MAX: f32;
     const SIGN_MASK: u16;
     const INDEX_SHIFT: u32;
 
-    fn read(bytes: &[u8], offset: usize) -> Option<u16>;
+    fn widen(self) -> u16;
 }
 
 impl Quantized for u8 {
-    const BYTE_WIDTH: usize = 1;
     const CONTROL_MASK: u16 = 0x7f;
     const CONTROL_MAX: f32 = 127.0;
     const SIGN_MASK: u16 = 0x80;
     const INDEX_SHIFT: u32 = 7;
 
-    fn read(bytes: &[u8], offset: usize) -> Option<u16> {
-        bytes.get(offset).copied().map(u16::from)
+    fn widen(self) -> u16 {
+        u16::from(self)
     }
 }
 
 impl Quantized for u16 {
-    const BYTE_WIDTH: usize = 2;
     const CONTROL_MASK: u16 = 0x7fff;
     const CONTROL_MAX: f32 = 32_767.0;
     const SIGN_MASK: u16 = 0x8000;
     const INDEX_SHIFT: u32 = 15;
 
-    fn read(bytes: &[u8], offset: usize) -> Option<u16> {
-        let value = bytes.get(offset..offset + 2)?;
-        Some(u16::from_le_bytes([value[0], value[1]]))
+    fn widen(self) -> u16 {
+        self
     }
 }
 
 fn decode_quantized_quaternion<T: Quantized>(
     table_entries: u16,
-    data: &[u8],
+    data: &[T],
 ) -> Result<[f32; 4], String> {
     let knot_count = data.len() / 4;
     if knot_count == 0 {
         return Err("quantized quaternion has no knots".to_owned());
     }
-    let control_offset = knot_count * T::BYTE_WIDTH;
+    let control_offset = knot_count;
     let packed = [
-        T::read(data, control_offset),
-        T::read(data, control_offset + T::BYTE_WIDTH),
-        T::read(data, control_offset + 2 * T::BYTE_WIDTH),
+        data.get(control_offset).copied().map(T::widen),
+        data.get(control_offset + 1).copied().map(T::widen),
+        data.get(control_offset + 2).copied().map(T::widen),
     ];
     let [Some(first), Some(second), Some(third)] = packed else {
         return Err("quantized quaternion has no complete first control".to_owned());
@@ -301,17 +298,19 @@ fn decode_quantized_quaternion<T: Quantized>(
 fn decode_quantized_vec3<T: Quantized>(
     scales: &[f32; 3],
     offsets: &[f32; 3],
-    data: &[u8],
+    data: &[T],
 ) -> Result<[f32; 3], String> {
     let knot_count = data.len() / 4;
     if knot_count == 0 {
         return Err("quantized D3 curve has no knots".to_owned());
     }
-    let control_offset = knot_count * T::BYTE_WIDTH;
+    let control_offset = knot_count;
     let mut result = [0.0; 3];
     for (component, output) in result.iter_mut().enumerate() {
-        let offset = control_offset + component * T::BYTE_WIDTH;
-        let value = T::read(data, offset)
+        let value = data
+            .get(control_offset + component)
+            .copied()
+            .map(T::widen)
             .ok_or_else(|| "quantized D3 curve has no complete first control".to_owned())?;
         *output = offsets[component] + scales[component] * f32::from(value);
     }
@@ -367,10 +366,9 @@ mod tests {
 
     #[test]
     fn u16_curve_uses_the_first_control_after_the_knot_block() {
-        // The UAX reader preserves the on-disk u16 element count as the byte
-        // vector length. Three knots therefore occupy the first six bytes,
-        // followed by the first three-component control.
-        let data = [0, 0, 1, 0, 2, 0, 10, 0, 20, 0, 30, 0];
+        // Three knots are followed by three three-component controls. Sampling
+        // at time zero reads the first complete control after the knot block.
+        let data = [0_u16, 1, 2, 10, 20, 30, 11, 21, 31, 12, 22, 32];
         let actual = decode_quantized_vec3::<u16>(&[1.0; 3], &[0.0; 3], &data).unwrap();
         assert!(
             actual

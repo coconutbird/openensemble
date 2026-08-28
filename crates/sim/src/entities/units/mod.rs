@@ -7,20 +7,28 @@
 mod actions;
 mod building;
 mod combat;
+mod garrison;
 pub mod marine;
+mod scalars;
 mod shields;
 pub mod warthog;
 
 pub use actions::UnitActions;
-pub use building::{BuildingProduction, ResearchProgress, ResearchTask};
+pub use building::{
+    BuildingProduction, ConstructionKind, ConstructionProgress, ConstructionTask, ResearchProgress,
+    ResearchTask, TrainingKind, TrainingProgress, TrainingTask,
+};
+pub(crate) use building::{ProductionTask, TriggerCommandStateRef};
 pub use combat::UnitCombat;
+pub use garrison::UnitGarrison;
+pub use scalars::UnitDataScalar;
 pub use shields::{ShieldCoverage, UnitShields};
 
-use super::{BaseEntity, BaseId};
+use super::{BaseEntity, BaseId, EntityIdle};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::physics::PhysicsBody;
-use crate::player::PlayerId;
+use crate::player::{PlayerId, PopulationCost};
 use glam::Vec3;
 
 const ARRIVAL_THRESHOLD: f32 = 0.5;
@@ -72,10 +80,16 @@ pub struct Unit {
     pub archetype: UnitArchetype,
     /// Current lifecycle/order state.
     pub state: UnitState,
+    /// Retail `EntityIdle` action presence and elapsed duration.
+    pub(crate) idle: EntityIdle,
     /// Database proto-object ID, or `-1` when unresolved.
     pub proto_object_id: i32,
     /// Proto-object name retained for diagnostics and deterministic checksums.
     pub proto_object_name: String,
+    /// Authored object-type memberships used by containment and targeting rules.
+    pub object_types: Vec<String>,
+    /// Retail flying flag derived from the prototype movement type.
+    pub flying: bool,
     /// Current hit points.
     pub hitpoints: f32,
     /// Maximum hit points.
@@ -86,6 +100,18 @@ pub struct Unit {
     pub damage_multiplier: f32,
     /// Live incoming damage multiplier.
     pub damage_taken_multiplier: f32,
+    /// Live ranged-attack accuracy multiplier.
+    pub accuracy_scalar: f32,
+    /// Live research, training, and construction work-rate multiplier.
+    pub work_rate_scalar: f32,
+    /// Live line-of-sight radius multiplier.
+    pub line_of_sight_scalar: f32,
+    /// Live movement speed and acceleration multiplier.
+    pub velocity_scalar: f32,
+    /// Live authored weapon-range multiplier.
+    pub weapon_range_scalar: f32,
+    /// Whether automatic target acquisition may choose this object.
+    auto_attackable: bool,
     /// Movement speed in world units per second.
     pub speed: f32,
     /// Acceleration in world units per second squared; zero means immediate.
@@ -106,10 +132,38 @@ pub struct Unit {
     pub attack_ability_id: Option<u8>,
     /// Live enablement state for authored tactic actions.
     pub actions: UnitActions,
+    /// Containment state and immutable container capabilities.
+    pub garrison: UnitGarrison,
     /// Per-unit authored attack animation/cooldown state.
     pub combat: UnitCombat,
     /// Research/production work owned by building units.
     pub production: BuildingProduction,
+    /// Whether construction has completed and built-state effects are active.
+    pub built: bool,
+    /// Unit whose command created this building.
+    pub built_by: Option<EntityId>,
+    /// Concrete socket entity supplied by a direct build command.
+    pub build_socket_id: Option<EntityId>,
+    /// Virtual child-socket index selected by `BuildOther`.
+    pub build_socket_index: Option<u16>,
+    /// Building currently plugged into this socket unit.
+    pub(crate) socket_plug_id: Option<EntityId>,
+    /// Unit whose authored child-object list created this socket.
+    pub(crate) socket_parent_id: Option<EntityId>,
+    /// Authored socket units associated with this unit, in entity-ref order.
+    pub(crate) associated_socket_ids: Vec<EntityId>,
+    /// Socket position in its parent's right/up/forward coordinate frame.
+    pub(crate) socket_local_offset: Vec3,
+    /// Socket yaw relative to its parent's facing, in degrees.
+    pub(crate) socket_local_yaw_degrees: f32,
+    /// Live population charged to this standalone object.
+    pub population_costs: Vec<PopulationCost>,
+    /// Population-cap additions supplied while this object remains alive.
+    pub population_cap_additions: Vec<PopulationCost>,
+    /// Building whose production queue created this standalone object.
+    pub trained_by: Option<EntityId>,
+    /// Shared authored train-limit bucket, when one linked this object.
+    pub train_limit_bucket: Option<u8>,
     /// Squad containing this unit, if any.
     pub squad_id: Option<EntityId>,
     /// Base containing this building, if any.
@@ -125,13 +179,22 @@ impl Default for Unit {
             kind: UnitKind::Mobile,
             archetype: UnitArchetype::Generic,
             state: UnitState::Idle,
+            idle: EntityIdle::default(),
             proto_object_id: -1,
             proto_object_name: String::new(),
+            object_types: Vec::new(),
+            flying: false,
             hitpoints: 100.0,
             max_hitpoints: 100.0,
             shields: UnitShields::default(),
             damage_multiplier: 1.0,
             damage_taken_multiplier: 1.0,
+            accuracy_scalar: 1.0,
+            work_rate_scalar: 1.0,
+            line_of_sight_scalar: 1.0,
+            velocity_scalar: 1.0,
+            weapon_range_scalar: 1.0,
+            auto_attackable: true,
             speed: 10.0,
             acceleration: 0.0,
             turn_rate_degrees: 0.0,
@@ -142,8 +205,22 @@ impl Default for Unit {
             attack_range: 0.0,
             attack_ability_id: None,
             actions: UnitActions::default(),
+            garrison: UnitGarrison::default(),
             combat: UnitCombat::default(),
             production: BuildingProduction::default(),
+            built: true,
+            built_by: None,
+            build_socket_id: None,
+            build_socket_index: None,
+            socket_plug_id: None,
+            socket_parent_id: None,
+            associated_socket_ids: Vec::new(),
+            socket_local_offset: Vec3::ZERO,
+            socket_local_yaw_degrees: 0.0,
+            population_costs: Vec::new(),
+            population_cap_additions: Vec::new(),
+            trained_by: None,
+            train_limit_bucket: None,
             squad_id: None,
             base_id: None,
             formation_offset: Vec3::ZERO,
@@ -164,18 +241,100 @@ impl Unit {
     /// Create an immobile building in the unit pool.
     #[must_use]
     pub fn new_building(id: EntityId, player_id: PlayerId) -> Self {
-        Self {
+        let mut building = Self {
             base: BaseEntity::new(id, player_id),
             kind: UnitKind::Building,
             speed: 0.0,
             ..Self::default()
-        }
+        };
+        building.base.configure_prototype_mobility(true);
+        building
     }
 
     /// Check whether this unit is a building.
     #[must_use]
     pub fn is_building(&self) -> bool {
         self.kind == UnitKind::Building
+    }
+
+    /// Check whether this unit can perform completed-unit gameplay actions.
+    #[must_use]
+    pub fn is_operational(&self) -> bool {
+        self.is_alive() && !self.is_garrisoned() && (!self.is_building() || self.built)
+    }
+
+    /// Return whether automatic combat acquisition may target this object.
+    #[must_use]
+    pub const fn is_auto_attackable(&self) -> bool {
+        self.auto_attackable
+    }
+
+    pub(crate) fn set_auto_attackable(&mut self, auto_attackable: bool) {
+        self.auto_attackable = auto_attackable;
+    }
+
+    /// Return whether the retail idle action currently exists.
+    #[must_use]
+    pub fn has_idle_action(&self) -> bool {
+        self.idle.is_active()
+    }
+
+    /// Return the elapsed duration of the current idle action in milliseconds.
+    #[must_use]
+    pub fn idle_duration(&self) -> u32 {
+        self.idle.duration_ms()
+    }
+
+    pub(crate) fn reconcile_idle_action(&mut self, elapsed_ms: u32, parent_is_idle: bool) {
+        let should_be_idle = self.is_alive() && self.state == UnitState::Idle && parent_is_idle;
+        self.idle.reconcile(should_be_idle, elapsed_ms);
+    }
+
+    pub(crate) fn cancel_idle_action(&mut self) {
+        self.idle.cancel();
+    }
+
+    /// Check whether another unit currently contains this unit.
+    #[must_use]
+    pub const fn is_garrisoned(&self) -> bool {
+        self.garrison.is_contained()
+    }
+
+    /// Check retail object-type identity without case sensitivity.
+    ///
+    /// Every proto-object is itself a base object type, followed by its
+    /// authored abstract object-type memberships.
+    #[must_use]
+    pub fn is_object_type(&self, object_type: &str) -> bool {
+        self.proto_object_name.eq_ignore_ascii_case(object_type)
+            || self
+                .object_types
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(object_type))
+    }
+
+    /// Return whether this unit is an authored socket child of another unit.
+    #[must_use]
+    pub const fn is_socket(&self) -> bool {
+        self.socket_parent_id.is_some()
+    }
+
+    /// Return the unit that owns this authored socket child.
+    #[must_use]
+    pub const fn socket_parent(&self) -> Option<EntityId> {
+        self.socket_parent_id
+    }
+
+    /// Return associated socket units in retail entity-reference order.
+    #[must_use]
+    pub fn associated_sockets(&self) -> &[EntityId] {
+        &self.associated_socket_ids
+    }
+
+    /// Return the live building ID recorded as this socket's plug.
+    #[must_use]
+    pub const fn socket_plug(&self) -> Option<EntityId> {
+        self.socket_plug_id
     }
 
     /// Check whether movement is controlled by a dynamic physics body.
@@ -191,6 +350,16 @@ impl Unit {
         if max_hitpoints.is_finite() && max_hitpoints > 0.0 {
             self.max_hitpoints = max_hitpoints;
             self.hitpoints = max_hitpoints;
+        }
+    }
+
+    pub(crate) fn set_prototype_movement_speed(&mut self, speed: f32) {
+        if !speed.is_finite() || speed < 0.0 {
+            return;
+        }
+        self.speed = speed;
+        if let Some(body) = self.physics.as_mut() {
+            body.set_max_speed(speed);
         }
     }
 
@@ -218,6 +387,7 @@ impl Unit {
         self.attack_range = 0.0;
         self.attack_ability_id = None;
         self.combat.reset();
+        self.cancel_idle_action();
         self.stop();
     }
 
@@ -225,13 +395,19 @@ impl Unit {
     ///
     /// Buildings and units currently controlled through a squad reject it.
     pub fn move_to(&mut self, target: Vec3) -> bool {
-        if self.is_building() || self.squad_id.is_some() || !self.is_alive() {
+        if self.is_building()
+            || !self.base.is_mobile()
+            || self.squad_id.is_some()
+            || !self.is_alive()
+            || self.is_garrisoned()
+        {
             return false;
         }
         self.attack_target = None;
         self.attack_range = 0.0;
         self.attack_ability_id = None;
         self.combat.reset();
+        self.cancel_idle_action();
         self.move_target = Some(target);
         self.state = UnitState::Moving;
         true
@@ -239,13 +415,14 @@ impl Unit {
 
     /// Issue a standalone attack order.
     pub fn attack(&mut self, target: EntityId, range: f32, ability_id: Option<u8>) -> bool {
-        if self.squad_id.is_some() || !self.is_alive() || target.is_invalid() {
+        if self.squad_id.is_some() || !self.is_operational() || target.is_invalid() {
             return false;
         }
         self.attack_target = Some(target);
         self.attack_range = valid_attack_range(range);
         self.attack_ability_id = ability_id;
         self.combat.reset();
+        self.cancel_idle_action();
         self.move_target = None;
         self.base.velocity = Vec3::ZERO;
         self.state = UnitState::Attacking;
@@ -254,6 +431,7 @@ impl Unit {
 
     /// Cancel the current standalone attack order.
     pub fn clear_attack_order(&mut self) {
+        self.cancel_idle_action();
         self.attack_target = None;
         self.attack_range = 0.0;
         self.attack_ability_id = None;
@@ -266,7 +444,7 @@ impl Unit {
     }
 
     pub(crate) fn chase_attack_target(&mut self, target: Vec3) {
-        if self.state == UnitState::Attacking && !self.is_building() {
+        if self.state == UnitState::Attacking && !self.is_building() && self.base.is_mobile() {
             self.move_target = Some(target);
         }
     }
@@ -316,16 +494,20 @@ impl Unit {
 
     /// Stop standalone movement.
     pub fn stop(&mut self) {
+        let interrupted_movement = self.state == UnitState::Moving || self.move_target.is_some();
         self.move_target = None;
         self.base.velocity = Vec3::ZERO;
         if self.state == UnitState::Moving {
             self.state = UnitState::Idle;
         }
+        if interrupted_movement {
+            self.cancel_idle_action();
+        }
     }
 
     fn update_movement(&mut self, dt: f32) {
         if let Some(body) = &mut self.physics {
-            if body.update(&mut self.base, self.move_target, dt) {
+            if body.update(&mut self.base, self.move_target, dt, self.velocity_scalar) {
                 self.stop();
             }
             return;
@@ -335,19 +517,22 @@ impl Unit {
         };
         let to_target = target - self.base.position;
         let distance = to_target.length();
-        if distance < ARRIVAL_THRESHOLD || self.speed * dt >= distance {
+        let speed = self.speed * self.velocity_scalar;
+        if distance < ARRIVAL_THRESHOLD || speed * dt >= distance {
             self.base.position = target;
             self.stop();
             return;
         }
         let direction = to_target / distance;
-        self.base.velocity = direction * self.speed;
+        self.base.velocity = direction * speed;
         self.base.position += self.base.velocity * dt;
         self.base.set_forward(direction);
     }
 
     pub(crate) fn move_as_squad_member(&mut self, target: Vec3) {
-        if !self.is_building() && self.is_alive() {
+        if !self.is_building() && self.base.is_mobile() && self.is_alive() && !self.is_garrisoned()
+        {
+            self.cancel_idle_action();
             self.move_target = Some(target);
             self.state = UnitState::Moving;
         }
@@ -360,15 +545,20 @@ impl Entity for Unit {
     }
 
     fn update(&mut self, dt: f32) {
-        if self.state == UnitState::Moving
-            || (self.state == UnitState::Attacking && self.move_target.is_some())
+        if self.base.is_mobile()
+            && !self.is_garrisoned()
+            && (self.state == UnitState::Moving
+                || (self.state == UnitState::Attacking && self.move_target.is_some()))
         {
             self.update_movement(dt);
         }
     }
 
     fn is_alive(&self) -> bool {
-        self.base.is_alive() && self.state != UnitState::Dead && self.hitpoints > 0.0
+        // Retail's BUnit::isAlive reads its explicit alive flag. Direct
+        // trigger HP edits can therefore leave an otherwise-live unit at
+        // zero hit points; normal combat damage still calls `kill` at zero.
+        self.base.is_alive() && self.state != UnitState::Dead
     }
 }
 

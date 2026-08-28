@@ -110,12 +110,12 @@ pub enum VarType {
     GameStatePredicate = 101,
     FloatList = 102,
     UILocationMinigame = 103,
-    Concept = 104,
-    ConceptList = 105,
-    UserClassType = 106,
-    SquadFlag = 107,
-    TalkingHead = 108,
-    FlashableUIItem = 109,
+    SquadFlag = 104,
+    FlashableUIItem = 105,
+    TalkingHead = 106,
+    Concept = 107,
+    ConceptList = 108,
+    UserClassType = 109,
 }
 
 impl VarType {
@@ -128,5 +128,22 @@ impl VarType {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn late_retail_discriminants_preserve_declared_order() {
+        assert_eq!(VarType::SquadFlag as u8, 104);
+        assert_eq!(VarType::FlashableUIItem as u8, 105);
+        assert_eq!(VarType::TalkingHead as u8, 106);
+        assert_eq!(VarType::Concept as u8, 107);
+        assert_eq!(VarType::ConceptList as u8, 108);
+        assert_eq!(VarType::UserClassType as u8, 109);
+        assert_eq!(VarType::from_u8(104), Some(VarType::SquadFlag));
+        assert_eq!(VarType::from_u8(109), Some(VarType::UserClassType));
     }
 }

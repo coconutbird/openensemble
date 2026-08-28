@@ -122,6 +122,93 @@ impl BuildingCommand {
         }
     }
 
+    /// Construct a retail standalone-unit training/cancel command.
+    #[must_use]
+    pub fn train_units(
+        player_id: i32,
+        recipients: Vec<EntityId>,
+        prototype_id: i32,
+        count: i32,
+    ) -> Self {
+        Self::training(
+            player_id,
+            recipients,
+            BuildingCommandType::TrainUnit,
+            prototype_id,
+            count,
+        )
+    }
+
+    /// Construct a retail squad training/cancel command.
+    #[must_use]
+    pub fn train_squads(
+        player_id: i32,
+        recipients: Vec<EntityId>,
+        prototype_id: i32,
+        count: i32,
+    ) -> Self {
+        Self::training(
+            player_id,
+            recipients,
+            BuildingCommandType::TrainSquad,
+            prototype_id,
+            count,
+        )
+    }
+
+    /// Construct a retail direct-building construction/cancel command.
+    #[must_use]
+    pub fn build(
+        player_id: i32,
+        recipients: Vec<EntityId>,
+        prototype_id: i32,
+        position: Vec3,
+        count: i32,
+        socket_id: EntityId,
+    ) -> Self {
+        Self {
+            base: production_base(player_id, recipients),
+            building_type: BuildingCommandType::Build,
+            target_id: prototype_id,
+            target_position: position,
+            count,
+            socket_id,
+        }
+    }
+
+    /// Construct a retail socket-building construction/cancel command.
+    #[must_use]
+    pub fn build_other(
+        player_id: i32,
+        recipients: Vec<EntityId>,
+        prototype_id: i32,
+        count: i32,
+    ) -> Self {
+        Self {
+            base: production_base(player_id, recipients),
+            building_type: BuildingCommandType::BuildOther,
+            target_id: prototype_id,
+            count,
+            ..Self::default()
+        }
+    }
+
+    fn training(
+        player_id: i32,
+        recipients: Vec<EntityId>,
+        building_type: BuildingCommandType,
+        prototype_id: i32,
+        count: i32,
+    ) -> Self {
+        Self {
+            base: production_base(player_id, recipients),
+            building_type,
+            target_id: prototype_id,
+            count,
+            ..Self::default()
+        }
+    }
+
     /// Serialize the seven fixed retail fields following the base command.
     ///
     /// # Errors
@@ -155,6 +242,18 @@ impl BuildingCommand {
         self.count = reader.read_i32::<LittleEndian>()?;
         self.socket_id = EntityId::from_u32(reader.read_i32::<LittleEndian>()?.cast_unsigned());
         Ok(())
+    }
+}
+
+fn production_base(player_id: i32, recipients: Vec<EntityId>) -> Command {
+    Command {
+        player_id,
+        sender_type: EntityType::Player,
+        senders: vec![player_id],
+        recipient_type: EntityType::Unit,
+        recipients,
+        command_type: CommandType::Building,
+        ..Command::default()
     }
 }
 

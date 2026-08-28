@@ -133,7 +133,6 @@ impl Trigger {
     #[must_use]
     pub fn starts_active(mut self) -> Self {
         self.start_active = true;
-        self.is_active = true;
         self
     }
 
@@ -163,7 +162,6 @@ impl Trigger {
     pub fn on_activated(&mut self, current_time: u32) {
         self.is_active = true;
         self.activated_time = current_time;
-        self.next_evaluate_time = current_time;
     }
 
     /// Called when the trigger is deactivated.
@@ -179,6 +177,6 @@ impl Trigger {
     /// Update the next evaluation time after an evaluation.
     pub fn update_next_evaluate_time(&mut self, current_time: u32) {
         self.evaluate_count += 1;
-        self.next_evaluate_time = current_time + self.evaluate_frequency;
+        self.next_evaluate_time = current_time.wrapping_add(self.evaluate_frequency);
     }
 }

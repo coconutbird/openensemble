@@ -10,20 +10,58 @@ use crate::physics::{
     prepare_squad_movement, resolve_unit_collisions, substeps, sync_squad_members,
 };
 use crate::player::{GAIA_PLAYER, MAX_TEAMS, Player, PlayerId, TeamRelation};
-use crate::random::Random;
+use crate::random::{Random, SimRandom};
 use glam::Vec3;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 mod ability;
 mod checksum;
 mod combat;
+mod construction;
+mod control;
+mod custom_commands;
+mod events;
+mod game_settings;
+mod garrison;
+mod health;
+mod hitch;
+mod idle;
+mod lifecycle;
+mod object_types;
+mod orders;
+mod ownership;
+mod powers;
+mod production;
+mod proto_data;
+mod query;
 mod research;
+mod resources;
+mod roster;
 mod shields;
+pub(crate) mod sockets;
+mod spatial;
 mod team;
 mod technology;
+mod training;
+mod triggers;
 
+pub use construction::{ConstructionError, ConstructionQueueResult};
+pub use custom_commands::{CustomCommand, CustomCommandFlags};
+pub(crate) use events::EventEntityParameter;
+pub use events::{
+    ChatRequest, CinematicRequest, GeneralEvent, GeneralEventType, PresentationRequest,
+};
+pub use garrison::GarrisonError;
+pub use health::UnitHealth;
+pub use hitch::HitchError;
+pub use powers::power_prototype_id;
+pub use production::ProductionUpdate;
 pub use research::{ResearchError, ResearchQueueResult, technology_prototype_id};
 pub use technology::TechnologyError;
+pub(crate) use training::TriggerTrainingRequest;
+pub use training::{
+    MAX_TRAIN_BATCH, TrainingError, TrainingQueueResult, object_runtime_id, squad_runtime_id,
+};
 
 use team::neutral_team_relations;
 
@@ -39,10 +77,32 @@ pub struct World {
     players: Vec<Player>,
     /// Directed team diplomacy matrix, matching vanilla `BWorld` state.
     team_relations: [[TeamRelation; MAX_TEAMS]; MAX_TEAMS],
+    /// Whether the current game was configured as campaign co-op.
+    coop: bool,
+    /// Deterministic configuration symbols visible to retail trigger scripts.
+    config_symbols: BTreeSet<String>,
+    /// Retail general-event subscriptions and completion state.
+    general_events: events::GeneralEventState,
+    /// Renderer-facing requests authored by the authoritative simulation.
+    presentation: events::PresentationState,
+    /// Scenario-authored custom command buttons keyed by retail command ID.
+    custom_commands: BTreeMap<i32, CustomCommand>,
+    /// Next monotonically assigned retail custom command ID.
+    next_custom_command_id: i32,
+    /// Paid custom-command work waiting on authoritative completion timers.
+    custom_command_executions: Vec<custom_commands::CustomCommandExecution>,
     /// Current game time in milliseconds.
     pub game_time_ms: u32,
     /// Deterministic RNG for the world.
     pub rng: Random,
+    /// Retail synchronized random-manager stream used by trigger operations.
+    sim_rng: SimRandom,
+    /// Damage scalar applied to targets that have not completed construction.
+    construction_damage_multiplier: f32,
+    /// Concrete and abstract object types keyed by live proto-object database ID.
+    prototype_object_types: BTreeMap<i32, Vec<String>>,
+    /// Proto-squad name and maximum child count keyed by live database ID.
+    prototype_squads: BTreeMap<i32, (String, u32)>,
     /// Unit pool. Mobile units and buildings both use vanilla class 1.
     pub units: EntityManager<Unit>,
     /// Squad entity manager.
@@ -53,6 +113,10 @@ pub struct World {
     bases: BTreeMap<BaseId, Base>,
     /// Next candidate base number.
     next_base_id: u16,
+    /// Authoritative scenario and gameplay trigger scripts.
+    trigger_engine: crate::trigger::TriggerEngine,
+    /// Trigger-state writes deferred while their script is being evaluated.
+    pending_building_command_events: Vec<triggers::BuildingCommandEvent>,
 }
 
 impl Default for World {
@@ -68,13 +132,26 @@ impl World {
         Self {
             players: Vec::new(),
             team_relations: neutral_team_relations(),
+            coop: false,
+            config_symbols: BTreeSet::new(),
+            general_events: events::GeneralEventState::default(),
+            presentation: events::PresentationState::default(),
+            custom_commands: BTreeMap::new(),
+            next_custom_command_id: 0,
+            custom_command_executions: Vec::new(),
             game_time_ms: 0,
             rng: Random::new(),
+            sim_rng: SimRandom::new(),
+            construction_damage_multiplier: 1.0,
+            prototype_object_types: BTreeMap::new(),
+            prototype_squads: BTreeMap::new(),
             units: EntityManager::new(EntityClass::Unit),
             squads: EntityManager::new(EntityClass::Squad),
             projectiles: EntityManager::new(EntityClass::Projectile),
             bases: BTreeMap::new(),
             next_base_id: 0,
+            trigger_engine: crate::trigger::TriggerEngine::new(),
+            pending_building_command_events: Vec::new(),
         }
     }
 
@@ -83,7 +160,15 @@ impl World {
     pub fn with_seed(seed: u64) -> Self {
         let mut world = Self::new();
         world.rng.set_seed64(seed);
+        let [byte_0, byte_1, byte_2, byte_3, _, _, _, _] = seed.to_le_bytes();
         world
+            .sim_rng
+            .set_seed(u32::from_le_bytes([byte_0, byte_1, byte_2, byte_3]));
+        world
+    }
+
+    pub(crate) fn trigger_random_index(&mut self, maximum: u32) -> u32 {
+        self.sim_rng.index(maximum)
     }
 
     /// Initialize the world with the given number of players.
@@ -153,16 +238,34 @@ impl World {
         self.game_time_ms = self.game_time_ms.wrapping_add(ms);
     }
 
+    pub(crate) fn set_construction_damage_multiplier(&mut self, multiplier: Option<f32>) {
+        self.construction_damage_multiplier = multiplier
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .unwrap_or(1.0);
+    }
+
     /// Reset the world to initial state.
     pub fn reset(&mut self) {
         self.players.clear();
         self.team_relations = neutral_team_relations();
+        self.coop = false;
+        self.config_symbols.clear();
+        self.general_events = events::GeneralEventState::default();
+        self.presentation = events::PresentationState::default();
+        self.custom_commands.clear();
+        self.next_custom_command_id = 0;
+        self.custom_command_executions.clear();
         self.game_time_ms = 0;
+        self.construction_damage_multiplier = 1.0;
+        self.prototype_object_types.clear();
+        self.prototype_squads.clear();
         self.units.clear();
         self.squads.clear();
         self.projectiles.clear();
         self.bases.clear();
         self.next_base_id = 0;
+        self.trigger_engine = crate::trigger::TriggerEngine::new();
+        self.pending_building_command_events.clear();
     }
 
     /// Create a new squad for the given player.
@@ -192,7 +295,16 @@ impl World {
 
     /// Remove a squad and detach its surviving units.
     pub fn remove_squad(&mut self, id: EntityId) -> Option<Squad> {
+        self.prepare_remove_squad_garrison(id);
+        self.detach_squad_hitch(id);
         let squad = self.squads.remove(id)?;
+        for (_, other_squad) in self.squads.iter_mut() {
+            other_squad.clear_teleporter_destination(id);
+        }
+        if let Some(player) = self.get_player_mut(squad.base.player_id) {
+            player.revoke_first_power_from_squad(id);
+            player.release_population(&squad.population_costs);
+        }
         for unit_id in &squad.unit_ids {
             if let Some(unit) = self.units.get_mut(*unit_id)
                 && unit.squad_id == Some(id)
@@ -273,8 +385,31 @@ impl World {
 
     /// Remove a unit or building and clean up squad/base membership.
     pub fn remove_unit(&mut self, id: EntityId) -> Option<Unit> {
+        let socket_children = self
+            .units
+            .get(id)?
+            .associated_socket_ids
+            .iter()
+            .copied()
+            .filter(|&socket_id| {
+                self.units
+                    .get(socket_id)
+                    .is_some_and(|socket| socket.socket_parent_id == Some(id))
+            })
+            .collect::<Vec<_>>();
+        for socket_id in socket_children {
+            let _removed = self.remove_unit(socket_id);
+        }
+        self.prepare_remove_unit_garrison(id);
+        self.detach_unit_socket_refs(id);
         let unit = self.units.remove(id)?;
-        self.refund_research_for_removed_unit(&unit);
+        self.refund_production_for_removed_unit(&unit);
+        if let Some(player) = self.get_player_mut(unit.base.player_id) {
+            player.release_population(&unit.population_costs);
+            if unit.built {
+                player.adjust_population_cap(&unit.population_cap_additions, false);
+            }
+        }
         let mut emptied_squad = None;
         if let Some(squad_id) = unit.squad_id
             && let Some(squad) = self.squads.get_mut(squad_id)
@@ -293,7 +428,7 @@ impl World {
         Some(unit)
     }
 
-    /// Attach a mobile unit to a same-player squad.
+    /// Attach a unit or building to a same-player squad.
     pub fn attach_unit_to_squad(&mut self, unit_id: EntityId, squad_id: EntityId) -> bool {
         let Some(unit) = self.units.get(unit_id) else {
             return false;
@@ -301,7 +436,7 @@ impl World {
         let Some(squad) = self.squads.get(squad_id) else {
             return false;
         };
-        if unit.is_building() || unit.base.player_id != squad.base.player_id {
+        if unit.base.player_id != squad.base.player_id {
             return false;
         }
         let shielded = unit.shields.is_enabled();
@@ -480,6 +615,7 @@ impl World {
         for _ in 0..step_count {
             self.update_entity_substep(step_duration, gameplay);
         }
+        self.update_idle_actions(dt);
     }
 
     fn update_entity_substep(
@@ -512,6 +648,8 @@ impl World {
         }
         resolve_unit_collisions(&mut self.units);
         sync_squad_members(&mut self.squads, &mut self.units, &physics_anchors);
+        self.sync_associated_socket_transforms();
+        self.update_garrisons(gameplay);
         self.update_projectiles(dt, gameplay);
         let dead_units: Vec<_> = self
             .units

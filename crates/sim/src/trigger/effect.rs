@@ -1,6 +1,6 @@
 //! Trigger effects - actions that modify game state.
 
-use super::VarId;
+use super::{VarBinding, VarId};
 
 /// Vanilla effect type IDs.
 /// Values match `BTriggerEffect::cTE*` for file format compatibility.
@@ -176,6 +176,7 @@ pub enum EffectType {
     MathFloat = 353,
     MathLocation = 295,
     MathResources = 279,
+    RandomTime = 516,
 
     // String conversion
     AsString = 181,
@@ -192,6 +193,7 @@ pub enum EffectType {
     LerpColor = 188,
     LerpPercent = 262,
     LerpLocation = 294,
+    LerpTime = 748,
 
     // Get operations
     GetLocation = 189,
@@ -204,6 +206,9 @@ pub enum EffectType {
     GetDirectionFromLocations = 500,
     GetPlayerCiv = 239,
     GetPlayerLeader = 475,
+    GetParentSquad = 519,
+    GetPlayerPop = 646,
+    GetMeanLocation = 670,
 
     // Resources
     SetResources = 277,
@@ -239,6 +244,7 @@ pub enum EffectType {
     SetDirection = 489,
     SetAmmo = 390,
     SetIgnoreUserInput = 382,
+    SetMobile = 510,
 
     // Partition/Shuffle
     SquadListPartition = 296,
@@ -309,6 +315,18 @@ pub enum EffectType {
     // Scripts/Cinematics
     LaunchScript = 392,
     LaunchCinematic = 480,
+    PlayChat = 729,
+
+    // General events
+    EventSubscribe = 811,
+    EventSetFilter = 812,
+    EventReset = 837,
+    EventFilterCamera = 838,
+    EventFilterEntity = 839,
+    EventFilterEntityList = 840,
+    EventDelete = 988,
+    EventClearFilters = 989,
+    EventSubscribeUseCount = 1018,
 
     // Squad mode
     ChangeSquadMode = 388,
@@ -318,10 +336,35 @@ pub enum EffectType {
     CopyProtoSquadList = 482,
     CopyObjectTypeList = 483,
     CopyTechList = 484,
+    CopyIntegerList = 562,
+    CopyLocationList = 609,
     CopyDirection = 501,
     CopyObjective = 360,
     CopyMessageIndex = 261,
     CopyKBBase = 455,
+
+    // Typed value-list operations
+    ProtoObjectListAdd = 569,
+    ProtoObjectListRemove = 570,
+    ProtoSquadListAdd = 571,
+    ProtoSquadListRemove = 572,
+    TechListAdd = 573,
+    TechListRemove = 574,
+    IntegerListAdd = 580,
+    IntegerListRemove = 581,
+    IntegerListGetSize = 582,
+
+    // Command state
+    BuildingCommand = 559,
+    CustomCommandAdd = 633,
+    CustomCommandRemove = 634,
+    ClearBuildingCommandState = 940,
+
+    // Player resource income
+    SetSelectable = 900,
+    SetTrickleRate = 901,
+    GetTrickleRate = 902,
+    SetAutoAttackable = 915,
 
     // KB operations
     KBBaseGetDistance = 446,
@@ -340,12 +383,44 @@ pub enum EffectType {
     // Proto queries
     GetSquadTrainerType = 458,
     GetTechResearcherType = 459,
+    GetProtoSquad = 630,
+
+    // Late copy/list operations
+    CopyLocStringID = 818,
+    ObjectListRemove = 836,
+
+    // Batch squad creation
+    CreateSquads = 875,
 
     // Design
     DesignLineGetPoints = 460,
     DesignFindSphere = 425,
     ModifyDataScalar = 413,
     ModifyProtoData = 237,
+
+    // Debug/presentation
+    DebugVarTime = 207,
+    DebugVarCount = 209,
+    DebugVarFloat = 218,
+    DebugVarPlayerList = 221,
+    DebugVarString = 230,
+
+    // Economy queries
+    GetPlayerEconomy = 647,
+    CostToFloat = 678,
+    GetCost = 679,
+    GetPop = 736,
+
+    // AI force analysis
+    AIAnalyzeSquadList = 668,
+    AIAnalyzeOffenseAToB = 669,
+    AISAGetComponent = 672,
+    AIAnalyzeProtoSquadList = 674,
+    AICalculateOffenseRatioAToB = 914,
+    CopyAISquadAnalysis = 921,
+
+    // Scenario transport setup
+    SetTeleporterDestination = 967,
 
     /// Custom effect for scripting extensions (not in vanilla).
     Custom = 0xFFFF,
@@ -356,8 +431,18 @@ impl EffectType {
     /// Returns None for obsolete or unknown values.
     #[must_use]
     pub fn from_u16(value: u16) -> Option<Self> {
-        // This is a simplified check - in practice we'd have a complete match
-        match value {
+        if value == Self::SetTeleporterDestination as u16 {
+            return Some(Self::SetTeleporterDestination);
+        }
+        if Self::is_known_early_type(value) || Self::is_known_late_type(value) {
+            return Some(unsafe { std::mem::transmute::<u16, Self>(value) });
+        }
+        None
+    }
+
+    fn is_known_early_type(value: u16) -> bool {
+        matches!(
+            value,
             31..=38
             | 50..=53
             | 55..=61
@@ -383,6 +468,8 @@ impl EffectType {
             | 178..=181
             | 183..=190
             | 193
+            | 207 | 209 | 218 | 221
+            | 230
             | 237
             | 239
             | 243
@@ -393,6 +480,7 @@ impl EffectType {
             | 277..=279
             | 281
             | 283..=298
+            | 299
             | 300..=306
             | 308
             | 309
@@ -408,6 +496,12 @@ impl EffectType {
             | 382
             | 385
             | 388..=393
+        )
+    }
+
+    fn is_known_late_type(value: u16) -> bool {
+        matches!(
+            value,
             | 413
             | 417..=419
             | 425
@@ -423,9 +517,39 @@ impl EffectType {
             | 480..=484
             | 489..=493
             | 498
-            | 499..=501 => Some(unsafe { std::mem::transmute::<u16, EffectType>(value) }),
-            _ => None,
-        }
+            | 499..=501
+            | 510
+            | 516
+            | 519
+            | 559
+            | 562
+            | 569..=574
+            | 580..=582
+            | 609
+            | 630
+            | 633
+            | 634
+            | 646 | 647
+            | 668 | 669 | 672 | 674
+            | 670
+            | 678 | 679
+            | 729
+            | 736
+            | 748
+            | 811
+            | 812
+            | 818
+            | 836
+            | 837..=840
+            | 875
+            | 900..=902
+            | 914 | 915
+            | 921
+            | 940
+            | 988
+            | 989
+            | 1018
+        )
     }
 }
 
@@ -438,11 +562,14 @@ pub struct Effect {
     /// The type of effect to execute.
     pub effect_type: EffectType,
 
-    /// Input variable references (indices into `TriggerScript`'s variable list).
-    pub inputs: Vec<VarId>,
+    /// Original effect DBID, including IDs not implemented by this build.
+    pub raw_type: u16,
 
-    /// Output variable references (for effects that produce values).
-    pub outputs: Vec<VarId>,
+    /// Input signature slots and their sparse script-variable IDs.
+    pub inputs: Vec<VarBinding>,
+
+    /// Output signature slots and their sparse script-variable IDs.
+    pub outputs: Vec<VarBinding>,
 
     /// Version for compatibility.
     pub version: u8,
@@ -455,6 +582,7 @@ impl Effect {
         Self {
             id,
             effect_type,
+            raw_type: effect_type as u16,
             inputs: Vec::new(),
             outputs: Vec::new(),
             version: 0,
@@ -464,14 +592,40 @@ impl Effect {
     /// Add an input variable reference.
     #[must_use]
     pub fn with_input(mut self, var_id: VarId) -> Self {
-        self.inputs.push(var_id);
+        let signature_id = u16::try_from(self.inputs.len() + 1).unwrap_or(u16::MAX);
+        self.inputs.push(VarBinding::new(signature_id, var_id));
+        self
+    }
+
+    /// Add an input variable at an explicit retail signature slot.
+    #[must_use]
+    pub fn with_input_at(mut self, signature_id: u16, var_id: VarId) -> Self {
+        self.inputs.push(VarBinding::new(signature_id, var_id));
         self
     }
 
     /// Add an output variable reference.
     #[must_use]
     pub fn with_output(mut self, var_id: VarId) -> Self {
-        self.outputs.push(var_id);
+        let signature_id = u16::try_from(self.outputs.len() + 1).unwrap_or(u16::MAX);
+        self.outputs.push(VarBinding::new(signature_id, var_id));
         self
+    }
+
+    /// Add an output variable at an explicit retail signature slot.
+    #[must_use]
+    pub fn with_output_at(mut self, signature_id: u16, var_id: VarId) -> Self {
+        self.outputs.push(VarBinding::new(signature_id, var_id));
+        self
+    }
+
+    /// Resolve a variable ID by its one-based retail signature slot.
+    #[must_use]
+    pub fn variable_id(&self, signature_id: u16) -> Option<VarId> {
+        self.inputs
+            .iter()
+            .chain(&self.outputs)
+            .find(|binding| binding.signature_id == signature_id)
+            .map(|binding| binding.variable_id)
     }
 }

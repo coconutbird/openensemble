@@ -175,7 +175,7 @@ fn warthog_collides_with_static_building_deterministically() {
     let mut second = load_scenario_into_world(&scenario, &database);
     let first_squad_id = first.get_entity_id(10).unwrap();
     let second_squad_id = second.get_entity_id(10).unwrap();
-    let first_building_id = first.get_entity_id(20).unwrap();
+    let first_building_squad_id = first.get_entity_id(20).unwrap();
     let target = Vec3::new(25.0, 0.0, 0.0);
     issue_move(&mut first.world, first_squad_id, target);
     issue_move(&mut second.world, second_squad_id, target);
@@ -197,6 +197,11 @@ fn warthog_collides_with_static_building_deterministically() {
 
     let squad = first.world.get_squad(first_squad_id).unwrap();
     let unit = first.world.get_unit(squad.unit_ids[0]).unwrap();
+    let first_building_id = first
+        .world
+        .get_squad(first_building_squad_id)
+        .unwrap()
+        .unit_ids[0];
     let building = first.world.get_building(first_building_id).unwrap();
     assert!(saw_contact);
     assert!(unit.base.position.x <= -9.0 + 0.001);
