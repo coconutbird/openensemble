@@ -8,6 +8,7 @@ workspace = true
 
 [dependencies]
 pipeline = { workspace = true }
+sim = { workspace = true }
 xcore = { workspace = true }
 winit = { workspace = true }
 wgpu = { workspace = true }

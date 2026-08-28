@@ -460,7 +460,7 @@ pub(super) fn create_light_view(
     queue: &wgpu::Queue,
     source: Option<(&[u8], u32, u32)>,
 ) -> wgpu::TextureView {
-    let Some((values, width, height)) = source else {
+    let Some((pixels, width, height)) = source else {
         return create_placeholder_view(device, queue, "Placeholder Light", [128, 128, 128, 255]);
     };
     let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -473,7 +473,7 @@ pub(super) fn create_light_view(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::R8Unorm,
+        format: wgpu::TextureFormat::Rgba8Unorm,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
@@ -484,10 +484,10 @@ pub(super) fn create_light_view(
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
-        values,
+        pixels,
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(width),
+            bytes_per_row: Some(width.saturating_mul(4)),
             rows_per_image: Some(height),
         },
         wgpu::Extent3d {

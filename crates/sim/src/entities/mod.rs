@@ -2,7 +2,7 @@
 //!
 //! Hierarchy based on original source:
 //! - `BEntity` (base) - position, velocity, player, actions
-//!   - `BObject` - visual, physics (not needed for MVP)
+//!   - `BObject` - visual and physics state
 //!     - `BUnit` - individual unit
 //!     - `BDopple` - fog of war ghost
 //!     - `BProjectile` - bullets, missiles
@@ -14,10 +14,10 @@
 
 mod base;
 mod base_site;
-mod squad;
-mod unit;
+pub mod squads;
+pub mod units;
 
 pub use base::BaseEntity;
 pub use base_site::{Base, BaseId};
-pub use squad::{Squad, SquadState};
-pub use unit::{Unit, UnitKind, UnitState};
+pub use squads::{Squad, SquadArchetype, SquadFormation, SquadState};
+pub use units::{Unit, UnitArchetype, UnitKind, UnitState};

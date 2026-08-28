@@ -9,8 +9,7 @@ mod rendering;
 
 use std::path::{Path, PathBuf};
 
-use glam::{FloatExt, Mat4, Vec3};
-use num_traits::ToPrimitive;
+use glam::Vec3;
 use pipeline::hw1;
 use pipeline::source::{AssetSource, StdFileProvider};
 use pipeline::xtd;
@@ -28,8 +27,6 @@ use render::wgpu;
 use crate::capture::{CaptureConfig, CaptureState};
 use crate::types::GpuResources;
 
-const WARTHOG_VISUAL: &str = "unsc_veh_warthog_01";
-
 struct TerrainLoadInputs {
     terrain: xtd::XtdFile,
     textures: Option<xtt::XttFile>,
@@ -37,7 +34,7 @@ struct TerrainLoadInputs {
     environment: Option<EnvironmentMap>,
     sky: Option<UgxUnit>,
     source: Option<AssetSource<StdFileProvider>>,
-    warthog_visual: Option<pipeline::database::hw1::Visual>,
+    simulation: Option<sim::LoadedScenario>,
     ugx_scene: Option<UgxUnitScene>,
 }
 
@@ -48,6 +45,8 @@ pub struct TerrainViewer {
     pub scenario_name: Option<String>,
     /// Asset source for loading textures from ERA archives.
     pub asset_source: Option<AssetSource<StdFileProvider>>,
+    /// Authoritative game state loaded by `sim` from the scenario database.
+    pub simulation: Option<sim::LoadedScenario>,
     /// All decoded terrain data (mesh, textures, splat, decals, foliage, roads).
     pub scene: Option<TerrainScene>,
     /// Scenario GLS/FLS constants used by every lit renderer.
@@ -91,17 +90,9 @@ pub struct TerrainViewer {
     pub shadow_resources: Option<crate::shadow::ShadowResources>,
     /// Road GPU resources (pipeline, vertex buffer, textures).
     pub road_resources: Option<crate::roads::RoadResources>,
-    /// Decoded Warthog visual graph used to exercise unit rendering.
-    pub ugx_unit: Option<UgxUnit>,
-    /// GPU resources for every component in the centered Warthog.
-    pub ugx_renderer: Option<UgxUnitRenderer>,
-    /// Model-to-world placement for the Warthog.
-    pub ugx_transform: Mat4,
-    /// A model-loading failure does not prevent terrain diagnostics from running.
-    pub ugx_error: Option<String>,
-    /// Scenario objects resolved through their database visuals.
+    /// Visual assets bound to entities in the authoritative simulation world.
     pub ugx_scene: Option<UgxUnitScene>,
-    /// GPU resources for renderable scenario object placements.
+    /// Presentation-only GPU resources for simulation entity placements.
     pub ugx_scene_renderer: Option<UgxUnitSceneRenderer>,
     /// Optional deterministic top-down capture-and-exit state.
     pub capture: Option<CaptureState>,
@@ -113,6 +104,7 @@ impl TerrainViewer {
             xtd_path: None,
             scenario_name: None,
             asset_source: None,
+            simulation: None,
             scene: None,
             lightset: None,
             local_lights: LocalLightSet::default(),
@@ -137,10 +129,6 @@ impl TerrainViewer {
             foliage_resources: None,
             shadow_resources: None,
             road_resources: None,
-            ugx_unit: None,
-            ugx_renderer: None,
-            ugx_transform: Mat4::IDENTITY,
-            ugx_error: None,
             ugx_scene: None,
             ugx_scene_renderer: None,
             capture: None,
@@ -190,6 +178,7 @@ impl TerrainViewer {
 
         // Store asset source for road texture loading later
         self.asset_source = inputs.source;
+        self.simulation = inputs.simulation;
         self.lightset = inputs.lightset;
         self.environment = inputs.environment;
         self.sky_unit = inputs.sky;
@@ -213,7 +202,6 @@ impl TerrainViewer {
                 }
                 self.scene = Some(scene);
                 self.load_error = None;
-                self.load_warthog(inputs.warthog_visual.as_ref());
             }
             Err(e) => {
                 self.load_error = Some(e.clone());
@@ -221,77 +209,33 @@ impl TerrainViewer {
             }
         }
     }
-
-    fn load_warthog(&mut self, visual: Option<&pipeline::database::hw1::Visual>) {
-        self.ugx_unit = None;
-        self.ugx_renderer = None;
-        self.ugx_error = None;
-        let Some(scene) = &self.scene else { return };
-        let Some(raw) = &scene.raw_xtd_data else {
-            self.ugx_error =
-                Some("packed terrain data is unavailable for UGX placement".to_owned());
-            return;
-        };
-        let center = scene.mesh.center();
-        let terrain_height = terrain_surface_height(raw, center.x, center.z).unwrap_or(center.y);
-        let Some(source) = &mut self.asset_source else {
-            log::info!("No ERA asset source is available; skipping the centered Warthog");
-            return;
-        };
-        let Some(visual) = visual else {
-            self.ugx_error = Some(format!("Visual definition not found: {WARTHOG_VISUAL}"));
-            return;
-        };
-        match UgxUnit::load(source, visual) {
-            Ok(unit) => {
-                let bounds_min = Vec3::from_array(unit.bounds_min());
-                let bounds_max = Vec3::from_array(unit.bounds_max());
-                let model_center = Vec3::new(
-                    f32::midpoint(bounds_min.x, bounds_max.x),
-                    0.0,
-                    f32::midpoint(bounds_min.z, bounds_max.z),
-                );
-                let translation = Vec3::new(center.x, terrain_height + 0.05, center.z)
-                    - Vec3::new(model_center.x, bounds_min.y, model_center.z);
-                self.ugx_transform = Mat4::from_translation(translation);
-                log::info!(
-                    "Loaded centered Warthog unit: {} components, {} triangles, {} authored attachments ({} unresolved target bones) at ({:.2}, {:.2}, {:.2}) [{}]",
-                    unit.component_count(),
-                    unit.triangle_count(),
-                    unit.attachments().len(),
-                    unit.unresolved_attachment_bone_count(),
-                    center.x,
-                    terrain_height,
-                    center.z,
-                    unit.component_names().collect::<Vec<_>>().join(", ")
-                );
-                self.ugx_unit = Some(unit);
-            }
-            Err(error) => {
-                let message = format!("Failed to load centered Warthog: {error}");
-                log::error!("{message}");
-                self.ugx_error = Some(message);
-            }
-        }
-    }
 }
 
 fn load_scenario_inputs(scenario_name: &str) -> Result<TerrainLoadInputs, String> {
-    log::info!("Loading scenario via pipeline::World: {scenario_name}");
+    log::info!("Loading scenario database and game state via sim: {scenario_name}");
     let dir = data::paths::game_dir();
     let dir_str = dir.to_string_lossy();
-    let (mut world, mut source) =
-        hw1::World::load(&dir_str).map_err(|error| format!("Failed to load World: {error}"))?;
-    world.swap_scenario(&mut source, scenario_name);
+    let sim::LoadedGameScenario {
+        simulation,
+        mut content,
+        mut source,
+    } = sim::load_scenario_from_game_dir(&dir_str, scenario_name)
+        .map_err(|error| format!("Failed to load simulation scenario: {error}"))?;
+    log::info!(
+        "Entered sim scenario with {} players, {} initial bases, {} squads, and {} units/buildings",
+        simulation.world.player_count(),
+        simulation.initial_base_ids.len(),
+        simulation.world.squads.len(),
+        simulation.world.units.len(),
+    );
 
-    let warthog_visual = world.visuals.get(WARTHOG_VISUAL).cloned();
-    let sky = world
+    let sky = content
         .manifest
         .sky_ref
         .as_deref()
         .map(|reference| load_sky_unit(&mut source, reference))
         .transpose()?;
-    if let (Some(reference), Some(sky)) = (&world.manifest.sky_ref, &sky) {
+    if let (Some(reference), Some(sky)) = (&content.manifest.sky_ref, &sky) {
         log::info!(
             "Loaded scenario sky '{}': {} components, {} triangles",
             reference,
@@ -299,7 +243,7 @@ fn load_scenario_inputs(scenario_name: &str) -> Result<TerrainLoadInputs, String
             sky.triangle_count(),
         );
     }
-    let environment = world
+    let environment = content
         .manifest
         .terrain_env_ref
         .as_deref()
@@ -316,79 +260,40 @@ fn load_scenario_inputs(scenario_name: &str) -> Result<TerrainLoadInputs, String
             environment.hdr_scale(),
         );
     }
-    let player_start_proto = world
-        .database
-        .game_data
-        .as_ref()
-        .and_then(|game_data| game_data.code_proto_objects.as_ref())
-        .and_then(|mappings| {
-            mappings.entries.iter().find(|entry| {
-                entry
-                    .object_type
-                    .eq_ignore_ascii_case("SkirmishEmptyBaseObject")
-            })
-        })
-        .map(|entry| entry.proto_name.clone());
-    let ugx_scene = world.scenario_data.as_ref().map(|scenario| {
-        if let Some(proto_name) = player_start_proto.as_deref() {
-            UgxUnitScene::load_scenario(
-                &mut source,
-                scenario,
-                &world.visuals,
-                &world.database.objects,
-                world
-                    .scenario
-                    .as_ref()
-                    .map(|descriptor| descriptor.max_players),
-                proto_name,
-            )
-        } else {
-            if !scenario.positions().is_empty() {
-                log::warn!(
-                    "Game data has no SkirmishEmptyBaseObject mapping; player-start pads are unavailable"
-                );
-            }
-            UgxUnitScene::load(
-                &mut source,
-                scenario.objects(),
-                &world.visuals,
-                &world.database.objects,
-            )
-        }
-    });
-    if let Some(scene) = &ugx_scene {
-        log_ugx_scene_summary(scene);
-    }
+    let ugx_scene = UgxUnitScene::load_world(
+        &mut source,
+        &simulation.world,
+        &content.visuals,
+        &content.database.objects,
+    );
+    log_ugx_scene_summary(&ugx_scene);
 
-    let terrain = world.terrain_data.take().ok_or_else(|| {
+    let terrain = content.terrain_data.take().ok_or_else(|| {
         format!("World loaded but no XTD terrain data for scenario '{scenario_name}'")
     })?;
     Ok(TerrainLoadInputs {
         terrain,
-        textures: world.terrain_textures.take(),
-        lightset: world.lightset.take(),
+        textures: content.terrain_textures.take(),
+        lightset: content.lightset.take(),
         environment,
         sky,
         source: Some(source),
-        warthog_visual,
-        ugx_scene,
+        simulation: Some(simulation),
+        ugx_scene: Some(ugx_scene),
     })
 }
 
 fn log_ugx_scene_summary(scene: &UgxUnitScene) {
     log::info!(
-        "Resolved scenario UGX scene: {} placements from {} objects + {} player starts across {} visuals ({} NoRender, {} gameplay-only, {} squads, {} malformed, {} invalid transforms, {} object load failures, {} start failures)",
+        "Resolved simulation UGX scene: {} placements from {} sim entities across {} visuals ({} NoRender, {} missing visuals, {} missing prototypes, {} invalid transforms, {} asset load failures)",
         scene.placement_count(),
-        scene.object_count(),
-        scene.player_start_count(),
+        scene.simulation_entity_count(),
         scene.unique_visual_count(),
         scene.skipped_no_render_count(),
         scene.missing_visual_count(),
-        scene.skipped_squad_count(),
         scene.missing_proto_count(),
         scene.invalid_transform_count(),
         scene.load_failure_count(),
-        scene.player_start_failure_count(),
     );
     for issue in scene.issues() {
         log::warn!(
@@ -417,7 +322,7 @@ fn load_file_inputs(path: &Path) -> Result<TerrainLoadInputs, String> {
         environment: None,
         sky: None,
         source: None,
-        warthog_visual: None,
+        simulation: None,
         ugx_scene: None,
     })
 }
@@ -454,70 +359,5 @@ fn canonical_sky_visual_path(reference: &str) -> String {
         normalized
     } else {
         format!("art\\{normalized}")
-    }
-}
-
-fn terrain_surface_height(
-    raw: &render::terrain::RawXtdData,
-    world_x: f32,
-    world_z: f32,
-) -> Option<f32> {
-    let dimension = raw.num_verts_per_axis;
-    let last = dimension.checked_sub(1)?;
-    let scale = raw.tile_scale.abs().max(f32::EPSILON);
-    let grid_x = (world_x / scale).clamp(0.0, last.to_f32()?);
-    let grid_z = (world_z / scale).clamp(0.0, last.to_f32()?);
-    let x0 = grid_x.floor().to_u32()?;
-    let z0 = grid_z.floor().to_u32()?;
-    let x1 = x0.saturating_add(1).min(last);
-    let z1 = z0.saturating_add(1).min(last);
-    let tx = grid_x - x0.to_f32()?;
-    let tz = grid_z - z0.to_f32()?;
-    let h00 = packed_height(raw, x0, z0)?;
-    let h10 = packed_height(raw, x1, z0)?;
-    let h01 = packed_height(raw, x0, z1)?;
-    let h11 = packed_height(raw, x1, z1)?;
-    Some(h00.lerp(h10, tx).lerp(h01.lerp(h11, tx), tz))
-}
-
-fn packed_height(raw: &render::terrain::RawXtdData, x: u32, z: u32) -> Option<f32> {
-    let index = z.checked_mul(raw.num_verts_per_axis)?.checked_add(x)?;
-    let packed = *raw.packed_positions.get(usize::try_from(index).ok()?)?;
-    let normalized = ((packed >> 10) & 0x3ff).to_f32()? / 1023.0;
-    Some((normalized - render::terrain::NORMALIZED_TERRAIN_Y_OFFSET) * raw.range[1] - raw.mid[1])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::terrain_surface_height;
-    use num_traits::ToPrimitive;
-    use render::terrain::{NORMALIZED_TERRAIN_Y_OFFSET, RawXtdData};
-
-    fn packed_y(normalized: f32) -> u32 {
-        let quantized = (normalized * 1023.0)
-            .round()
-            .to_u32()
-            .expect("normalized test height must fit u32");
-        quantized << 10
-    }
-
-    #[test]
-    fn ugx_ground_placement_bilinearly_samples_world_xz() {
-        let raw = RawXtdData {
-            packed_positions: vec![packed_y(0.25), packed_y(0.5), packed_y(0.75), packed_y(1.0)],
-            packed_normals: vec![0; 4],
-            num_verts_per_axis: 2,
-            mid: [0.0, 0.0, 0.0],
-            range: [1.0, 100.0, 1.0],
-            tile_scale: 2.0,
-            world_min: [0.0; 3],
-            world_max: [2.0, 100.0, 2.0],
-            tessellation: None,
-            ao_data: None,
-            alpha_data: None,
-        };
-        let expected = (0.625 - NORMALIZED_TERRAIN_Y_OFFSET) * 100.0;
-        let actual = terrain_surface_height(&raw, 1.0, 1.0).expect("center sample");
-        assert!((actual - expected).abs() < 0.1);
     }
 }

@@ -53,7 +53,7 @@ pub struct TerrainScene {
     pub road_chunks: Vec<RoadChunkData>,
 
     // -- Lighting --
-    /// Decoded lighting texture data from XTD (L8 luminance, full resolution).
+    /// Decoded lighting texture data from XTD (RGBA8, full resolution).
     pub lighting_data: Option<LightingTextureData>,
 }
 
@@ -92,16 +92,16 @@ impl TerrainScene {
         let raw_xtd_data = Self::extract_raw_xtd(xtd);
         let mesh = Self::build_mesh(xtd)?;
 
-        // Decode lighting data (L8 luminance at full resolution)
+        // Decode the full-resolution BC1 light map to RGBA8 for the GPU.
         let lighting_data = xtd.decode_lighting().ok().and_then(|ld| {
             log::info!(
                 "Lighting texture: {}x{} ({} bytes)",
                 ld.width,
                 ld.height,
-                ld.values.len()
+                ld.pixels.len()
             );
             Some(LightingTextureData {
-                values: ld.values,
+                pixels: ld.pixels,
                 width: u32::try_from(ld.width).ok()?,
                 height: u32::try_from(ld.height).ok()?,
             })
@@ -148,19 +148,23 @@ impl TerrainScene {
     fn extract_raw_xtd(xtd: &XtdFile) -> Option<RawXtdData> {
         let raw = xtd.extract_raw_data().ok()?;
 
-        let tessellation = xtd.decode_tessellation().and_then(|tessellation| {
-            let patches_x = u32::try_from(tessellation.num_x_patches).ok()?;
-            let patches_z = u32::try_from(tessellation.num_z_patches).ok()?;
-            let expected_len = patches_x.checked_mul(patches_z)?;
-            if usize::try_from(expected_len).ok()? != tessellation.patch_tess_levels.len() {
-                return None;
-            }
-            Some(TerrainTessellationData {
-                patches_x,
-                patches_z,
-                levels: tessellation.patch_tess_levels,
-            })
-        });
+        let tessellation = xtd
+            .decode_tessellation()
+            .ok()
+            .flatten()
+            .and_then(|tessellation| {
+                let patches_x = u32::try_from(tessellation.num_x_patches).ok()?;
+                let patches_z = u32::try_from(tessellation.num_z_patches).ok()?;
+                let expected_len = patches_x.checked_mul(patches_z)?;
+                if usize::try_from(expected_len).ok()? != tessellation.patch_tess_levels.len() {
+                    return None;
+                }
+                Some(TerrainTessellationData {
+                    patches_x,
+                    patches_z,
+                    levels: tessellation.patch_tess_levels,
+                })
+            });
 
         let ao_data = xtd.decode_ao().ok().and_then(|ao| {
             Some(AoTextureData {

@@ -1,12 +1,16 @@
-//! Individual units and buildings.
+//! Individual unit and building entities.
 //!
 //! Reverse engineering confirms that both mobile units and buildings occupy
 //! vanilla's class-1 `BUnit` pool. [`UnitKind`] records the behavioral
 //! distinction without inventing a separate entity class.
 
+pub mod marine;
+pub mod warthog;
+
 use super::{BaseEntity, BaseId};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
+use crate::physics::PhysicsBody;
 use crate::player::PlayerId;
 use glam::Vec3;
 
@@ -20,6 +24,18 @@ pub enum UnitKind {
     Mobile,
     /// An immobile building, still stored in the unit pool.
     Building,
+}
+
+/// Gameplay implementation selected for a unit proto object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UnitArchetype {
+    /// Existing direct-movement behavior for an unimplemented unit type.
+    #[default]
+    Generic,
+    /// Stock `unsc_inf_marine_01` infantry behavior.
+    Marine,
+    /// Stock `unsc_veh_warthog_01` vehicle behavior.
+    Warthog,
 }
 
 /// Minimal unit lifecycle state.
@@ -41,6 +57,8 @@ pub struct Unit {
     pub base: BaseEntity,
     /// Mobile unit versus building behavior.
     pub kind: UnitKind,
+    /// Gameplay implementation selected from proto metadata.
+    pub archetype: UnitArchetype,
     /// Current lifecycle/order state.
     pub state: UnitState,
     /// Database proto-object ID, or `-1` when unresolved.
@@ -53,6 +71,14 @@ pub struct Unit {
     pub max_hitpoints: f32,
     /// Movement speed in world units per second.
     pub speed: f32,
+    /// Acceleration in world units per second squared; zero means immediate.
+    pub acceleration: f32,
+    /// Maximum yaw rate in degrees per second; zero means immediate.
+    pub turn_rate_degrees: f32,
+    /// Gameplay obstruction radii even when no live rigid body is active.
+    pub obstruction_half_extents: Vec3,
+    /// Deterministic rigid body, when this object participates in physics.
+    pub physics: Option<PhysicsBody>,
     /// Standalone movement target.
     pub move_target: Option<Vec3>,
     /// Squad containing this unit, if any.
@@ -68,12 +94,17 @@ impl Default for Unit {
         Self {
             base: BaseEntity::default(),
             kind: UnitKind::Mobile,
+            archetype: UnitArchetype::Generic,
             state: UnitState::Idle,
             proto_object_id: -1,
             proto_object_name: String::new(),
             hitpoints: 100.0,
             max_hitpoints: 100.0,
             speed: 10.0,
+            acceleration: 0.0,
+            turn_rate_degrees: 0.0,
+            obstruction_half_extents: Vec3::ZERO,
+            physics: None,
             move_target: None,
             squad_id: None,
             base_id: None,
@@ -107,6 +138,14 @@ impl Unit {
     #[must_use]
     pub fn is_building(&self) -> bool {
         self.kind == UnitKind::Building
+    }
+
+    /// Check whether movement is controlled by a dynamic physics body.
+    #[must_use]
+    pub fn is_physics_driven(&self) -> bool {
+        self.physics
+            .as_ref()
+            .is_some_and(|body| body.motion_type() == crate::physics::MotionType::Dynamic)
     }
 
     /// Set both current and maximum hit points.
@@ -148,6 +187,33 @@ impl Unit {
         true
     }
 
+    /// Accumulate a force on this unit's physics body.
+    pub fn apply_force(&mut self, force: Vec3) -> bool {
+        let Some(body) = &mut self.physics else {
+            return false;
+        };
+        body.apply_force(force);
+        true
+    }
+
+    /// Apply an immediate impulse to this unit's physics body.
+    pub fn apply_impulse(&mut self, impulse: Vec3) -> bool {
+        let Some(body) = &mut self.physics else {
+            return false;
+        };
+        body.apply_impulse(&mut self.base, impulse);
+        true
+    }
+
+    /// Apply an immediate impulse at a world-space point.
+    pub fn apply_impulse_at_point(&mut self, impulse: Vec3, point: Vec3) -> bool {
+        let Some(body) = &mut self.physics else {
+            return false;
+        };
+        body.apply_impulse_at_point(&mut self.base, impulse, point);
+        true
+    }
+
     /// Stop standalone movement.
     pub fn stop(&mut self) {
         self.move_target = None;
@@ -158,6 +224,12 @@ impl Unit {
     }
 
     fn update_movement(&mut self, dt: f32) {
+        if let Some(body) = &mut self.physics {
+            if body.update(&mut self.base, self.move_target, dt) {
+                self.stop();
+            }
+            return;
+        }
         let Some(target) = self.move_target else {
             return;
         };
@@ -172,6 +244,13 @@ impl Unit {
         self.base.velocity = direction * self.speed;
         self.base.position += self.base.velocity * dt;
         self.base.set_forward(direction);
+    }
+
+    pub(crate) fn move_as_squad_member(&mut self, target: Vec3) {
+        if !self.is_building() && self.is_alive() {
+            self.move_target = Some(target);
+            self.state = UnitState::Moving;
+        }
     }
 }
 

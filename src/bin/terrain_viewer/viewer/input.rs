@@ -177,28 +177,23 @@ impl TerrainViewer {
             ui.separator();
             ui.colored_label(egui::Color32::RED, error);
         }
-        if let Some(unit) = &self.ugx_unit {
+        if let Some(simulation) = &self.simulation {
             ui.separator();
             ui.label(format!(
-                "UGX Warthog: {} components, {} triangles, {} attachments ({} unresolved bones)",
-                unit.component_count(),
-                unit.triangle_count(),
-                unit.attachments().len(),
-                unit.unresolved_attachment_bone_count()
+                "Simulation: {} players, {} initial bases, {} squads, {} units/buildings",
+                simulation.world.player_count(),
+                simulation.initial_base_ids.len(),
+                simulation.world.squads.len(),
+                simulation.world.units.len(),
             ));
         }
         if let Some(scene) = &self.ugx_scene {
             ui.label(format!(
-                "UGX scenario: {} placements from {} objects + {} starts, {} unique visuals",
+                "UGX presentation: {} placements from {} sim entities, {} unique visuals",
                 scene.placement_count(),
-                scene.object_count(),
-                scene.player_start_count(),
+                scene.simulation_entity_count(),
                 scene.unique_visual_count()
             ));
-        }
-        if let Some(error) = &self.ugx_error {
-            ui.separator();
-            ui.colored_label(egui::Color32::RED, error);
         }
     }
 

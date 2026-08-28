@@ -83,11 +83,14 @@ save/load ordering; they are not original debug symbols.
 | --- | --- |
 | Packed `BEntityID` fields | `entity_id.rs`: `EntityId` and `EntityClass` |
 | Separate generational typed pools | `entity.rs`: `EntityManager<T>` |
-| Class-1 mobile units and buildings | `entities/unit.rs`: `Unit` and `UnitKind` |
-| Class-2 squads and unit membership | `entities/squad.rs`: `Squad::unit_ids` |
+| Class-1 mobile units and buildings | `entities/units/mod.rs`: `Unit` and `UnitKind` |
+| Stock Warthog and Marine unit profiles | `entities/units/warthog.rs` and `entities/units/marine.rs` |
+| Class-2 squads and unit membership | `entities/squads/mod.rs`: `Squad::unit_ids` |
+| Stock Warthog and Marine squad profiles | `entities/squads/warthog.rs` and `entities/squads/marine.rs` |
 | Building-associated base numbers | `entities/base_site.rs`: `BaseId` and `Base` |
 | World ownership and cleanup | `world.rs`: unit, squad, and base lifecycle APIs |
-| Placed proto-object and squad expansion | `scenario.rs` |
+| Layered scenario/database loading and entity expansion | `scenario.rs`, `scenario/coordinates.rs`, and `scenario/starts.rs` |
+| Ground/vehicle integration and collision | `physics.rs` |
 | Deterministic state comparison | `world.rs`: unit/squad/base checksum helpers |
 
 The MVP intentionally defers class-0 generic objects, Dopples, projectiles,

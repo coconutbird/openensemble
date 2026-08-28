@@ -18,9 +18,6 @@ use crate::gpu::create_depth_texture;
 
 impl TerrainViewer {
     fn render_units<'pass>(&'pass self, phase: RenderPhase, pass: &mut wgpu::RenderPass<'pass>) {
-        if let Some(renderer) = &self.ugx_renderer {
-            renderer.render_phase(phase, pass);
-        }
         if let Some(renderer) = &self.ugx_scene_renderer {
             renderer.render_phase(phase, pass);
         }
@@ -104,15 +101,6 @@ impl TerrainViewer {
                 &ugx_resources,
             ));
         }
-        if let Some(unit) = &self.ugx_unit {
-            self.ugx_renderer = Some(render::ugx::UnitRenderer::new_with_resources(
-                ctx.device,
-                ctx.queue,
-                unit,
-                self.ugx_transform,
-                &ugx_resources,
-            ));
-        }
         if let Some(scene) = &self.ugx_scene {
             let renderer = render::ugx::UnitSceneRenderer::new_with_resources(
                 ctx.device,
@@ -121,7 +109,7 @@ impl TerrainViewer {
                 &ugx_resources,
             );
             log::info!(
-                "Uploaded {} scenario UGX placements",
+                "Uploaded {} simulation-backed UGX placements",
                 renderer.placement_count()
             );
             self.ugx_scene_renderer = Some(renderer);
@@ -275,18 +263,14 @@ impl TerrainViewer {
                 self.render_time_seconds,
             );
         }
-        if let Some(renderer) = &mut self.ugx_renderer {
-            renderer.update_frame_at_time(
-                queue,
-                view_projection,
-                self.ugx_transform,
-                lighting,
-                self.render_time_seconds,
-            );
-        }
         if let Some(renderer) = &mut self.ugx_scene_renderer {
-            renderer.update_frame_at_time(
+            let simulation = self
+                .simulation
+                .as_ref()
+                .expect("a unit scene is always built from simulation state");
+            renderer.update_from_world_at_time(
                 queue,
+                &simulation.world,
                 view_projection,
                 lighting,
                 self.render_time_seconds,

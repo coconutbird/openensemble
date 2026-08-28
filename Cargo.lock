@@ -2721,6 +2721,7 @@ dependencies = [
  "pipeline",
  "pollster",
  "rayon",
+ "sim",
  "thiserror 2.0.18",
  "wesl",
  "wgpu",
@@ -4446,6 +4447,7 @@ dependencies = [
  "ecf",
  "nostdio",
  "num-traits",
+ "texture2ddecoder",
  "thiserror 2.0.18",
  "zerocopy",
 ]

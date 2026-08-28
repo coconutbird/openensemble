@@ -2,9 +2,13 @@
 //!
 //! Based on `BWorld` from the original source.
 
+use crate::entities::squads::{formation_offset_to_local, formation_offset_to_world};
 use crate::entities::{Base, BaseEntity, BaseId, Squad, Unit};
 use crate::entity::{Entity, EntityManager};
 use crate::entity_id::{EntityClass, EntityId};
+use crate::physics::{
+    prepare_squad_movement, resolve_unit_collisions, substeps, sync_squad_members,
+};
 use crate::player::{GAIA_PLAYER, Player, PlayerId};
 use crate::random::Random;
 use crate::sync::SyncChecksum;
@@ -256,7 +260,8 @@ impl World {
             return false;
         }
         let old_squad_id = unit.squad_id;
-        let formation_offset = unit.base.position - squad.base.position;
+        let formation_offset =
+            formation_offset_to_local(squad.base.forward, unit.base.position - squad.base.position);
         if old_squad_id == Some(squad_id) {
             return true;
         }
@@ -278,6 +283,29 @@ impl World {
         unit.squad_id = Some(squad_id);
         unit.formation_offset = formation_offset;
         unit.stop();
+        true
+    }
+
+    /// Assign a squad-local formation offset and immediately synchronize the member transform.
+    pub(crate) fn set_squad_member_formation_offset(
+        &mut self,
+        unit_id: EntityId,
+        offset: Vec3,
+    ) -> bool {
+        let Some(squad_id) = self.units.get(unit_id).and_then(|unit| unit.squad_id) else {
+            return false;
+        };
+        let Some(squad) = self.squads.get(squad_id) else {
+            return false;
+        };
+        let position = squad.base.position + formation_offset_to_world(squad.base.forward, offset);
+        let forward = squad.base.forward;
+        let Some(unit) = self.units.get_mut(unit_id) else {
+            return false;
+        };
+        unit.formation_offset = offset;
+        unit.base.position = position;
+        unit.base.forward = forward;
         true
     }
 
@@ -378,8 +406,20 @@ impl World {
 
     /// Update all entities for one tick.
     pub fn update_entities(&mut self, dt: f32) {
+        let Some((step_count, step_duration)) = substeps(dt) else {
+            return;
+        };
+        for _ in 0..step_count {
+            self.update_entity_substep(step_duration);
+        }
+    }
+
+    fn update_entity_substep(&mut self, dt: f32) {
+        let physics_anchors = prepare_squad_movement(&self.squads, &mut self.units);
         for (_, squad) in self.squads.iter_mut() {
-            squad.update(dt);
+            if !physics_anchors.contains_key(&squad.base.id) {
+                squad.update(dt);
+            }
         }
         let dead_squads: Vec<_> = self
             .squads
@@ -401,7 +441,8 @@ impl World {
         for id in dead_units {
             let _removed = self.remove_unit(id);
         }
-        self.sync_squad_units();
+        resolve_unit_collisions(&mut self.units);
+        sync_squad_members(&mut self.squads, &mut self.units, &physics_anchors);
     }
 
     fn allocate_base_id(&mut self) -> BaseId {
@@ -430,35 +471,6 @@ impl World {
             }
         } else if let Some(base) = self.bases.get_mut(&base_id) {
             base.remove_building(building_id);
-        }
-    }
-
-    fn sync_squad_units(&mut self) {
-        let squads: Vec<_> = self
-            .squads
-            .iter()
-            .map(|(id, squad)| {
-                (
-                    id,
-                    squad.base.position,
-                    squad.base.forward,
-                    squad.base.velocity,
-                    squad.unit_ids.clone(),
-                )
-            })
-            .collect();
-        for (squad_id, position, forward, velocity, unit_ids) in squads {
-            for unit_id in unit_ids {
-                let Some(unit) = self.units.get_mut(unit_id) else {
-                    continue;
-                };
-                if unit.squad_id != Some(squad_id) {
-                    continue;
-                }
-                unit.base.position = position + unit.formation_offset;
-                unit.base.forward = forward;
-                unit.base.velocity = velocity;
-            }
         }
     }
 
@@ -526,6 +538,7 @@ fn hash_units(cs: &mut SyncChecksum, units: &EntityManager<Unit>) {
     for (_, unit) in units.iter() {
         hash_base_entity(cs, &unit.base);
         cs.hash_u32(unit.kind as u32);
+        cs.hash_u32(unit.archetype as u32);
         cs.hash_u32(unit.state as u32);
         cs.hash_i32(unit.proto_object_id);
         cs.hash_u32(u32::try_from(unit.proto_object_name.len()).unwrap_or(u32::MAX));
@@ -533,6 +546,19 @@ fn hash_units(cs: &mut SyncChecksum, units: &EntityManager<Unit>) {
         cs.hash_f32(unit.hitpoints);
         cs.hash_f32(unit.max_hitpoints);
         cs.hash_f32(unit.speed);
+        cs.hash_f32(unit.acceleration);
+        cs.hash_f32(unit.turn_rate_degrees);
+        cs.hash_vec3(
+            unit.obstruction_half_extents.x,
+            unit.obstruction_half_extents.y,
+            unit.obstruction_half_extents.z,
+        );
+        if let Some(body) = &unit.physics {
+            cs.hash_u32(1);
+            body.hash_state(cs);
+        } else {
+            cs.hash_u32(0);
+        }
         hash_optional_vec3(cs, unit.move_target);
         hash_optional_entity_id(cs, unit.squad_id);
         hash_optional_base_id(cs, unit.base_id);
@@ -549,8 +575,17 @@ fn hash_squads(cs: &mut SyncChecksum, squads: &EntityManager<Squad>) {
     for (_, squad) in squads.iter() {
         hash_base_entity(cs, &squad.base);
         cs.hash_u32(squad.state as u32);
+        cs.hash_u32(squad.archetype as u32);
+        cs.hash_u32(squad.formation as u32);
         cs.hash_f32(squad.speed);
+        cs.hash_f32(squad.acceleration);
+        cs.hash_f32(squad.turn_rate_degrees);
         cs.hash_i32(squad.proto_squad_id);
+        cs.hash_u32(u32::try_from(squad.proto_squad_name.len()).unwrap_or(u32::MAX));
+        cs.hash_bytes(squad.proto_squad_name.as_bytes());
+        cs.hash_f32(squad.turn_radius);
+        cs.hash_f32(squad.min_turn_radius);
+        cs.hash_f32(squad.max_turn_radius);
         hash_optional_vec3(cs, squad.move_target);
         cs.hash_u32(u32::try_from(squad.unit_ids.len()).unwrap_or(u32::MAX));
         for &unit_id in &squad.unit_ids {
@@ -829,9 +864,10 @@ mod tests {
             .move_to(Vec3::new(10.0, 0.0, 0.0));
         world.update_entities(0.1);
 
-        let squad_x = world.get_squad(squad_id).unwrap().base.position.x;
-        let unit_x = world.get_unit(unit_id).unwrap().base.position.x;
-        assert!((unit_x - squad_x - 1.0).abs() < f32::EPSILON);
+        let squad = world.get_squad(squad_id).unwrap();
+        let unit = world.get_unit(unit_id).unwrap();
+        let world_offset = unit.base.position - squad.base.position;
+        assert!((world_offset - Vec3::NEG_Z).length() < f32::EPSILON);
     }
 
     #[test]

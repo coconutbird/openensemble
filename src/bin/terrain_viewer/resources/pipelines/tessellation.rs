@@ -533,7 +533,7 @@ impl TerrainViewer {
             .scene
             .as_ref()
             .and_then(|scene| scene.lighting_data.as_ref())
-            .map(|data| (data.values.as_slice(), data.width, data.height));
+            .map(|data| (data.pixels.as_slice(), data.width, data.height));
         TessellationAuxiliary {
             shadow,
             blackmap,

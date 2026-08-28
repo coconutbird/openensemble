@@ -90,6 +90,7 @@ fn scenario_variation_index_selects_and_clamps_model_asset() {
     let visual = Visual {
         default_model: Some("Default".to_owned()),
         models: vec![model],
+        logic: None,
     };
     let model = &visual.models[0];
     assert_eq!(model_asset_path(&visual, model, Some(0)), Some("crate_01"));
