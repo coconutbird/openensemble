@@ -313,10 +313,36 @@ impl World {
                 }
             }
         }
+        self.issue_training_rally_order(task.player_id, building_id, entity_id);
         if let Some(player) = self.get_player_mut(task.player_id) {
             player.release_reserved_population(&task.population_costs);
         }
         Some(entity_id)
+    }
+
+    fn issue_training_rally_order(
+        &mut self,
+        player_id: crate::player::PlayerId,
+        building_id: EntityId,
+        trained_entity_id: EntityId,
+    ) {
+        let Some(rally_point) = self.training_rally_point(building_id, player_id) else {
+            return;
+        };
+        let Some(building_position) = self
+            .get_building(building_id)
+            .map(|building| building.base.position)
+        else {
+            return;
+        };
+        let mut destination = self.resolve_rally_point(rally_point);
+        if rally_point.target_entity_id().is_none() {
+            let direction = destination - building_position;
+            if direction.length() > 4.0 {
+                destination -= direction.normalize() * 4.0;
+            }
+        }
+        let _issued = self.issue_move_order(player_id, trained_entity_id, destination);
     }
 }
 
@@ -462,5 +488,69 @@ mod tests {
             .unwrap();
         assert!((progress.total_points() - 20.0).abs() <= f32::EPSILON);
         assert!((progress.current_points() - 1.0).abs() <= f32::EPSILON);
+    }
+
+    #[test]
+    fn completed_training_prefers_local_rally_and_stops_near_direct_points() {
+        let database = training_database();
+        let mut world = World::new();
+        world.init_players(1);
+        let building_id = world.create_building_at(1, Vec3::ZERO);
+        assert!(world.set_player_rally_point(1, Vec3::new(0.0, 0.0, 30.0), None));
+        assert!(world.set_unit_rally_point(building_id, 1, Vec3::new(0.0, 0.0, 20.0), None));
+
+        let trained = world
+            .complete_training(building_id, &training_task(), &database)
+            .unwrap();
+
+        assert_eq!(
+            world.get_unit(trained).unwrap().move_target,
+            Some(Vec3::new(0.0, 0.0, 16.0))
+        );
+    }
+
+    #[test]
+    fn completed_training_preserves_entity_rally_targets_without_offset() {
+        let database = training_database();
+        let mut world = World::new();
+        world.init_players(1);
+        let building_id = world.create_building_at(1, Vec3::ZERO);
+        let target = world.create_unit_at(1, Vec3::new(30.0, 0.0, 10.0));
+        assert!(world.set_player_rally_point(1, Vec3::ZERO, Some(target)));
+
+        let trained = world
+            .complete_training(building_id, &training_task(), &database)
+            .unwrap();
+
+        assert_eq!(
+            world.get_unit(trained).unwrap().move_target,
+            Some(Vec3::new(30.0, 0.0, 10.0))
+        );
+    }
+
+    fn training_database() -> Database {
+        Database {
+            objects: vec![ProtoObject {
+                name: "test_unit".to_owned(),
+                object_class: Some("Unit".to_owned()),
+                ..ProtoObject::default()
+            }],
+            ..Database::default()
+        }
+    }
+
+    fn training_task() -> TrainingTask {
+        TrainingTask {
+            player_id: 1,
+            kind: TrainingKind::Unit,
+            prototype_id: 0,
+            prototype_name: "test_unit".to_owned(),
+            current_points: 0.0,
+            total_points: 0.0,
+            cost: Resources::new(),
+            population_costs: Vec::new(),
+            train_limit_bucket: None,
+            trigger_state: None,
+        }
     }
 }

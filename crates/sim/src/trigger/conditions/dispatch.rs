@@ -5,10 +5,10 @@ use super::{
     can_pay_cost, check_diplomacy, check_resource_totals, command_state, compare_bool,
     compare_cost, compare_elapsed, compare_f32, compare_i32, compare_identity,
     compare_player_squad_count, compare_player_unit_count, compare_population, compare_string,
-    compare_time, contains_garrisoned, events, game_settings, has_garrisoned, hitch, is_attacking,
-    is_garrisoned, is_object_type, is_owned_by, is_proto_object, is_under_attack, iterators,
-    lifecycle, list_selection, player_in_state, player_is_gaia, player_type, player_using_leader,
-    queries, sockets, spatial, tech_status, time_reached,
+    compare_time, contains_garrisoned, events, forbids, game_settings, has_garrisoned, hitch,
+    is_attacking, is_garrisoned, is_object_type, is_owned_by, is_proto_object, is_under_attack,
+    iterators, lifecycle, list_selection, player_in_state, player_is_gaia, player_type,
+    player_using_leader, queries, sockets, spatial, tech_status, time_reached, timers,
 };
 
 pub(super) fn evaluate_condition_with_database(
@@ -50,7 +50,8 @@ fn evaluate_core_condition(
         ConditionType::CompareCount
         | ConditionType::ComparePlayers
         | ConditionType::CompareTeams
-        | ConditionType::CompareProtoSquad => compare_i32(condition, script),
+        | ConditionType::CompareProtoSquad
+        | ConditionType::CompareDesignLine => compare_i32(condition, script),
         ConditionType::CompareFloat
         | ConditionType::ComparePercent
         | ConditionType::CompareHitpoints => compare_f32(condition, script),
@@ -149,6 +150,9 @@ fn evaluate_query_condition(
         ConditionType::CanGetOneInteger => {
             list_selection::can_get_one_integer(condition, script, world)
         }
+        ConditionType::CanGetOneDesignLine => {
+            list_selection::can_get_one_design_line(condition, script, world)
+        }
         ConditionType::CanGetOneLocation => {
             list_selection::can_get_one_location(condition, script, world)
         }
@@ -158,6 +162,7 @@ fn evaluate_query_condition(
         ConditionType::EventTriggered => events::event_triggered(condition, script, world),
         ConditionType::ChatCompleted => events::chat_completed(condition, script, world),
         ConditionType::CinematicCompleted => events::cinematic_completed(world),
+        ConditionType::FadeCompleted => events::fade_completed(world),
         ConditionType::BuildingCommandDone => {
             command_state::building_command_done(condition, script, world)
         }
@@ -177,6 +182,8 @@ fn evaluate_query_condition(
         ConditionType::CanGetSocketPlugUnit => {
             sockets::can_get_socket_plug_unit(condition, script, world)
         }
+        ConditionType::IsForbidden => forbids::is_forbidden(condition, script, world, database),
+        ConditionType::IsTimerDone => timers::is_done(condition, script, world),
         ConditionType::NextPlayer => iterators::next_player(condition, script),
         ConditionType::NextTeam => iterators::next_team(condition, script),
         ConditionType::NextUnit => iterators::next_unit(condition, script),

@@ -2,7 +2,9 @@
 //!
 //! Based on `BPlayer` from the original source.
 
+mod forbids;
 mod powers;
+mod rally_points;
 mod research;
 mod technology;
 
@@ -276,6 +278,10 @@ pub struct Player {
     pub name: String,
     /// Player-specific technology effects and transformed prototype state.
     pub technologies: PlayerTechState,
+    /// Player-global rally destination used by newly trained forces.
+    rally_point: Option<crate::entities::RallyPoint>,
+    /// Per-player object, squad, and technology availability overrides.
+    forbids: forbids::PlayerForbidState,
     /// Retail power-menu entries and their authoritative remaining uses.
     powers: powers::PlayerPowerState,
     /// Player-global technology work currently assigned to buildings.
@@ -301,6 +307,8 @@ impl Player {
             population: Vec::new(),
             name: String::new(),
             technologies: PlayerTechState::default(),
+            rally_point: None,
+            forbids: forbids::PlayerForbidState::default(),
             powers: powers::PlayerPowerState::default(),
             research: PlayerResearchState::default(),
         }

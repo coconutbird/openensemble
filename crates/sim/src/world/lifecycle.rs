@@ -1,9 +1,43 @@
 //! Shared retail-style entity kill and immediate-destroy operations.
 
-use super::World;
+use super::{World, design_lines, events, presentation, scoring, team};
 use crate::entity_id::{EntityClass, EntityId};
 
 impl World {
+    /// Reset the world to initial state.
+    pub fn reset(&mut self) {
+        self.players.clear();
+        self.team_relations = team::neutral_team_relations();
+        self.coop = false;
+        self.fog_of_war_enabled = true;
+        self.black_map_cleared = false;
+        self.scenario_score = scoring::ScenarioScoreState::default();
+        self.design_lines = design_lines::DesignLineState::default();
+        self.objectives.clear();
+        self.terrain_bounds = None;
+        self.playable_bounds = None;
+        self.config_symbols.clear();
+        self.general_events = events::GeneralEventState::default();
+        self.presentation = events::PresentationState::default();
+        self.presentation_control = presentation::PresentationControlState::default();
+        self.custom_commands.clear();
+        self.next_custom_command_id = 0;
+        self.custom_command_executions.clear();
+        self.game_timers = super::timers::GameTimerState::default();
+        self.game_time_ms = 0;
+        self.construction_damage_multiplier = 1.0;
+        self.prototype_object_types.clear();
+        self.prototype_squads.clear();
+        self.objects.clear();
+        self.units.clear();
+        self.squads.clear();
+        self.projectiles.clear();
+        self.bases.clear();
+        self.next_base_id = 0;
+        self.trigger_engine = crate::trigger::TriggerEngine::new();
+        self.pending_building_command_events.clear();
+    }
+
     /// Kill an entity, optionally removing it immediately.
     ///
     /// A regular kill leaves dead state observable until the next entity
@@ -11,8 +45,10 @@ impl World {
     /// method returns, matching the distinction trigger DBIDs 37 and 38 make.
     pub fn kill_entity(&mut self, entity_id: EntityId, immediate: bool) -> bool {
         match entity_id.class() {
+            Some(EntityClass::Object) => self.remove_object(entity_id).is_some(),
             Some(EntityClass::Unit) => self.kill_unit(entity_id, immediate),
             Some(EntityClass::Squad) => self.kill_squad(entity_id, immediate),
+            Some(EntityClass::Projectile) => self.remove_projectile(entity_id).is_some(),
             _ => false,
         }
     }

@@ -123,6 +123,8 @@ fn hash_value(checksum: &mut SyncChecksum, value: &TriggerValue) {
         TriggerValue::TechList(values) => hash_i32s(checksum, 25, values),
         TriggerValue::ObjectType(value) => hash_tagged_string(checksum, 26, value),
         TriggerValue::ObjectTypeList(values) => hash_strings(checksum, 27, values),
+        TriggerValue::DesignLine(value) => hash_i32(checksum, 47, *value),
+        TriggerValue::DesignLineList(values) => hash_i32s(checksum, 48, values),
         TriggerValue::Cost(value) => {
             checksum.hash_u32(28);
             for amount in value.amounts() {

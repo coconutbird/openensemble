@@ -211,6 +211,9 @@ impl TerrainViewer {
             },
             |lightset| LightingParams::from_lightset(lightset, camera),
         );
+        if let Some(simulation) = &self.simulation {
+            params.apply_simulation_state(&simulation.world);
+        }
         let light_direction = glam::Vec3::from_array([
             params.dir_light_vec[0],
             params.dir_light_vec[1],

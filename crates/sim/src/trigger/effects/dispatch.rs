@@ -2,10 +2,11 @@
 
 use super::{
     ControlAction, Database, Effect, EffectOutcome, EffectType, GameplayCatalog, TriggerScript,
-    World, adjust_count, ai, commands, copy_value, economy, entities, entity_flags, events,
-    execute_control_effect, filters, game_state, health, is_copy_effect, iterators,
-    list_processing, lists, math, orders, ownership, powers, proto_data, relationships, resources,
-    set_teleporter, spatial, support, unit_data, value_lists,
+    World, adjust_count, ai, commands, copy_value, design_lines, economy, entities, entity_flags,
+    entity_visuals, events, execute_control_effect, filters, fog, forbids, game_state, health,
+    is_copy_effect, iterators, list_processing, lists, math, objectives, orders, ownership, powers,
+    presentation, proto_data, rally_points, relationships, resources, revealers, set_teleporter,
+    spatial, support, timers, tower_walls, unit_data, value_lists,
 };
 
 pub(crate) fn execute_effect(
@@ -22,6 +23,21 @@ pub(crate) fn execute_effect(
         return (outcome, None);
     }
     if let Some(outcome) = game_state::execute(effect, script, world) {
+        return (outcome, None);
+    }
+    if let Some(outcome) = objectives::execute(effect, script, world) {
+        return (outcome, None);
+    }
+    if let Some(outcome) = entity_visuals::execute(effect, script, world) {
+        return (outcome, None);
+    }
+    if let Some(outcome) = entities::execute(effect, script, world, database) {
+        return (outcome, None);
+    }
+    if let Some(outcome) = design_lines::execute(effect, script, world) {
+        return (outcome, None);
+    }
+    if let Some(outcome) = presentation::execute(effect, script, world) {
         return (outcome, None);
     }
     let outcome =
@@ -54,6 +70,7 @@ fn execute_world_effect(
         EffectType::SetTrickleRate => resources::set_trickle_rate(effect, script, world),
         EffectType::GetTrickleRate => resources::get_trickle_rate(effect, script, world),
         EffectType::GetPlayerPop => resources::get_player_pop(effect, script, world, database),
+        EffectType::SetPlayerPop => resources::set_player_pop(effect, script, world, database),
         EffectType::GetPlayerEconomy => {
             economy::get_player_economy(effect, script, world, database)
         }
@@ -75,10 +92,6 @@ fn execute_world_effect(
         EffectType::TechDeactivate => {
             resources::change_technology(effect, script, world, database, false)
         }
-        EffectType::CreateObject => entities::create_object(effect, script, world, database),
-        EffectType::CreateSquad => entities::create_squad(effect, script, world, database),
-        EffectType::CreateSquads => entities::create_squads(effect, script, world, database),
-        EffectType::CreateUnit => entities::create_unit(effect, script, world, database),
         EffectType::GetUnits => lists::get_units(effect, script, world),
         EffectType::GetSquads => lists::get_squads(effect, script, world),
         EffectType::GetProtoSquad => lists::get_proto_squad(effect, script, world),
@@ -100,20 +113,21 @@ fn execute_world_effect(
         }
         EffectType::Unload => orders::unload(effect, script, world),
         EffectType::Move => orders::move_squads(effect, script, world),
-        EffectType::Kill => entities::kill_or_destroy(effect, script, world, false),
-        EffectType::Destroy => entities::kill_or_destroy(effect, script, world, true),
+        EffectType::MovePath => orders::move_path(effect, script, world),
         EffectType::ChangeOwner => ownership::change_owner(effect, script, world),
         EffectType::GetHealth => health::get_health(effect, script, world),
+        EffectType::RandomLocation => spatial::random_location(effect, script, world),
         EffectType::GetLocation => spatial::get_location(effect, script, world),
         EffectType::GetMeanLocation => spatial::get_mean_location(effect, script, world),
         EffectType::GetOwner => ownership::get_owner(effect, script, world),
         EffectType::GetChildUnits => relationships::get_child_units(effect, script, world),
         EffectType::GetParentSquad => relationships::get_parent_squad(effect, script, world),
-        EffectType::Work => orders::work(effect, script, world),
+        EffectType::Work => orders::work(effect, script, world, gameplay),
         EffectType::Repair => health::repair_or_damage(effect, script, world, true),
         EffectType::Damage => health::repair_or_damage(effect, script, world, false),
         EffectType::CombatDamage => health::combat_damage(effect, script, world),
         EffectType::Teleport => spatial::teleport(effect, script, world),
+        EffectType::SetPlayableBounds => spatial::set_playable_bounds(effect, script, world),
         EffectType::SetDirection => spatial::set_direction(effect, script, world),
         EffectType::SetMobile => entity_flags::set_mobile(effect, script, world),
         EffectType::SetSelectable => entity_flags::set_selectable(effect, script, world),
@@ -122,12 +136,24 @@ fn execute_world_effect(
         EffectType::ModifyProtoData => {
             proto_data::modify_proto_data(effect, script, world, database)
         }
+        EffectType::EnableFogOfWar => fog::set_enabled(effect, script, world),
+        EffectType::ClearBlackMap | EffectType::ResetBlackMap => fog::black_map(effect, world),
+        EffectType::SetTowerWallDestination => {
+            tower_walls::set_destination(effect, script, world, gameplay)
+        }
+        EffectType::Forbid => forbids::set_forbidden(effect, script, world, database),
+        EffectType::Revealer => revealers::create(effect, script, world, database),
         EffectType::PowerGrant => powers::grant(effect, script, world, database),
         EffectType::PowerRevoke => powers::revoke(effect, script, world, database),
+        EffectType::RallyPointSet => rally_points::set(effect, script, world),
+        EffectType::RallyPointClear => rally_points::clear(effect, script, world),
+        EffectType::RallyPointGet => rally_points::get(effect, script, world),
         EffectType::GetDirection => spatial::get_direction(effect, script, world),
         EffectType::GetDirectionFromLocations => {
             spatial::get_direction_from_locations(effect, script)
         }
+        EffectType::CreateTimer => timers::create(effect, script, world),
+        EffectType::DestroyTimer => timers::destroy(effect, script, world),
         _ => return None,
     };
     Some(outcome)

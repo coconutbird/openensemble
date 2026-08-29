@@ -72,6 +72,7 @@ pub enum TrainingError {
 #[derive(Debug, Clone)]
 struct TrainingDefinition {
     kind: TrainingKind,
+    forbid_id: i32,
     prototype_name: String,
     total_points: f32,
     cost: Resources,
@@ -351,6 +352,17 @@ impl World {
                 prototype: definition.prototype_name.clone(),
             });
         }
+        let forbidden = match definition.kind {
+            TrainingKind::Unit => player.is_object_forbidden(database, definition.forbid_id),
+            TrainingKind::Squad => player.is_squad_forbidden(database, definition.forbid_id),
+        };
+        if forbidden {
+            return Err(TrainingError::CommandUnavailable {
+                building_id,
+                kind: definition.kind,
+                prototype: definition.prototype_name.clone(),
+            });
+        }
         let Some(building_prototype) = database.objects.iter().find(|prototype| {
             prototype
                 .name
@@ -513,6 +525,7 @@ fn unit_training_definition(
     validate_object_population(database, prototype)?;
     Ok(TrainingDefinition {
         kind: TrainingKind::Unit,
+        forbid_id: prototype.dbid.unwrap_or(prototype_id),
         prototype_name: prototype.name.clone(),
         total_points: valid_unit_build_points(prototype, technologies)?,
         cost: training_cost(
@@ -556,6 +569,7 @@ fn squad_training_definition(
     }
     Ok(TrainingDefinition {
         kind: TrainingKind::Squad,
+        forbid_id: prototype.dbid.unwrap_or(prototype_id),
         prototype_name: prototype.name.clone(),
         total_points: valid_build_points(&prototype.name, prototype.build_points)?,
         cost: training_cost(

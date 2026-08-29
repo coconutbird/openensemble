@@ -1,19 +1,29 @@
 //! Retail-style building construction, placement, payment, and cancellation.
 
+mod cost;
 mod placement;
 
 use super::World;
 use crate::entities::units::{ProductionTask, TriggerCommandStateRef};
 use crate::entities::{ConstructionKind, ConstructionProgress, ConstructionTask};
 use crate::entity_id::EntityId;
-use crate::player::{MAX_RESOURCES, PlayerId, PlayerTechState, PopulationCost, Resources};
+use crate::player::{PlayerId, PlayerTechState, PopulationCost, Resources};
 use crate::scenario::create_unbuilt_building_from_prototype;
 use crate::scenario::population::{object_population_costs, object_population_type_id};
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use pipeline::database::hw1::objects::{ProtoObject, TrainLimitType};
 
+use cost::construction_cost;
 use placement::{direct_build_transform, find_build_other_socket};
+
+impl World {
+    pub(crate) fn set_construction_damage_multiplier(&mut self, multiplier: Option<f32>) {
+        self.construction_damage_multiplier = multiplier
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .unwrap_or(1.0);
+    }
+}
 
 /// Result of accepting one `BuildOther` command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +104,7 @@ pub enum ConstructionError {
 #[derive(Debug, Clone)]
 struct ConstructionDefinition {
     prototype_id: i32,
+    forbid_id: i32,
     prototype_name: String,
     total_points: f32,
     cost: Resources,
@@ -458,6 +469,9 @@ impl World {
         };
         let definition = ConstructionDefinition {
             prototype_id: task.prototype_id,
+            forbid_id: object_by_runtime_id(database, task.prototype_id)
+                .and_then(|prototype| prototype.dbid)
+                .unwrap_or(task.prototype_id),
             prototype_name: task.prototype_name.clone(),
             total_points: task.total_points,
             cost: task.cost,
@@ -587,6 +601,9 @@ impl World {
             return Err(ConstructionError::BuilderUnbuilt(builder_id));
         }
         if kind == ConstructionKind::BuildOther && !builder.is_building() {
+            return Err(command_unavailable(builder_id, kind, definition));
+        }
+        if player.is_object_forbidden(database, definition.forbid_id) {
             return Err(command_unavailable(builder_id, kind, definition));
         }
         let Some(builder_prototype) = object_by_name(database, &builder.proto_object_name) else {
@@ -807,6 +824,7 @@ fn construction_definition(
     validate_object_population(database, prototype)?;
     Ok(ConstructionDefinition {
         prototype_id,
+        forbid_id: prototype.dbid.unwrap_or(prototype_id),
         prototype_name: prototype.name.clone(),
         total_points: valid_build_points(prototype, technologies)?,
         cost: construction_cost(database, prototype)?,
@@ -839,44 +857,6 @@ fn direct_construction_task(
         train_limit_bucket,
         trigger_state: None,
     }
-}
-
-fn construction_cost(
-    database: &Database,
-    prototype: &ProtoObject,
-) -> Result<Resources, ConstructionError> {
-    if prototype.costs.is_empty() {
-        return Ok(Resources::new());
-    }
-    let resources = database
-        .game_data
-        .as_ref()
-        .and_then(|game_data| game_data.resources.as_ref())
-        .ok_or_else(|| ConstructionError::MissingResourceTable(prototype.name.clone()))?;
-    let mut cost = Resources::new();
-    for entry in &prototype.costs {
-        if !entry.amount.is_finite() || entry.amount < 0.0 {
-            return Err(ConstructionError::InvalidCost {
-                prototype: prototype.name.clone(),
-                resource: entry.resource_type.clone(),
-            });
-        }
-        let resource_id = resources
-            .entries
-            .iter()
-            .position(|resource| {
-                resource
-                    .name
-                    .eq_ignore_ascii_case(entry.resource_type.trim())
-            })
-            .filter(|index| *index < MAX_RESOURCES)
-            .ok_or_else(|| ConstructionError::UnknownResource {
-                prototype: prototype.name.clone(),
-                resource: entry.resource_type.clone(),
-            })?;
-        cost.add(resource_id, entry.amount);
-    }
-    Ok(cost)
 }
 
 fn validate_object_population(

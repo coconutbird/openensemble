@@ -35,6 +35,7 @@ impl EntityFilterSet {
     /// Test one live entity against every appended retail predicate.
     pub(crate) fn matches_entity(&self, entity_id: EntityId, world: &World) -> bool {
         match entity_id.class() {
+            Some(EntityClass::Object) => self.matches_object(entity_id, world),
             Some(EntityClass::Unit) => self.matches_unit(entity_id, world),
             Some(EntityClass::Squad) => self.matches_squad(entity_id, world),
             Some(EntityClass::Projectile) => self.matches_projectile(entity_id, world),
@@ -47,6 +48,57 @@ impl EntityFilterSet {
         for predicate in &self.filters {
             predicate.hash_state(checksum);
         }
+    }
+
+    fn matches_object(&self, entity_id: EntityId, world: &World) -> bool {
+        let Some(object) = world.get_object(entity_id) else {
+            return false;
+        };
+        self.filters.iter().all(|predicate| {
+            let (matches, invert) = match predicate {
+                EntityFilterPredicate::IsAlive { invert } => (object.is_alive(), *invert),
+                EntityFilterPredicate::IsIdle { invert }
+                | EntityFilterPredicate::ProtoSquads { invert, .. } => (false, *invert),
+                EntityFilterPredicate::InList { invert, entities } => {
+                    (entities.contains(&entity_id), *invert)
+                }
+                EntityFilterPredicate::Players { invert, players } => {
+                    (players.contains(&i32::from(object.base.player_id)), *invert)
+                }
+                EntityFilterPredicate::Teams { invert, teams } => (
+                    world
+                        .get_player(object.base.player_id)
+                        .is_some_and(|player| teams.contains(&i32::from(player.team_id))),
+                    *invert,
+                ),
+                EntityFilterPredicate::ProtoObjects { invert, prototypes } => {
+                    (prototypes.contains(&object.proto_object_id), *invert)
+                }
+                EntityFilterPredicate::ObjectTypes {
+                    invert,
+                    object_types,
+                } => (
+                    object_types.iter().any(|object_type| {
+                        world.entity_object_type_match(entity_id, object_type) == Some(true)
+                    }),
+                    *invert,
+                ),
+                EntityFilterPredicate::Diplomacy {
+                    invert,
+                    relation_type,
+                    reference_team,
+                } => (
+                    diplomacy_matches(
+                        world,
+                        object.base.player_id,
+                        *reference_team,
+                        *relation_type,
+                    ),
+                    *invert,
+                ),
+            };
+            matches != invert
+        })
     }
 
     fn matches_unit(&self, entity_id: EntityId, world: &World) -> bool {
@@ -500,6 +552,7 @@ pub struct Color {
 }
 
 impl Color {
+    #[must_use]
     pub fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
         Self { r, g, b, a }
     }
@@ -665,6 +718,10 @@ pub enum TriggerValue {
     /// stable across scenario-layered databases.
     ObjectType(String),
     ObjectTypeList(Vec<String>),
+    /// Scenario design-object line identity.
+    DesignLine(i32),
+    /// Ordered design-line identities; duplicates are significant in retail.
+    DesignLineList(Vec<i32>),
 
     // Resources
     Cost(Cost),

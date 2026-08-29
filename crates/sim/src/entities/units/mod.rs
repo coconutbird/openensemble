@@ -9,8 +9,10 @@ mod building;
 mod combat;
 mod garrison;
 pub mod marine;
+pub(crate) mod rally_points;
 mod scalars;
 mod shields;
+mod tower_wall;
 pub mod warthog;
 
 pub use actions::UnitActions;
@@ -21,10 +23,12 @@ pub use building::{
 pub(crate) use building::{ProductionTask, TriggerCommandStateRef};
 pub use combat::UnitCombat;
 pub use garrison::UnitGarrison;
+pub use rally_points::RallyPoint;
 pub use scalars::UnitDataScalar;
 pub use shields::{ShieldCoverage, UnitShields};
+pub use tower_wall::TowerWallAction;
 
-use super::{BaseEntity, BaseId, EntityIdle};
+use super::{BaseEntity, BaseId, EntityIdle, ObjectState};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::physics::PhysicsBody;
@@ -69,11 +73,20 @@ pub enum UnitState {
     Dead,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum MovementFacing {
+    #[default]
+    Forward,
+    Reverse,
+}
+
 /// An individual mobile unit or building.
 #[derive(Debug, Clone)]
 pub struct Unit {
     /// Common entity state.
     pub base: BaseEntity,
+    /// Runtime state inherited from retail `BObject`.
+    pub object_state: ObjectState,
     /// Mobile unit versus building behavior.
     pub kind: UnitKind,
     /// Gameplay implementation selected from proto metadata.
@@ -112,6 +125,8 @@ pub struct Unit {
     pub weapon_range_scalar: f32,
     /// Whether automatic target acquisition may choose this object.
     auto_attackable: bool,
+    /// Whether movement keeps this unit facing opposite its travel direction.
+    movement_facing: MovementFacing,
     /// Movement speed in world units per second.
     pub speed: f32,
     /// Acceleration in world units per second squared; zero means immediate.
@@ -136,8 +151,12 @@ pub struct Unit {
     pub garrison: UnitGarrison,
     /// Per-unit authored attack animation/cooldown state.
     pub combat: UnitCombat,
+    /// Persistent retail tower-wall action after a destination is assigned.
+    pub tower_wall: Option<TowerWallAction>,
     /// Research/production work owned by building units.
     pub production: BuildingProduction,
+    /// Primary and co-op rally destinations retained by this unit.
+    rally_points: rally_points::UnitRallyPoints,
     /// Whether construction has completed and built-state effects are active.
     pub built: bool,
     /// Unit whose command created this building.
@@ -176,6 +195,7 @@ impl Default for Unit {
     fn default() -> Self {
         Self {
             base: BaseEntity::default(),
+            object_state: ObjectState::default(),
             kind: UnitKind::Mobile,
             archetype: UnitArchetype::Generic,
             state: UnitState::Idle,
@@ -195,6 +215,7 @@ impl Default for Unit {
             velocity_scalar: 1.0,
             weapon_range_scalar: 1.0,
             auto_attackable: true,
+            movement_facing: MovementFacing::Forward,
             speed: 10.0,
             acceleration: 0.0,
             turn_rate_degrees: 0.0,
@@ -207,7 +228,9 @@ impl Default for Unit {
             actions: UnitActions::default(),
             garrison: UnitGarrison::default(),
             combat: UnitCombat::default(),
+            tower_wall: None,
             production: BuildingProduction::default(),
+            rally_points: rally_points::UnitRallyPoints::default(),
             built: true,
             built_by: None,
             build_socket_id: None,
@@ -271,6 +294,20 @@ impl Unit {
 
     pub(crate) fn set_auto_attackable(&mut self, auto_attackable: bool) {
         self.auto_attackable = auto_attackable;
+    }
+
+    /// Return whether retail reverse movement is enabled for this unit.
+    #[must_use]
+    pub const fn is_reverse_moving(&self) -> bool {
+        matches!(self.movement_facing, MovementFacing::Reverse)
+    }
+
+    pub(crate) fn set_reverse_move(&mut self, reverse_move: bool) {
+        self.movement_facing = if reverse_move {
+            MovementFacing::Reverse
+        } else {
+            MovementFacing::Forward
+        };
     }
 
     /// Return whether the retail idle action currently exists.
@@ -506,8 +543,15 @@ impl Unit {
     }
 
     fn update_movement(&mut self, dt: f32) {
+        let reverse_move = self.is_reverse_moving();
         if let Some(body) = &mut self.physics {
-            if body.update(&mut self.base, self.move_target, dt, self.velocity_scalar) {
+            if body.update(
+                &mut self.base,
+                self.move_target,
+                dt,
+                self.velocity_scalar,
+                reverse_move,
+            ) {
                 self.stop();
             }
             return;
@@ -526,7 +570,8 @@ impl Unit {
         let direction = to_target / distance;
         self.base.velocity = direction * speed;
         self.base.position += self.base.velocity * dt;
-        self.base.set_forward(direction);
+        self.base
+            .set_forward(if reverse_move { -direction } else { direction });
     }
 
     pub(crate) fn move_as_squad_member(&mut self, target: Vec3) {

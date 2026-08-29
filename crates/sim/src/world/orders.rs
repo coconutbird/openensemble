@@ -26,8 +26,7 @@ impl World {
             let Some(squad) = self.squads.get_mut(recipient_id) else {
                 return false;
             };
-            squad.move_to(target);
-            return true;
+            return squad.issue_scripted_move(target, false, false);
         }
         if self.units.get(recipient_id).is_some_and(|unit| {
             unit.base.player_id == player_id
@@ -42,5 +41,92 @@ impl World {
                 .is_some_and(|unit| unit.move_to(target));
         }
         false
+    }
+
+    /// Issue a squad work command to a fixed position.
+    pub fn issue_squad_move_order_to_position(
+        &mut self,
+        player_id: PlayerId,
+        squad_id: EntityId,
+        target: Vec3,
+        attack_move: bool,
+        queue: bool,
+    ) -> bool {
+        self.issue_squad_move_path(player_id, squad_id, &[target], attack_move, queue)
+    }
+
+    /// Snapshot a live unit or squad leader position into a squad work command.
+    pub fn issue_squad_move_order_to_entity(
+        &mut self,
+        player_id: PlayerId,
+        squad_id: EntityId,
+        requested_target_id: EntityId,
+        attack_move: bool,
+        queue: bool,
+    ) -> bool {
+        let Some((_target_id, position)) = self.squad_move_entity_target(requested_target_id)
+        else {
+            return false;
+        };
+        self.issue_squad_move_path(player_id, squad_id, &[position], attack_move, queue)
+    }
+
+    pub(crate) fn squad_move_entity_target(
+        &self,
+        requested_target_id: EntityId,
+    ) -> Option<(EntityId, Vec3)> {
+        if let Some(unit) = self
+            .units
+            .get(requested_target_id)
+            .filter(|unit| unit.is_alive())
+        {
+            return Some((requested_target_id, unit.base.position));
+        }
+        let squad = self
+            .squads
+            .get(requested_target_id)
+            .filter(|squad| squad.is_alive())?;
+        let leader_id = squad.unit_ids.first().copied()?;
+        let leader = self.units.get(leader_id).filter(|unit| unit.is_alive())?;
+        Some((leader_id, leader.base.position))
+    }
+
+    /// Issue one multi-waypoint work command to an owned squad.
+    pub fn issue_squad_move_path(
+        &mut self,
+        player_id: PlayerId,
+        squad_id: EntityId,
+        waypoints: &[Vec3],
+        attack_move: bool,
+        queue: bool,
+    ) -> bool {
+        if !self.squads.get(squad_id).is_some_and(|squad| {
+            squad.base.player_id == player_id && squad.is_alive() && !squad.garrison.is_garrisoned()
+        }) {
+            return false;
+        }
+        self.squads
+            .get_mut(squad_id)
+            .is_some_and(|squad| squad.issue_scripted_path(waypoints, attack_move, queue))
+    }
+
+    /// Persistently enable or disable reverse movement for a squad and its members.
+    pub fn set_squad_reverse_move(&mut self, squad_id: EntityId, reverse_move: bool) -> bool {
+        let Some(unit_ids) = self
+            .squads
+            .get(squad_id)
+            .map(|squad| squad.unit_ids.clone())
+        else {
+            return false;
+        };
+        if let Some(squad) = self.squads.get_mut(squad_id) {
+            squad.set_reverse_move(reverse_move);
+        }
+        for unit_id in unit_ids {
+            if let Some(unit) = self.units.get_mut(unit_id) {
+                unit.set_reverse_move(reverse_move);
+            }
+        }
+        true
     }
 }

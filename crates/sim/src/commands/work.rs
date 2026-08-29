@@ -24,7 +24,7 @@ mod flags {
 /// Work command flag bits in the base command flag set.
 pub mod command_flags {
     /// Attack-move flag (extends the base command flags).
-    pub const ATTACK_MOVE: usize = 8;
+    pub const ATTACK_MOVE: usize = 1;
 }
 
 /// Work command matching vanilla `BWorkCommand`.

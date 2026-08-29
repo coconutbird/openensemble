@@ -8,9 +8,14 @@ impl World {
     /// Return the live selectable override for any represented entity class.
     #[must_use]
     pub fn entity_is_selectable(&self, entity_id: EntityId) -> Option<bool> {
-        self.units
+        self.objects
             .get(entity_id)
-            .map(|unit| unit.base.is_selectable())
+            .map(|object| object.base.is_selectable())
+            .or_else(|| {
+                self.units
+                    .get(entity_id)
+                    .map(|unit| unit.base.is_selectable())
+            })
             .or_else(|| {
                 self.squads
                     .get(entity_id)
@@ -25,6 +30,10 @@ impl World {
 
     /// Set the live selectable override for any represented entity class.
     pub fn set_entity_selectable(&mut self, entity_id: EntityId, selectable: bool) -> bool {
+        if let Some(object) = self.objects.get_mut(entity_id) {
+            object.base.set_selectable(selectable);
+            return true;
+        }
         if let Some(unit) = self.units.get_mut(entity_id) {
             unit.base.set_selectable(selectable);
             return true;

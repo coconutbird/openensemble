@@ -3,7 +3,7 @@
 use super::{
     PlacedUnitKind, ScenarioObject, classify_proto_object, configure_unit_from_proto,
     create_scenario_squad, create_scenario_unit, database_id, find_proto_object, find_proto_squad,
-    refresh_squad_member_settings, scenario_forward, scenario_position,
+    refresh_squad_member_settings, scenario_forward, scenario_position, valid_nonnegative,
 };
 use crate::entities::squads::marine::is_marine_squad;
 use crate::entities::squads::warthog::{WarthogSquadSpec, is_warthog_squad};
@@ -144,8 +144,19 @@ fn configure_synthetic_squad(
         squad.min_turn_radius = spec.min_turn_radius;
         squad.max_turn_radius = spec.max_turn_radius;
     } else if is_marine_squad(&prototype.name) {
+        let spec = crate::entities::squads::marine::MarineSquadSpec::default();
         squad.archetype = SquadArchetype::Marine;
         squad.formation = SquadFormation::Flock;
+        squad.aggro_distance = spec.aggro_distance;
+        squad.leash_distance = spec.leash_distance;
+    }
+    if let Some((_, proto)) = matching_proto_squad(database, &prototype.name) {
+        if let Some(aggro_distance) = valid_nonnegative(proto.aggro_distance) {
+            squad.aggro_distance = aggro_distance;
+        }
+        if let Some(leash_distance) = valid_nonnegative(proto.leash_distance) {
+            squad.leash_distance = leash_distance;
+        }
     }
 }
 

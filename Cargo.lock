@@ -2911,7 +2911,9 @@ version = "0.1.0"
 dependencies = [
  "binrw",
  "byteorder",
+ "ecf",
  "glam",
+ "half",
  "num-traits",
  "pipeline",
  "quick-xml 0.37.5",

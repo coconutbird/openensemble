@@ -389,6 +389,15 @@ impl GameplayCatalog {
         self.abilities.get(usize::from(actual_id))
     }
 
+    /// Database index of the generic retail `Command` ability.
+    ///
+    /// Trigger Work V4 writes this ID when `DoAbility` is enabled so tactic
+    /// rules can choose the object's concrete command action.
+    #[must_use]
+    pub const fn command_ability_id(&self) -> Option<u8> {
+        self.command_ability_id
+    }
+
     /// Return global projectile gravity from the layered game-data table.
     #[must_use]
     pub const fn projectile_gravity(&self) -> f32 {

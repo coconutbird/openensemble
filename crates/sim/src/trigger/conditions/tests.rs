@@ -33,6 +33,31 @@ fn compare_proto_squad_uses_retail_ordered_operator_semantics() {
 }
 
 #[test]
+fn compare_design_line_uses_retail_ordered_operator_semantics() {
+    let mut world = World::new();
+    let mut script = TriggerScript::new(1);
+    add_value(
+        &mut script,
+        1,
+        VarType::DesignLine,
+        TriggerValue::DesignLine(12),
+    );
+    add_value(&mut script, 2, VarType::Operator, TriggerValue::Int(1));
+    add_value(
+        &mut script,
+        3,
+        VarType::DesignLine,
+        TriggerValue::DesignLine(27),
+    );
+    let condition = Condition::new(1, ConditionType::CompareDesignLine)
+        .with_input_at(1, 1)
+        .with_input_at(2, 2)
+        .with_input_at(3, 3);
+
+    assert_condition(&condition, &mut script, &mut world, ConditionResult::True);
+}
+
+#[test]
 fn is_idle_uses_action_presence_unit_precedence_and_retail_duration_output() {
     let mut world = World::new();
     world.init_players(1);

@@ -36,6 +36,9 @@ use std::collections::{BTreeMap, HashMap};
 mod garrison;
 
 mod coordinates;
+mod design_lines;
+mod forbids;
+mod objectives;
 pub(crate) mod placed;
 pub(crate) mod population;
 mod prototypes;
@@ -46,6 +49,8 @@ mod triggers;
 
 // Re-export scenario types from pipeline for convenience
 pub use coordinates::ScenarioPositionAxes;
+pub use design_lines::DesignLineLoadError;
+pub use objectives::ObjectiveLoadError;
 pub use pipeline::hw1::scenario::{ScenarioData, ScenarioObject, ScenarioPlayer, ScenarioPosition};
 use prototypes::{
     PlacedUnitKind, classify_proto_object, creates_base, database_id, find_proto_object,
@@ -109,6 +114,15 @@ pub enum ScenarioAssetLoadError {
     /// A scenario trigger system was malformed.
     #[error("failed to load a scenario trigger system: {0}")]
     Trigger(#[from] crate::trigger::LoadError),
+    /// The scenario's synchronized XSD simulation terrain was malformed.
+    #[error("failed to load scenario simulation terrain: {0}")]
+    Terrain(#[from] crate::world::TerrainLoadError),
+    /// Scenario-authored design-line path geometry was malformed.
+    #[error("failed to load scenario design lines: {0}")]
+    DesignLines(#[from] DesignLineLoadError),
+    /// Scenario-authored objective state was malformed.
+    #[error("failed to load scenario objectives: {0}")]
+    Objectives(#[from] ObjectiveLoadError),
 }
 
 impl LoadedScenario {
@@ -184,6 +198,23 @@ pub fn load_scenario_from_game_dir(
         max_players,
         gameplay,
     );
+    if let Some(terrain) = &content.terrain_data {
+        let minimum = Vec3::from_array(terrain.header.world_min);
+        let maximum = Vec3::from_array(terrain.header.world_max);
+        let _configured = simulation.world.configure_terrain_bounds(minimum, maximum);
+    }
+    if let Some(xsd_path) = content
+        .scenario
+        .as_ref()
+        .and_then(pipeline::hw1::scenario::ScenarioDescriptor::xtd_path)
+        .and_then(|path| path.strip_suffix(".xtd").map(|base| format!("{base}.xsd")))
+        && let Some(xsd) = source.resolve_exact(&xsd_path)
+    {
+        simulation.world.configure_terrain_simulation(&xsd)?;
+    }
+    objectives::load_objectives(&mut simulation.world, &trigger_document)?;
+    design_lines::load_design_lines(&mut simulation.world, &trigger_document)?;
+    forbids::apply_scenario_forbids(&mut simulation.world, &content.database, &trigger_document);
     triggers::load_trigger_systems(&mut simulation, &content.database, &trigger_document)?;
 
     Ok(LoadedGameScenario {
@@ -234,6 +265,7 @@ fn load_scenario_into_world_with_max_players(
     let player_count =
         u8::try_from(players.len().min(crate::world::MAX_PLAYERS)).unwrap_or(u8::MAX);
     world.init_players(player_count);
+    objectives::configure_objective_references(&mut world, scenario.objectives());
     configure_players(&mut world, players, db);
 
     for obj in objects {
@@ -440,7 +472,10 @@ pub(crate) fn create_squad_from_prototype(
             squad.max_turn_radius = stock.max_turn_radius;
         }
         if squad.archetype == SquadArchetype::Marine {
+            let stock = MarineSquadSpec::default();
             squad.formation = SquadFormation::Flock;
+            squad.aggro_distance = stock.aggro_distance;
+            squad.leash_distance = stock.leash_distance;
         }
         if proto
             .and_then(|(_, squad)| squad.formation_type.as_deref())
@@ -457,6 +492,16 @@ pub(crate) fn create_squad_from_prototype(
             squad.max_turn_radius = valid_nonnegative(turn_radius.max)
                 .unwrap_or(fallback_max)
                 .max(squad.min_turn_radius);
+        }
+        if let Some(authored_aggro) =
+            valid_nonnegative(proto.and_then(|(_, squad)| squad.aggro_distance))
+        {
+            squad.aggro_distance = authored_aggro;
+        }
+        if let Some(authored_leash) =
+            valid_nonnegative(proto.and_then(|(_, squad)| squad.leash_distance))
+        {
+            squad.leash_distance = authored_leash;
         }
     }
     if let Some((_, proto)) = proto {

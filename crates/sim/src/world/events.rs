@@ -341,6 +341,7 @@ pub(super) struct GeneralEventState {
     subscribers: BTreeMap<u16, Vec<GeneralEventSubscriber>>,
     chat_completed_subscriber: Option<u32>,
     cinematic_completed_subscriber: Option<u32>,
+    fade_completed_subscriber: Option<u32>,
 }
 
 #[derive(Debug, Default)]
@@ -429,6 +430,22 @@ impl World {
     pub(crate) fn cinematic_completed(&self) -> bool {
         self.general_events
             .cinematic_completed_subscriber
+            .and_then(|id| self.general_events.get(id))
+            .is_some_and(|subscriber| subscriber.fired)
+    }
+
+    pub(crate) fn prepare_fade_completion(&mut self, interrupted: bool) {
+        let subscriber_id = self.general_events.ensure_fade_completed_subscriber();
+        self.general_events.reset_fired(subscriber_id, false);
+        if interrupted {
+            self.general_events
+                .set_fired(subscriber_id, self.game_time_ms);
+        }
+    }
+
+    pub(crate) fn fade_completed(&self) -> bool {
+        self.general_events
+            .fade_completed_subscriber
             .and_then(|id| self.general_events.get(id))
             .is_some_and(|subscriber| subscriber.fired)
     }
@@ -540,6 +557,15 @@ impl GeneralEventState {
         id
     }
 
+    fn ensure_fade_completed_subscriber(&mut self) -> u32 {
+        if let Some(id) = self.fade_completed_subscriber {
+            return id;
+        }
+        let id = self.subscribe(GeneralEventType::FadeCompleted, None, false);
+        self.fade_completed_subscriber = Some(id);
+        id
+    }
+
     fn get(&self, id: u32) -> Option<&GeneralEventSubscriber> {
         let event_type = u16::try_from(id & 0xFFFF).ok()?;
         let index = usize::try_from(id >> 16).ok()?;
@@ -564,6 +590,14 @@ impl GeneralEventState {
         } else {
             subscriber.fired = false;
         }
+    }
+
+    fn set_fired(&mut self, id: u32, fire_time: u32) {
+        let Some(subscriber) = self.get_mut(id) else {
+            return;
+        };
+        subscriber.fired = true;
+        subscriber.fire_time = fire_time;
     }
 
     fn fire(&mut self, event: &GeneralEvent, world: &World) -> usize {
@@ -595,6 +629,7 @@ impl GeneralEventState {
         }
         hash_optional_u32(checksum, self.chat_completed_subscriber);
         hash_optional_u32(checksum, self.cinematic_completed_subscriber);
+        hash_optional_u32(checksum, self.fade_completed_subscriber);
     }
 }
 

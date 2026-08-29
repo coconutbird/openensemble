@@ -2,26 +2,36 @@
 
 mod ai;
 mod commands;
+mod design_lines;
 mod dispatch;
 mod economy;
 mod entities;
 mod entity_flags;
+mod entity_visuals;
 mod events;
 mod filters;
+mod fog;
+mod forbids;
 mod game_state;
 mod health;
 mod iterators;
 mod list_processing;
 mod lists;
 mod math;
+mod objectives;
 mod orders;
 mod ownership;
 mod powers;
+mod presentation;
 mod proto_data;
+mod rally_points;
 mod relationships;
 mod resources;
+mod revealers;
 mod spatial;
 mod support;
+mod timers;
+mod tower_walls;
 mod unit_data;
 mod value_lists;
 
@@ -176,6 +186,8 @@ fn is_copy_effect(raw_type: u16) -> bool {
             | 562
             | 609
             | 818
+            | 867
+            | 872
             | 921
     )
 }

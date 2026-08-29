@@ -37,10 +37,12 @@ pub use commands::{
 pub use dispatcher::{CommandDispatcher, DispatchError, DispatchedCommand};
 pub use entities::{
     Base, BaseEntity, BaseId, BuildingProduction, ConstructionKind, ConstructionProgress,
-    ConstructionTask, Projectile, RecoveryType, ResearchProgress, ResearchTask, ShieldCoverage,
-    Squad, SquadArchetype, SquadContainmentState, SquadFormation, SquadGarrison, SquadMode,
-    SquadRecovery, SquadShields, SquadState, TrainingKind, TrainingProgress, TrainingTask, Unit,
-    UnitActions, UnitArchetype, UnitDataScalar, UnitGarrison, UnitKind, UnitShields, UnitState,
+    ConstructionTask, DopplePolicy, Object, ObjectKind, ObjectState, Projectile, RallyPoint,
+    RecoveryType, ResearchProgress, ResearchTask, Revealer, ShieldCoverage, Squad, SquadArchetype,
+    SquadContainmentState, SquadFormation, SquadGarrison, SquadMode, SquadRecovery, SquadShields,
+    SquadState, SquadTransportFlyIn, TargetingSelection, TowerWallAction, TrainingKind,
+    TrainingProgress, TrainingTask, TransportFlyInPhase, Unit, UnitActions, UnitArchetype,
+    UnitDataScalar, UnitGarrison, UnitKind, UnitShields, UnitState,
 };
 pub use entity::{Entity, EntityManager, MAX_ENTITY_SLOTS};
 pub use entity_id::{EntityClass, EntityId};
@@ -78,14 +80,17 @@ pub use sync::{SimpleChecksum, SyncChecksum};
 pub use time_sync::{ClientTimeHistory, TimeSync, TimingRecord};
 pub use trigger::{
     AISquadAnalysis, AISquadAnalysisComponent, BuildingCommandState, Condition, ConditionMode,
-    ConditionResult, ConditionType, Effect, EffectType, Trigger, TriggerCost, TriggerEngine,
-    TriggerId, TriggerScript, TriggerScriptId, TriggerUpdate, TriggerValue, TriggerVec3, VarId,
-    VarType,
+    ConditionResult, ConditionType, Effect, EffectType, ObjectiveId, Trigger, TriggerColor,
+    TriggerCost, TriggerEngine, TriggerId, TriggerScript, TriggerScriptId, TriggerUpdate,
+    TriggerValue, TriggerVec3, VarId, VarType,
 };
 pub use world::{
-    ChatRequest, CinematicRequest, ConstructionError, ConstructionQueueResult, CustomCommand,
-    CustomCommandFlags, GarrisonError, GeneralEvent, GeneralEventType, MAX_PLAYERS,
-    MAX_TRAIN_BATCH, PresentationRequest, ProductionUpdate, ResearchError, ResearchQueueResult,
-    TechnologyError, TrainingError, TrainingQueueResult, World, object_runtime_id,
-    power_prototype_id, squad_runtime_id, technology_prototype_id,
+    CameraControlPermissions, CameraDirective, ChatRequest, CinematicRequest, ConstructionError,
+    ConstructionQueueResult, CustomCommand, CustomCommandFlags, DesignLineId, GameTimer,
+    GameTimerAudience, GarrisonError, GeneralEvent, GeneralEventType, HintCallout,
+    HintCalloutAnchor, HudItem, MAX_PLAYERS, MAX_TRAIN_BATCH, ObjectiveState,
+    PlayerPresentationState, PresentationRequest, ProductionUpdate, ResearchError,
+    ResearchQueueResult, ScenarioScoreInfo, ScreenFadeOverlay, ScreenFadeSequence, TechnologyError,
+    TrainingError, TrainingQueueResult, World, object_runtime_id, power_prototype_id,
+    squad_runtime_id, technology_prototype_id,
 };

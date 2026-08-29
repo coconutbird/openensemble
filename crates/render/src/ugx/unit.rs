@@ -9,7 +9,7 @@ use pipeline::uax::Reader as UaxReader;
 
 use super::animation::AnimationPose;
 use super::model::ModelPose;
-use super::renderer::{RendererResources, SharedResources, WorldBindings};
+use super::renderer::{RendererResources, SelectionOverlay, SharedResources, WorldBindings};
 use super::{LoadError, Model, Renderer};
 use crate::environment::EnvironmentMap;
 use crate::terrain::LightingParams;
@@ -895,14 +895,34 @@ impl UnitRenderer {
         lighting: &LightingParams,
         time_seconds: f32,
     ) {
+        self.update_frame_with_selection_at_time(
+            queue,
+            view_projection,
+            unit_transform,
+            lighting,
+            time_seconds,
+            SelectionOverlay::default(),
+        );
+    }
+
+    pub(super) fn update_frame_with_selection_at_time(
+        &mut self,
+        queue: &wgpu::Queue,
+        view_projection: Mat4,
+        unit_transform: Mat4,
+        lighting: &LightingParams,
+        time_seconds: f32,
+        selection: SelectionOverlay,
+    ) {
         self.unit_transform = unit_transform;
         for instance in &mut self.instances {
-            instance.renderer.update_frame_at_time(
+            instance.renderer.update_frame_with_selection_at_time(
                 queue,
                 view_projection,
                 unit_transform * instance.local_transform,
                 lighting,
                 time_seconds,
+                selection,
             );
         }
     }

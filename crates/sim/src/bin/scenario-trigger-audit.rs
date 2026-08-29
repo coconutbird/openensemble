@@ -23,17 +23,36 @@ fn main() -> ExitCode {
     for scenario in scenarios {
         match load_scenario_from_game_dir(&game_dir, &scenario) {
             Ok(mut loaded) => {
+                if env::var_os("OPENENSEMBLE_AUDIT_OBJECTIVES").is_some() {
+                    print_scenario_objectives(&scenario, &mut loaded);
+                }
                 print_catalog(&scenario, loaded.simulation.world.trigger_engine());
                 print_selected_bindings(
                     &scenario,
                     loaded.simulation.world.trigger_engine(),
                     &selected_dbids,
                 );
+                if env::var_os("OPENENSEMBLE_AUDIT_ENTITIES").is_some() {
+                    print_selected_entities(
+                        &scenario,
+                        &loaded.simulation.world,
+                        &loaded.simulation.gameplay,
+                        &selected_dbids,
+                    );
+                }
                 let update = loaded.simulation.world.update_triggers_with_gameplay(
                     &loaded.content.database,
                     &loaded.simulation.gameplay,
                 );
                 println!("{scenario}: initial-update={update:?}");
+                print_reached_selected_bindings(
+                    &scenario,
+                    loaded.simulation.world.trigger_engine(),
+                    &selected_dbids,
+                );
+                if env::var_os("OPENENSEMBLE_AUDIT_PRESENTATION").is_some() {
+                    print_presentation_state(&scenario, &loaded.simulation.world);
+                }
                 if update.infinite_loop_guard_reached {
                     print_hot_triggers(&scenario, loaded.simulation.world.trigger_engine());
                 }
@@ -48,6 +67,46 @@ fn main() -> ExitCode {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+fn print_scenario_objectives(scenario: &str, loaded: &mut sim::LoadedGameScenario) {
+    let Some(path) = loaded
+        .content
+        .scenario
+        .as_ref()
+        .map(pipeline::hw1::scenario::ScenarioDescriptor::scn_path)
+    else {
+        return;
+    };
+    let Some(document) = loaded.source.read_xmb(&path) else {
+        return;
+    };
+    let Some(objectives) = document
+        .root()
+        .and_then(|root| root.children.iter().find(|node| node.name == "Objectives"))
+    else {
+        return;
+    };
+    for objective in objectives
+        .children
+        .iter()
+        .filter(|node| node.name == "Objective")
+    {
+        let attributes = objective
+            .attributes
+            .iter()
+            .map(|attribute| (attribute.name.as_str(), attribute.value_string()))
+            .collect::<Vec<_>>();
+        let fields = objective
+            .children
+            .iter()
+            .map(|field| (field.name.as_str(), field.text_string()))
+            .collect::<Vec<_>>();
+        println!(
+            "{scenario}: objective attributes={attributes:?} text={:?} fields={fields:?}",
+            objective.text_string(),
+        );
     }
 }
 
@@ -96,6 +155,175 @@ fn print_selected_bindings(scenario: &str, engine: &sim::TriggerEngine, dbids: &
                 );
             }
         }
+    }
+}
+
+fn print_reached_selected_bindings(
+    scenario: &str,
+    engine: &sim::TriggerEngine,
+    dbids: &BTreeSet<u16>,
+) {
+    if dbids.is_empty() {
+        return;
+    }
+    for (script_id, script) in engine.scripts() {
+        for trigger in trigger_reached_selected(script, dbids) {
+            for effect in trigger
+                .effects_on_true
+                .iter()
+                .chain(&trigger.effects_on_false)
+                .filter(|effect| dbids.contains(&effect.raw_type))
+            {
+                println!(
+                    "{scenario}: reached-selected script={script_id} trigger={} evaluations={} name={:?} {}",
+                    trigger.id,
+                    trigger.evaluate_count,
+                    trigger.name,
+                    describe_effect(effect, script)
+                );
+            }
+        }
+    }
+}
+
+fn print_selected_entities(
+    scenario: &str,
+    world: &sim::World,
+    gameplay: &sim::GameplayCatalog,
+    dbids: &BTreeSet<u16>,
+) {
+    let mut entity_ids = Vec::new();
+    for (_, script) in world.trigger_engine().scripts() {
+        for trigger in &script.triggers {
+            for effect in trigger
+                .effects_on_true
+                .iter()
+                .chain(&trigger.effects_on_false)
+                .filter(|effect| dbids.contains(&effect.raw_type))
+            {
+                for binding in effect.inputs.iter().chain(&effect.outputs) {
+                    let Some(entity_id) = script
+                        .get_variable(binding.variable_id)
+                        .and_then(|variable| variable.value.as_entity())
+                    else {
+                        continue;
+                    };
+                    if !entity_ids.contains(&entity_id) {
+                        entity_ids.push(entity_id);
+                    }
+                }
+            }
+        }
+    }
+    entity_ids.sort_unstable();
+    for entity_id in entity_ids {
+        let Some(squad) = world.get_squad(entity_id) else {
+            println!("{scenario}: selected-entity id={entity_id:?} missing-squad");
+            continue;
+        };
+        println!(
+            "{scenario}: selected-entity id={entity_id:?} player={} proto-squad={:?} position={:?} forward={:?} units={:?}",
+            squad.base.player_id,
+            squad.proto_squad_name,
+            squad.base.position,
+            squad.base.forward,
+            squad.unit_ids,
+        );
+        for &unit_id in &squad.unit_ids {
+            let Some(unit) = world.get_unit(unit_id) else {
+                continue;
+            };
+            let tower_actions = gameplay
+                .object(&unit.proto_object_name)
+                .into_iter()
+                .flat_map(|object| {
+                    object
+                        .tactics()
+                        .actions
+                        .iter()
+                        .filter(|action| {
+                            action
+                                .action_type
+                                .as_deref()
+                                .is_some_and(|kind| kind.eq_ignore_ascii_case("TowerWall"))
+                        })
+                        .map(|action| {
+                            let weapon =
+                                action.weapon.as_deref().and_then(|weapon_name| {
+                                    object.tactics().weapons.iter().find(|weapon| {
+                                        weapon.name.eq_ignore_ascii_case(weapon_name)
+                                    })
+                                });
+                            (
+                                &action.name,
+                                &action.weapon,
+                                weapon.and_then(|weapon| weapon.projectile.as_deref()),
+                                weapon
+                                    .and_then(|weapon| weapon.projectile.as_deref())
+                                    .and_then(|projectile| gameplay.projectile(projectile)),
+                                &action.beam,
+                            )
+                        })
+                })
+                .collect::<Vec<_>>();
+            println!(
+                "{scenario}: selected-unit id={unit_id:?} proto-object={:?} position={:?} forward={:?} garrisoned={:?} tower-actions={tower_actions:?}",
+                unit.proto_object_name,
+                unit.base.position,
+                unit.base.forward,
+                unit.garrison.contained_unit_ids(),
+            );
+        }
+    }
+}
+
+fn trigger_reached_selected<'a>(
+    script: &'a sim::TriggerScript,
+    dbids: &BTreeSet<u16>,
+) -> impl Iterator<Item = &'a sim::Trigger> {
+    script.triggers.iter().filter(|trigger| {
+        trigger.evaluate_count > 0
+            && trigger
+                .effects_on_true
+                .iter()
+                .chain(&trigger.effects_on_false)
+                .any(|effect| dbids.contains(&effect.raw_type))
+    })
+}
+
+fn print_presentation_state(scenario: &str, world: &sim::World) {
+    let hud = [
+        sim::HudItem::Minimap,
+        sim::HudItem::Resources,
+        sim::HudItem::Time,
+        sim::HudItem::PowerStatus,
+        sim::HudItem::Units,
+        sim::HudItem::DpadHelp,
+        sim::HudItem::ButtonHelp,
+        sim::HudItem::Reticle,
+        sim::HudItem::Score,
+        sim::HudItem::UnitStats,
+        sim::HudItem::CircleMenuExtraInfo,
+    ]
+    .map(|item| (item.trigger_name(), world.hud_item_enabled(item)));
+    println!(
+        "{scenario}: presentation hud={hud:?} terrain-skirt={} blur={} minimap-rotation={} minimap-skirt-mirroring={} circle-menu-reset={} fade={:?} callouts={:?}",
+        world.render_terrain_skirt_enabled(),
+        world.screen_blur_enabled(),
+        world.minimap_rotation_degrees(),
+        world.minimap_skirt_mirroring(),
+        world.circle_menu_reset_revision(),
+        world.screen_fade_overlay(),
+        world.hint_callouts().collect::<Vec<_>>(),
+    );
+    for player_index in 1..world.player_count() {
+        let Ok(player_id) = u8::try_from(player_index) else {
+            continue;
+        };
+        println!(
+            "{scenario}: presentation player={player_id} state={:?}",
+            world.player_presentation_state(player_id),
+        );
     }
 }
 

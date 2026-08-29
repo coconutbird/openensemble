@@ -24,6 +24,38 @@ pub(super) const MATERIAL_FLAG_DISTORTION: u32 = 1 << 14;
 pub(super) const MATERIAL_FLAG_RECEIVES_SHADOWS: u32 = 1 << 15;
 pub(super) const MATERIAL_FLAG_TERRAIN_CONFORM: u32 = 1 << 16;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(in crate::ugx) struct SelectionOverlay {
+    color: [f32; 4],
+    uv_scale: f32,
+    uv_offset: f32,
+    intensity: f32,
+}
+
+impl SelectionOverlay {
+    pub(in crate::ugx) const fn new(
+        color: [f32; 4],
+        uv_scale: f32,
+        uv_offset: f32,
+        intensity: f32,
+    ) -> Self {
+        Self {
+            color,
+            uv_scale,
+            uv_offset,
+            intensity,
+        }
+    }
+
+    pub(in crate::ugx) const fn color(self) -> [f32; 4] {
+        self.color
+    }
+
+    pub(in crate::ugx) const fn params(self) -> [f32; 4] {
+        [self.uv_scale, self.uv_offset, self.intensity, 1.0]
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(super) struct SceneUniform {
@@ -57,6 +89,8 @@ pub(super) struct SceneUniform {
     light_volume_row0: [f32; 4],
     light_volume_row1: [f32; 4],
     light_volume_row2: [f32; 4],
+    selection_color: [f32; 4],
+    selection_params: [f32; 4],
 }
 
 impl SceneUniform {
@@ -67,6 +101,7 @@ impl SceneUniform {
             &LightingParams::default(),
             0.0,
             terrain,
+            SelectionOverlay::default(),
         )
     }
 
@@ -76,6 +111,7 @@ impl SceneUniform {
         lighting: &LightingParams,
         time_seconds: f32,
         terrain: TerrainHeightfieldInfo,
+        selection: SelectionOverlay,
     ) -> Self {
         Self {
             view_projection: view_projection.to_cols_array_2d(),
@@ -118,6 +154,8 @@ impl SceneUniform {
             light_volume_row0: lighting.light_volume_row0,
             light_volume_row1: lighting.light_volume_row1,
             light_volume_row2: lighting.light_volume_row2,
+            selection_color: selection.color(),
+            selection_params: selection.params(),
         }
     }
 }

@@ -6,14 +6,18 @@
 mod garrison;
 pub mod marine;
 mod mode;
+mod orders;
 mod recovery;
 mod shields;
+mod transport;
 pub mod warthog;
 
 pub use garrison::{SquadContainmentState, SquadGarrison};
 pub use mode::SquadMode;
 pub use recovery::{RecoveryType, SquadRecovery};
 pub use shields::SquadShields;
+pub(crate) use transport::SquadTransportPlan;
+pub use transport::{SquadTransportFlyIn, TransportFlyInPhase};
 
 use super::{BaseEntity, EntityIdle};
 use crate::entity::Entity;
@@ -74,6 +78,8 @@ pub struct Squad {
     pub formation: SquadFormation,
     /// Movement target position (if moving).
     pub move_target: Option<Vec3>,
+    /// Active and alternate-queued retail movement commands.
+    pub(crate) orders: orders::SquadOrders,
     /// Unit or squad currently targeted by an attack order.
     pub attack_target: Option<EntityId>,
     /// Command-authored attack range override; zero selects tactic range.
@@ -104,6 +110,12 @@ pub struct Squad {
     pub min_turn_radius: f32,
     /// Maximum pathing turn radius from the proto squad.
     pub max_turn_radius: f32,
+    /// Distance at which an attack-move may automatically acquire a target.
+    pub aggro_distance: f32,
+    /// Maximum pursuit distance for an automatically acquired target.
+    pub leash_distance: f32,
+    /// Whether movement keeps the squad facing opposite its travel direction.
+    reverse_move: bool,
     /// Units in this squad, sorted by entity ID for deterministic iteration.
     pub unit_ids: Vec<EntityId>,
     /// Live population charged to this logical squad.
@@ -114,12 +126,16 @@ pub struct Squad {
     pub train_limit_bucket: Option<u8>,
     /// Destination squad used by the retail hot-drop/teleporter action.
     pub teleporter_destination: Option<EntityId>,
+    /// Ordered retail entity references linking this source to wall endpoints.
+    associated_wall_tower_ids: Vec<EntityId>,
     /// Towing squad this squad is currently hitched to.
     pub(crate) towing_partner: Option<EntityId>,
     /// Trailer squad currently hitched behind this towing squad.
     pub(crate) trailer_partner: Option<EntityId>,
     /// Logical containment order and passenger state.
     pub garrison: SquadGarrison,
+    /// Trigger-created transport action owned by a synthetic transport squad.
+    pub(crate) transport_fly_in: Option<SquadTransportFlyIn>,
     /// Members that completed the current command-ability attack cycle.
     ability_used_unit_ids: Vec<EntityId>,
 }
@@ -133,6 +149,7 @@ impl Default for Squad {
             archetype: SquadArchetype::Generic,
             formation: SquadFormation::Generic,
             move_target: None,
+            orders: orders::SquadOrders::default(),
             attack_target: None,
             attack_range: 0.0,
             mode: SquadMode::Normal,
@@ -148,14 +165,19 @@ impl Default for Squad {
             turn_radius: 0.0,
             min_turn_radius: 0.0,
             max_turn_radius: 0.0,
+            aggro_distance: 0.0,
+            leash_distance: 0.0,
+            reverse_move: false,
             unit_ids: Vec::new(),
             population_costs: Vec::new(),
             trained_by: None,
             train_limit_bucket: None,
             teleporter_destination: None,
+            associated_wall_tower_ids: Vec::new(),
             towing_partner: None,
             trailer_partner: None,
             garrison: SquadGarrison::default(),
+            transport_fly_in: None,
             ability_used_unit_ids: Vec::new(),
         }
     }
@@ -219,18 +241,13 @@ impl Squad {
     }
 
     fn move_to_internal(&mut self, target: Vec3) {
-        self.attack_target = None;
-        self.attack_range = 0.0;
-        self.attack_ability_id = None;
-        self.ability_used_unit_ids.clear();
-        self.cancel_idle_action();
-        self.move_target = Some(target);
-        self.state = SquadState::Moving;
+        self.start_direct_move(target);
     }
 
     /// Remove every authoritative movement, combat, and containment order.
     pub(crate) fn remove_all_orders(&mut self) {
         self.garrison.cancel_pending();
+        self.cancel_scripted_move_orders();
         self.move_target = None;
         self.attack_target = None;
         self.attack_range = 0.0;
@@ -255,6 +272,7 @@ impl Squad {
             return false;
         }
         self.garrison.cancel_pending();
+        self.cancel_scripted_move_orders();
         self.attack_target = Some(target);
         self.attack_range = valid_attack_range(range);
         if let Some(mode) = mode {
@@ -267,20 +285,6 @@ impl Squad {
         self.base.velocity = Vec3::ZERO;
         self.state = SquadState::Attacking;
         true
-    }
-
-    /// Cancel the active attack order.
-    pub fn clear_attack_order(&mut self) {
-        self.cancel_idle_action();
-        self.attack_target = None;
-        self.attack_range = 0.0;
-        self.attack_ability_id = None;
-        self.ability_used_unit_ids.clear();
-        self.move_target = None;
-        self.base.velocity = Vec3::ZERO;
-        if self.state == SquadState::Attacking {
-            self.state = SquadState::Idle;
-        }
     }
 
     pub(crate) fn chase_attack_target(&mut self, target: Vec3) {
@@ -308,6 +312,7 @@ impl Squad {
     /// Stop moving.
     pub fn stop(&mut self) {
         let interrupted_movement = self.state == SquadState::Moving || self.move_target.is_some();
+        self.cancel_scripted_move_orders();
         self.move_target = None;
         self.base.velocity = Vec3::ZERO;
         if self.state == SquadState::Moving {
@@ -322,6 +327,7 @@ impl Squad {
     pub fn kill(&mut self) {
         self.state = SquadState::Dead;
         self.base.kill();
+        self.cancel_scripted_move_orders();
         self.move_target = None;
         self.attack_target = None;
         self.attack_range = 0.0;
@@ -337,6 +343,16 @@ impl Squad {
         !self.garrison.is_garrisoned() && self.state == SquadState::Moving
     }
 
+    /// Return whether retail reverse movement is enabled for this squad.
+    #[must_use]
+    pub const fn is_reverse_moving(&self) -> bool {
+        self.reverse_move
+    }
+
+    pub(crate) fn set_reverse_move(&mut self, reverse_move: bool) {
+        self.reverse_move = reverse_move;
+    }
+
     /// Link this source squad's hot-drop action to a destination squad.
     pub fn set_teleporter_destination(&mut self, destination: EntityId) {
         self.teleporter_destination = (!destination.is_invalid()).then_some(destination);
@@ -347,6 +363,27 @@ impl Squad {
         if self.teleporter_destination == Some(removed) {
             self.teleporter_destination = None;
         }
+    }
+
+    /// Wall endpoints linked by `SetTowerWallDestination`, in entity-ref order.
+    #[must_use]
+    pub fn associated_wall_towers(&self) -> &[EntityId] {
+        &self.associated_wall_tower_ids
+    }
+
+    /// Active trigger transport action when this is the carrier squad.
+    #[must_use]
+    pub const fn transport_fly_in(&self) -> Option<&SquadTransportFlyIn> {
+        self.transport_fly_in.as_ref()
+    }
+
+    pub(crate) fn add_associated_wall_tower(&mut self, target: EntityId) {
+        self.associated_wall_tower_ids.push(target);
+    }
+
+    pub(crate) fn remove_associated_wall_tower(&mut self, removed: EntityId) {
+        self.associated_wall_tower_ids
+            .retain(|&target| target != removed);
     }
 
     /// Return whether this squad is a trailer attached to another squad.
@@ -460,26 +497,36 @@ impl Squad {
         if distance < ARRIVAL_THRESHOLD {
             // Arrived at destination
             self.base.position = target;
-            self.stop();
+            self.finish_current_movement();
             return true;
         }
 
         let direction = to_target / distance;
-        self.base.forward = turn_toward(self.base.forward, direction, self.turn_rate_degrees, dt);
+        let facing = if self.reverse_move {
+            -direction
+        } else {
+            direction
+        };
+        self.base.forward = turn_toward(self.base.forward, facing, self.turn_rate_degrees, dt);
+        let movement_direction = if self.reverse_move {
+            -self.base.forward
+        } else {
+            self.base.forward
+        };
         let current_speed = self.base.velocity.length();
         let desired_speed = desired_speed(self.speed, self.acceleration, distance);
         let next_speed = approach_speed(current_speed, desired_speed, self.acceleration, dt);
         let move_distance = next_speed * dt;
 
-        if move_distance >= distance && self.base.forward.dot(direction) > 0.999 {
+        if move_distance >= distance && movement_direction.dot(direction) > 0.999 {
             // Would overshoot, just arrive
             self.base.position = target;
-            self.stop();
+            self.finish_current_movement();
             return true;
         }
 
         // Update position and velocity
-        self.base.velocity = self.base.forward * next_speed;
+        self.base.velocity = movement_direction * next_speed;
         self.base.position += self.base.velocity * dt;
 
         false

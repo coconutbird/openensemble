@@ -10,6 +10,7 @@
 //! - Types: Data types for terrain textures, decals, and foliage
 //! - Loading: Functions to load textures and extract data from XTT
 
+mod callouts;
 mod camera;
 mod compositing;
 pub mod loading;
@@ -21,7 +22,8 @@ mod texture;
 pub mod types;
 mod uniforms;
 
-pub use camera::Camera;
+pub use callouts::{ProjectedHintCallout, project_hint_callouts};
+pub use camera::{Camera, SimulationCameraAdapter};
 pub use compositing::{
     CompositeBindings, CompositeParams, CompositingConfig, CompositorResources, LodConfig,
 };

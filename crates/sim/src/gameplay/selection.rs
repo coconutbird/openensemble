@@ -100,6 +100,27 @@ pub(super) struct ObjectTargetTraits {
 }
 
 impl GameplayCatalog {
+    /// Evaluate the full contextual work-action rules in authored order.
+    ///
+    /// Unlike [`Self::select_ranged_action`], this preserves non-combat actions
+    /// such as garrison, gather, capture, repair, and movement. Retail uses the
+    /// same tactic lookup before converting a generic work command into a sim
+    /// order.
+    #[must_use]
+    pub fn select_work_action<'catalog>(
+        &'catalog self,
+        proto_object_name: &str,
+        query: &AttackQuery<'_>,
+        action_is_enabled: impl FnMut(&Action) -> bool,
+    ) -> Option<&'catalog Action> {
+        self.object(proto_object_name)?.select_work_action(
+            query,
+            self.ability_name(query.ability_id),
+            self.target_traits(query.target_proto_object_name),
+            action_is_enabled,
+        )
+    }
+
     /// Evaluate ranged target rules in authored order and return the selected action.
     #[must_use]
     pub fn select_ranged_action<'catalog>(
@@ -153,6 +174,31 @@ impl GameplayCatalog {
 }
 
 impl ObjectGameplay {
+    fn select_work_action<'catalog>(
+        &'catalog self,
+        query: &AttackQuery<'_>,
+        requested_ability: Option<&str>,
+        target: Option<&ObjectTargetTraits>,
+        mut action_is_enabled: impl FnMut(&Action) -> bool,
+    ) -> Option<&'catalog Action> {
+        let mut fallback = None;
+        for rule in &self.tactics.tactic.as_ref()?.target_rules {
+            let Some(action) = self.resolve_rule_work_action(rule) else {
+                continue;
+            };
+            if !action_is_enabled(action)
+                || !rule_matches(rule, action, query, requested_ability, target)
+            {
+                continue;
+            }
+            if query.ability_id.is_none() || required_ability(rule).is_some() {
+                return Some(action);
+            }
+            fallback.get_or_insert(action);
+        }
+        fallback
+    }
+
     fn select_ranged_action<'catalog>(
         &'catalog self,
         query: &AttackQuery<'_>,
@@ -194,6 +240,14 @@ impl ObjectGameplay {
             .iter()
             .find(|action| action.name.eq_ignore_ascii_case(name))?;
         is_ranged_attack(action).then(|| self.resolve_action(action))?
+    }
+
+    fn resolve_rule_work_action(&self, rule: &TargetRule) -> Option<&Action> {
+        let name = rule.action.as_deref()?;
+        self.tactics
+            .actions
+            .iter()
+            .find(|action| action.name.eq_ignore_ascii_case(name))
     }
 
     fn unambiguous_fixture_action(
@@ -594,6 +648,63 @@ mod tests {
         let overrides = BTreeMap::from([("Grenade", false), ("Rocket", false)]);
 
         assert_eq!(selected(&catalog, &query, &overrides), Some("Rifle"));
+    }
+
+    #[test]
+    fn work_selection_preserves_noncombat_actions_and_authored_range() {
+        let mut database = Database::new();
+        database.objects.extend([
+            ProtoObject {
+                name: "worker".to_owned(),
+                tactics: Some("worker.tactics".to_owned()),
+                ..ProtoObject::default()
+            },
+            ProtoObject {
+                name: "tower".to_owned(),
+                object_types: vec!["GaiaGarrison".to_owned()],
+                ..ProtoObject::default()
+            },
+        ]);
+        let tactics = TacticData {
+            actions: vec![Action {
+                name: "EnterTower".to_owned(),
+                action_type: Some("Garrison".to_owned()),
+                work_range: Some(5.0),
+                ..Action::default()
+            }],
+            tactic: Some(TacticRules {
+                target_rules: vec![TargetRule {
+                    relation: Some("Any".to_owned()),
+                    action: Some("EnterTower".to_owned()),
+                    target_types: vec!["GaiaGarrison".to_owned()],
+                    ..TargetRule::default()
+                }],
+                ..TacticRules::default()
+            }),
+            ..TacticData::default()
+        };
+        let catalog = GameplayCatalog::from_tactics(&database, [("worker".to_owned(), tactics)]);
+        let query = AttackQuery {
+            relation: TacticRelation::Neutral,
+            target_proto_object_name: Some("tower"),
+            ..AttackQuery::default()
+        };
+
+        let action = catalog
+            .select_work_action("worker", &query, authored_enabled)
+            .expect("garrison work action");
+        assert_eq!(action.action_type.as_deref(), Some("Garrison"));
+        assert_eq!(action.work_range, Some(5.0));
+        assert!(
+            catalog
+                .select_ranged_action("worker", &query, authored_enabled)
+                .is_none()
+        );
+        assert!(
+            catalog
+                .select_work_action("worker", &query, |_| false)
+                .is_none()
+        );
     }
 
     #[test]

@@ -31,8 +31,8 @@ pub use engine::{ConditionResult, TriggerEngine, TriggerUpdate};
 pub use loader::{LoadError, LoadResult, TriggerLoadContext, VanillaLoader};
 pub use script::{ScriptType, TriggerScript, TriggerVar};
 pub use value::{
-    BuildingCommandState, Cost as TriggerCost, EntityFilterSet, TriggerIterator, TriggerValue,
-    Vec3 as TriggerVec3,
+    BuildingCommandState, Color as TriggerColor, Cost as TriggerCost, EntityFilterSet, ObjectiveId,
+    TriggerIterator, TriggerValue, Vec3 as TriggerVec3,
 };
 pub use var_type::VarType;
 

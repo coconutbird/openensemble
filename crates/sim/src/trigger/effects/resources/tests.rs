@@ -121,6 +121,52 @@ fn get_player_pop_resolves_unit_slot_from_scenario_database() {
     assert_close(float(&script, 5), 5.0);
 }
 
+#[test]
+fn set_player_pop_writes_only_used_unit_population_fields_without_clamping() {
+    let database = Database {
+        game_data: Some(GameData {
+            pops: Some(PopsWrapper {
+                entries: vec!["Leader".to_owned(), "Unit".to_owned()],
+            }),
+            ..GameData::default()
+        }),
+        ..Database::default()
+    };
+    let mut world = World::new();
+    world.init_players(1);
+    let player = world.get_player_mut(1).unwrap();
+    player.configure_population_slots(2);
+    assert!(player.set_population_limits(1, 12.0, 20.0));
+    player.add_population(&[PopulationCost::new(1, 5.0)]);
+
+    let mut script = TriggerScript::new(1);
+    script.add_variable(TriggerVar::new(1, VarType::Player).with_value(TriggerValue::Player(1)));
+    script.add_variable(TriggerVar::new(2, VarType::Float).with_value(TriggerValue::Float(30.0)));
+    script.add_variable(TriggerVar::new(3, VarType::Float).with_value(TriggerValue::Float(25.0)));
+    script.add_variable(
+        TriggerVar::new(4, VarType::Float)
+            .with_value(TriggerValue::Float(9.0))
+            .null(),
+    );
+    script.add_variable(TriggerVar::new(5, VarType::Float).with_value(TriggerValue::Float(7.0)));
+    let effect = Effect::new(1, EffectType::SetPlayerPop)
+        .with_input_at(1, 1)
+        .with_input_at(2, 2)
+        .with_input_at(3, 3)
+        .with_input_at(4, 4)
+        .with_input_at(5, 5);
+
+    assert_eq!(
+        set_player_pop(&effect, &script, &mut world, Some(&database)),
+        EffectOutcome::Applied
+    );
+    let population = world.get_player(1).unwrap().get_population(1).unwrap();
+    assert_close(population.cap, 30.0);
+    assert_close(population.max, 25.0);
+    assert_close(population.future, 0.0);
+    assert_close(population.count, 7.0);
+}
+
 fn assert_close(actual: f32, expected: f32) {
     assert!((actual - expected).abs() <= f32::EPSILON);
 }

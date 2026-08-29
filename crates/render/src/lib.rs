@@ -11,6 +11,7 @@ pub mod postprocess;
 pub mod terrain;
 pub mod terrain_effect;
 pub mod ugx;
+pub mod ui;
 mod world;
 
 pub use world::{RenderPhase, WorldRenderer};

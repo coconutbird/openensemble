@@ -3,13 +3,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use glam::Mat4;
-use sim::{EntityId, World as SimWorld};
+use glam::{Mat4, Vec3};
+use num_traits::ToPrimitive;
+use sim::{EntityId, TargetingSelection, TeamId, World as SimWorld};
 
-use super::{UnitScene, simulation_entity_transform};
+use super::{UnitScene, simulation_entity_transform, simulation_entity_visible_to_team};
 use crate::environment::EnvironmentMap;
 use crate::terrain::LightingParams;
-use crate::ugx::renderer::SharedResources;
+use crate::ugx::renderer::{SelectionOverlay, SharedResources};
 use crate::ugx::{RendererResources, UnitRenderer, WorldBindings};
 use crate::{RenderPhase, WorldRenderer};
 
@@ -18,6 +19,9 @@ struct RenderedPlacement {
     proto_name: String,
     transform: Mat4,
     visible: bool,
+    visual_bounds_min: Vec3,
+    visual_bounds_max: Vec3,
+    selection: SelectionOverlay,
     renderer: UnitRenderer,
 }
 
@@ -121,6 +125,9 @@ impl UnitSceneRenderer {
                 proto_name: placement.proto_name().to_owned(),
                 transform: placement.transform,
                 visible: true,
+                visual_bounds_min: Vec3::from_array(placement.unit.bounds_min()),
+                visual_bounds_max: Vec3::from_array(placement.unit.bounds_max()),
+                selection: SelectionOverlay::default(),
                 renderer: UnitRenderer::new_with_shared(
                     device,
                     queue,
@@ -164,6 +171,9 @@ impl UnitSceneRenderer {
                     proto_name: placement.proto_name().to_owned(),
                     transform: placement.transform,
                     visible: true,
+                    visual_bounds_min: Vec3::from_array(placement.unit.bounds_min()),
+                    visual_bounds_max: Vec3::from_array(placement.unit.bounds_max()),
+                    selection: SelectionOverlay::default(),
                     renderer: UnitRenderer::new_with_shared(
                         device,
                         queue,
@@ -187,11 +197,69 @@ impl UnitSceneRenderer {
         self.update_from_world_at_time(queue, world, view_projection, lighting, 0.0);
     }
 
+    /// Present the latest sim state as visible to one team.
+    pub fn update_from_world_for_team(
+        &mut self,
+        queue: &wgpu::Queue,
+        world: &SimWorld,
+        team_id: TeamId,
+        view_projection: Mat4,
+        lighting: &LightingParams,
+    ) {
+        self.update_from_world_for_team_at_time(
+            queue,
+            world,
+            team_id,
+            view_projection,
+            lighting,
+            0.0,
+        );
+    }
+
     /// Present sim state with animated material UVs at the supplied render time.
     pub fn update_from_world_at_time(
         &mut self,
         queue: &wgpu::Queue,
         world: &SimWorld,
+        view_projection: Mat4,
+        lighting: &LightingParams,
+        time_seconds: f32,
+    ) {
+        self.update_from_world_projection(
+            queue,
+            world,
+            None,
+            view_projection,
+            lighting,
+            time_seconds,
+        );
+    }
+
+    /// Present animated sim state as visible to one team.
+    pub fn update_from_world_for_team_at_time(
+        &mut self,
+        queue: &wgpu::Queue,
+        world: &SimWorld,
+        team_id: TeamId,
+        view_projection: Mat4,
+        lighting: &LightingParams,
+        time_seconds: f32,
+    ) {
+        self.update_from_world_projection(
+            queue,
+            world,
+            Some(team_id),
+            view_projection,
+            lighting,
+            time_seconds,
+        );
+    }
+
+    fn update_from_world_projection(
+        &mut self,
+        queue: &wgpu::Queue,
+        world: &SimWorld,
+        viewer_team: Option<TeamId>,
         view_projection: Mat4,
         lighting: &LightingParams,
         time_seconds: f32,
@@ -202,7 +270,20 @@ impl UnitSceneRenderer {
                 continue;
             };
             placement.transform = transform;
-            placement.visible = true;
+            placement.selection = world
+                .entity_targeting_selection(placement.entity_id)
+                .map_or_else(SelectionOverlay::default, |selection| {
+                    project_selection(
+                        world,
+                        selection,
+                        transform,
+                        placement.visual_bounds_min,
+                        placement.visual_bounds_max,
+                    )
+                });
+            placement.visible = viewer_team.is_none_or(|team_id| {
+                simulation_entity_visible_to_team(world, team_id, placement.entity_id)
+            });
         }
         update_renderers(
             &mut self.placements,
@@ -249,13 +330,74 @@ fn update_renderers(
     time_seconds: f32,
 ) {
     for placement in placements.iter_mut().filter(|placement| placement.visible) {
-        placement.renderer.update_frame_at_time(
+        placement.renderer.update_frame_with_selection_at_time(
             queue,
             view_projection,
             placement.transform,
             lighting,
             time_seconds,
+            placement.selection,
         );
+    }
+}
+
+fn project_selection(
+    world: &SimWorld,
+    selection: TargetingSelection,
+    transform: Mat4,
+    bounds_min: Vec3,
+    bounds_max: Vec3,
+) -> SelectionOverlay {
+    let (minimum_y, maximum_y) = transformed_y_bounds(transform, bounds_min, bounds_max);
+    let extent = maximum_y - minimum_y;
+    let scale = if extent.abs() > f32::EPSILON {
+        -extent.recip()
+    } else {
+        1.0
+    };
+    let base_offset = 2.0 - minimum_y * scale;
+    let elapsed_seconds = world
+        .game_time()
+        .wrapping_sub(selection.started_at_ms())
+        .to_f32()
+        .unwrap_or(f32::MAX)
+        * 0.001;
+    let raw_scroll = elapsed_seconds * selection.scroll_speed();
+    let scroll = if raw_scroll < -4.0 {
+        -((-raw_scroll) % 4.0)
+    } else {
+        raw_scroll
+    };
+    let [r, g, b, a] = selection.color();
+    SelectionOverlay::new(
+        [
+            f32::from(r) / 255.0,
+            f32::from(g) / 255.0,
+            f32::from(b) / 255.0,
+            f32::from(a) / 255.0,
+        ],
+        scale,
+        base_offset + scroll,
+        selection.intensity(),
+    )
+}
+
+fn transformed_y_bounds(transform: Mat4, minimum: Vec3, maximum: Vec3) -> (f32, f32) {
+    let mut minimum_y = f32::INFINITY;
+    let mut maximum_y = f32::NEG_INFINITY;
+    for x in [minimum.x, maximum.x] {
+        for y in [minimum.y, maximum.y] {
+            for z in [minimum.z, maximum.z] {
+                let world_y = transform.transform_point3(Vec3::new(x, y, z)).y;
+                minimum_y = minimum_y.min(world_y);
+                maximum_y = maximum_y.max(world_y);
+            }
+        }
+    }
+    if minimum_y.is_finite() && maximum_y.is_finite() {
+        (minimum_y, maximum_y)
+    } else {
+        (0.0, 0.0)
     }
 }
 
@@ -267,5 +409,36 @@ impl WorldRenderer for UnitSceneRenderer {
         for placement in self.placements.iter().filter(|placement| placement.visible) {
             placement.renderer.render_phase(phase, pass);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Mat4, Vec3, project_selection};
+
+    #[test]
+    fn selection_projection_uses_sim_time_and_decoded_world_bounds() {
+        let mut world = sim::World::new();
+        let unit_id = world.create_unit(1);
+        assert!(world.flash_entity(unit_id, 500, 3_000, [255, 255, 0, 255], 80.0));
+        world.game_time_ms = 500;
+        let selection = world.entity_targeting_selection(unit_id).unwrap();
+        let overlay = project_selection(
+            &world,
+            selection,
+            Mat4::from_translation(Vec3::new(0.0, 10.0, 0.0)),
+            Vec3::new(-1.0, -1.0, -1.0),
+            Vec3::new(1.0, 1.0, 1.0),
+        );
+
+        assert_eq!(
+            overlay.color().map(f32::to_bits),
+            [1.0, 1.0, 0.0, 1.0].map(f32::to_bits)
+        );
+        let params = overlay.params();
+        assert_eq!(params[0].to_bits(), (-0.5_f32).to_bits());
+        assert_eq!(params[1].to_bits(), 4.5_f32.to_bits());
+        assert_eq!(params[2].to_bits(), 80.0_f32.to_bits());
+        assert_eq!(params[3].to_bits(), 1.0_f32.to_bits());
     }
 }

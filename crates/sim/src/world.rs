@@ -3,7 +3,7 @@
 //! Based on `BWorld` from the original source.
 
 use crate::entities::squads::{formation_offset_to_local, formation_offset_to_world};
-use crate::entities::{Base, BaseId, Projectile, Squad, Unit};
+use crate::entities::{Base, BaseId, Object, Projectile, Squad, Unit};
 use crate::entity::{Entity, EntityManager};
 use crate::entity_id::{EntityClass, EntityId};
 use crate::physics::{
@@ -15,11 +15,13 @@ use glam::Vec3;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod ability;
+mod bounds;
 mod checksum;
 mod combat;
 mod construction;
 mod control;
 mod custom_commands;
+mod design_lines;
 mod events;
 mod game_settings;
 mod garrison;
@@ -27,26 +29,41 @@ mod health;
 mod hitch;
 mod idle;
 mod lifecycle;
+#[cfg(test)]
+mod lifecycle_tests;
+mod object_state;
 mod object_types;
+mod objectives;
 mod orders;
 mod ownership;
 mod powers;
+mod presentation;
 mod production;
 mod proto_data;
 mod query;
+mod rally_points;
 mod research;
 mod resources;
 mod roster;
+mod scoring;
 mod shields;
 pub(crate) mod sockets;
 mod spatial;
 mod team;
 mod technology;
+mod terrain;
+mod time;
+mod timers;
+mod tower_walls;
 mod training;
+mod transports;
 mod triggers;
+mod visibility;
 
+pub use bounds::WorldBounds;
 pub use construction::{ConstructionError, ConstructionQueueResult};
 pub use custom_commands::{CustomCommand, CustomCommandFlags};
+pub use design_lines::DesignLineId;
 pub(crate) use events::EventEntityParameter;
 pub use events::{
     ChatRequest, CinematicRequest, GeneralEvent, GeneralEventType, PresentationRequest,
@@ -54,10 +71,18 @@ pub use events::{
 pub use garrison::GarrisonError;
 pub use health::UnitHealth;
 pub use hitch::HitchError;
+pub use objectives::ObjectiveState;
 pub use powers::power_prototype_id;
+pub use presentation::{
+    CameraControlPermissions, CameraDirective, HintCallout, HintCalloutAnchor, HudItem,
+    PlayerPresentationState, ScreenFadeOverlay, ScreenFadeSequence,
+};
 pub use production::ProductionUpdate;
 pub use research::{ResearchError, ResearchQueueResult, technology_prototype_id};
+pub use scoring::ScenarioScoreInfo;
 pub use technology::TechnologyError;
+pub use terrain::TerrainLoadError;
+pub use timers::{GameTimer, GameTimerAudience};
 pub(crate) use training::TriggerTrainingRequest;
 pub use training::{
     MAX_TRAIN_BATCH, TrainingError, TrainingQueueResult, object_runtime_id, squad_runtime_id,
@@ -79,12 +104,32 @@ pub struct World {
     team_relations: [[TeamRelation; MAX_TEAMS]; MAX_TEAMS],
     /// Whether the current game was configured as campaign co-op.
     coop: bool,
+    /// Whether gameplay fog of war is enabled for every team.
+    fog_of_war_enabled: bool,
+    /// Whether every team's whole terrain map has been explored.
+    black_map_cleared: bool,
+    /// Scenario-authored campaign scoring configuration.
+    scenario_score: scoring::ScenarioScoreState,
+    /// Scenario-authored path geometry keyed by retail design-line ID.
+    design_lines: design_lines::DesignLineState,
+    /// Scenario-authored objectives in their retail manager order.
+    objectives: Vec<ObjectiveState>,
+    /// Full horizontal terrain extent loaded from the active scenario XTD.
+    terrain_bounds: Option<WorldBounds>,
+    /// Active scenario-playable subset; `None` uses the full terrain extent.
+    playable_bounds: Option<WorldBounds>,
+    /// Retail XSD simulation terrain used by gameplay height queries.
+    terrain_simulation: Option<terrain::TerrainSimulation>,
     /// Deterministic configuration symbols visible to retail trigger scripts.
     config_symbols: BTreeSet<String>,
     /// Retail general-event subscriptions and completion state.
     general_events: events::GeneralEventState,
     /// Renderer-facing requests authored by the authoritative simulation.
     presentation: events::PresentationState,
+    /// Durable trigger-authored controls projected by renderer/UI clients.
+    presentation_control: presentation::PresentationControlState,
+    /// Retail's fixed four-slot trigger timer manager.
+    game_timers: timers::GameTimerState,
     /// Scenario-authored custom command buttons keyed by retail command ID.
     custom_commands: BTreeMap<i32, CustomCommand>,
     /// Next monotonically assigned retail custom command ID.
@@ -103,6 +148,8 @@ pub struct World {
     prototype_object_types: BTreeMap<i32, Vec<String>>,
     /// Proto-squad name and maximum child count keyed by live database ID.
     prototype_squads: BTreeMap<i32, (String, u32)>,
+    /// Class-0 invisible and world-control objects.
+    pub objects: EntityManager<Object>,
     /// Unit pool. Mobile units and buildings both use vanilla class 1.
     pub units: EntityManager<Unit>,
     /// Squad entity manager.
@@ -133,9 +180,19 @@ impl World {
             players: Vec::new(),
             team_relations: neutral_team_relations(),
             coop: false,
+            fog_of_war_enabled: true,
+            black_map_cleared: false,
+            scenario_score: scoring::ScenarioScoreState::default(),
+            design_lines: design_lines::DesignLineState::default(),
+            objectives: Vec::new(),
+            terrain_bounds: None,
+            playable_bounds: None,
+            terrain_simulation: None,
             config_symbols: BTreeSet::new(),
             general_events: events::GeneralEventState::default(),
             presentation: events::PresentationState::default(),
+            presentation_control: presentation::PresentationControlState::default(),
+            game_timers: timers::GameTimerState::default(),
             custom_commands: BTreeMap::new(),
             next_custom_command_id: 0,
             custom_command_executions: Vec::new(),
@@ -145,6 +202,7 @@ impl World {
             construction_damage_multiplier: 1.0,
             prototype_object_types: BTreeMap::new(),
             prototype_squads: BTreeMap::new(),
+            objects: EntityManager::new(EntityClass::Object),
             units: EntityManager::new(EntityClass::Unit),
             squads: EntityManager::new(EntityClass::Squad),
             projectiles: EntityManager::new(EntityClass::Projectile),
@@ -169,6 +227,10 @@ impl World {
 
     pub(crate) fn trigger_random_index(&mut self, maximum: u32) -> u32 {
         self.sim_rng.index(maximum)
+    }
+
+    pub(crate) fn trigger_random_float(&mut self, minimum: f32, maximum: f32) -> f32 {
+        self.sim_rng.range_float(minimum, maximum)
     }
 
     /// Initialize the world with the given number of players.
@@ -227,47 +289,6 @@ impl World {
         self.players.iter_mut().skip(1)
     }
 
-    /// Get current game time in milliseconds.
-    #[must_use]
-    pub fn game_time(&self) -> u32 {
-        self.game_time_ms
-    }
-
-    /// Advance game time by the given milliseconds.
-    pub fn advance_time(&mut self, ms: u32) {
-        self.game_time_ms = self.game_time_ms.wrapping_add(ms);
-    }
-
-    pub(crate) fn set_construction_damage_multiplier(&mut self, multiplier: Option<f32>) {
-        self.construction_damage_multiplier = multiplier
-            .filter(|value| value.is_finite() && *value >= 0.0)
-            .unwrap_or(1.0);
-    }
-
-    /// Reset the world to initial state.
-    pub fn reset(&mut self) {
-        self.players.clear();
-        self.team_relations = neutral_team_relations();
-        self.coop = false;
-        self.config_symbols.clear();
-        self.general_events = events::GeneralEventState::default();
-        self.presentation = events::PresentationState::default();
-        self.custom_commands.clear();
-        self.next_custom_command_id = 0;
-        self.custom_command_executions.clear();
-        self.game_time_ms = 0;
-        self.construction_damage_multiplier = 1.0;
-        self.prototype_object_types.clear();
-        self.prototype_squads.clear();
-        self.units.clear();
-        self.squads.clear();
-        self.projectiles.clear();
-        self.bases.clear();
-        self.next_base_id = 0;
-        self.trigger_engine = crate::trigger::TriggerEngine::new();
-        self.pending_building_command_events.clear();
-    }
-
     /// Create a new squad for the given player.
     pub fn create_squad(&mut self, player_id: PlayerId) -> EntityId {
         self.create_squad_at(player_id, Vec3::ZERO)
@@ -298,8 +319,18 @@ impl World {
         self.prepare_remove_squad_garrison(id);
         self.detach_squad_hitch(id);
         let squad = self.squads.remove(id)?;
+        self.remove_hint_callouts_for_entity(id);
         for (_, other_squad) in self.squads.iter_mut() {
             other_squad.clear_teleporter_destination(id);
+            other_squad.remove_associated_wall_tower(id);
+        }
+        for (_, unit) in self.units.iter_mut() {
+            if unit
+                .tower_wall
+                .is_some_and(|action| action.target_squad_id() == id)
+            {
+                unit.tower_wall = None;
+            }
         }
         if let Some(player) = self.get_player_mut(squad.base.player_id) {
             player.revoke_first_power_from_squad(id);
@@ -403,6 +434,7 @@ impl World {
         self.prepare_remove_unit_garrison(id);
         self.detach_unit_socket_refs(id);
         let unit = self.units.remove(id)?;
+        self.remove_hint_callouts_for_entity(id);
         self.refund_production_for_removed_unit(&unit);
         if let Some(player) = self.get_player_mut(unit.base.player_id) {
             player.release_population(&unit.population_costs);
@@ -441,6 +473,7 @@ impl World {
         }
         let shielded = unit.shields.is_enabled();
         let old_squad_id = unit.squad_id;
+        let reverse_move = squad.is_reverse_moving();
         let formation_offset =
             formation_offset_to_local(squad.base.forward, unit.base.position - squad.base.position);
         if old_squad_id == Some(squad_id) {
@@ -465,6 +498,7 @@ impl World {
             return false;
         };
         unit.squad_id = Some(squad_id);
+        unit.set_reverse_move(reverse_move);
         unit.shields.clear_recharge_request();
         unit.formation_offset = formation_offset;
         unit.stop();
@@ -609,13 +643,17 @@ impl World {
         dt: f32,
         gameplay: Option<&crate::gameplay::GameplayCatalog>,
     ) {
+        self.update_game_timers();
+        self.update_screen_fade();
         let Some((step_count, step_duration)) = substeps(dt) else {
             return;
         };
         for _ in 0..step_count {
             self.update_entity_substep(step_duration, gameplay);
         }
+        self.update_revealers(dt);
         self.update_idle_actions(dt);
+        self.update_object_states();
     }
 
     fn update_entity_substep(
@@ -624,9 +662,11 @@ impl World {
         gameplay: Option<&crate::gameplay::GameplayCatalog>,
     ) {
         if let Some(gameplay) = gameplay {
+            self.update_attack_move_orders(gameplay);
             self.update_combat_orders(dt, gameplay);
             self.update_shields(dt, gameplay);
         }
+        self.update_transport_fly_ins(dt);
         let physics_anchors = prepare_squad_movement(&self.squads, &mut self.units);
         for (_, squad) in self.squads.iter_mut() {
             squad.update_recovery(dt);
@@ -949,33 +989,5 @@ mod tests {
             world.get_unit(unit_id).unwrap().base.position,
             detached_position
         );
-    }
-
-    #[test]
-    fn removing_an_anchor_dissolves_base_membership() {
-        let mut world = World::new();
-        let anchor_id = world.create_building(1);
-        let base_id = world.register_base(anchor_id).unwrap();
-        let second_id = world.create_building(1);
-        assert!(world.add_building_to_base(base_id, second_id));
-
-        let removed = world.remove_unit(anchor_id);
-
-        assert!(removed.is_some());
-        assert!(world.get_base(base_id).is_none());
-        assert_eq!(world.get_building(second_id).unwrap().base_id, None);
-    }
-
-    #[test]
-    fn dead_units_are_removed_and_stale_ids_fail() {
-        let mut world = World::new();
-        let old_id = world.create_unit(1);
-        world.get_unit_mut(old_id).unwrap().kill();
-        world.update_entities(0.05);
-        let replacement_id = world.create_unit(1);
-
-        assert!(world.get_unit(old_id).is_none());
-        assert_eq!(old_id.pool_index(), replacement_id.pool_index());
-        assert_ne!(old_id.generation(), replacement_id.generation());
     }
 }

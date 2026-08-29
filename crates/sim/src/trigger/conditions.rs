@@ -13,6 +13,7 @@ use pipeline::database::hw1::Database;
 mod command_state;
 mod dispatch;
 mod events;
+mod forbids;
 mod game_settings;
 mod hitch;
 mod iterators;
@@ -21,6 +22,7 @@ mod list_selection;
 mod queries;
 mod sockets;
 mod spatial;
+mod timers;
 
 use dispatch::evaluate_condition_with_database;
 
@@ -503,9 +505,14 @@ fn is_proto_object(condition: &Condition, script: &TriggerScript, world: &World)
     let Some(proto_id) = value_at(condition, script, 2).and_then(as_i32) else {
         return false;
     };
-    entity_at(condition, script, 3)
-        .and_then(|unit_id| world.get_unit(unit_id))
-        .is_some_and(|unit| unit.proto_object_id == proto_id)
+    entity_at(condition, script, 3).is_some_and(|entity_id| {
+        world
+            .get_object(entity_id)
+            .is_some_and(|object| object.proto_object_id == proto_id)
+            || world
+                .get_unit(entity_id)
+                .is_some_and(|unit| unit.proto_object_id == proto_id)
+    })
 }
 
 fn is_object_type(condition: &Condition, script: &TriggerScript, world: &World) -> bool {
@@ -736,6 +743,7 @@ fn as_i32(value: &TriggerValue) -> Option<i32> {
         | TriggerValue::ProtoObject(value)
         | TriggerValue::ProtoSquad(value)
         | TriggerValue::Tech(value)
+        | TriggerValue::DesignLine(value)
         | TriggerValue::Objective(value) => Some(*value),
         TriggerValue::Trigger(value) => i32::try_from(*value).ok(),
         _ => None,
@@ -810,11 +818,7 @@ fn unique_entity(entities: &mut Vec<EntityId>, entity_id: EntityId) {
 }
 
 fn entity_owner(world: &World, entity_id: EntityId) -> Option<u8> {
-    match entity_id.class() {
-        Some(EntityClass::Unit) => world.get_unit(entity_id).map(|unit| unit.base.player_id),
-        Some(EntityClass::Squad) => world.get_squad(entity_id).map(|squad| squad.base.player_id),
-        _ => None,
-    }
+    world.entity_owner(entity_id)
 }
 
 fn write_time(script: &mut TriggerScript, variable_id: VarId, value: u32) {

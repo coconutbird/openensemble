@@ -2,7 +2,7 @@
 
 use super::World;
 use super::team::hash_team_relations;
-use crate::entities::{Base, BaseEntity, BaseId, Projectile, Squad, Unit};
+use crate::entities::{Base, BaseEntity, BaseId, Object, ObjectKind, Projectile, Squad, Unit};
 use crate::entity::EntityManager;
 use crate::entity_id::EntityId;
 use crate::player::{Player, PopulationCost};
@@ -21,14 +21,30 @@ impl World {
         let mut checksum = SyncChecksum::new();
         checksum.hash_u32(self.game_time_ms);
         checksum.hash_u32(u32::from(self.coop));
+        checksum.hash_u32(u32::from(self.fog_of_war_enabled));
+        checksum.hash_u32(u32::from(self.black_map_cleared));
+        self.scenario_score.hash_state(&mut checksum);
+        self.design_lines.hash_state(&mut checksum);
+        self.hash_objectives(&mut checksum);
+        hash_optional_bounds(&mut checksum, self.terrain_bounds);
+        hash_optional_bounds(&mut checksum, self.playable_bounds);
+        if let Some(terrain) = &self.terrain_simulation {
+            checksum.hash_u32(1);
+            terrain.hash_state(&mut checksum);
+        } else {
+            checksum.hash_u32(0);
+        }
         hash_config_symbols(&mut checksum, self.config_symbols());
         self.general_events.hash_state(&mut checksum);
         self.presentation.hash_state(&mut checksum);
+        self.presentation_control.hash_state(&mut checksum);
+        self.game_timers.hash_state(&mut checksum);
         self.hash_custom_commands(&mut checksum);
         checksum.hash_f32(self.construction_damage_multiplier);
         self.hash_prototype_catalogs(&mut checksum);
         hash_players(&mut checksum, &self.players);
         hash_team_relations(&mut checksum, &self.team_relations);
+        hash_objects(&mut checksum, &self.objects);
         hash_units(&mut checksum, &self.units);
         hash_squads(&mut checksum, &self.squads);
         hash_projectiles(&mut checksum, &self.projectiles);
@@ -57,6 +73,36 @@ impl World {
         }
         checksum.hash_u32(self.sim_rng.seed());
         checksum.value()
+    }
+}
+
+fn hash_optional_bounds(checksum: &mut SyncChecksum, bounds: Option<super::WorldBounds>) {
+    if let Some(bounds) = bounds {
+        checksum.hash_u32(1);
+        bounds.hash_state(checksum);
+    } else {
+        checksum.hash_u32(0);
+    }
+}
+
+fn hash_objects(checksum: &mut SyncChecksum, objects: &EntityManager<Object>) {
+    checksum.hash_u32(u32::try_from(objects.len()).unwrap_or(u32::MAX));
+    for (_, object) in objects.iter() {
+        hash_base_entity(checksum, &object.base);
+        object.object_state.hash_state(checksum);
+        checksum.hash_i32(object.proto_object_id);
+        checksum.hash_u32(u32::try_from(object.proto_object_name.len()).unwrap_or(u32::MAX));
+        checksum.hash_bytes(object.proto_object_name.as_bytes());
+        match &object.kind {
+            ObjectKind::Revealer(revealer) => {
+                checksum.hash_u32(0);
+                checksum.hash_u32(u32::from(revealer.team_id()));
+                checksum.hash_f32(revealer.line_of_sight_scalar());
+                checksum.hash_f32(revealer.line_of_sight());
+                checksum.hash_f32(revealer.reveal_fraction());
+                checksum.hash_u32(revealer.lifespan_expiration_ms().unwrap_or(u32::MAX));
+            }
+        }
     }
 }
 
@@ -92,6 +138,8 @@ fn hash_players(checksum: &mut SyncChecksum, players: &[Player]) {
             checksum.hash_f32(population.future);
         }
         player.technologies.hash_state(checksum);
+        player.hash_rally_point_state(checksum);
+        player.hash_forbid_state(checksum);
         player.hash_power_state(checksum);
         player.research.hash_state(checksum);
     }
@@ -110,6 +158,7 @@ fn hash_units(checksum: &mut SyncChecksum, units: &EntityManager<Unit>) {
     checksum.hash_u32(u32::try_from(units.len()).unwrap_or(u32::MAX));
     for (_, unit) in units.iter() {
         hash_base_entity(checksum, &unit.base);
+        unit.object_state.hash_state(checksum);
         checksum.hash_u32(unit.kind as u32);
         checksum.hash_u32(unit.archetype as u32);
         checksum.hash_u32(unit.state as u32);
@@ -124,6 +173,7 @@ fn hash_units(checksum: &mut SyncChecksum, units: &EntityManager<Unit>) {
         }
         checksum.hash_u32(u32::from(unit.flying));
         checksum.hash_u32(u32::from(unit.is_auto_attackable()));
+        checksum.hash_u32(u32::from(unit.is_reverse_moving()));
         checksum.hash_f32(unit.hitpoints);
         checksum.hash_f32(unit.max_hitpoints);
         unit.shields.hash_state(checksum);
@@ -155,7 +205,14 @@ fn hash_units(checksum: &mut SyncChecksum, units: &EntityManager<Unit>) {
         unit.actions.hash_state(checksum);
         unit.garrison.hash_state(checksum);
         unit.combat.hash_state(checksum);
+        if let Some(tower_wall) = unit.tower_wall {
+            checksum.hash_u32(1);
+            tower_wall.hash_state(checksum);
+        } else {
+            checksum.hash_u32(0);
+        }
         unit.production.hash_state(checksum);
+        unit.hash_rally_point_state(checksum);
         checksum.hash_u32(u32::from(unit.built));
         hash_optional_entity_id(checksum, unit.built_by);
         hash_optional_entity_id(checksum, unit.build_socket_id);
@@ -190,6 +247,7 @@ fn hash_projectiles(checksum: &mut SyncChecksum, projectiles: &EntityManager<Pro
     checksum.hash_u32(u32::try_from(projectiles.len()).unwrap_or(u32::MAX));
     for (_, projectile) in projectiles.iter() {
         hash_base_entity(checksum, &projectile.base);
+        projectile.object_state.hash_state(checksum);
         projectile.hash_state(checksum);
     }
 }
@@ -211,7 +269,11 @@ fn hash_squads(checksum: &mut SyncChecksum, squads: &EntityManager<Squad>) {
         checksum.hash_f32(squad.turn_radius);
         checksum.hash_f32(squad.min_turn_radius);
         checksum.hash_f32(squad.max_turn_radius);
+        checksum.hash_f32(squad.aggro_distance);
+        checksum.hash_f32(squad.leash_distance);
+        checksum.hash_u32(u32::from(squad.is_reverse_moving()));
         hash_optional_vec3(checksum, squad.move_target);
+        squad.hash_order_state(checksum);
         hash_optional_entity_id(checksum, squad.attack_target);
         checksum.hash_f32(squad.attack_range);
         checksum.hash_u32(squad.mode as u32);
@@ -228,9 +290,17 @@ fn hash_squads(checksum: &mut SyncChecksum, squads: &EntityManager<Squad>) {
         hash_optional_entity_id(checksum, squad.trained_by);
         checksum.hash_u32(squad.train_limit_bucket.map_or(u32::MAX, u32::from));
         hash_optional_entity_id(checksum, squad.teleporter_destination);
+        checksum.hash_u32(u32::try_from(squad.associated_wall_towers().len()).unwrap_or(u32::MAX));
+        for &target in squad.associated_wall_towers() {
+            checksum.hash_u32(target.as_u32());
+        }
         hash_optional_entity_id(checksum, squad.towing_partner);
         hash_optional_entity_id(checksum, squad.trailer_partner);
         squad.garrison.hash_state(checksum);
+        checksum.hash_u32(u32::from(squad.transport_fly_in.is_some()));
+        if let Some(action) = &squad.transport_fly_in {
+            action.hash_state(checksum);
+        }
     }
 }
 

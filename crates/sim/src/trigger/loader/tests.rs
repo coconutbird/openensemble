@@ -110,6 +110,18 @@ fn runtime_container_variables_load_as_typed_empty_state() {
         TriggerValue::IntegerList(Vec::new())
     );
     assert_eq!(
+        parse_var_value("", VarType::DesignLine, TriggerLoadContext::default()),
+        TriggerValue::DesignLine(-1)
+    );
+    assert_eq!(
+        parse_var_value(
+            "12, 12, 31",
+            VarType::DesignLineList,
+            TriggerLoadContext::default()
+        ),
+        TriggerValue::DesignLineList(vec![12, 12, 31])
+    );
+    assert_eq!(
         parse_var_value("", VarType::Cost, TriggerLoadContext::default()),
         TriggerValue::Cost(Cost::default())
     );
@@ -186,6 +198,7 @@ fn loader_preserves_types_for_empty_non_null_variables() {
                 <TriggerVar ID="2" Type="TeamList"></TriggerVar>
                 <TriggerVar ID="3" Type="Cost"></TriggerVar>
                 <TriggerVar ID="4" Type="Vector"></TriggerVar>
+                <TriggerVar ID="5" Type="DesignLineList"></TriggerVar>
             </TriggerVars>
             <Triggers />
         </TriggerSystem>"#,
@@ -208,6 +221,10 @@ fn loader_preserves_types_for_empty_non_null_variables() {
     assert_eq!(
         script.get_variable(4).map(|variable| &variable.value),
         Some(&TriggerValue::Vector(Vec3::default()))
+    );
+    assert_eq!(
+        script.get_variable(5).map(|variable| &variable.value),
+        Some(&TriggerValue::DesignLineList(Vec::new()))
     );
 }
 

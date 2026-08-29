@@ -1,6 +1,6 @@
 //! Projectile entities owned and advanced by the authoritative simulation.
 
-use crate::entities::BaseEntity;
+use crate::entities::{BaseEntity, ObjectState};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::ProjectileProfile;
@@ -39,6 +39,8 @@ pub(crate) struct ProjectileLaunch {
 pub struct Projectile {
     /// Common entity state used directly by presentation systems.
     pub base: BaseEntity,
+    /// Runtime state inherited from retail `BObject`.
+    pub object_state: ObjectState,
     /// Database proto-object ID, or `-1` when unresolved.
     pub proto_object_id: i32,
     /// Proto-object name retained for rendering and checksums.
@@ -96,6 +98,7 @@ impl Projectile {
         base.velocity = forward * current_speed;
         Self {
             base,
+            object_state: ObjectState::default(),
             proto_object_id: profile.proto_object_id,
             proto_object_name: profile.proto_object_name.clone(),
             source_id: launch.source_id,

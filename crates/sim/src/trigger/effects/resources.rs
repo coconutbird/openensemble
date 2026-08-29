@@ -163,6 +163,44 @@ pub(super) fn get_player_pop(
     EffectOutcome::Applied
 }
 
+pub(super) fn set_player_pop(
+    effect: &Effect,
+    script: &TriggerScript,
+    world: &mut World,
+    database: Option<&Database>,
+) -> EffectOutcome {
+    let Some(database) = database else {
+        return EffectOutcome::Skipped;
+    };
+    let Some(player_id) = player_id_at(effect, script, 1) else {
+        return EffectOutcome::Skipped;
+    };
+    let Some(population_type) = crate::scenario::population::population_type_id(database, "Unit")
+    else {
+        return EffectOutcome::Skipped;
+    };
+    let Some(population) = world
+        .get_player_mut(player_id)
+        .and_then(|player| player.get_population_mut(population_type))
+    else {
+        return EffectOutcome::Skipped;
+    };
+
+    if let Some(value) = optional_float_at(effect, script, 2) {
+        population.cap = value;
+    }
+    if let Some(value) = optional_float_at(effect, script, 3) {
+        population.max = value;
+    }
+    if let Some(value) = optional_float_at(effect, script, 4) {
+        population.future = value;
+    }
+    if let Some(value) = optional_float_at(effect, script, 5) {
+        population.count = value;
+    }
+    EffectOutcome::Applied
+}
+
 pub(super) fn change_technology(
     effect: &Effect,
     script: &TriggerScript,
@@ -233,6 +271,15 @@ fn as_i32(value: &TriggerValue) -> Option<i32> {
         }
         _ => None,
     }
+}
+
+fn optional_float_at(effect: &Effect, script: &TriggerScript, signature_id: u16) -> Option<f32> {
+    used_variable_id(effect, script, signature_id).and_then(|_| {
+        let TriggerValue::Float(value) = value_at(effect, script, signature_id)? else {
+            return None;
+        };
+        Some(*value)
+    })
 }
 
 fn resources_from_cost(cost: &crate::trigger::value::Cost) -> Resources {

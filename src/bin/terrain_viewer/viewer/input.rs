@@ -47,6 +47,14 @@ fn debug_button_row(ui: &mut egui::Ui, debug_mode: &mut u32, buttons: &[(&str, u
 }
 
 impl TerrainViewer {
+    fn synchronize_camera_presentation(&mut self) -> sim::PlayerPresentationState {
+        let Some(simulation) = &self.simulation else {
+            return sim::PlayerPresentationState::default();
+        };
+        self.camera_adapter
+            .synchronize(&mut self.camera, &simulation.world, 1)
+    }
+
     fn update_simulation_controls(&mut self, input: &Input) {
         if input.is_key_pressed(KeyCode::M) {
             self.spawn_player_marines(1);
@@ -262,6 +270,109 @@ impl TerrainViewer {
             });
     }
 
+    fn draw_hint_callouts(&self, ctx: &egui::Context) {
+        let (Some(simulation), Some(content)) = (&self.simulation, &self.game_content) else {
+            return;
+        };
+        let screen = ctx.screen_rect();
+        if screen.width() <= 0.0 || screen.height() <= 0.0 {
+            return;
+        }
+        let view_projection = self
+            .camera
+            .view_projection_matrix(screen.width() / screen.height());
+        for callout in render::terrain::project_hint_callouts(
+            &simulation.world,
+            view_projection,
+            [screen.width(), screen.height()],
+        ) {
+            let fallback = format!("String {}", callout.string_id);
+            let text = content
+                .resolve_string(callout.string_id)
+                .unwrap_or(&fallback);
+            egui::Area::new(egui::Id::new(("simulation_hint_callout", callout.id)))
+                .fixed_pos(egui::pos2(
+                    callout.screen_position[0],
+                    callout.screen_position[1],
+                ))
+                .pivot(egui::Align2::CENTER_BOTTOM)
+                .interactable(false)
+                .show(ctx, |ui| {
+                    egui::Frame::new()
+                        .fill(egui::Color32::from_black_alpha(210))
+                        .stroke(egui::Stroke::new(1.0_f32, egui::Color32::LIGHT_BLUE))
+                        .inner_margin(egui::Margin::symmetric(10, 6))
+                        .corner_radius(4.0)
+                        .show(ui, |ui| {
+                            ui.set_max_width(280.0);
+                            ui.colored_label(egui::Color32::WHITE, text);
+                        });
+                });
+        }
+    }
+
+    fn draw_game_timer(&mut self, ctx: &egui::Context) {
+        let (Some(simulation), Some(content)) = (&self.simulation, &self.game_content) else {
+            return;
+        };
+        let Some(timer) = self.timer_adapter.synchronize(&simulation.world, 1, true) else {
+            return;
+        };
+        let timer_id = timer.id();
+        let label_string_id = timer.label_string_id();
+        let time = render::ui::format_game_timer(timer.current_time_ms());
+        let fallback = label_string_id.map(|string_id| format!("String {string_id}"));
+        let label = label_string_id
+            .and_then(|string_id| content.resolve_string(string_id).or(fallback.as_deref()));
+        let screen_rect = ctx.screen_rect();
+        egui::Area::new(egui::Id::new(("simulation_game_timer", timer_id)))
+            .fixed_pos(egui::pos2(screen_rect.width() / 2.0, 52.0))
+            .pivot(egui::Align2::CENTER_TOP)
+            .interactable(false)
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(egui::Color32::from_black_alpha(210))
+                    .stroke(egui::Stroke::new(1.0_f32, egui::Color32::LIGHT_BLUE))
+                    .inner_margin(egui::Margin::symmetric(16, 8))
+                    .corner_radius(4.0)
+                    .show(ui, |ui| {
+                        ui.vertical_centered(|ui| {
+                            if let Some(label) = label {
+                                ui.colored_label(egui::Color32::WHITE, label);
+                            }
+                            ui.label(
+                                egui::RichText::new(time)
+                                    .color(egui::Color32::WHITE)
+                                    .size(24.0)
+                                    .monospace(),
+                            );
+                        });
+                    });
+            });
+    }
+
+    fn draw_screen_fade(&self, ctx: &egui::Context) {
+        let Some(simulation) = &self.simulation else {
+            return;
+        };
+        let Some([red, green, blue, alpha]) = render::ui::screen_fade_rgba(&simulation.world)
+        else {
+            return;
+        };
+        if alpha == 0 {
+            return;
+        }
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("simulation_screen_fade"),
+        ));
+        painter.rect_filled(
+            ctx.screen_rect(),
+            0.0,
+            egui::Color32::from_rgba_unmultiplied(red, green, blue, alpha),
+        );
+    }
+
     fn draw_scene_information(&self, ui: &mut egui::Ui) {
         ui.label(format!(
             "Camera: ({:.1}, {:.1}, {:.1})",
@@ -397,7 +508,8 @@ impl Application for TerrainViewer {
         self.update_bump_power(input);
         self.update_simulation_controls(input);
         self.advance_simulation(ctx.delta_time);
-        self.camera.update(input, ctx.delta_time);
+        let camera_state = self.synchronize_camera_presentation();
+        self.camera.update(input, ctx.delta_time, camera_state);
         self.update_compositor_lod();
         true
     }
@@ -407,9 +519,12 @@ impl Application for TerrainViewer {
             return;
         }
         self.draw_hud(ctx);
+        self.draw_game_timer(ctx);
+        self.draw_hint_callouts(ctx);
         if self.show_info {
             self.draw_information_window(ctx);
         }
+        self.draw_screen_fade(ctx);
     }
 
     fn render(&mut self, _ctx: &FrameContext) -> Color {

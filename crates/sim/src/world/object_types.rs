@@ -126,6 +126,9 @@ impl World {
         object_type: &str,
     ) -> Option<bool> {
         match entity_id.class() {
+            Some(EntityClass::Object) => self.get_object(entity_id).and_then(|value| {
+                self.prototype_object_type_match(value.proto_object_id, object_type)
+            }),
             Some(EntityClass::Unit) => self.unit_object_type_match(entity_id, object_type),
             Some(EntityClass::Squad) => self.squad_object_type_match(entity_id, object_type),
             Some(EntityClass::Projectile) => self.get_projectile(entity_id).and_then(|value| {

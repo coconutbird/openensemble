@@ -293,7 +293,7 @@ impl World {
         if authored_unobtainable(technology) {
             return TechStatus::Unobtainable;
         }
-        if has_flag(technology, "Forbid") || technology.alpha == Some(1) {
+        if player.is_technology_forbidden(database, technology_id) || technology.alpha == Some(1) {
             return TechStatus::Obtainable;
         }
         if prerequisites_met(self, player, database, technology) {

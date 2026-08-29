@@ -273,6 +273,8 @@ pub enum EffectType {
 
     // UI
     UIUnlock = 330,
+    HudToggle = 526,
+    SetRenderTerrainSkirt = 532,
 
     // List diff
     SquadListDiff = 334,
@@ -387,13 +389,29 @@ pub enum EffectType {
 
     // Late copy/list operations
     CopyLocStringID = 818,
+    CreateObstructionUnit = 833,
     ObjectListRemove = 836,
+
+    // Whole-map exploration
+    ClearBlackMap = 863,
+
+    // Renderer/UI presentation controls
+    HintCalloutCreate = 809,
+    HintCalloutDestroy = 810,
+    SetCamera = 884,
+    FadeToColor = 912,
+    FadeTransition = 922,
 
     // Batch squad creation
     CreateSquads = 875,
 
     // Design
     DesignLineGetPoints = 460,
+    CopyDesignLineList = 867,
+    DesignLineListAdd = 868,
+    DesignLineListRemove = 869,
+    DesignLineListGetSize = 870,
+    CopyDesignLine = 872,
     DesignFindSphere = 425,
     ModifyDataScalar = 413,
     ModifyProtoData = 237,
@@ -411,6 +429,22 @@ pub enum EffectType {
     GetCost = 679,
     GetPop = 736,
 
+    // Game timers
+    CreateTimer = 658,
+    DestroyTimer = 659,
+
+    // Scenario world bounds
+    SetPlayableBounds = 712,
+    ResetBlackMap = 713,
+
+    // Player population state
+    SetPlayerPop = 741,
+
+    // Rally points
+    RallyPointSet = 717,
+    RallyPointClear = 718,
+    RallyPointGet = 719,
+
     // AI force analysis
     AIAnalyzeSquadList = 668,
     AIAnalyzeOffenseAToB = 669,
@@ -421,6 +455,29 @@ pub enum EffectType {
 
     // Scenario transport setup
     SetTeleporterDestination = 967,
+
+    // Scenario scoring
+    SetScenarioScoreInfo = 984,
+
+    // Entity presentation and fog-memory policy
+    FlashEntity = 1000,
+    SetTowerWallDestination = 1001,
+    ResetDopple = 1007,
+
+    // Objective counters
+    ObjectiveIncrementCounter = 935,
+    ObjectiveDecrementCounter = 936,
+    ObjectiveGetCurrentCounter = 937,
+    ObjectiveGetFinalCounter = 938,
+
+    // Late renderer/UI presentation controls
+    IgnoreDpad = 1034,
+    EnableScreenBlur = 1037,
+    PowerMenuEnable = 1044,
+    SetMinimapNorthPointerRotation = 1045,
+    HideCircleMenu = 1048,
+    SetMinimapSkirtMirroring = 1054,
+    LockPlayerUser = 1061,
 
     /// Custom effect for scripting extensions (not in vanilla).
     Custom = 0xFFFF,
@@ -521,6 +578,8 @@ impl EffectType {
             | 510
             | 516
             | 519
+            | 526
+            | 532
             | 559
             | 562
             | 569..=574
@@ -530,25 +589,50 @@ impl EffectType {
             | 633
             | 634
             | 646 | 647
+            | 658 | 659
             | 668 | 669 | 672 | 674
             | 670
             | 678 | 679
+             | 712
+             | 713
+            | 717..=719
             | 729
             | 736
+            | 741
             | 748
+            | 809
+            | 810
             | 811
             | 812
             | 818
+            | 833
             | 836
-            | 837..=840
+             | 837..=840
+            | 863
+            | 867..=870
+            | 872
             | 875
+            | 884
             | 900..=902
+            | 912
             | 914 | 915
-            | 921
+            | 921 | 922
+            | 935..=938
             | 940
+            | 984
             | 988
             | 989
+            | 1000
+            | 1001
+            | 1007
             | 1018
+            | 1034
+            | 1037
+            | 1044
+            | 1045
+            | 1048
+            | 1054
+            | 1061
         )
     }
 }

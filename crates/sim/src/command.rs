@@ -133,6 +133,9 @@ impl Default for Command {
 }
 
 impl Command {
+    /// Retail `BCommand::cFlagAlternate` bit used to queue an order.
+    pub const ALTERNATE_FLAG: usize = 0;
+
     /// Check if a specific command flag bit is set.
     #[must_use]
     pub fn has_flag(&self, bit: usize) -> bool {

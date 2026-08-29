@@ -26,6 +26,7 @@ use texture::{
     create_fallback_shadow_view, create_fallback_terrain_heightfield_view,
     create_fallback_volume_view, create_texture_view,
 };
+pub(super) use uniforms::SelectionOverlay;
 use uniforms::{MaterialUniform, SceneUniform};
 
 const SHADER: &str = include_str!("shader.wgsl");
@@ -821,6 +822,25 @@ impl Renderer {
         lighting: &LightingParams,
         time_seconds: f32,
     ) {
+        self.update_frame_with_selection_at_time(
+            queue,
+            view_projection,
+            model_transform,
+            lighting,
+            time_seconds,
+            SelectionOverlay::default(),
+        );
+    }
+
+    pub(super) fn update_frame_with_selection_at_time(
+        &mut self,
+        queue: &wgpu::Queue,
+        view_projection: Mat4,
+        model_transform: Mat4,
+        lighting: &LightingParams,
+        time_seconds: f32,
+        selection: SelectionOverlay,
+    ) {
         self.model_transform = model_transform;
         let uniform = SceneUniform::from_frame(
             view_projection,
@@ -828,6 +848,7 @@ impl Renderer {
             lighting,
             time_seconds,
             self.shared.terrain_heightfield_info,
+            selection,
         );
         queue.write_buffer(&self.scene_buffer, 0, bytemuck::bytes_of(&uniform));
     }

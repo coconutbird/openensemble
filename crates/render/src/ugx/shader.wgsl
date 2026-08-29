@@ -50,6 +50,8 @@ struct Scene {
     light_volume_row0: vec4<f32>,
     light_volume_row1: vec4<f32>,
     light_volume_row2: vec4<f32>,
+    selection_color: vec4<f32>,
+    selection_params: vec4<f32>,
 };
 
 struct Material {
@@ -731,6 +733,21 @@ fn evaluate_light_volume(
     return LocalLightResult(diffuse, specular);
 }
 
+fn targeting_selection(world_y: f32) -> vec3<f32> {
+    if scene.selection_params.w <= 0.5 {
+        return vec3<f32>(0.0);
+    }
+    let uv = world_y * scene.selection_params.x + scene.selection_params.y;
+    if uv < 0.0 || uv > 1.0 {
+        return vec3<f32>(0.0);
+    }
+    let scan = sin(uv * 3.14159265);
+    return scene.selection_color.rgb
+        * scene.selection_params.z
+        * scan
+        * scan;
+}
+
 @fragment
 fn fs_main(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
     var diffuse_sample = vec4<f32>(1.0);
@@ -967,6 +984,7 @@ fn fs_main(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @l
         + specular
         + emissive
         + highlight
-        + environment;
+        + environment
+        + targeting_selection(input.world_position.y);
     return vec4<f32>(fog_color(lit, input.fog_densities), opacity);
 }

@@ -5,7 +5,7 @@
 use crate::command_queue::{CommandEntry, QueuedCommand};
 use crate::commands::{
     BuildingCommand, BuildingCommandType, GameCommand, GameCommandType, PowerCommand,
-    PowerCommandType, WorkCommand,
+    PowerCommandType, WorkCommand, work_command_flags,
 };
 use crate::entities::{RecoveryType, SquadMode, TrainingKind};
 use crate::gameplay::resolve_database_ability;
@@ -73,7 +73,11 @@ impl<'database> CommandExecutor<'database> {
 
     /// Execute a move order.
     fn execute_move(world: &mut World, cmd: &WorkCommand) {
-        if let Some(target) = cmd.terrain_point {
+        let entity_position = (!cmd.unit_id.is_invalid())
+            .then(|| world.squad_move_entity_target(cmd.unit_id))
+            .flatten()
+            .map(|(_, position)| position);
+        if let Some(target) = entity_position.or(cmd.terrain_point) {
             Self::move_owned_recipients(world, cmd, target);
         }
     }
@@ -201,8 +205,19 @@ impl<'database> CommandExecutor<'database> {
         let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
             return;
         };
+        let attack_move = cmd.base.has_flag(work_command_flags::ATTACK_MOVE);
+        let queue = cmd.base.has_flag(crate::Command::ALTERNATE_FLAG);
         for &recipient_id in &cmd.base.recipients {
-            let _accepted = world.issue_move_order(player_id, recipient_id, target);
+            let accepted = world.issue_squad_move_order_to_position(
+                player_id,
+                recipient_id,
+                target,
+                attack_move,
+                queue,
+            );
+            if !accepted && !attack_move && !queue {
+                let _accepted = world.issue_move_order(player_id, recipient_id, target);
+            }
         }
     }
 
@@ -234,6 +249,12 @@ impl<'database> CommandExecutor<'database> {
         let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
             return;
         };
+        if cmd.building_type == BuildingCommandType::ClearRallyPoint {
+            for &building_id in &cmd.base.recipients {
+                let _cleared = world.clear_unit_rally_point(building_id, player_id);
+            }
+            return;
+        }
         if cmd.count == 0 {
             return;
         }
@@ -319,12 +340,43 @@ impl<'database> CommandExecutor<'database> {
 
     /// Execute a game command.
     fn execute_game(&self, world: &mut World, cmd: &GameCommand) {
-        let Some(database) = self.database else {
+        let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
             return;
         };
         match cmd.game_type {
-            GameCommandType::CreateSquad => Self::execute_create_squad(world, database, cmd),
-            GameCommandType::CreateObject => Self::execute_create_object(world, database, cmd),
+            GameCommandType::SetGlobalRallyPoint => {
+                let _set = world.set_player_rally_point(
+                    player_id,
+                    cmd.position,
+                    optional_entity_id(cmd.data),
+                );
+            }
+            GameCommandType::ClearGlobalRallyPoint => {
+                let _cleared = world.clear_player_rally_point(player_id);
+            }
+            GameCommandType::SetBuildingRallyPoint => {
+                let building_id = crate::EntityId::from_u32(cmd.data.cast_unsigned());
+                let _set = world.set_unit_rally_point(
+                    building_id,
+                    player_id,
+                    cmd.position,
+                    optional_entity_id(cmd.data2),
+                );
+            }
+            GameCommandType::ClearBuildingRallyPoint => {
+                let building_id = crate::EntityId::from_u32(cmd.data.cast_unsigned());
+                let _cleared = world.clear_unit_rally_point(building_id, player_id);
+            }
+            GameCommandType::CreateSquad => {
+                if let Some(database) = self.database {
+                    Self::execute_create_squad(world, database, cmd);
+                }
+            }
+            GameCommandType::CreateObject => {
+                if let Some(database) = self.database {
+                    Self::execute_create_object(world, database, cmd);
+                }
+            }
             _ => {}
         }
     }
@@ -372,6 +424,11 @@ impl<'database> CommandExecutor<'database> {
     }
 }
 
+fn optional_entity_id(raw: i32) -> Option<crate::EntityId> {
+    let entity_id = crate::EntityId::from_u32(raw.cast_unsigned());
+    (!entity_id.is_invalid()).then_some(entity_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,6 +473,47 @@ mod tests {
         let squad = world.get_squad(squad_id).unwrap();
         assert_eq!(squad.state, SquadState::Moving);
         assert_eq!(squad.move_target, Some(Vec3::new(100.0, 0.0, 50.0)));
+    }
+
+    #[test]
+    fn move_command_flags_reach_the_shared_squad_order_queue() {
+        let mut world = World::new();
+        world.init_players(1);
+        let squad_id = world.create_squad(1);
+        let first_target = Vec3::X;
+        assert!(world.issue_move_order(1, squad_id, first_target));
+        let second_target = Vec3::new(2.0, 0.0, 0.0);
+        let mut base = Command {
+            id: OrderType::Move as i32,
+            player_id: 1,
+            recipients: vec![squad_id],
+            ..Default::default()
+        };
+        base.set_flag(crate::Command::ALTERNATE_FLAG, true);
+        base.set_flag(work_command_flags::ATTACK_MOVE, true);
+        let entry = CommandEntry {
+            command: QueuedCommand::Work(WorkCommand {
+                base,
+                terrain_point: Some(second_target),
+                ..Default::default()
+            }),
+            exec_time: 0,
+            sequence: 0,
+            source_client: 1,
+        };
+
+        CommandExecutor::new().execute(&mut world, &entry);
+        assert_eq!(
+            world.get_squad(squad_id).unwrap().move_target,
+            Some(first_target)
+        );
+        world
+            .get_squad_mut(squad_id)
+            .unwrap()
+            .finish_current_movement();
+        let squad = world.get_squad(squad_id).unwrap();
+        assert_eq!(squad.move_target, Some(second_target));
+        assert!(squad.is_executing_attack_move());
     }
 
     #[test]
@@ -537,5 +635,113 @@ mod tests {
 
         let power = world.get_player(1).unwrap().power_entry(0).unwrap();
         assert_eq!(power.finite_uses_remaining(), 3);
+    }
+
+    #[test]
+    fn game_rally_commands_update_sim_state_without_a_database() {
+        let mut world = World::new();
+        world.init_players(1);
+        let target = world.create_unit_at(1, Vec3::new(10.0, 0.0, 20.0));
+        let building = world.create_building(1);
+        let executor = CommandExecutor::new();
+
+        execute_game_command(
+            &executor,
+            &mut world,
+            GameCommand {
+                base: Command {
+                    player_id: 1,
+                    ..Command::default()
+                },
+                game_type: GameCommandType::SetGlobalRallyPoint,
+                data: target.as_u32().cast_signed(),
+                position: Vec3::ONE,
+                ..GameCommand::default()
+            },
+        );
+        assert_eq!(
+            world.player_rally_point(1).unwrap().target_entity_id(),
+            Some(target)
+        );
+
+        execute_game_command(
+            &executor,
+            &mut world,
+            GameCommand {
+                base: Command {
+                    player_id: 1,
+                    ..Command::default()
+                },
+                game_type: GameCommandType::SetBuildingRallyPoint,
+                data: building.as_u32().cast_signed(),
+                data2: -1,
+                position: Vec3::new(30.0, 0.0, 40.0),
+                ..GameCommand::default()
+            },
+        );
+        assert_eq!(
+            world
+                .unit_rally_point(building, 1)
+                .map(crate::RallyPoint::position),
+            Some(Vec3::new(30.0, 0.0, 40.0))
+        );
+
+        execute_game_command(
+            &executor,
+            &mut world,
+            GameCommand {
+                base: Command {
+                    player_id: 1,
+                    ..Command::default()
+                },
+                game_type: GameCommandType::ClearGlobalRallyPoint,
+                ..GameCommand::default()
+            },
+        );
+        assert!(world.player_rally_point(1).is_none());
+    }
+
+    #[test]
+    fn building_clear_rally_command_is_not_blocked_by_zero_count() {
+        let mut world = World::new();
+        world.init_players(1);
+        let building = world.create_building(1);
+        assert!(world.set_unit_rally_point(building, 1, Vec3::ONE, None));
+        let command = BuildingCommand {
+            base: Command {
+                player_id: 1,
+                recipients: vec![building],
+                ..Command::default()
+            },
+            building_type: BuildingCommandType::ClearRallyPoint,
+            count: 0,
+            ..BuildingCommand::default()
+        };
+        let entry = CommandEntry {
+            command: QueuedCommand::Building(command),
+            exec_time: 0,
+            sequence: 0,
+            source_client: 1,
+        };
+
+        CommandExecutor::new().execute(&mut world, &entry);
+
+        assert!(world.unit_rally_point(building, 1).is_none());
+    }
+
+    fn execute_game_command(
+        executor: &CommandExecutor<'_>,
+        world: &mut World,
+        command: GameCommand,
+    ) {
+        executor.execute(
+            world,
+            &CommandEntry {
+                command: QueuedCommand::Game(command),
+                exec_time: 0,
+                sequence: 0,
+                source_client: 1,
+            },
+        );
     }
 }

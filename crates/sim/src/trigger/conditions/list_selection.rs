@@ -18,6 +18,7 @@ enum ScalarSelectionKind {
     ProtoSquad,
     Tech,
     Integer,
+    DesignLine,
 }
 
 pub(super) fn can_get_one_unit(
@@ -110,6 +111,14 @@ pub(super) fn can_get_one_integer(
     select_i32(condition, script, world, ScalarSelectionKind::Integer, 3)
 }
 
+pub(super) fn can_get_one_design_line(
+    condition: &Condition,
+    script: &mut TriggerScript,
+    world: &mut World,
+) -> bool {
+    select_i32(condition, script, world, ScalarSelectionKind::DesignLine, 3)
+}
+
 pub(super) fn can_get_one_location(
     condition: &Condition,
     script: &mut TriggerScript,
@@ -185,7 +194,10 @@ fn scalar_list_at(
         | (ScalarSelectionKind::ProtoObject, TriggerValue::ProtoObjectList(values))
         | (ScalarSelectionKind::ProtoSquad, TriggerValue::ProtoSquadList(values))
         | (ScalarSelectionKind::Tech, TriggerValue::TechList(values))
-        | (ScalarSelectionKind::Integer, TriggerValue::IntegerList(values)) => Some(values.clone()),
+        | (ScalarSelectionKind::Integer, TriggerValue::IntegerList(values))
+        | (ScalarSelectionKind::DesignLine, TriggerValue::DesignLineList(values)) => {
+            Some(values.clone())
+        }
         _ => None,
     }
 }
@@ -198,6 +210,7 @@ fn scalar_value(kind: ScalarSelectionKind, value: i32) -> TriggerValue {
         ScalarSelectionKind::ProtoSquad => TriggerValue::ProtoSquad(value),
         ScalarSelectionKind::Tech => TriggerValue::Tech(value),
         ScalarSelectionKind::Integer => TriggerValue::Int(value),
+        ScalarSelectionKind::DesignLine => TriggerValue::DesignLine(value),
     }
 }
 

@@ -16,7 +16,7 @@ pub use model::{BlendMode, LoadError, Model};
 pub use renderer::{Renderer, RendererResources, WorldBindings};
 pub use scene::{
     ScenarioPositionAxes, UnitPlacement, UnitScene, UnitSceneIssue, UnitSceneRenderer,
-    scenario_object_direction_to_world, scenario_object_position_to_world,
+    scenario_object_direction_to_world, scenario_object_position_to_world, simulation_entity_flash,
     simulation_unit_transform,
 };
 pub use unit::{

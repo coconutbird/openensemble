@@ -256,6 +256,23 @@ impl Default for LightingParams {
 }
 
 impl LightingParams {
+    /// Project authoritative simulation state into terrain visibility inputs.
+    ///
+    /// Texture ownership remains a presentation concern. The renderer keeps a
+    /// supplied black map enabled unless the simulation authoritatively clears
+    /// exploration or disables fog.
+    pub fn apply_simulation_state(&mut self, world: &sim::World) {
+        if let Some(bounds) = world.effective_playable_bounds() {
+            self.blackmap_params1[1] = bounds.min_x();
+            self.blackmap_params1[2] = bounds.min_z();
+            self.blackmap_params2[1] = bounds.max_x();
+            self.blackmap_params2[2] = bounds.max_z();
+        }
+        if world.black_map_is_cleared() || !world.fog_of_war_enabled() {
+            self.blackmap_params1[3] = 0.0;
+        }
+    }
+
     /// Builds the original shared-lighting constants from a scenario GLS/FLS
     /// lightset.
     ///
@@ -337,6 +354,7 @@ unsafe impl bytemuck::Zeroable for LightingParams {}
 
 #[cfg(test)]
 mod tests {
+    use glam::Vec3;
     use pipeline::hw1::LightSetData;
 
     use super::{LightingParams, pack_sh_channel};
@@ -399,6 +417,27 @@ mod tests {
         assert_close(params.planar_fog_params[0], 0.0);
         assert_close(params.ao_params[0], 0.7);
         assert_close(params.local_light_params[1], 64.0);
+    }
+
+    #[test]
+    fn terrain_visibility_inputs_are_projected_only_from_sim_state() {
+        let mut world = sim::World::new();
+        assert!(world.configure_terrain_bounds(Vec3::ZERO, Vec3::new(256.0, 20.0, 128.0)));
+        assert!(
+            world.set_playable_bounds(Vec3::new(30.0, 99.0, 100.0), Vec3::new(220.0, -99.0, 10.0),)
+        );
+        let mut params = LightingParams::default();
+        params.blackmap_params1[3] = 1.0;
+
+        params.apply_simulation_state(&world);
+
+        assert_eq!(&params.blackmap_params1[1..3], &[30.0, 10.0]);
+        assert_eq!(&params.blackmap_params2[1..3], &[220.0, 100.0]);
+        assert_close(params.blackmap_params1[3], 1.0);
+
+        world.clear_black_map();
+        params.apply_simulation_state(&world);
+        assert_close(params.blackmap_params1[3], 0.0);
     }
 
     fn assert_close_slice(actual: &[f32], expected: &[f32]) {

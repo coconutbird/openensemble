@@ -185,6 +185,36 @@ fn proto_object_selection_uses_its_retail_slot_four_output() {
     );
 }
 
+#[test]
+fn design_line_selection_preserves_typed_identity_and_empty_output() {
+    let mut world = World::new();
+    let mut script = selection_script(
+        VarType::DesignLineList,
+        TriggerValue::DesignLineList(vec![41, 72]),
+        VarType::DesignLine,
+        TriggerValue::DesignLine(-1),
+    );
+    script.get_variable_mut(2).unwrap().value = TriggerValue::Int(1);
+    let condition = selection_condition(ConditionType::CanGetOneDesignLine);
+
+    assert!(can_get_one_design_line(&condition, &mut script, &mut world));
+    assert_eq!(
+        script.get_variable(3).map(|variable| &variable.value),
+        Some(&TriggerValue::DesignLine(72))
+    );
+
+    script.get_variable_mut(1).unwrap().value = TriggerValue::DesignLineList(Vec::new());
+    assert!(!can_get_one_design_line(
+        &condition,
+        &mut script,
+        &mut world
+    ));
+    assert_eq!(
+        script.get_variable(3).map(|variable| &variable.value),
+        Some(&TriggerValue::DesignLine(72))
+    );
+}
+
 fn selection_script(
     list_type: VarType,
     list: TriggerValue,

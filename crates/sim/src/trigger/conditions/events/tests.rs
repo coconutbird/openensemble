@@ -1,5 +1,6 @@
 use super::*;
 use crate::trigger::{ConditionType, TriggerVar, VarType};
+use crate::world::ScreenFadeSequence;
 use crate::world::{ChatRequest, CinematicRequest, GeneralEvent, GeneralEventType};
 
 #[test]
@@ -64,6 +65,23 @@ fn presentation_conditions_wait_for_acknowledgement_and_chat_delay() {
     assert!(!cinematic_completed(&world));
     assert!(world.acknowledge_presentation(cinematic_id, 1));
     assert!(cinematic_completed(&world));
+}
+
+#[test]
+fn fade_completed_waits_for_authoritative_transition_time() {
+    let mut world = World::new();
+    world.start_screen_fade(
+        [0, 0, 0],
+        ScreenFadeSequence::ToColor {
+            duration_ms: 100,
+            fade_in: false,
+        },
+    );
+    assert!(!fade_completed(&world));
+    world.advance_time(99);
+    assert!(!fade_completed(&world));
+    world.advance_time(1);
+    assert!(fade_completed(&world));
 }
 
 fn add_int(script: &mut TriggerScript, id: u32, value: u32) {

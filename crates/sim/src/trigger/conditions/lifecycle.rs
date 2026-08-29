@@ -99,8 +99,12 @@ fn used_variable_id(
 
 fn is_alive(world: &World, entity_id: EntityId) -> bool {
     match entity_id.class() {
+        Some(EntityClass::Object) => world.get_object(entity_id).is_some_and(Entity::is_alive),
         Some(EntityClass::Unit) => world.get_unit(entity_id).is_some_and(Entity::is_alive),
         Some(EntityClass::Squad) => world.get_squad(entity_id).is_some_and(Entity::is_alive),
+        Some(EntityClass::Projectile) => world
+            .get_projectile(entity_id)
+            .is_some_and(Entity::is_alive),
         _ => false,
     }
 }

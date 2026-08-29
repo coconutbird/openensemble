@@ -310,7 +310,7 @@ fn creation_failures_preserve_each_retail_output_contract() {
 }
 
 #[test]
-fn create_squad_fly_in_is_reported_without_approximating_transport_state() {
+fn create_squad_fly_in_without_civ_transport_keeps_retail_ground_fallback() {
     let database = entity_database();
     let mut world = trigger_world();
     let mut script = TriggerScript::default();
@@ -329,9 +329,16 @@ fn create_squad_fly_in_is_reported_without_approximating_transport_state() {
 
     let update = world.update_triggers_with_database(&database);
 
-    assert_eq!(update.unsupported_effect_types, vec![36]);
-    assert_eq!(update.effects_applied, 0);
-    assert!(world.squads.is_empty());
+    assert!(update.unsupported_effect_types.is_empty());
+    assert_eq!(update.effects_applied, 1);
+    let squads = world.squads.iter().collect::<Vec<_>>();
+    let [(_, squad)] = squads.as_slice() else {
+        panic!("the ground fallback should retain one created squad");
+    };
+    assert_eq!(squad.proto_squad_name, "test_squad");
+    assert_eq!(squad.base.position, glam::Vec3::ZERO);
+    assert!(squad.transport_fly_in().is_none());
+    assert_eq!(squad.unit_ids.len(), 2);
 }
 
 fn entity_database() -> Database {

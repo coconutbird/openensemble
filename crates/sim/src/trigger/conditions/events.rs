@@ -34,6 +34,10 @@ pub(super) fn cinematic_completed(world: &World) -> bool {
     world.cinematic_completed()
 }
 
+pub(super) fn fade_completed(world: &World) -> bool {
+    world.screen_fade_completed()
+}
+
 fn subscriber_id_at(
     condition: &Condition,
     script: &TriggerScript,

@@ -143,6 +143,67 @@ fn game_time_effects_use_retail_wrapping_and_saturating_rules() {
 }
 
 #[test]
+fn scenario_score_info_consumes_all_inputs_but_retail_discards_tin_grade() {
+    assert_eq!(
+        EffectType::from_u16(984),
+        Some(EffectType::SetScenarioScoreInfo)
+    );
+    let mut world = World::new();
+    let initial_checksum = world.checksum();
+    let mut script = TriggerScript::new(1);
+    add_value(&mut script, 11, VarType::Float, TriggerValue::Float(0.5));
+    add_value(&mut script, 12, VarType::Float, TriggerValue::Float(10.0));
+    add_value(&mut script, 13, VarType::Time, TriggerValue::Time(300_000));
+    add_value(&mut script, 14, VarType::Time, TriggerValue::Time(720_000));
+    add_value(&mut script, 15, VarType::Integer, TriggerValue::Int(27_000));
+    add_value(&mut script, 16, VarType::Integer, TriggerValue::Int(18_000));
+    add_value(&mut script, 17, VarType::Integer, TriggerValue::Int(12_000));
+    add_value(&mut script, 18, VarType::Integer, TriggerValue::Int(1));
+    let mut effect = Effect::new(1, EffectType::SetScenarioScoreInfo);
+    for (slot, variable_id) in (1..=8).zip(11..=18) {
+        effect = effect.with_input_at(slot, variable_id);
+    }
+    effect.version = u8::MAX;
+
+    assert_eq!(
+        set_scenario_score_info(&effect, &script, &mut world),
+        EffectOutcome::Applied
+    );
+    let info = world.scenario_score_info().expect("scenario score info");
+    assert_eq!(info.scenario_id(), -1);
+    assert_eq!(
+        info.combat_bonus_min_multiplier().to_bits(),
+        0.5_f32.to_bits()
+    );
+    assert_eq!(
+        info.combat_bonus_max_multiplier().to_bits(),
+        10.0_f32.to_bits()
+    );
+    assert_eq!(info.mission_min_par_time_ms(), 300_000);
+    assert_eq!(info.mission_max_par_time_ms(), 720_000);
+    assert_eq!(info.grade_score_thresholds(), [27_000, 18_000, 12_000]);
+    assert_ne!(world.checksum(), initial_checksum);
+
+    let configured_checksum = world.checksum();
+    script.get_variable_mut(18).unwrap().value = TriggerValue::Int(99_999);
+    assert_eq!(
+        set_scenario_score_info(&effect, &script, &mut world),
+        EffectOutcome::Applied
+    );
+    assert_eq!(world.checksum(), configured_checksum);
+
+    script.get_variable_mut(17).unwrap().value = TriggerValue::Bool(false);
+    assert_eq!(
+        set_scenario_score_info(&effect, &script, &mut world),
+        EffectOutcome::Skipped
+    );
+    assert_eq!(world.checksum(), configured_checksum);
+
+    world.reset();
+    assert!(world.scenario_score_info().is_none());
+}
+
+#[test]
 fn get_players_2_filters_in_roster_order_with_retail_relation_rules() {
     let mut world = World::new();
     world.init_players(4);

@@ -237,6 +237,50 @@ fn construction_progress_is_part_of_the_deterministic_checksum() {
     assert_eq!(left.checksum(), right.checksum());
 }
 
+#[test]
+fn player_object_forbids_gate_new_construction() {
+    let database = construction_database();
+    let (mut world, builder_id) = construction_world(&database);
+    let runtime_id = object_runtime_id(&database, DIRECT).unwrap();
+    let forbid_id = object_prototype_id(&database, DIRECT).unwrap();
+
+    assert_eq!(
+        world
+            .get_player_mut(1)
+            .unwrap()
+            .set_object_forbidden(&database, forbid_id, true),
+        Some(true)
+    );
+    assert!(matches!(
+        world.start_build(
+            1,
+            builder_id,
+            &database,
+            runtime_id,
+            Vec3::new(12.0, 0.0, 8.0),
+            EntityId::INVALID,
+        ),
+        Err(ConstructionError::CommandUnavailable { .. })
+    ));
+
+    world
+        .get_player_mut(1)
+        .unwrap()
+        .set_object_forbidden(&database, forbid_id, false);
+    assert!(
+        world
+            .start_build(
+                1,
+                builder_id,
+                &database,
+                runtime_id,
+                Vec3::new(12.0, 0.0, 8.0),
+                EntityId::INVALID,
+            )
+            .is_ok()
+    );
+}
+
 fn enqueue(clock: &mut Simulation, command: BuildingCommand) {
     clock
         .command_queue

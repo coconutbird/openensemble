@@ -9,7 +9,7 @@ use pipeline::database::hw1::{Database, GameData, ProtoObject, Squad as ProtoSqu
 use sim::{
     BuildingCommand, EntityId, MS_PER_TICK, Simulation, TechStatus, TrainingError, TrainingKind,
     TrainingQueueResult, World, object_prototype_id, object_runtime_id, spawn_object_at,
-    squad_runtime_id, technology_prototype_id,
+    squad_prototype_id, squad_runtime_id, technology_prototype_id,
 };
 
 const BARRACKS: &str = "test_barracks";
@@ -219,6 +219,82 @@ fn command_enable_and_train_limits_gate_authoritative_acceptance() {
         .unwrap();
     assert!(matches!(
         world.queue_training(1, barracks_id, &database, TrainingKind::Squad, marine_id, 1,),
+        Err(TrainingError::CommandUnavailable { .. })
+    ));
+}
+
+#[test]
+fn player_forbids_gate_new_squad_and_unit_training() {
+    let database = production_database(false);
+    let (mut world, barracks_id) = production_world(&database, 3.0, 500.0);
+    let marine_runtime_id = squad_runtime_id(&database, MARINE).unwrap();
+    let marine_forbid_id = squad_prototype_id(&database, MARINE).unwrap();
+    let drone_runtime_id = object_runtime_id(&database, DRONE).unwrap();
+    let drone_forbid_id = object_prototype_id(&database, DRONE).unwrap();
+    let initial_checksum = world.checksum();
+
+    assert_eq!(
+        world
+            .get_player_mut(1)
+            .unwrap()
+            .set_squad_forbidden(&database, marine_forbid_id, true),
+        Some(true)
+    );
+    assert_ne!(world.checksum(), initial_checksum);
+    assert!(matches!(
+        world.queue_training(
+            1,
+            barracks_id,
+            &database,
+            TrainingKind::Squad,
+            marine_runtime_id,
+            1,
+        ),
+        Err(TrainingError::CommandUnavailable { .. })
+    ));
+
+    world
+        .get_player_mut(1)
+        .unwrap()
+        .set_squad_forbidden(&database, marine_forbid_id, false);
+    assert_eq!(
+        world
+            .queue_training(
+                1,
+                barracks_id,
+                &database,
+                TrainingKind::Squad,
+                marine_runtime_id,
+                1,
+            )
+            .unwrap()
+            .accepted,
+        1
+    );
+    world
+        .cancel_training(
+            1,
+            barracks_id,
+            &database,
+            TrainingKind::Squad,
+            marine_runtime_id,
+            1,
+        )
+        .unwrap();
+
+    world
+        .get_player_mut(1)
+        .unwrap()
+        .set_object_forbidden(&database, drone_forbid_id, true);
+    assert!(matches!(
+        world.queue_training(
+            1,
+            barracks_id,
+            &database,
+            TrainingKind::Unit,
+            drone_runtime_id,
+            1,
+        ),
         Err(TrainingError::CommandUnavailable { .. })
     ));
 }

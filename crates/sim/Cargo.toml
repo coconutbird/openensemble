@@ -15,5 +15,7 @@ byteorder = { workspace = true }
 binrw = { workspace = true }
 quick-xml = { workspace = true }
 pipeline = { workspace = true }
+ecf = { workspace = true }
+half = { workspace = true }
 
 [dev-dependencies]

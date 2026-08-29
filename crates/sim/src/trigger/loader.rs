@@ -595,6 +595,8 @@ fn parse_var_value(text: &str, var_type: VarType, context: TriggerLoadContext<'_
         )),
         VarType::ObjectType => TriggerValue::ObjectType(text.trim().to_owned()),
         VarType::ObjectTypeList => TriggerValue::ObjectTypeList(parse_name_list(text)),
+        VarType::DesignLine => TriggerValue::DesignLine(text.trim().parse().unwrap_or(-1)),
+        VarType::DesignLineList => TriggerValue::DesignLineList(parse_i32_list(text)),
         VarType::Tech => TriggerValue::Tech(parse_technology(text, context)),
         VarType::TechList => TriggerValue::TechList(parse_prototype_list(
             text,

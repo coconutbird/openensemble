@@ -1,6 +1,8 @@
 //! Authoritative attack-order targeting and pursuit.
 
 mod helpers;
+#[cfg(test)]
+mod test_catalog;
 
 use super::World;
 use crate::entities::projectiles::{ProjectileLaunch, ProjectileStep};
@@ -134,6 +136,72 @@ impl World {
         engagements.sort_by_key(|engagement| engagement.attacker_id);
         engagements.dedup_by_key(|engagement| engagement.attacker_id);
         self.advance_attacks(dt, gameplay, engagements);
+    }
+
+    pub(super) fn update_attack_move_orders(&mut self, gameplay: &GameplayCatalog) {
+        let squad_ids = self
+            .squads
+            .iter()
+            .filter_map(|(id, squad)| {
+                (squad.state == SquadState::Moving
+                    && squad.is_executing_attack_move()
+                    && squad.aggro_distance.is_finite()
+                    && squad.aggro_distance > 0.0)
+                    .then_some(id)
+            })
+            .collect::<Vec<_>>();
+        for squad_id in squad_ids {
+            let Some(target_id) = self.attack_move_target(squad_id, gameplay) else {
+                continue;
+            };
+            let Some(target_id) = self
+                .attack_target_snapshot(target_id)
+                .map(|target| target.id)
+            else {
+                continue;
+            };
+            if let Some(squad) = self.squads.get_mut(squad_id) {
+                let _started = squad.begin_attack_move_engagement(target_id);
+            }
+        }
+    }
+
+    fn attack_move_target(
+        &self,
+        squad_id: EntityId,
+        gameplay: &GameplayCatalog,
+    ) -> Option<EntityId> {
+        let squad = self.squads.get(squad_id)?;
+        let maximum_distance_squared = squad.aggro_distance * squad.aggro_distance;
+        self.units
+            .iter()
+            .filter(|(unit_id, unit)| {
+                !squad.contains_unit(*unit_id)
+                    && unit.is_alive()
+                    && !unit.is_garrisoned()
+                    && unit.is_auto_attackable()
+                    && self.players_are_enemies(squad.base.player_id, unit.base.player_id)
+            })
+            .filter_map(|(unit_id, unit)| {
+                let distance_squared = xz_distance_squared(squad.base.position, unit.base.position);
+                if distance_squared > maximum_distance_squared {
+                    return None;
+                }
+                let target = concrete_target_snapshot(unit_id, unit);
+                let can_attack = squad.unit_ids.iter().any(|member_id| {
+                    self.units.get(*member_id).is_some_and(|member| {
+                        self.selected_ranged_action(member, &target, gameplay, true)
+                            .is_some()
+                    })
+                });
+                can_attack.then_some((distance_squared, unit_id))
+            })
+            .min_by(|(left_distance, left_id), (right_distance, right_id)| {
+                left_distance
+                    .total_cmp(right_distance)
+                    .then_with(|| left_id.cmp(right_id))
+            })
+            .map(|(_, unit_id)| unit_id)
     }
 
     fn update_squad_combat_orders(&mut self, gameplay: &GameplayCatalog) -> Vec<AttackEngagement> {
@@ -446,6 +514,14 @@ impl World {
         if !self.players_are_enemies(squad.base.player_id, target.player_id) {
             return CombatMotion::Clear;
         }
+        if let Some(origin) = squad.auto_attack_origin()
+            && squad.leash_distance.is_finite()
+            && squad.leash_distance > 0.0
+            && xz_distance_squared(origin, target.position)
+                > squad.leash_distance * squad.leash_distance
+        {
+            return CombatMotion::Clear;
+        }
         let range = if squad.attack_range > 0.0 {
             Some(squad.attack_range)
         } else {
@@ -476,7 +552,7 @@ impl World {
             let Some(concrete_target) = self.concrete_attack_target(target.id) else {
                 return CombatMotion::Clear;
             };
-            self.unit_tactic_range(unit, &concrete_target, gameplay)
+            self.unit_tactic_range(unit, &concrete_target, gameplay, false)
         };
         combat_motion(unit.base.position, target, range)
     }
@@ -548,11 +624,12 @@ impl World {
         target: &ConcreteTargetSnapshot,
         gameplay: &GameplayCatalog,
     ) -> Option<f32> {
+        let automatic = squad.is_auto_attack_engagement();
         squad
             .unit_ids
             .iter()
             .filter_map(|&unit_id| self.units.get(unit_id))
-            .filter_map(|unit| self.unit_tactic_range(unit, target, gameplay))
+            .filter_map(|unit| self.unit_tactic_range(unit, target, gameplay, automatic))
             .reduce(f32::max)
     }
 
@@ -561,8 +638,9 @@ impl World {
         unit: &Unit,
         target: &ConcreteTargetSnapshot,
         gameplay: &GameplayCatalog,
+        automatic: bool,
     ) -> Option<f32> {
-        let action = self.selected_ranged_action(unit, target, gameplay)?;
+        let action = self.selected_ranged_action(unit, target, gameplay, automatic)?;
         let range = action
             .weapon
             .max_range
@@ -587,7 +665,11 @@ impl World {
         gameplay: &'gameplay GameplayCatalog,
     ) -> Option<&'gameplay AttackProfile> {
         let unit = self.units.get(unit_id)?;
-        let action = self.selected_ranged_action(unit, target, gameplay)?;
+        let automatic = unit
+            .squad_id
+            .and_then(|squad_id| self.squads.get(squad_id))
+            .is_some_and(Squad::is_auto_attack_engagement);
+        let action = self.selected_ranged_action(unit, target, gameplay, automatic)?;
         gameplay
             .object(&unit.proto_object_name)?
             .attack_profile(&action.action.name)
@@ -598,6 +680,7 @@ impl World {
         unit: &Unit,
         target: &ConcreteTargetSnapshot,
         gameplay: &'gameplay GameplayCatalog,
+        automatic: bool,
     ) -> Option<RangedAction<'gameplay>> {
         let (squad_mode, requested_ability_id) = unit
             .squad_id
@@ -616,6 +699,9 @@ impl World {
                 .is_some()
         });
         let mut flags = AttackQueryFlags::empty();
+        if automatic {
+            flags.insert(AttackQueryFlags::AUTO_TARGET);
+        }
         if target.player_id == 0 {
             flags.insert(AttackQueryFlags::TARGET_GAIA);
         }
@@ -693,11 +779,12 @@ fn concrete_target_snapshot(id: EntityId, unit: &Unit) -> ConcreteTargetSnapshot
 
 #[cfg(test)]
 mod tests {
+    use super::test_catalog::ability_catalog;
     use super::*;
     use crate::gameplay::AttackAnimation;
-    use pipeline::database::hw1::tactics::{Action, TacticData, TacticRules, TargetRule, Weapon};
+    use pipeline::database::hw1::tactics::{Action, TacticData, Weapon};
     use pipeline::database::hw1::weapontypes::DamageModifier;
-    use pipeline::database::hw1::{Ability, Database, ProtoObject, WeaponType};
+    use pipeline::database::hw1::{Database, ProtoObject, WeaponType};
 
     fn combat_catalog() -> GameplayCatalog {
         let mut database = Database::new();
@@ -823,6 +910,40 @@ mod tests {
     }
 
     #[test]
+    fn attack_move_acquires_an_enemy_then_resumes_its_destination() {
+        let gameplay = combat_catalog();
+        let mut world = World::with_seed(51);
+        world.init_players(2);
+        world.get_player_mut(1).unwrap().team_id = 1;
+        world.get_player_mut(2).unwrap().team_id = 2;
+        world.configure_standard_team_relations();
+        let squad_id = world.create_squad_at(1, Vec3::ZERO);
+        let attacker_id = world.create_unit_at(1, Vec3::ZERO);
+        world.get_unit_mut(attacker_id).unwrap().proto_object_name = "test_attacker".to_owned();
+        assert!(world.attach_unit_to_squad(attacker_id, squad_id));
+        let squad = world.get_squad_mut(squad_id).unwrap();
+        squad.aggro_distance = 20.0;
+        squad.leash_distance = 30.0;
+        let target_id = world.create_unit_at(2, Vec3::new(5.0, 0.0, 0.0));
+        world.get_unit_mut(target_id).unwrap().proto_object_name = "test_target".to_owned();
+        let destination = Vec3::new(40.0, 0.0, 0.0);
+        assert!(world.issue_squad_move_order_to_position(1, squad_id, destination, true, false,));
+
+        world.update_entities_with_gameplay(0.05, &gameplay);
+        let squad = world.get_squad(squad_id).unwrap();
+        assert_eq!(squad.state, SquadState::Attacking);
+        assert!(squad.is_auto_attack_engagement());
+        assert_eq!(squad.attack_target, Some(target_id));
+
+        world.get_unit_mut(target_id).unwrap().kill();
+        world.update_entities_with_gameplay(0.05, &gameplay);
+        let squad = world.get_squad(squad_id).unwrap();
+        assert_eq!(squad.state, SquadState::Moving);
+        assert_eq!(squad.move_target, Some(destination));
+        assert_eq!(squad.attack_target, None);
+    }
+
+    #[test]
     fn unbuilt_targets_use_the_database_construction_damage_multiplier() {
         let mut world = World::new();
         let target_id = world.create_building(1);
@@ -863,116 +984,5 @@ mod tests {
             Some("GrenadeAttack")
         );
         assert!(world.get_unit(target_id).unwrap().hitpoints < 100.0);
-    }
-
-    fn ability_catalog() -> GameplayCatalog {
-        let mut database = Database::new();
-        database.abilities.push(Ability {
-            name: "Command".to_owned(),
-            ..Ability::default()
-        });
-        database.abilities.push(Ability {
-            name: "TestGrenade".to_owned(),
-            recover_start: Some("Attack".to_owned()),
-            recover_type: Some("Ability".to_owned()),
-            recover_time: Some(20.0),
-            ..Ability::default()
-        });
-        database.objects.extend([
-            ProtoObject {
-                name: "test_attacker".to_owned(),
-                tactics: Some("test_attacker.tactics".to_owned()),
-                ability_command: Some("TestGrenade".to_owned()),
-                ..ProtoObject::default()
-            },
-            ProtoObject {
-                name: "test_target".to_owned(),
-                object_types: vec!["NonFlying".to_owned()],
-                ..ProtoObject::default()
-            },
-        ]);
-        let tactics = TacticData {
-            weapons: vec![
-                Weapon {
-                    name: "Rifle".to_owned(),
-                    max_range: Some(10.0),
-                    ..Weapon::default()
-                },
-                Weapon {
-                    name: "Grenade".to_owned(),
-                    max_range: Some(40.0),
-                    ..Weapon::default()
-                },
-            ],
-            actions: vec![
-                ranged_action("RifleAttack", "Rifle"),
-                ranged_action("GrenadeAttack", "Grenade"),
-            ],
-            tactic: Some(TacticRules {
-                target_rules: vec![
-                    TargetRule {
-                        relation: Some("Enemy".to_owned()),
-                        squad_mode: Some("Normal".to_owned()),
-                        action: Some("RifleAttack".to_owned()),
-                        ..TargetRule::default()
-                    },
-                    TargetRule {
-                        relation: Some("Enemy".to_owned()),
-                        squad_mode: Some("Normal".to_owned()),
-                        target_types: vec!["NonFlying".to_owned()],
-                        action: Some("GrenadeAttack".to_owned()),
-                        ability: Some("Command".to_owned()),
-                        ..TargetRule::default()
-                    },
-                ],
-                ..TacticRules::default()
-            }),
-            ..TacticData::default()
-        };
-        GameplayCatalog::from_test_profiles(
-            &database,
-            [("test_attacker".to_owned(), tactics)],
-            [
-                (
-                    "test_attacker".to_owned(),
-                    instant_profile("RifleAttack", 10.0),
-                ),
-                (
-                    "test_attacker".to_owned(),
-                    instant_profile("GrenadeAttack", 40.0),
-                ),
-            ],
-        )
-    }
-
-    fn ranged_action(name: &str, weapon: &str) -> Action {
-        Action {
-            name: name.to_owned(),
-            action_type: Some("RangedAttack".to_owned()),
-            weapon: Some(weapon.to_owned()),
-            ..Action::default()
-        }
-    }
-
-    fn instant_profile(action_name: &str, max_range: f32) -> AttackProfile {
-        AttackProfile {
-            action_name: action_name.to_owned(),
-            weapon_name: action_name.to_owned(),
-            weapon_type: None,
-            projectile: None,
-            max_range,
-            damage_per_attack: 5.0,
-            animations: vec![AttackAnimation {
-                asset_path: "test_attack.uax".to_owned(),
-                weight: 1,
-                duration: 0.1,
-                attack_positions: vec![0.0],
-            }],
-            pre_attack_cooldown: [0.0, 0.0],
-            post_attack_cooldown: [0.0, 0.0],
-            reload_duration: 0.0,
-            visual_ammo: 0,
-            uses_height_bonus_damage: false,
-        }
     }
 }

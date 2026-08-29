@@ -6,7 +6,7 @@ use std::sync::Arc;
 use glam::{Mat4, Vec3};
 use pipeline::database::hw1::{ProtoObject, Visual};
 use pipeline::source::{AssetSource, StdFileProvider};
-use sim::{EntityId, World as SimWorld};
+use sim::{EntityId, TeamId, World as SimWorld};
 
 use super::Unit;
 use super::unit::UnitAssetCache;
@@ -360,6 +360,25 @@ pub fn simulation_entity_transform(world: &SimWorld, entity_id: EntityId) -> Opt
         })
 }
 
+/// Project the simulation's authoritative team visibility into presentation.
+#[must_use]
+pub fn simulation_entity_visible_to_team(
+    world: &SimWorld,
+    team_id: TeamId,
+    entity_id: EntityId,
+) -> bool {
+    world.is_entity_visible_to_team(team_id, entity_id)
+}
+
+/// Project one authoritative targeting-selection request into presentation.
+#[must_use]
+pub fn simulation_entity_flash(
+    world: &SimWorld,
+    entity_id: EntityId,
+) -> Option<sim::TargetingSelection> {
+    world.entity_targeting_selection(entity_id)
+}
+
 /// Build a model-to-world matrix solely from authoritative simulation state.
 #[must_use]
 pub fn simulation_unit_transform(unit: &sim::Unit) -> Option<Mat4> {
@@ -414,10 +433,13 @@ mod tests {
     use std::collections::HashMap;
 
     use glam::Vec3;
-    use pipeline::database::hw1::ProtoObject;
+    use pipeline::database::hw1::{Database, GameData, ProtoObject};
     use pipeline::source::{AssetSource, StdFileProvider};
 
-    use super::{prototype_is_hidden, simulation_unit_transform};
+    use super::{
+        prototype_is_hidden, simulation_entity_flash, simulation_entity_visible_to_team,
+        simulation_unit_transform,
+    };
 
     #[test]
     fn simulation_transform_uses_only_live_position_and_facing() {
@@ -528,5 +550,66 @@ mod tests {
         assert_eq!(scene.simulation_entity_count(), 1);
         assert_eq!(scene.placement_count(), 0);
         assert!(!scene.sync_world(&mut source, &world, &visuals, &proto_objects));
+    }
+
+    #[test]
+    fn invisible_sim_control_objects_do_not_pollute_the_visual_roster() {
+        let mut source = AssetSource::with_provider(StdFileProvider);
+        let mut world = sim::World::new();
+        world.init_players(1);
+        world.get_player_mut(1).unwrap().team_id = 1;
+        let database = Database {
+            objects: vec![ProtoObject {
+                name: "sys_revealer".to_owned(),
+                dbid: Some(13),
+                los: Some(1.0),
+                ..ProtoObject::default()
+            }],
+            game_data: Some(GameData {
+                minimum_revealer_size: Some(4.0),
+                ..GameData::default()
+            }),
+            ..Database::default()
+        };
+        let visuals = HashMap::new();
+        let scene = super::UnitScene::load_world(&mut source, &world, &visuals, &database.objects);
+        let revealer = world
+            .create_revealer(&database, 1, Vec3::ZERO, 10.0, None)
+            .expect("revealer");
+
+        assert!(world.get_revealer(revealer).is_some());
+        assert!(world.is_position_revealed_to_team(1, Vec3::new(9.0, 0.0, 0.0)));
+        assert!(scene.roster_matches(&world));
+        assert_eq!(scene.simulation_entity_count(), 0);
+        assert_eq!(scene.placement_count(), 0);
+    }
+
+    #[test]
+    fn team_visibility_projection_reads_only_authoritative_sim_state() {
+        let mut world = sim::World::new();
+        world.init_players(2);
+        world.get_player_mut(1).unwrap().team_id = 1;
+        world.get_player_mut(2).unwrap().team_id = 2;
+        let friendly = world.create_unit_at(1, Vec3::ZERO);
+        let enemy = world.create_unit_at(2, Vec3::new(100.0, 0.0, 100.0));
+
+        assert!(simulation_entity_visible_to_team(&world, 1, friendly));
+        assert!(!simulation_entity_visible_to_team(&world, 1, enemy));
+        world.set_fog_of_war_enabled(false);
+        assert!(simulation_entity_visible_to_team(&world, 1, enemy));
+    }
+
+    #[test]
+    fn flash_projection_reads_only_authoritative_sim_state() {
+        let mut world = sim::World::new();
+        let entity_id = world.create_unit(1);
+        assert!(simulation_entity_flash(&world, entity_id).is_none());
+
+        assert!(world.flash_entity(entity_id, 500, 3_000, [255, 255, 0, 255], 80.0));
+        let flash = simulation_entity_flash(&world, entity_id).expect("sim flash request");
+        assert_eq!(flash.color(), [255, 255, 0, 255]);
+        assert_eq!(flash.expires_at_ms(), Some(3_000));
+        assert_eq!(flash.scroll_speed().to_bits(), (-4.0_f32).to_bits());
+        assert_eq!(flash.intensity().to_bits(), 80.0_f32.to_bits());
     }
 }

@@ -256,6 +256,7 @@ impl PhysicsBody {
         move_target: Option<Vec3>,
         dt: f32,
         velocity_scalar: f32,
+        reverse_move: bool,
     ) -> bool {
         if self.motion_type == MotionType::Static || !valid_step(dt) {
             self.clear_accumulators();
@@ -264,7 +265,7 @@ impl PhysicsBody {
         self.integrate_forces(entity, dt);
         let target_before = move_target.map(|target| planar(target - entity.position));
         if let Some(target) = move_target {
-            self.drive_toward(entity, target, dt, velocity_scalar);
+            self.drive_toward(entity, target, dt, velocity_scalar, reverse_move);
         }
         self.integrate_angular_velocity(entity, dt);
         entity.position += entity.velocity * dt;
@@ -321,7 +322,14 @@ impl PhysicsBody {
         entity.velocity *= damping_factor(self.material.linear_damping, dt);
     }
 
-    fn drive_toward(&self, entity: &mut BaseEntity, target: Vec3, dt: f32, velocity_scalar: f32) {
+    fn drive_toward(
+        &self,
+        entity: &mut BaseEntity,
+        target: Vec3,
+        dt: f32,
+        velocity_scalar: f32,
+        reverse_move: bool,
+    ) {
         let delta = planar(target - entity.position);
         let distance = delta.length();
         if distance <= ARRIVAL_THRESHOLD {
@@ -329,7 +337,12 @@ impl PhysicsBody {
             entity.velocity.z = 0.0;
             return;
         }
-        let desired_forward = delta / distance;
+        let travel_direction = delta / distance;
+        let desired_forward = if reverse_move {
+            -travel_direction
+        } else {
+            travel_direction
+        };
         let current_speed = planar(entity.velocity).length();
         let acceleration = (self.acceleration * velocity_scalar).max(MIN_ACCELERATION);
         let braking_distance = 0.5 * current_speed * current_speed / acceleration;
@@ -342,8 +355,13 @@ impl PhysicsBody {
         let max_turn = self.maximum_turn_rate(next_speed, velocity_scalar) * dt;
         let forward = turn_toward(entity.forward, desired_forward, max_turn);
         entity.set_forward(forward);
-        entity.velocity.x = entity.forward.x * next_speed;
-        entity.velocity.z = entity.forward.z * next_speed;
+        let movement_direction = if reverse_move {
+            -entity.forward
+        } else {
+            entity.forward
+        };
+        entity.velocity.x = movement_direction.x * next_speed;
+        entity.velocity.z = movement_direction.z * next_speed;
     }
 
     fn maximum_turn_rate(&self, speed: f32, velocity_scalar: f32) -> f32 {
@@ -714,7 +732,7 @@ fn sync_physical_squad_origins(
         squad.base.forward = anchor.base.forward;
         squad.base.velocity = anchor.base.velocity;
         if squad.state == SquadState::Moving && anchor.state != UnitState::Moving {
-            squad.stop();
+            squad.finish_current_movement();
         }
     }
 }
@@ -844,12 +862,34 @@ mod tests {
     #[test]
     fn vehicle_accelerates_and_turns_with_limits() {
         let (mut entity, mut body) = dynamic_body(Vec3::ZERO);
-        let arrived = body.update(&mut entity, Some(Vec3::new(100.0, 0.0, 0.0)), 0.05, 1.0);
+        let arrived = body.update(
+            &mut entity,
+            Some(Vec3::new(100.0, 0.0, 0.0)),
+            0.05,
+            1.0,
+            false,
+        );
 
         assert!(!arrived);
         assert!(entity.velocity.length() <= 3.0 + f32::EPSILON);
         assert!(entity.forward.x > 0.0);
         assert!(entity.forward.z > 0.0);
+    }
+
+    #[test]
+    fn reverse_vehicle_faces_away_while_accelerating_toward_target() {
+        let (mut entity, mut body) = dynamic_body(Vec3::ZERO);
+        let arrived = body.update(
+            &mut entity,
+            Some(Vec3::new(100.0, 0.0, 0.0)),
+            0.05,
+            1.0,
+            true,
+        );
+
+        assert!(!arrived);
+        assert!(entity.forward.x < 0.0);
+        assert!(entity.velocity.x > 0.0);
     }
 
     #[test]

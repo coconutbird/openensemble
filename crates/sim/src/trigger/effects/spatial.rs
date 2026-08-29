@@ -1,5 +1,8 @@
 //! Retail spatial query and authoritative transform effects.
 
+mod random_location;
+pub(super) use random_location::random_location;
+
 use super::support::{
     EntityListKind, bool_at, entities_at, unique_add, used_variable_id, variable_is_used, vector_at,
 };
@@ -10,6 +13,24 @@ use glam::Vec3;
 use num_traits::ToPrimitive;
 
 const INVALID_VECTOR: Vec3 = Vec3::new(-1.0, -1.0, -1.0);
+
+pub(super) fn set_playable_bounds(
+    effect: &Effect,
+    script: &TriggerScript,
+    world: &mut World,
+) -> EffectOutcome {
+    let Some(first) = vector_at(effect, script, 1) else {
+        return EffectOutcome::Skipped;
+    };
+    let Some(second) = vector_at(effect, script, 2) else {
+        return EffectOutcome::Skipped;
+    };
+    if world.set_playable_bounds(first, second) {
+        EffectOutcome::Applied
+    } else {
+        EffectOutcome::Skipped
+    }
+}
 
 pub(super) fn get_location(
     effect: &Effect,
@@ -136,8 +157,9 @@ fn mean_entity_position(world: &World, entity_id: EntityId, kind: EntityListKind
         EntityListKind::Unit => world.get_unit(entity_id).map(|unit| unit.base.position),
         EntityListKind::Squad => squad_average_position(world, entity_id),
         EntityListKind::Object => world
-            .get_unit(entity_id)
-            .map(|unit| unit.base.position)
+            .get_object(entity_id)
+            .map(|object| object.base.position)
+            .or_else(|| world.get_unit(entity_id).map(|unit| unit.base.position))
             .or_else(|| {
                 world
                     .get_projectile(entity_id)

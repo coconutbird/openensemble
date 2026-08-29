@@ -17,11 +17,14 @@ use pipeline::xtt;
 use render::environment::EnvironmentMap;
 use render::lighting::LocalLightSet;
 use render::postprocess::{HDR_COLOR_FORMAT, ToneMapResources};
-use render::terrain::{Camera, CompositorResources, LodConfig, TerrainScene};
+use render::terrain::{
+    Camera, CompositorResources, LodConfig, SimulationCameraAdapter, TerrainScene,
+};
 use render::ugx::{
     Unit as UgxUnit, UnitRenderer as UgxUnitRenderer, UnitScene as UgxUnitScene,
     UnitSceneRenderer as UgxUnitSceneRenderer,
 };
+use render::ui::SimulationTimerAdapter;
 use render::wgpu;
 
 use crate::capture::{CaptureConfig, CaptureState};
@@ -65,6 +68,10 @@ pub struct TerrainViewer {
     /// GPU resources for the camera-relative authored sky visual.
     pub sky_renderer: Option<UgxUnitRenderer>,
     pub camera: Camera,
+    /// Renderer-local application state for sim-authored camera directives.
+    pub camera_adapter: SimulationCameraAdapter,
+    /// Renderer-local selection for the sim-owned single timer widget.
+    pub timer_adapter: SimulationTimerAdapter,
     pub show_info: bool,
     pub wireframe: bool,
     pub load_error: Option<String>,
@@ -121,6 +128,8 @@ impl TerrainViewer {
             sky_unit: None,
             sky_renderer: None,
             camera: Camera::default(),
+            camera_adapter: SimulationCameraAdapter::default(),
+            timer_adapter: SimulationTimerAdapter::default(),
             show_info: true,
             wireframe: false,
             load_error: None,
@@ -191,6 +200,7 @@ impl TerrainViewer {
         self.simulation = inputs.simulation;
         self.game_content = inputs.content;
         self.simulation_clock.reset();
+        self.timer_adapter.reset();
         if self.simulation.is_some() {
             self.simulation_clock.start();
         }
@@ -213,9 +223,11 @@ impl TerrainViewer {
             self.asset_source.as_mut(),
         ) {
             Ok(scene) => {
+                let hover_point = scene.mesh.center();
                 if first_load {
-                    self.camera.position = scene.mesh.center() + Vec3::new(0.0, 200.0, -300.0);
+                    self.camera.position = hover_point + Vec3::new(0.0, 200.0, -300.0);
                 }
+                self.camera_adapter.reset(&self.camera, hover_point);
                 self.scene = Some(scene);
                 self.load_error = None;
             }

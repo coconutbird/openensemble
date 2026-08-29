@@ -15,6 +15,8 @@
 mod base;
 mod base_site;
 mod idle;
+mod object_state;
+pub mod objects;
 pub mod projectiles;
 pub mod squads;
 pub mod units;
@@ -22,13 +24,16 @@ pub mod units;
 pub use base::BaseEntity;
 pub use base_site::{Base, BaseId};
 pub(crate) use idle::EntityIdle;
+pub use object_state::{DopplePolicy, ObjectState, TargetingSelection};
+pub use objects::{Object, ObjectKind, Revealer};
 pub use projectiles::Projectile;
 pub use squads::{
     RecoveryType, Squad, SquadArchetype, SquadContainmentState, SquadFormation, SquadGarrison,
-    SquadMode, SquadRecovery, SquadShields, SquadState,
+    SquadMode, SquadRecovery, SquadShields, SquadState, SquadTransportFlyIn, TransportFlyInPhase,
 };
 pub use units::{
-    BuildingProduction, ConstructionKind, ConstructionProgress, ConstructionTask, ResearchProgress,
-    ResearchTask, ShieldCoverage, TrainingKind, TrainingProgress, TrainingTask, Unit, UnitActions,
-    UnitArchetype, UnitDataScalar, UnitGarrison, UnitKind, UnitShields, UnitState,
+    BuildingProduction, ConstructionKind, ConstructionProgress, ConstructionTask, RallyPoint,
+    ResearchProgress, ResearchTask, ShieldCoverage, TowerWallAction, TrainingKind,
+    TrainingProgress, TrainingTask, Unit, UnitActions, UnitArchetype, UnitDataScalar, UnitGarrison,
+    UnitKind, UnitShields, UnitState,
 };

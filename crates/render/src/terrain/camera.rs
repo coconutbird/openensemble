@@ -2,6 +2,10 @@
 
 use glam::{Mat4, Vec3};
 
+use sim::{CameraDirective, PlayerId, PlayerPresentationState, World};
+
+const DEFAULT_CAMERA_ZOOM: f32 = 300.0;
+
 /// Fly camera for navigating terrain.
 ///
 /// Uses yaw/pitch rotation with WASD movement.
@@ -122,5 +126,125 @@ impl Camera {
         self.position = center + Vec3::new(max_dim * 0.5, height * 2.0, max_dim * 0.5);
         self.yaw = -std::f32::consts::FRAC_PI_4;
         self.pitch = -0.4;
+    }
+}
+
+/// Renderer-owned adapter for one-shot camera directives from the simulation.
+///
+/// Persistent permissions remain in [`PlayerPresentationState`]. Hover point,
+/// zoom distance, and the applied revision are local UI state and never feed
+/// gameplay back into the simulation.
+#[derive(Clone, Debug)]
+pub struct SimulationCameraAdapter {
+    applied_revision: u32,
+    hover_point: Option<Vec3>,
+    hover_height_offset: f32,
+    zoom_distance: f32,
+}
+
+impl Default for SimulationCameraAdapter {
+    fn default() -> Self {
+        Self {
+            applied_revision: 0,
+            hover_point: None,
+            hover_height_offset: 0.0,
+            zoom_distance: DEFAULT_CAMERA_ZOOM,
+        }
+    }
+}
+
+impl SimulationCameraAdapter {
+    /// Seed renderer-local hover/zoom state after loading a terrain scene.
+    pub fn reset(&mut self, camera: &Camera, hover_point: Vec3) {
+        self.applied_revision = 0;
+        self.hover_point = hover_point.is_finite().then_some(hover_point);
+        self.hover_height_offset = 0.0;
+        let zoom_distance = camera.position.distance(hover_point);
+        self.zoom_distance = if zoom_distance.is_finite() {
+            zoom_distance.max(1.0)
+        } else {
+            DEFAULT_CAMERA_ZOOM
+        };
+    }
+
+    /// Project the latest directive for `player_id` into the renderer camera.
+    ///
+    /// The returned permissions are read directly by the input adapter. A
+    /// directive is applied once per synchronized revision.
+    pub fn synchronize(
+        &mut self,
+        camera: &mut Camera,
+        world: &World,
+        player_id: PlayerId,
+    ) -> PlayerPresentationState {
+        let state = world.player_presentation_state(player_id);
+        if let Some(directive) = state
+            .camera_directive
+            .filter(|directive| directive.revision != self.applied_revision)
+        {
+            self.apply_directive(camera, directive);
+        }
+        state
+    }
+
+    fn apply_directive(&mut self, camera: &mut Camera, directive: CameraDirective) {
+        if directive.revision == self.applied_revision {
+            return;
+        }
+        if let Some(direction) = directive.direction {
+            apply_retail_v4_yaw(camera, direction);
+        }
+        if let Some(offset) = directive.hover_height_offset {
+            self.hover_height_offset = offset;
+        }
+        if let Some(hover_point) = directive.location {
+            let target = hover_point + Vec3::Y * self.hover_height_offset;
+            camera.position = target - camera.forward() * self.zoom_distance;
+            self.hover_point = Some(hover_point);
+        } else if directive.hover_height_offset.is_some()
+            && let Some(hover_point) = self.hover_point
+        {
+            let target = hover_point + Vec3::Y * self.hover_height_offset;
+            camera.position = target - camera.forward() * self.zoom_distance;
+        }
+        self.applied_revision = directive.revision;
+    }
+}
+
+fn apply_retail_v4_yaw(camera: &mut Camera, direction: Vec3) {
+    let Some(current) = Vec3::new(camera.forward().x, 0.0, camera.forward().z).try_normalize()
+    else {
+        return;
+    };
+    let Some(target) = Vec3::new(direction.x, 0.0, direction.z).try_normalize() else {
+        return;
+    };
+    let angle = current.dot(target).clamp(-1.0, 1.0).acos();
+    camera.yaw -= angle;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn simulation_directive_is_one_shot_and_preserves_renderer_zoom() {
+        let mut camera = Camera::default();
+        let mut adapter = SimulationCameraAdapter::default();
+        adapter.reset(&camera, Vec3::ZERO);
+        let zoom = camera.position.length();
+        let directive = CameraDirective {
+            revision: 1,
+            location: Some(Vec3::new(20.0, 5.0, 30.0)),
+            direction: Some(Vec3::X),
+            hover_height_offset: Some(3.0),
+        };
+
+        adapter.apply_directive(&mut camera, directive);
+        let hover = Vec3::new(20.0, 8.0, 30.0);
+        assert!((camera.position.distance(hover) - zoom).abs() < 0.001);
+        let first_position = camera.position;
+        adapter.apply_directive(&mut camera, directive);
+        assert_eq!(camera.position, first_position);
     }
 }

@@ -50,6 +50,20 @@ impl SimRandom {
         }
         self.next_15() / (32_767 / (maximum + 1) + 1)
     }
+
+    /// Return retail's inclusive floating distribution in `0.0..=1.0`.
+    pub(crate) fn distribution(&mut self) -> f32 {
+        const ONE_OVER_32K: f32 = 1.0 / 32_767.0;
+        self.next_15()
+            .to_f32()
+            .expect("a 15-bit random sample has an exact f32 representation")
+            * ONE_OVER_32K
+    }
+
+    /// Return a value in the retail inclusive floating range.
+    pub(crate) fn range_float(&mut self, minimum: f32, maximum: f32) -> f32 {
+        minimum + ((maximum - minimum) * self.distribution())
+    }
 }
 
 /// Deterministic RNG matching vanilla `Random` class.
@@ -351,6 +365,16 @@ mod tests {
         assert_eq!(
             (0..4).map(|_| rng.index(3)).collect::<Vec<_>>(),
             vec![0, 2, 0, 3]
+        );
+
+        rng.set_seed(1);
+        assert_eq!(
+            rng.distribution().to_bits(),
+            (41.0_f32 / 32_767.0).to_bits()
+        );
+        assert_eq!(
+            rng.range_float(-2.0, 3.0).to_bits(),
+            (-2.0_f32 + 5.0 * (18_467.0 / 32_767.0)).to_bits()
         );
     }
 }

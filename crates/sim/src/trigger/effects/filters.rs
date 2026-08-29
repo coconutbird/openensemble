@@ -235,7 +235,19 @@ fn validate_and_test(
         EntityListKind::Squad => world
             .get_squad(entity_id)
             .map(|_| filter_set.matches_entity(entity_id, world)),
-        EntityListKind::Object => None,
+        EntityListKind::Object => world
+            .get_object(entity_id)
+            .map(|_| filter_set.matches_entity(entity_id, world))
+            .or_else(|| {
+                world
+                    .get_unit(entity_id)
+                    .map(|_| filter_set.matches_entity(entity_id, world))
+            })
+            .or_else(|| {
+                world
+                    .get_projectile(entity_id)
+                    .map(|_| filter_set.matches_entity(entity_id, world))
+            }),
     }
 }
 

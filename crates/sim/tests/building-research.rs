@@ -198,6 +198,48 @@ fn instant_and_authored_prerequisite_semantics_are_authoritative() {
     assert_resources(&world, [50.0, 5.0, 0.0, 0.0]);
 }
 
+#[test]
+fn player_technology_forbids_gate_new_research() {
+    let database = research_database();
+    let mut world = sim::World::new();
+    world.init_players(1);
+    world.get_player_mut(1).unwrap().resources.amounts = [1_000.0, 10.0, 0.0, 0.0];
+    let barracks_id = spawn_barracks(&mut world, &database);
+    let technology_id = technology_prototype_id(&database, UPGRADE_ONE).unwrap();
+
+    assert_eq!(
+        world
+            .get_player_mut(1)
+            .unwrap()
+            .set_technology_forbidden(&database, technology_id, true),
+        Some(true)
+    );
+    assert_eq!(
+        world
+            .technology_status(1, &database, technology_id)
+            .unwrap(),
+        TechStatus::Obtainable
+    );
+    assert!(matches!(
+        world.queue_research(1, barracks_id, &database, technology_id),
+        Err(ResearchError::TechnologyUnavailable {
+            status: TechStatus::Obtainable,
+            ..
+        })
+    ));
+
+    world
+        .get_player_mut(1)
+        .unwrap()
+        .set_technology_forbidden(&database, technology_id, false);
+    assert_eq!(
+        world
+            .queue_research(1, barracks_id, &database, technology_id)
+            .unwrap(),
+        ResearchQueueResult::Queued
+    );
+}
+
 fn assert_resources(world: &sim::World, expected: [f32; 4]) {
     let actual = world.get_player(1).unwrap().resources.amounts;
     for (actual, expected) in actual.into_iter().zip(expected) {

@@ -2,6 +2,39 @@ use super::*;
 use crate::trigger::{EffectType, TriggerVar, VarType};
 
 #[test]
+fn set_playable_bounds_uses_retail_corner_slots_and_world_clamping() {
+    let mut world = World::new();
+    assert!(world.configure_terrain_bounds(Vec3::ZERO, Vec3::new(100.0, 5.0, 80.0)));
+    let mut script = TriggerScript::new(1);
+    add_value(
+        &mut script,
+        1,
+        VarType::Vector,
+        TriggerValue::Vector(TriggerVec3::new(120.0, 99.0, 70.0)),
+    );
+    add_value(
+        &mut script,
+        2,
+        VarType::Vector,
+        TriggerValue::Vector(TriggerVec3::new(-20.0, -99.0, 10.0)),
+    );
+    let mut effect = Effect::new(1, EffectType::SetPlayableBounds)
+        .with_input_at(1, 1)
+        .with_input_at(2, 2);
+    effect.version = 1;
+
+    assert_eq!(
+        set_playable_bounds(&effect, &script, &mut world),
+        EffectOutcome::Applied
+    );
+    let bounds = world.playable_bounds().expect("scenario subset");
+    assert_close(bounds.min_x(), 0.0);
+    assert_close(bounds.min_z(), 10.0);
+    assert_close(bounds.max_x(), 100.0);
+    assert_close(bounds.max_z(), 70.0);
+}
+
+#[test]
 fn mean_location_versions_use_retail_authored_and_valid_divisors() {
     let mut world = World::new();
     let unit_id = world.create_unit_at(1, Vec3::new(8.0, 4.0, 2.0));
@@ -126,4 +159,8 @@ fn vector(script: &TriggerScript, id: u32) -> TriggerVec3 {
         TriggerValue::Vector(value) => value,
         ref value => panic!("expected vector, got {value:?}"),
     }
+}
+
+fn assert_close(actual: f32, expected: f32) {
+    assert!((actual - expected).abs() < f32::EPSILON);
 }

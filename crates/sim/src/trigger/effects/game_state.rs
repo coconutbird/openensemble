@@ -1,6 +1,6 @@
 //! Retail game-time, team, and player-list effects.
 
-use super::support::{bool_at, integer_at, used_variable_id, variable_is_used};
+use super::support::{bool_at, float_at, integer_at, used_variable_id, variable_is_used};
 use super::{EffectOutcome, value_at, write_value};
 use crate::trigger::{Effect, EffectType, TriggerScript, TriggerValue, VarId};
 use crate::world::World;
@@ -14,7 +14,7 @@ pub(super) enum IdListKind {
 pub(super) fn execute(
     effect: &Effect,
     script: &mut TriggerScript,
-    world: &World,
+    world: &mut World,
 ) -> Option<EffectOutcome> {
     let outcome = match effect.effect_type {
         EffectType::GetTeams => get_teams(effect, script, world),
@@ -26,9 +26,45 @@ pub(super) fn execute(
         EffectType::GetPlayers2 => get_players_2(effect, script, world),
         EffectType::GetGameTime => get_game_time(effect, script, world),
         EffectType::GetGameTimeRemaining => get_game_time_remaining(effect, script, world),
+        EffectType::SetScenarioScoreInfo => set_scenario_score_info(effect, script, world),
         _ => return None,
     };
     Some(outcome)
+}
+
+fn set_scenario_score_info(
+    effect: &Effect,
+    script: &TriggerScript,
+    world: &mut World,
+) -> EffectOutcome {
+    let (
+        Some(combat_bonus_min),
+        Some(combat_bonus_max),
+        Some(mission_min_par_time),
+        Some(mission_max_par_time),
+        Some(grade_gold),
+        Some(grade_silver),
+        Some(grade_bronze),
+        Some(_grade_tin),
+    ) = (
+        float_at(effect, script, 1),
+        float_at(effect, script, 2),
+        time_at(effect, script, 3),
+        time_at(effect, script, 4),
+        integer_at(effect, script, 5),
+        integer_at(effect, script, 6),
+        integer_at(effect, script, 7),
+        integer_at(effect, script, 8),
+    )
+    else {
+        return EffectOutcome::Skipped;
+    };
+    world.set_scenario_score_info(
+        [combat_bonus_min, combat_bonus_max],
+        [mission_min_par_time, mission_max_par_time],
+        [grade_gold, grade_silver, grade_bronze],
+    );
+    EffectOutcome::Applied
 }
 
 pub(super) fn get_players_2(
