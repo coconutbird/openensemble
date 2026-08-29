@@ -2,10 +2,15 @@
 mod catalog_assertions;
 #[path = "scenario_asset_loading/combat_assertions.rs"]
 mod combat_assertions;
+#[path = "scenario_asset_loading/protection_assertions.rs"]
+mod protection_assertions;
 
 use catalog_assertions::assert_loaded_gameplay_catalog;
 use combat_assertions::{
     damaged_squad_member_count, squad_member_hitpoint_snapshot, squad_member_hitpoints,
+};
+use protection_assertions::{
+    assert_real_external_shield_loading, assert_real_protection_catalog_and_lifecycle,
 };
 use sim::entities::squads::marine::MARINE_SQUAD_NAME;
 use sim::{
@@ -68,6 +73,8 @@ fn loads_real_scenario_database_and_simulation_together() {
     assert_real_barracks_training(&mut loaded);
     assert_real_barracks_research(&mut loaded);
     assert_real_shield_loading_and_recharge(&mut loaded);
+    assert_real_protection_catalog_and_lifecycle(&mut loaded);
+    assert_real_external_shield_loading(&mut loaded);
     assert_real_base_spawn_and_move(&mut loaded);
 }
 

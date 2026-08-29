@@ -169,17 +169,13 @@ impl World {
             .iter()
             .filter(|(_, unit)| unit.base.player_id == player_id)
             .filter_map(|(unit_id, unit)| {
+                if !unit.shields.is_enabled() {
+                    return None;
+                }
                 let proto = database
                     .objects
                     .iter()
                     .find(|proto| proto.name.eq_ignore_ascii_case(&unit.proto_object_name))?;
-                if !proto
-                    .damage_type
-                    .as_deref()
-                    .is_some_and(|damage_type| damage_type.eq_ignore_ascii_case("Shielded"))
-                {
-                    return None;
-                }
                 let base = proto
                     .shieldpoints
                     .filter(|shieldpoints| shieldpoints.is_finite() && *shieldpoints >= 0.0)

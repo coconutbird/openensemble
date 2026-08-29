@@ -197,6 +197,10 @@ enum ContextualWorkOrder {
         target: EntityId,
         range: f32,
     },
+    Join {
+        target: EntityId,
+        ability_id: Option<u8>,
+    },
     Hitch(EntityId),
     Unhitch(EntityId),
     Unsupported,
@@ -303,6 +307,10 @@ fn resolve_contextual_work(
             target: target_id,
             range,
         },
+        Some(kind) if kind.eq_ignore_ascii_case("Join") => ContextualWorkOrder::Join {
+            target: target_id,
+            ability_id,
+        },
         Some(kind)
             if kind.eq_ignore_ascii_case("Move") || kind.eq_ignore_ascii_case("GaggleMove") =>
         {
@@ -396,6 +404,9 @@ fn issue_contextual_work(
         ContextualWorkOrder::Garrison { target, range } => world
             .issue_garrison_order(player_id, squad_id, target, range)
             .is_ok(),
+        ContextualWorkOrder::Join { target, ability_id } => {
+            world.issue_join_order(player_id, squad_id, target, ability_id)
+        }
         ContextualWorkOrder::Hitch(target) => {
             world.issue_hitch_order(player_id, squad_id, target).is_ok()
         }

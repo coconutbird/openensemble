@@ -3,7 +3,7 @@
 //! Based on `BWorld` from the original source.
 
 use crate::entities::squads::{formation_offset_to_local, formation_offset_to_world};
-use crate::entities::{Base, BaseId, Object, Projectile, Squad, Unit};
+use crate::entities::{Base, BaseId, Object, Projectile, ShieldCoverage, Squad, Unit};
 use crate::entity::{Entity, EntityManager};
 use crate::entity_id::{EntityClass, EntityId};
 use crate::physics::{
@@ -42,6 +42,7 @@ mod powers;
 mod presentation;
 mod production;
 mod projectiles;
+mod protection;
 mod proto_data;
 mod query;
 mod rally_points;
@@ -153,6 +154,8 @@ pub struct World {
     prototype_object_types: BTreeMap<i32, Vec<String>>,
     /// Proto-squad name and maximum child count keyed by live database ID.
     prototype_squads: BTreeMap<i32, (String, u32)>,
+    /// Scenario-layered integral shield coverage keyed by proto-object name.
+    prototype_shield_coverages: BTreeMap<String, ShieldCoverage>,
     /// Class-0 invisible and world-control objects.
     pub objects: EntityManager<Object>,
     /// Unit pool. Mobile units and buildings both use vanilla class 1.
@@ -207,6 +210,7 @@ impl World {
             construction_damage_multiplier: 1.0,
             prototype_object_types: BTreeMap::new(),
             prototype_squads: BTreeMap::new(),
+            prototype_shield_coverages: BTreeMap::new(),
             objects: EntityManager::new(EntityClass::Object),
             units: EntityManager::new(EntityClass::Unit),
             squads: EntityManager::new(EntityClass::Squad),
@@ -323,10 +327,13 @@ impl World {
     pub fn remove_squad(&mut self, id: EntityId) -> Option<Squad> {
         self.prepare_remove_squad_garrison(id);
         self.detach_squad_hitch(id);
+        self.prepare_remove_squad_protection(id);
         let squad = self.squads.remove(id)?;
         self.remove_hint_callouts_for_entity(id);
         for (_, other_squad) in self.squads.iter_mut() {
             other_squad.clear_teleporter_destination(id);
+            other_squad.clear_join_reference(id);
+            other_squad.clear_damage_proxy_target(id);
             other_squad.remove_associated_wall_tower(id);
         }
         for (_, unit) in self.units.iter_mut() {
@@ -608,6 +615,7 @@ impl World {
         let Some(base) = self.bases.remove(&id) else {
             return false;
         };
+        self.destroy_removed_base_plasma_shield(&base);
         let building_ids: Vec<_> = base.buildings().collect();
         for building_id in building_ids {
             let _removed = self.remove_unit(building_id);
@@ -658,6 +666,7 @@ impl World {
             self.update_revivals(dt, gameplay);
             self.update_attack_move_orders(gameplay);
             self.update_combat_orders(dt, gameplay);
+            self.update_protection(dt, gameplay);
             self.update_shields(dt, gameplay);
         }
         self.update_transport_fly_ins(dt);
@@ -714,6 +723,7 @@ impl World {
             .is_some_and(|base| base.anchor_building_id == building_id);
         if is_anchor {
             if let Some(base) = self.bases.remove(&base_id) {
+                self.destroy_removed_base_plasma_shield(&base);
                 for other_id in base.buildings() {
                     if let Some(other) = self.units.get_mut(other_id) {
                         other.base_id = None;

@@ -1,5 +1,6 @@
 //! Immutable tactic calculations used by retail AI squad analysis.
 
+use super::damage_types::DamageTypeProfiles;
 use super::{GameplayCatalog, ObjectGameplay, selection};
 use crate::player::PlayerTechState;
 use pipeline::database::hw1::Database;
@@ -54,13 +55,16 @@ impl GameplayCatalog {
     }
 }
 
-pub(super) fn collect_damage_type_exemplars(database: &Database) -> BTreeMap<String, String> {
+pub(super) fn collect_damage_type_exemplars(
+    database: &Database,
+    profiles: &DamageTypeProfiles,
+) -> BTreeMap<String, String> {
     let mut exemplars = BTreeMap::new();
     for damage_type in AI_DAMAGE_TYPES {
         if let Some(object) = database.objects.iter().find(|object| {
-            object
-                .damage_type
-                .as_deref()
+            profiles
+                .base_damage_type(&object.name)
+                .or(object.damage_type.as_deref())
                 .is_some_and(|kind| kind.eq_ignore_ascii_case(damage_type))
         }) {
             exemplars.insert(damage_type.to_ascii_lowercase(), object.name.clone());
@@ -102,7 +106,7 @@ fn add_action_ratings(
         if !action_allows_exemplar(catalog, rule, kind, weapon, damage_type) {
             continue;
         }
-        let modifier = weapon_modifier(catalog, weapon, damage_type);
+        let modifier = weapon_modifier(catalog, weapon, damage_type, technologies);
         ratings[index] += damage * modifier.damage * modifier.rating;
     }
 }
@@ -185,21 +189,29 @@ fn weapon_modifier(
     catalog: &GameplayCatalog,
     weapon: &Weapon,
     damage_type: &str,
+    technologies: &PlayerTechState,
 ) -> super::WeaponDamageModifier {
-    weapon
-        .weapon_type
-        .as_deref()
-        .and_then(|weapon_type| {
-            catalog
-                .weapon_damage_modifiers
-                .get(&weapon_type.to_ascii_lowercase())
-        })
+    let Some(weapon_type) = weapon.weapon_type.as_deref() else {
+        return default_weapon_modifier();
+    };
+    let Some(mut modifier) = catalog
+        .weapon_damage_modifiers
+        .get(&weapon_type.to_ascii_lowercase())
         .and_then(|modifiers| modifiers.get(&damage_type.to_ascii_lowercase()))
         .copied()
-        .unwrap_or(super::WeaponDamageModifier {
-            damage: 1.0,
-            rating: 1.0,
-        })
+    else {
+        return default_weapon_modifier();
+    };
+    modifier.damage =
+        technologies.weapon_type_damage_modifier(weapon_type, damage_type, modifier.damage);
+    modifier
+}
+
+fn default_weapon_modifier() -> super::WeaponDamageModifier {
+    super::WeaponDamageModifier {
+        damage: 1.0,
+        rating: 1.0,
+    }
 }
 
 fn ai_action_kind(action: &Action) -> Option<AIActionKind> {
@@ -219,8 +231,9 @@ fn ai_action_kind(action: &Action) -> Option<AIActionKind> {
 mod tests {
     use super::*;
     use pipeline::database::hw1::tactics::{TacticData, TacticRules};
+    use pipeline::database::hw1::techs::{EffectTarget, EffectsWrapper, TechEffect};
     use pipeline::database::hw1::weapontypes::DamageModifier;
-    use pipeline::database::hw1::{ProtoObject, WeaponType};
+    use pipeline::database::hw1::{ProtoObject, Tech, WeaponType};
 
     #[test]
     fn ratings_use_damage_percentage_rating_and_retail_rule_gating() {
@@ -249,6 +262,26 @@ mod tests {
             }],
             ..WeaponType::default()
         });
+        let technology = Tech {
+            name: "AntiVehicleDamage".to_owned(),
+            effects: Some(EffectsWrapper {
+                entries: vec![TechEffect {
+                    effect_type: "Data".to_owned(),
+                    subtype: Some("DamageModifier".to_owned()),
+                    amount: Some(2.0),
+                    relativity: Some("Percent".to_owned()),
+                    weapon_type: Some("AntiVehicle".to_owned()),
+                    damage_type: Some("Medium".to_owned()),
+                    target: Some(EffectTarget {
+                        target_type: Some("Player".to_owned()),
+                        value: Some("Player".to_owned()),
+                    }),
+                    ..TechEffect::default()
+                }],
+            }),
+            ..Tech::default()
+        };
+        database.techs.push(technology.clone());
         let tactics = TacticData {
             weapons: vec![Weapon {
                 name: "Gun".to_owned(),
@@ -277,5 +310,10 @@ mod tests {
         let ratings = catalog.ai_attack_ratings("attacker", &PlayerTechState::default());
         assert!(ratings[0].abs() < f32::EPSILON);
         assert!((ratings[2] - 30.0).abs() < f32::EPSILON);
+
+        let mut technologies = PlayerTechState::default();
+        let _transforms = technologies.activate(&database, &technology);
+        let ratings = catalog.ai_attack_ratings("attacker", &technologies);
+        assert!((ratings[2] - 60.0).abs() < f32::EPSILON);
     }
 }

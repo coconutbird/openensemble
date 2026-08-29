@@ -61,6 +61,34 @@ impl World {
         Some(attachment_id)
     }
 
+    pub(crate) fn add_visual_attachment_to_unit(
+        &mut self,
+        unit_id: EntityId,
+        prototype_id: i32,
+        prototype_name: &str,
+    ) -> Option<EntityId> {
+        let prototype_name = prototype_name.trim();
+        if prototype_name.is_empty() {
+            return None;
+        }
+        let (owner, position, forward) = self
+            .units
+            .get(unit_id)
+            .map(|unit| (unit.base.player_id, unit.base.position, unit.base.forward))?;
+        let attachment_id = self.insert_visual_attachment(
+            owner,
+            prototype_id,
+            prototype_name.to_owned(),
+            position,
+            forward,
+        );
+        self.entity_object_state_mut(attachment_id)?
+            .set_attached_to(Some(unit_id));
+        self.entity_object_state_mut(unit_id)?
+            .add_attachment(attachment_id);
+        Some(attachment_id)
+    }
+
     /// Synchronize child root transforms after all parent motion for a substep.
     pub(super) fn synchronize_attachments(&mut self) {
         let snapshots = self.attachment_snapshots();

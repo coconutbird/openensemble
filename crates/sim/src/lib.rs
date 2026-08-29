@@ -39,10 +39,11 @@ pub use entities::{
     Base, BaseEntity, BaseId, BuildingProduction, ConstructionKind, ConstructionProgress,
     ConstructionTask, DopplePolicy, IconObject, Object, ObjectKind, ObjectState, Projectile,
     RallyPoint, RecoveryType, ResearchProgress, ResearchTask, Revealer, ScriptedAnimation,
-    ShieldCoverage, Squad, SquadArchetype, SquadContainmentState, SquadFormation, SquadGarrison,
-    SquadMode, SquadRecovery, SquadShields, SquadState, SquadTransportFlyIn, TargetingSelection,
-    TowerWallAction, TrainingKind, TrainingProgress, TrainingTask, TransportFlyInPhase, Unit,
-    UnitActions, UnitArchetype, UnitDataScalar, UnitGarrison, UnitKind, UnitShields, UnitState,
+    ShieldCoverage, Squad, SquadArchetype, SquadBoardState, SquadContainmentState, SquadFormation,
+    SquadGarrison, SquadMergeState, SquadMode, SquadRecovery, SquadShields, SquadState,
+    SquadTransportFlyIn, TargetingSelection, TowerWallAction, TrainingKind, TrainingProgress,
+    TrainingTask, TransportFlyInPhase, Unit, UnitActions, UnitArchetype, UnitDataScalar,
+    UnitGarrison, UnitKind, UnitShields, UnitState,
 };
 pub use entity::{Entity, EntityManager, MAX_ENTITY_SLOTS};
 pub use entity_id::{EntityClass, EntityId};
@@ -50,9 +51,9 @@ pub use executor::CommandExecutor;
 pub use gameplay::{
     AbilityGameplay, AbilityRecoveryStart, AreaDamageProfile, AttackAccuracyProfile,
     AttackAnimation, AttackProfile, AttackQuery, AttackQueryFlags, GameplayCatalog,
-    GameplayLoadIssue, HeroRevivalProfile, ObjectGameplay, ProjectileInitialPerturbance,
-    ProjectilePerturbanceProfile, ProjectileProfile, RangedAction, ReviveActionProfile,
-    TacticRelation, UnitRevivalProfile,
+    GameplayLoadIssue, HeroRevivalProfile, JoinActionProfile, JoinKind, JoinMergeType,
+    MergedSquadProfile, ObjectGameplay, ProjectileInitialPerturbance, ProjectilePerturbanceProfile,
+    ProjectileProfile, RangedAction, ReviveActionProfile, TacticRelation, UnitRevivalProfile,
 };
 pub use order::OrderType;
 pub use packet::{ChannelPacketHeader, PacketError};

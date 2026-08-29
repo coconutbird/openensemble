@@ -8,7 +8,7 @@
 use crate::entity_id::{EntityClass, EntityId};
 use crate::player::PlayerId;
 use glam::Vec3;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Identifier for a player's base record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -40,6 +40,17 @@ pub struct Base {
     /// Base origin, initially taken from the anchor building.
     pub position: Vec3,
     building_ids: BTreeSet<EntityId>,
+    pub(crate) plasma_shield: BasePlasmaShield,
+}
+
+/// Authoritative lifecycle state for a base's persistent plasma shield.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct BasePlasmaShield {
+    pub primary_generator_id: Option<EntityId>,
+    pub shield_squad_id: Option<EntityId>,
+    pub rebuild_remaining: f32,
+    pub attack_wait_remaining: f32,
+    pub subshield_squads: BTreeMap<EntityId, EntityId>,
 }
 
 impl Base {
@@ -66,6 +77,7 @@ impl Base {
             anchor_building_id,
             position,
             building_ids: BTreeSet::from([anchor_building_id]),
+            plasma_shield: BasePlasmaShield::default(),
         }
     }
 
@@ -84,6 +96,33 @@ impl Base {
     /// Iterate over building IDs in deterministic entity-ID order.
     pub fn buildings(&self) -> impl Iterator<Item = EntityId> + '_ {
         self.building_ids.iter().copied()
+    }
+
+    /// Return the generator currently coordinating this base's plasma shield.
+    #[must_use]
+    pub const fn primary_plasma_shield_generator(&self) -> Option<EntityId> {
+        self.plasma_shield.primary_generator_id
+    }
+
+    /// Return the live or pending plasma-shield squad owned by this base.
+    #[must_use]
+    pub const fn plasma_shield_squad(&self) -> Option<EntityId> {
+        self.plasma_shield.shield_squad_id
+    }
+
+    /// Return the remaining authored rebuild delay in seconds.
+    #[must_use]
+    pub const fn plasma_shield_rebuild_remaining(&self) -> f32 {
+        self.plasma_shield.rebuild_remaining
+    }
+
+    /// Return the plasma subshield currently protecting one base building.
+    #[must_use]
+    pub fn plasma_subshield_squad(&self, building_id: EntityId) -> Option<EntityId> {
+        self.plasma_shield
+            .subshield_squads
+            .get(&building_id)
+            .copied()
     }
 
     pub(crate) fn add_building(&mut self, id: EntityId) {

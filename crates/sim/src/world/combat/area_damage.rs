@@ -41,6 +41,22 @@ struct PrimaryDamage {
     killed: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ExternalShieldVolume {
+    original_primary_id: EntityId,
+    center: Vec3,
+    radius_x: f32,
+    radius_y: f32,
+}
+
+impl ExternalShieldVolume {
+    fn contains(self, center: Vec3) -> bool {
+        center.y >= self.center.y - self.radius_y
+            && center.y <= self.center.y + self.radius_y
+            && self.center.distance_squared(center) <= self.radius_x * self.radius_x
+    }
+}
+
 impl World {
     pub(crate) fn apply_attack_damage(
         &mut self,
@@ -49,10 +65,12 @@ impl World {
     ) -> f32 {
         let Some(profile) = attack.area_damage else {
             return attack.primary_target_id.map_or(0.0, |target_id| {
-                self.apply_weapon_damage(
+                self.apply_directional_weapon_damage(
+                    attack.attacker_player_id,
                     target_id,
                     attack.damage,
                     attack.weapon_type.as_deref(),
+                    attack.direction,
                     gameplay,
                 )
             });
@@ -70,10 +88,12 @@ impl World {
         let splash_pool = attack.primary_target_id.map_or(attack.damage, |_| {
             (1.0 - profile.primary_target_factor) * attack.damage
         });
-        let mut candidates = self.area_damage_candidates(attack, profile, primary);
+        let external_shield = self.primary_external_shield_volume(attack.primary_target_id);
+        let mut candidates = self.area_damage_candidates(attack, profile, primary, external_shield);
         let mut total = primary.dealt;
         total += self.apply_uncapped_gaia_damage(
             &candidates.uncapped_gaia,
+            attack.attacker_player_id,
             attack.weapon_type.as_deref(),
             gameplay,
         );
@@ -84,6 +104,7 @@ impl World {
             total += self.apply_linear_area_damage(
                 &candidates.capped,
                 splash_pool,
+                attack.attacker_player_id,
                 attack.weapon_type.as_deref(),
                 gameplay,
             );
@@ -91,6 +112,7 @@ impl World {
             total += self.apply_capped_area_damage(
                 &candidates.capped,
                 splash_pool,
+                attack.attacker_player_id,
                 attack.weapon_type.as_deref(),
                 gameplay,
             );
@@ -107,14 +129,23 @@ impl World {
         let Some(target_id) = attack.primary_target_id else {
             return PrimaryDamage::default();
         };
-        let was_alive = self.units.get(target_id).is_some_and(Entity::is_alive);
+        let receiving_target_id = self.resolve_damage_target(target_id);
+        let was_alive = self
+            .units
+            .get(receiving_target_id)
+            .is_some_and(Entity::is_alive);
         let dealt = self.apply_weapon_damage(
+            attack.attacker_player_id,
             target_id,
             attack.damage * profile.primary_target_factor,
             attack.weapon_type.as_deref(),
             gameplay,
         );
-        let killed = was_alive && !self.units.get(target_id).is_some_and(Entity::is_alive);
+        let killed = was_alive
+            && !self
+                .units
+                .get(receiving_target_id)
+                .is_some_and(Entity::is_alive);
         PrimaryDamage { dealt, killed }
     }
 
@@ -123,10 +154,18 @@ impl World {
         attack: &AttackDamage,
         profile: AreaDamageProfile,
         primary: PrimaryDamage,
+        external_shield: Option<ExternalShieldVolume>,
     ) -> AreaCandidates {
         let mut candidates = AreaCandidates::default();
         for (id, unit) in self.units.iter() {
-            if !self.is_area_damage_candidate(id, unit, attack, profile, primary.killed) {
+            if !self.is_area_damage_candidate(
+                id,
+                unit,
+                attack,
+                profile,
+                primary.killed,
+                external_shield,
+            ) {
                 continue;
             }
             let (center, half_extents) = unit.simulation_bounds();
@@ -162,6 +201,7 @@ impl World {
         attack: &AttackDamage,
         profile: AreaDamageProfile,
         killed_primary: bool,
+        external_shield: Option<ExternalShieldVolume>,
     ) -> bool {
         if id == attack.attacker_id
             || !unit.is_attackable()
@@ -170,6 +210,11 @@ impl World {
             return false;
         }
         let (center, half_extents) = unit.simulation_bounds();
+        if external_shield
+            .is_some_and(|shield| id != shield.original_primary_id && shield.contains(center))
+        {
+            return false;
+        }
         if profile.linear_damage
             && !segment_intersects_aabb(
                 attack.ground_zero,
@@ -185,16 +230,41 @@ impl World {
                 && !self.players_are_allied(unit.base.player_id, attack.attacker_player_id))
     }
 
+    fn primary_external_shield_volume(
+        &self,
+        primary_target_id: Option<EntityId>,
+    ) -> Option<ExternalShieldVolume> {
+        let original_primary_id = primary_target_id?;
+        let shield_id = self.resolve_damage_target(original_primary_id);
+        let shield = self
+            .units
+            .get(shield_id)
+            .filter(|unit| unit.is_external_shield())?;
+        Some(ExternalShieldVolume {
+            original_primary_id,
+            center: shield.base.position,
+            radius_x: shield.obstruction_half_extents.x.abs(),
+            radius_y: shield.obstruction_half_extents.y.abs(),
+        })
+    }
+
     fn apply_uncapped_gaia_damage(
         &mut self,
         candidates: &[AreaCandidate],
+        attacker_player_id: PlayerId,
         weapon_type: Option<&str>,
         gameplay: Option<&GameplayCatalog>,
     ) -> f32 {
         candidates
             .iter()
             .map(|candidate| {
-                self.apply_weapon_damage(candidate.id, candidate.damage, weapon_type, gameplay)
+                self.apply_weapon_damage(
+                    attacker_player_id,
+                    candidate.id,
+                    candidate.damage,
+                    weapon_type,
+                    gameplay,
+                )
             })
             .sum()
     }
@@ -203,12 +273,19 @@ impl World {
         &mut self,
         candidates: &[AreaCandidate],
         mut splash_pool: f32,
+        attacker_player_id: PlayerId,
         weapon_type: Option<&str>,
         gameplay: Option<&GameplayCatalog>,
     ) -> f32 {
         let mut total = 0.0;
         for candidate in candidates {
-            let dealt = self.apply_weapon_damage(candidate.id, splash_pool, weapon_type, gameplay);
+            let dealt = self.apply_weapon_damage(
+                attacker_player_id,
+                candidate.id,
+                splash_pool,
+                weapon_type,
+                gameplay,
+            );
             total += dealt;
             splash_pool -= dealt;
             if splash_pool < DAMAGE_EPSILON {
@@ -222,6 +299,7 @@ impl World {
         &mut self,
         candidates: &[AreaCandidate],
         splash_pool: f32,
+        attacker_player_id: PlayerId,
         weapon_type: Option<&str>,
         gameplay: Option<&GameplayCatalog>,
     ) -> f32 {
@@ -238,6 +316,7 @@ impl World {
             .iter()
             .map(|candidate| {
                 self.apply_weapon_damage(
+                    attacker_player_id,
                     candidate.id,
                     candidate.damage * reduction,
                     weapon_type,
@@ -307,6 +386,7 @@ fn segment_intersects_aabb(start: Vec3, end: Vec3, center: Vec3, half_extents: V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entities::ShieldCoverage;
 
     fn profile() -> AreaDamageProfile {
         AreaDamageProfile {
@@ -355,6 +435,75 @@ mod tests {
         );
     }
 
+    fn front_shield_target(world: &mut World) -> EntityId {
+        let target_id = world.create_unit_at(2, Vec3::ZERO);
+        let target = world.get_unit_mut(target_id).expect("target");
+        target.base.set_forward(Vec3::Z);
+        target.shields.configure(ShieldCoverage::FrontHalf, 20.0);
+        target.shields.set_current(20.0);
+        target_id
+    }
+
+    #[test]
+    fn direct_hits_use_facing_while_authored_aoe_is_nondirectional() {
+        let (mut world, attacker_id) = combat_world();
+        let rear_target_id = front_shield_target(&mut world);
+        world.apply_attack_damage(
+            &AttackDamage {
+                attacker_id,
+                attacker_player_id: 1,
+                primary_target_id: Some(rear_target_id),
+                ground_zero: Vec3::ZERO,
+                direction: Vec3::Z,
+                damage: 10.0,
+                weapon_type: None,
+                area_damage: None,
+            },
+            None,
+        );
+        let rear_target = world.get_unit(rear_target_id).expect("rear target");
+        assert_close(rear_target.hitpoints, 90.0);
+        assert_close(rear_target.shields.current, 20.0);
+
+        let front_target_id = front_shield_target(&mut world);
+        world.apply_attack_damage(
+            &AttackDamage {
+                attacker_id,
+                attacker_player_id: 1,
+                primary_target_id: Some(front_target_id),
+                ground_zero: Vec3::ZERO,
+                direction: Vec3::NEG_Z,
+                damage: 10.0,
+                weapon_type: None,
+                area_damage: None,
+            },
+            None,
+        );
+        let front_target = world.get_unit(front_target_id).expect("front target");
+        assert_close(front_target.hitpoints, 100.0);
+        assert_close(front_target.shields.current, 10.0);
+
+        let area_target_id = front_shield_target(&mut world);
+        let mut area = profile();
+        area.primary_target_factor = 1.0;
+        world.apply_attack_damage(
+            &AttackDamage {
+                attacker_id,
+                attacker_player_id: 1,
+                primary_target_id: Some(area_target_id),
+                ground_zero: Vec3::ZERO,
+                direction: Vec3::Z,
+                damage: 10.0,
+                weapon_type: None,
+                area_damage: Some(area),
+            },
+            None,
+        );
+        let area_target = world.get_unit(area_target_id).expect("AOE target");
+        assert_close(area_target.hitpoints, 100.0);
+        assert_close(area_target.shields.current, 10.0);
+    }
+
     #[test]
     fn nonlinear_pool_reserves_primary_damage_and_excludes_allies() {
         let (mut world, attacker_id) = combat_world();
@@ -374,6 +523,36 @@ mod tests {
         assert_close(world.get_unit(far_id).unwrap().hitpoints, 100.0);
         assert_close(world.get_unit(attacker_id).unwrap().hitpoints, 100.0);
         assert_close(world.get_unit(gaia_id).unwrap().hitpoints, 0.0);
+    }
+
+    #[test]
+    fn proxy_external_shield_excludes_other_units_inside_its_aoe_volume() {
+        let (mut world, attacker_id) = combat_world();
+        let protected_squad = world.create_squad(2);
+        let primary_id = world.create_unit_at(2, Vec3::ZERO);
+        assert!(world.attach_unit_to_squad(primary_id, protected_squad));
+        let shield_squad = world.create_squad(2);
+        let shield_id = world.create_unit_at(2, Vec3::ZERO);
+        assert!(world.attach_unit_to_squad(shield_id, shield_squad));
+        let shield = world.get_unit_mut(shield_id).unwrap();
+        shield.set_external_shield(true);
+        shield.obstruction_half_extents = Vec3::new(4.0, 3.0, 4.0);
+        world
+            .get_squad_mut(protected_squad)
+            .unwrap()
+            .set_damage_proxy(shield_squad);
+        let inside_id = world.create_unit_at(2, Vec3::X * 2.0);
+        let outside_id = world.create_unit_at(2, Vec3::X * 6.0);
+        let mut area = profile();
+        area.radius = 10.0;
+        area.primary_target_factor = 0.5;
+
+        world.apply_attack_damage(&attack(attacker_id, Some(primary_id), area), None);
+
+        assert_close(world.get_unit(primary_id).unwrap().hitpoints, 100.0);
+        assert_close(world.get_unit(inside_id).unwrap().hitpoints, 100.0);
+        assert!(world.get_unit(outside_id).unwrap().hitpoints < 100.0);
+        assert!(world.get_unit(shield_id).unwrap().hitpoints < 50.0);
     }
 
     #[test]

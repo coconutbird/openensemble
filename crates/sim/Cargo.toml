@@ -19,3 +19,4 @@ ecf = { workspace = true }
 half = { workspace = true }
 
 [dev-dependencies]
+era = { workspace = true }

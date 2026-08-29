@@ -14,11 +14,16 @@ use pipeline::database::hw1::{Database, ProtoObject};
 fn collision_catalog(
     projectile_obstructable: bool,
     targets_foot: bool,
+    external_shield: bool,
     area_damage: Option<AreaDamageProfile>,
 ) -> GameplayCatalog {
-    let blocker_flags = projectile_obstructable
-        .then_some(vec!["ProjectileObstructable".to_owned()])
-        .unwrap_or_default();
+    let blocker_flags = [
+        projectile_obstructable.then_some("ProjectileObstructable".to_owned()),
+        external_shield.then_some("ExternalShield".to_owned()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     let target_flags = targets_foot
         .then_some(vec!["TargetsFootOfUnit".to_owned()])
         .unwrap_or_default();
@@ -137,7 +142,7 @@ fn assert_close(actual: f32, expected: f32) {
 
 #[test]
 fn projectile_obstruction_redirects_damage_to_the_first_interceptor() {
-    let gameplay = collision_catalog(true, false, None);
+    let gameplay = collision_catalog(true, false, false, None);
     let (mut world, _, blocker_id, target_id) = combat_world(2);
 
     resolve_first_shot(&mut world, &gameplay);
@@ -147,8 +152,53 @@ fn projectile_obstruction_redirects_damage_to_the_first_interceptor() {
 }
 
 #[test]
+fn external_shield_intercepts_without_projectile_obstructable() {
+    let gameplay = collision_catalog(false, false, true, None);
+    let (mut world, _, blocker_id, target_id) = combat_world(2);
+    let blocker = world.get_unit_mut(blocker_id).unwrap();
+    blocker.set_external_shield(true);
+    blocker.obstruction_half_extents = Vec3::splat(2.0);
+
+    resolve_first_shot(&mut world, &gameplay);
+
+    assert_close(world.get_unit(blocker_id).unwrap().hitpoints, 95.0);
+    assert_close(world.get_unit(target_id).unwrap().hitpoints, 100.0);
+}
+
+#[test]
+fn nonwall_external_shield_lets_projectiles_launched_inside_escape() {
+    let gameplay = collision_catalog(false, false, true, None);
+    let (mut world, attacker_id, blocker_id, target_id) = combat_world(2);
+    world.get_unit_mut(attacker_id).unwrap().base.position = Vec3::X * 5.0;
+    let blocker = world.get_unit_mut(blocker_id).unwrap();
+    blocker.set_external_shield(true);
+    blocker.obstruction_half_extents = Vec3::splat(2.0);
+
+    resolve_first_shot(&mut world, &gameplay);
+
+    assert_close(world.get_unit(blocker_id).unwrap().hitpoints, 100.0);
+    assert_close(world.get_unit(target_id).unwrap().hitpoints, 95.0);
+}
+
+#[test]
+fn wall_external_shield_still_catches_projectiles_launched_inside() {
+    let gameplay = collision_catalog(false, false, true, None);
+    let (mut world, attacker_id, blocker_id, target_id) = combat_world(2);
+    world.get_unit_mut(attacker_id).unwrap().base.position = Vec3::X * 5.0;
+    let blocker = world.get_unit_mut(blocker_id).unwrap();
+    blocker.set_external_shield(true);
+    blocker.obstruction_half_extents = Vec3::splat(2.0);
+    blocker.object_types.push("_WallShield".to_owned());
+
+    resolve_first_shot(&mut world, &gameplay);
+
+    assert_close(world.get_unit(blocker_id).unwrap().hitpoints, 95.0);
+    assert_close(world.get_unit(target_id).unwrap().hitpoints, 100.0);
+}
+
+#[test]
 fn non_obstructable_friendly_unit_is_ignored_away_from_the_target() {
-    let gameplay = collision_catalog(false, false, None);
+    let gameplay = collision_catalog(false, false, false, None);
     let (mut world, _, blocker_id, target_id) = combat_world(1);
 
     resolve_first_shot(&mut world, &gameplay);
@@ -168,7 +218,7 @@ fn targets_foot_launch_uses_ground_impact_as_the_full_splash_pool() {
         ignores_y_axis: false,
         friendly_fire: false,
     };
-    let gameplay = collision_catalog(false, true, Some(area_damage));
+    let gameplay = collision_catalog(false, true, false, Some(area_damage));
     let (mut world, _, blocker_id, target_id) = combat_world(2);
     world.get_unit_mut(blocker_id).unwrap().base.position = Vec3::new(10.75, 0.0, 0.0);
     world.get_unit_mut(blocker_id).unwrap().proto_object_name = "target".to_owned();

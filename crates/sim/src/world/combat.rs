@@ -1,6 +1,7 @@
 //! Authoritative attack-order targeting and pursuit.
 
 mod area_damage;
+mod damage;
 mod deviation;
 mod helpers;
 #[cfg(test)]
@@ -48,6 +49,7 @@ struct AttackEngagement {
 struct AttackerSnapshot {
     player_id: PlayerId,
     position: Vec3,
+    launch_position: Vec3,
     damage_multiplier: f32,
     range_scalar: f32,
     authored_range: f32,
@@ -62,6 +64,7 @@ struct ConcreteTargetSnapshot {
     id: EntityId,
     player_id: PlayerId,
     position: Vec3,
+    aim_position: Vec3,
     velocity: Vec3,
     collision_radius: f32,
     proto_object_name: String,
@@ -74,6 +77,7 @@ struct FireEvent {
     source_id: EntityId,
     source_player_id: PlayerId,
     source_position: Vec3,
+    launch_position: Vec3,
     target: ConcreteTargetSnapshot,
     damage: f32,
     weapon_type: Option<String>,
@@ -84,13 +88,13 @@ struct FireEvent {
     accuracy: deviation::LaunchAccuracy,
     friendly_fire: bool,
     collides_with_all_units: bool,
+    targets_foot_of_unit: bool,
 }
 
 impl FireEvent {
     fn from_attack(
         source_id: EntityId,
-        source_player_id: PlayerId,
-        source_position: Vec3,
+        attacker: &AttackerSnapshot,
         target: ConcreteTargetSnapshot,
         damage: f32,
         profile: &AttackProfile,
@@ -98,8 +102,9 @@ impl FireEvent {
     ) -> Self {
         Self {
             source_id,
-            source_player_id,
-            source_position,
+            source_player_id: attacker.player_id,
+            source_position: attacker.position,
+            launch_position: attacker.launch_position,
             target,
             damage,
             weapon_type: profile.weapon_type.clone(),
@@ -110,6 +115,7 @@ impl FireEvent {
             accuracy: deviation::LaunchAccuracy::new(profile.accuracy, false, 1.0, 1.0),
             friendly_fire: profile.friendly_fire,
             collides_with_all_units: !profile.targets_foot_of_unit,
+            targets_foot_of_unit: profile.targets_foot_of_unit,
         }
     }
 
@@ -194,6 +200,17 @@ impl World {
         engagements.sort_by_key(|engagement| engagement.attacker_id);
         engagements.dedup_by_key(|engagement| engagement.attacker_id);
         self.advance_attacks(dt, gameplay, engagements);
+    }
+
+    pub(in crate::world) fn validated_squad_attack_target(
+        &self,
+        squad_id: EntityId,
+        gameplay: &GameplayCatalog,
+    ) -> Option<EntityId> {
+        match self.squad_combat_motion(squad_id, gameplay) {
+            CombatMotion::Hold(target) => Some(target.id),
+            CombatMotion::Clear | CombatMotion::Chase(_) => None,
+        }
     }
 
     pub(super) fn update_attack_move_orders(&mut self, gameplay: &GameplayCatalog) {
@@ -412,8 +429,7 @@ impl World {
             let tuning = self.launch_tuning(&attacker, profile);
             let event = FireEvent::from_attack(
                 engagement.attacker_id,
-                attacker.player_id,
-                attacker.position,
+                &attacker,
                 target,
                 damage,
                 profile,
@@ -449,7 +465,8 @@ impl World {
         Some(AttackerSnapshot {
             player_id: unit.base.player_id,
             position: unit.base.position,
-            damage_multiplier: unit.damage_multiplier,
+            launch_position: unit.simulation_center(),
+            damage_multiplier: unit.effective_damage_multiplier(),
             range_scalar: unit.weapon_range_scalar,
             authored_range,
             proto_object_name: unit.proto_object_name.clone(),
@@ -514,23 +531,32 @@ impl World {
         let Some(profile) = gameplay.projectile(projectile_name) else {
             return;
         };
+        let aim_position = if event.targets_foot_of_unit {
+            event.target.position
+        } else {
+            event.target.aim_position
+        };
         let led_target_position = launch_target_position(
-            event.source_position,
-            event.target.position,
+            event.launch_position,
+            aim_position,
             event.target.velocity,
             profile.speed,
             event.max_velocity_lead,
         );
-        let targeting_lead = led_target_position - event.target.position;
-        let target_offset = deviation::projectile_deviation(
+        let targeting_lead = led_target_position - aim_position;
+        let deviation = deviation::projectile_deviation(
             &mut self.sim_rng,
-            event.source_position,
-            event.target.position,
+            event.launch_position,
+            aim_position,
             targeting_lead,
             event.max_range,
             event.accuracy,
         );
-        let target_position = led_target_position + target_offset;
+        let target_offset = aim_position - event.target.position + deviation;
+        let mut target_position = led_target_position + deviation;
+        if let Some(terrain_height) = self.terrain_height(target_position, true) {
+            target_position.y = target_position.y.max(terrain_height);
+        }
         let id = self.projectiles.allocate_id();
         let projectile = Projectile::new(
             id,
@@ -538,7 +564,7 @@ impl World {
             ProjectileLaunch {
                 source_id: event.source_id,
                 target_id: event.target.id,
-                source_position: event.source_position,
+                source_position: event.launch_position,
                 target_position,
                 target_entity_position: event.target.position,
                 target_offset,
@@ -578,52 +604,7 @@ impl World {
         })
     }
 
-    pub(super) fn apply_weapon_damage(
-        &mut self,
-        target_id: EntityId,
-        damage: f32,
-        weapon_type: Option<&str>,
-        gameplay: Option<&GameplayCatalog>,
-    ) -> f32 {
-        let Some(target) = self
-            .units
-            .get(target_id)
-            .filter(|target| target.is_attackable())
-        else {
-            return 0.0;
-        };
-        let weapon_modifier = gameplay.map_or(1.0, |catalog| {
-            catalog.weapon_damage_modifier(weapon_type, &target.proto_object_name)
-        });
-        let construction_modifier = if target.is_building() && !target.built {
-            self.construction_damage_multiplier
-        } else {
-            1.0
-        };
-        let final_multiplier =
-            weapon_modifier * construction_modifier * target.damage_taken_multiplier;
-        let health_before = target.hitpoints + target.shields.current;
-        let final_damage = damage * final_multiplier;
-        if !final_damage.is_finite() || final_damage <= 0.0 {
-            return 0.0;
-        }
-        let damaged = if let Some(gameplay) = gameplay {
-            self.damage_unit_with_gameplay(target_id, final_damage, gameplay)
-        } else {
-            self.damage_unit(target_id, final_damage)
-        };
-        if !damaged {
-            return 0.0;
-        }
-        let health_after = self.units.get(target_id).map_or(health_before, |target| {
-            target.hitpoints + target.shields.current
-        });
-        ((health_before - health_after).max(0.0) / final_multiplier)
-            .min(damage)
-            .max(0.0)
-    }
-
-    fn stop_unit_firing(&mut self, unit_ids: &[EntityId]) {
+    pub(in crate::world) fn stop_unit_firing(&mut self, unit_ids: &[EntityId]) {
         for &unit_id in unit_ids {
             if let Some(unit) = self.units.get_mut(unit_id) {
                 unit.combat.stop_firing();
@@ -936,12 +917,9 @@ fn concrete_target_snapshot(id: EntityId, unit: &Unit) -> ConcreteTargetSnapshot
         id,
         player_id: unit.base.player_id,
         position: unit.base.position,
+        aim_position: unit.simulation_center(),
         velocity: unit.base.velocity,
-        collision_radius: unit
-            .obstruction_half_extents
-            .abs()
-            .max_element()
-            .max(MIN_TARGET_RADIUS),
+        collision_radius: unit.obstruction_radius().max(MIN_TARGET_RADIUS),
         proto_object_name: unit.proto_object_name.clone(),
         damaged: unit.hitpoints < unit.max_hitpoints,
         unbuilt: unit.is_building() && !unit.built,

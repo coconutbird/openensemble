@@ -5,6 +5,7 @@ use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::GameplayCatalog;
 use crate::player::PlayerId;
+use glam::Vec3;
 
 impl World {
     /// Apply already-modified damage and emit the unit/squad damage event.
@@ -12,10 +13,41 @@ impl World {
     /// Weapon, armor, veterancy, and height modifiers belong at the caller;
     /// this method owns shield overflow, hit-point mutation, and recharge delay.
     pub fn damage_unit(&mut self, unit_id: EntityId, damage: f32) -> bool {
+        self.damage_unit_oriented(unit_id, damage, None)
+    }
+
+    pub(super) fn damage_unit_directional(
+        &mut self,
+        unit_id: EntityId,
+        damage: f32,
+        direction: Vec3,
+    ) -> bool {
+        self.damage_unit_oriented(unit_id, damage, Some(direction))
+    }
+
+    fn damage_unit_oriented(
+        &mut self,
+        unit_id: EntityId,
+        damage: f32,
+        direction: Option<Vec3>,
+    ) -> bool {
+        let unit_id = self.resolve_damage_target(unit_id);
+        self.damage_resolved_unit_oriented(unit_id, damage, direction)
+    }
+
+    fn damage_resolved_unit_oriented(
+        &mut self,
+        unit_id: EntityId,
+        damage: f32,
+        direction: Option<Vec3>,
+    ) -> bool {
         let damaged = self
             .units
             .get_mut(unit_id)
-            .is_some_and(|unit| unit.damage(damage));
+            .is_some_and(|unit| match direction {
+                Some(direction) => unit.damage_directional(damage, direction),
+                None => unit.damage(damage),
+            });
         if damaged {
             self.notify_unit_damaged(unit_id);
             if self
@@ -27,6 +59,18 @@ impl World {
             }
         }
         damaged
+    }
+
+    pub(super) fn damage_unit_directional_with_gameplay(
+        &mut self,
+        unit_id: EntityId,
+        damage: f32,
+        direction: Vec3,
+        gameplay: &GameplayCatalog,
+    ) -> bool {
+        let unit_id = self.resolve_damage_target(unit_id);
+        let _configured = self.configure_unit_revival(unit_id, gameplay);
+        self.damage_resolved_unit_oriented(unit_id, damage, Some(direction))
     }
 
     /// Configure scenario-layered revival behavior before applying combat damage.
@@ -46,6 +90,7 @@ impl World {
         damage: f32,
         override_revive: bool,
     ) -> bool {
+        let unit_id = self.resolve_damage_target(unit_id);
         if override_revive
             && self
                 .units
@@ -54,7 +99,7 @@ impl World {
         {
             return true;
         }
-        self.damage_unit(unit_id, damage)
+        self.damage_resolved_unit_oriented(unit_id, damage, None)
     }
 
     /// Configure layered revival behavior, then apply optional override damage.
@@ -65,8 +110,17 @@ impl World {
         gameplay: &GameplayCatalog,
         override_revive: bool,
     ) -> bool {
+        let unit_id = self.resolve_damage_target(unit_id);
         let _configured = self.configure_unit_revival(unit_id, gameplay);
-        self.damage_unit_with_override(unit_id, damage, override_revive)
+        if override_revive
+            && self
+                .units
+                .get_mut(unit_id)
+                .is_some_and(crate::entities::Unit::override_revival_at_zero)
+        {
+            return true;
+        }
+        self.damage_resolved_unit_oriented(unit_id, damage, None)
     }
 
     pub(super) fn update_shields(&mut self, dt: f32, gameplay: &GameplayCatalog) {
@@ -216,7 +270,7 @@ mod tests {
             unit.damage_taken_multiplier = 0.5;
         }
 
-        world.apply_weapon_damage(unit_id, 30.0, Some("Plasma"), Some(&gameplay));
+        world.apply_weapon_damage(1, unit_id, 30.0, Some("Plasma"), Some(&gameplay));
 
         let unit = world.get_unit(unit_id).expect("damaged unit");
         assert!(nearly_equal(unit.shields.current, 0.0));

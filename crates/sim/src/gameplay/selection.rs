@@ -1,5 +1,6 @@
 //! Runtime evaluation of authored tactic target rules.
 
+use super::damage_types::DamageTypeProfiles;
 use super::{AttackProfile, GameplayCatalog, ObjectGameplay, RangedAction, is_ranged_attack};
 use crate::entities::SquadMode;
 use pipeline::database::hw1::tactics::{Action, TargetRule};
@@ -487,10 +488,13 @@ fn target_type_matches(
 }
 
 impl ObjectTargetTraits {
-    fn from_proto(object: &ProtoObject) -> Self {
+    fn from_proto(object: &ProtoObject, damage_types: &DamageTypeProfiles) -> Self {
         Self {
             proto_object_name: object.name.clone(),
-            damage_type: object.damage_type.clone(),
+            damage_type: damage_types
+                .base_damage_type(&object.name)
+                .map(str::to_owned)
+                .or_else(|| object.damage_type.clone()),
             object_class: object.object_class.clone(),
             object_types: object.object_types.clone(),
             invulnerable: has_flag(object, "Invulnerable"),
@@ -524,14 +528,17 @@ pub(super) fn collect_ability_names(database: &Database) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn collect_target_traits(database: &Database) -> BTreeMap<String, ObjectTargetTraits> {
+pub(super) fn collect_target_traits(
+    database: &Database,
+    damage_types: &DamageTypeProfiles,
+) -> BTreeMap<String, ObjectTargetTraits> {
     database
         .objects
         .iter()
         .map(|object| {
             (
                 object.name.to_ascii_lowercase(),
-                ObjectTargetTraits::from_proto(object),
+                ObjectTargetTraits::from_proto(object, damage_types),
             )
         })
         .collect()

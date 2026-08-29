@@ -144,7 +144,7 @@ pub struct Projectile {
     pub target_id: EntityId,
     /// Last known destination, updated by tracking projectiles.
     pub target_position: Vec3,
-    /// Launch-time miss offset retained as the target entity moves.
+    /// Launch-time sim-center and miss offset retained as the target entity moves.
     target_offset: Vec3,
     /// Damage after attacker and launch-time height modifiers.
     pub damage: f32,
@@ -475,6 +475,10 @@ impl Projectile {
             >= self.initial_position.distance_squared(self.target_position) * 0.95
     }
 
+    pub(crate) const fn initial_position(&self) -> Vec3 {
+        self.initial_position
+    }
+
     pub(crate) const fn friendly_fire(&self) -> bool {
         self.runtime_flags
             .contains(ProjectileRuntimeFlags::FRIENDLY_FIRE)
@@ -775,8 +779,9 @@ mod tests {
 
     #[test]
     fn live_target_updates_preserve_the_launch_deviation_offset() {
-        let mut launch = ProjectileLaunch::test(Vec3::ZERO, Vec3::X * 10.0 + Vec3::Z * 2.0, 10.0);
-        launch.target_offset = Vec3::Z * 2.0;
+        let retained_offset = Vec3::new(0.0, 3.0, 2.0);
+        let mut launch = ProjectileLaunch::test(Vec3::ZERO, Vec3::X * 10.0 + retained_offset, 10.0);
+        launch.target_offset = retained_offset;
         let mut projectile = Projectile::new(
             EntityId::new(EntityClass::Projectile, 0),
             1,
@@ -787,7 +792,7 @@ mod tests {
         let _launch = projectile.advance(0.05, Some(target_motion(Vec3::X * 3.0)), 0.0);
         let _flight = projectile.advance(0.05, Some(target_motion(Vec3::X * 3.0)), 0.0);
 
-        assert_eq!(projectile.target_position, Vec3::X * 3.0 + Vec3::Z * 2.0);
+        assert_eq!(projectile.target_position, Vec3::X * 3.0 + retained_offset);
     }
 
     #[test]

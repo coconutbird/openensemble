@@ -170,11 +170,7 @@ impl World {
         let Some(source) = self.units.get(projectile.source_id) else {
             return true;
         };
-        let radius = source
-            .obstruction_half_extents
-            .x
-            .abs()
-            .max(source.obstruction_half_extents.z.abs());
+        let radius = source.obstruction_radius();
         let offset = projectile.base.position - source.base.position;
         offset.x * offset.x + offset.z * offset.z >= radius * radius
     }
@@ -284,7 +280,7 @@ impl World {
         gameplay: Option<&GameplayCatalog>,
     ) -> Option<ProjectileCollision> {
         let close_to_target = projectile.is_close_to_target();
-        let mut nearest: Option<(f32, EntityId)> = None;
+        let mut nearest: Option<(f32, EntityId, bool)> = None;
         for (unit_id, unit) in self.units.iter() {
             if !self.is_projectile_collision_candidate(
                 projectile,
@@ -295,9 +291,14 @@ impl World {
             ) {
                 continue;
             }
-            let (center, half_extents) = unit.simulation_bounds();
-            let Some(fraction) = segment_aabb_entry_fraction(start, end, center, half_extents)
-            else {
+            let external_shield = unit.is_external_shield();
+            let fraction = if external_shield {
+                external_shield_entry_fraction(projectile.initial_position(), start, end, unit)
+            } else {
+                let (center, half_extents) = unit.simulation_bounds();
+                segment_aabb_entry_fraction(start, end, center, half_extents)
+            };
+            let Some(fraction) = fraction else {
                 continue;
             };
             if nearest.is_none_or(|current| match fraction.total_cmp(&current.0) {
@@ -305,12 +306,16 @@ impl World {
                 std::cmp::Ordering::Equal => unit_id < current.1,
                 std::cmp::Ordering::Greater => false,
             }) {
-                nearest = Some((fraction, unit_id));
+                nearest = Some((fraction, unit_id, external_shield));
             }
         }
-        let (fraction, unit_id) = nearest?;
+        let (fraction, unit_id, external_shield) = nearest?;
         Some(ProjectileCollision {
-            position: penetrated_impact_position(start, end, fraction),
+            position: if external_shield {
+                end
+            } else {
+                penetrated_impact_position(start, end, fraction)
+            },
             primary_target_id: Some(unit_id),
         })
     }
@@ -331,7 +336,11 @@ impl World {
             return false;
         }
         if !traits.is_projectile_obstructable() {
-            if !close_to_target && unit_id != projectile.target_id && !projectile.self_damage() {
+            if !unit.is_external_shield()
+                && !close_to_target
+                && unit_id != projectile.target_id
+                && !projectile.self_damage()
+            {
                 return false;
             }
             if !unit.is_object_type("Cover")
@@ -454,6 +463,64 @@ fn segment_aabb_entry_fraction(
         }
     }
     Some(near)
+}
+
+fn external_shield_entry_fraction(
+    initial: Vec3,
+    start: Vec3,
+    end: Vec3,
+    shield: &Unit,
+) -> Option<f32> {
+    let center = shield.base.position;
+    let radii = shield.obstruction_half_extents.abs();
+    let radius_squared = radii.x.mul_add(radii.x, radii.z * radii.z);
+    if !center.is_finite()
+        || !radii.is_finite()
+        || !radius_squared.is_finite()
+        || radius_squared <= INTERSECTION_EPSILON
+    {
+        return None;
+    }
+    let launched_inside = external_shield_contains(initial, center, radii.y, radius_squared);
+    let is_wall_or_base = ["WallShield", "_WallShield", "BaseShield", "_BaseShield"]
+        .iter()
+        .any(|object_type| shield.is_object_type(object_type));
+    if launched_inside && !is_wall_or_base {
+        return None;
+    }
+
+    let direction = end - start;
+    let relative_start = start - center;
+    let quadratic = direction.length_squared();
+    if quadratic <= INTERSECTION_EPSILON {
+        return external_shield_contains(start, center, radii.y, radius_squared).then_some(0.0);
+    }
+    let half_linear = relative_start.dot(direction);
+    let constant = relative_start.length_squared() - radius_squared;
+    let discriminant = half_linear.mul_add(half_linear, -quadratic * constant);
+    if discriminant < 0.0 {
+        return None;
+    }
+    let root = discriminant.sqrt();
+    let mut near = (-half_linear - root) / quadratic;
+    let mut far = (-half_linear + root) / quadratic;
+    if direction.y.abs() <= INTERSECTION_EPSILON {
+        if relative_start.y.abs() > radii.y {
+            return None;
+        }
+    } else {
+        let first = (-radii.y - relative_start.y) / direction.y;
+        let second = (radii.y - relative_start.y) / direction.y;
+        near = near.max(first.min(second));
+        far = far.min(first.max(second));
+    }
+    near = near.max(0.0);
+    far = far.min(1.0);
+    (near <= far).then_some(near)
+}
+
+fn external_shield_contains(point: Vec3, center: Vec3, radius_y: f32, radius_squared: f32) -> bool {
+    (point.y - center.y).abs() <= radius_y && point.distance_squared(center) <= radius_squared
 }
 
 #[cfg(test)]

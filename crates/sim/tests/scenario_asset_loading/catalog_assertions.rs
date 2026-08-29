@@ -1,9 +1,10 @@
-use sim::{LoadedGameScenario, UnitRevivalProfile, object_prototype_id};
+use sim::{LoadedGameScenario, ShieldCoverage, SquadMode, UnitRevivalProfile, object_prototype_id};
 
 pub(super) fn assert_loaded_gameplay_catalog(loaded: &LoadedGameScenario) {
     assert_real_object_type_catalog(loaded);
     assert_real_revival_catalog(loaded);
     assert_real_timed_projectile_profiles(loaded);
+    assert_real_directional_damage_profiles(loaded);
     assert!(loaded.simulation.gameplay.referenced_tactic_count() > 0);
     assert!(!loaded.simulation.gameplay.is_empty());
     let authored_intercept_distance = loaded
@@ -97,6 +98,39 @@ pub(super) fn assert_loaded_gameplay_catalog(loaded: &LoadedGameScenario) {
         .attack_profile("GrenadeAttackAction")
         .expect("scenario-layered Marine grenade timing should resolve");
     assert_real_ballistic_projectile_profile(loaded, grenade);
+}
+
+fn assert_real_directional_damage_profiles(loaded: &LoadedGameScenario) {
+    let gameplay = &loaded.simulation.gameplay;
+    assert_eq!(
+        gameplay.shield_coverage("creep_inf_jackal_01"),
+        ShieldCoverage::FrontHalf
+    );
+    assert_eq!(
+        loaded
+            .simulation
+            .world
+            .prototype_shield_coverage("creep_inf_jackal_01"),
+        Some(ShieldCoverage::FrontHalf)
+    );
+    assert_eq!(
+        gameplay.directional_damage_type(
+            "creep_inf_jackal_01",
+            glam::Vec3::Z,
+            glam::Vec3::Z,
+            SquadMode::Normal,
+        ),
+        Some("Light")
+    );
+    assert_eq!(
+        gameplay.directional_damage_type(
+            "creep_inf_jackal_01",
+            glam::Vec3::Z,
+            glam::Vec3::Z,
+            SquadMode::Cover,
+        ),
+        Some("LightInCover")
+    );
 }
 
 fn assert_real_timed_projectile_profiles(loaded: &LoadedGameScenario) {

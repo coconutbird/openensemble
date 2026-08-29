@@ -189,6 +189,9 @@ fn hash_units(checksum: &mut SyncChecksum, units: &EntityManager<Unit>) {
         }
         checksum.hash_u32(u32::from(unit.flying));
         checksum.hash_u32(u32::from(unit.auto_attackable_setting()));
+        checksum.hash_u32(u32::from(unit.is_invulnerable()));
+        checksum.hash_u32(u32::from(unit.is_being_boarded()));
+        checksum.hash_u32(u32::from(unit.is_external_shield()));
         checksum.hash_u32(u32::from(unit.is_reverse_moving()));
         checksum.hash_f32(unit.hitpoints);
         checksum.hash_f32(unit.max_hitpoints);
@@ -196,6 +199,8 @@ fn hash_units(checksum: &mut SyncChecksum, units: &EntityManager<Unit>) {
         unit.hash_revival_state(checksum);
         checksum.hash_f32(unit.damage_multiplier);
         checksum.hash_f32(unit.damage_taken_multiplier);
+        checksum.hash_f32(unit.join_damage_multiplier());
+        checksum.hash_f32(unit.join_damage_taken_multiplier());
         checksum.hash_f32(unit.accuracy_scalar);
         checksum.hash_f32(unit.dodge_scalar);
         checksum.hash_f32(unit.work_rate_scalar);
@@ -284,6 +289,7 @@ fn hash_squads(checksum: &mut SyncChecksum, squads: &EntityManager<Squad>) {
         checksum.hash_i32(squad.proto_squad_id);
         checksum.hash_u32(u32::try_from(squad.proto_squad_name.len()).unwrap_or(u32::MAX));
         checksum.hash_bytes(squad.proto_squad_name.as_bytes());
+        checksum.hash_i32(squad.veterancy_level());
         checksum.hash_f32(squad.turn_radius);
         checksum.hash_f32(squad.min_turn_radius);
         checksum.hash_f32(squad.max_turn_radius);
@@ -299,6 +305,7 @@ fn hash_squads(checksum: &mut SyncChecksum, squads: &EntityManager<Squad>) {
         squad.recovery.hash_state(checksum);
         squad.shields.hash_state(checksum);
         checksum.hash_u32(squad.last_damaged_time);
+        squad.hash_join_state(checksum);
         squad.hash_ability_execution(checksum);
         checksum.hash_u32(u32::try_from(squad.unit_ids.len()).unwrap_or(u32::MAX));
         for &unit_id in &squad.unit_ids {
@@ -308,6 +315,7 @@ fn hash_squads(checksum: &mut SyncChecksum, squads: &EntityManager<Squad>) {
         hash_optional_entity_id(checksum, squad.trained_by);
         checksum.hash_u32(squad.train_limit_bucket.map_or(u32::MAX, u32::from));
         hash_optional_entity_id(checksum, squad.teleporter_destination);
+        hash_optional_entity_id(checksum, squad.damage_proxy());
         checksum.hash_u32(u32::try_from(squad.associated_wall_towers().len()).unwrap_or(u32::MAX));
         for &target in squad.associated_wall_towers() {
             checksum.hash_u32(target.as_u32());
@@ -329,6 +337,16 @@ fn hash_bases(checksum: &mut SyncChecksum, bases: &BTreeMap<BaseId, Base>) {
         checksum.hash_u32(u32::from(base.player_id));
         checksum.hash_u32(base.anchor_building_id.as_u32());
         checksum.hash_vec3(base.position.x, base.position.y, base.position.z);
+        hash_optional_entity_id(checksum, base.primary_plasma_shield_generator());
+        hash_optional_entity_id(checksum, base.plasma_shield_squad());
+        checksum.hash_f32(base.plasma_shield_rebuild_remaining());
+        checksum.hash_f32(base.plasma_shield.attack_wait_remaining);
+        checksum
+            .hash_u32(u32::try_from(base.plasma_shield.subshield_squads.len()).unwrap_or(u32::MAX));
+        for (&building_id, &shield_squad_id) in &base.plasma_shield.subshield_squads {
+            checksum.hash_u32(building_id.as_u32());
+            checksum.hash_u32(shield_squad_id.as_u32());
+        }
         checksum.hash_u32(u32::try_from(base.building_count()).unwrap_or(u32::MAX));
         for building_id in base.buildings() {
             checksum.hash_u32(building_id.as_u32());

@@ -34,7 +34,7 @@ pub(super) fn is_class_zero_object(proto: &ProtoObject) -> bool {
     proto
         .object_class
         .as_deref()
-        .is_some_and(|class| class.eq_ignore_ascii_case("Object"))
+        .is_none_or(|class| class.eq_ignore_ascii_case("Object"))
 }
 
 pub(super) fn creates_base(proto: &ProtoObject) -> bool {

@@ -21,6 +21,7 @@ pub struct PlayerTechState {
     action_effects: Vec<ActionEffect>,
     command_effects: Vec<CommandEffect>,
     weapon_effects: Vec<WeaponScalarEffect>,
+    weapon_type_modifier_effects: Vec<WeaponTypeModifierEffect>,
     hitpoint_effects: Vec<ProtoScalarEffect>,
     shieldpoint_effects: Vec<ProtoScalarEffect>,
     player_shield_regen_rate_effects: Vec<ScalarOperation>,
@@ -58,6 +59,13 @@ struct ProtoScalarEffect {
 struct WeaponScalarEffect {
     data_type: ProtoDataType,
     scalar: ProtoScalarEffect,
+}
+
+#[derive(Debug, Clone)]
+struct WeaponTypeModifierEffect {
+    weapon_type: String,
+    damage_type: String,
+    operation: ScalarOperation,
 }
 
 #[derive(Debug, Clone)]
@@ -171,6 +179,27 @@ impl PlayerTechState {
     #[must_use]
     pub fn weapon_damage(&self, proto_object: &str, weapon: &str, base: f32) -> f32 {
         self.weapon_scalar(ProtoDataType::Damage, proto_object, weapon, base)
+    }
+
+    /// Apply player technology effects to one authored weapon-type armor modifier.
+    #[must_use]
+    pub(crate) fn weapon_type_damage_modifier(
+        &self,
+        weapon_type: &str,
+        damage_type: &str,
+        base: f32,
+    ) -> f32 {
+        let current = self
+            .weapon_type_modifier_effects
+            .iter()
+            .filter(|effect| {
+                effect.weapon_type.eq_ignore_ascii_case(weapon_type)
+                    && effect.damage_type.eq_ignore_ascii_case(damage_type)
+            })
+            .fold(base, |current, effect| {
+                effect.operation.apply(base, current)
+            });
+        if current.is_finite() { current } else { base }
     }
 
     /// Apply player-owned prototype changes to an authored weapon range.
@@ -444,6 +473,7 @@ impl PlayerTechState {
         self.action_effects.clear();
         self.command_effects.clear();
         self.weapon_effects.clear();
+        self.weapon_type_modifier_effects.clear();
         self.hitpoint_effects.clear();
         self.shieldpoint_effects.clear();
         self.player_shield_regen_rate_effects.clear();
@@ -482,6 +512,8 @@ impl PlayerTechState {
             self.collect_action_effect(effect);
         } else if subtype.eq_ignore_ascii_case("CommandEnable") {
             self.collect_command_effect(effect);
+        } else if subtype.eq_ignore_ascii_case("DamageModifier") {
+            self.collect_weapon_type_modifier_effect(effect);
         } else if let Some(data_type) = weapon_data_type(subtype) {
             if let Some(scalar) = proto_scalar_effect(effect, true) {
                 self.weapon_effects
@@ -549,6 +581,25 @@ impl PlayerTechState {
             command_data: normalize(command_data),
             enabled: amount != 0.0,
         });
+    }
+
+    fn collect_weapon_type_modifier_effect(&mut self, effect: &TechEffect) {
+        if !effect_target_is(effect, "Player") {
+            return;
+        }
+        let (Some(weapon_type), Some(damage_type), Some(operation)) = (
+            nonempty(effect.weapon_type.as_deref()),
+            nonempty(effect.damage_type.as_deref()),
+            ScalarOperation::from_effect(effect),
+        ) else {
+            return;
+        };
+        self.weapon_type_modifier_effects
+            .push(WeaponTypeModifierEffect {
+                weapon_type: normalize(weapon_type),
+                damage_type: normalize(damage_type),
+                operation,
+            });
     }
 
     fn collect_ability_recovery_effect(&mut self, effect: &TechEffect) {
@@ -781,72 +832,4 @@ fn hash_string(checksum: &mut SyncChecksum, value: &str) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use pipeline::database::hw1::techs::{EffectTarget, EffectsWrapper};
-
-    #[test]
-    fn static_and_runtime_weapon_accuracy_effects_layer_in_retail_order() {
-        let technology = Tech {
-            name: "Sharpshooter".to_owned(),
-            effects: Some(EffectsWrapper {
-                entries: vec![
-                    weapon_effect("Accuracy", 0.5, "Percent", Some("Rifle"), false),
-                    weapon_effect("MovingMaxDeviation", 2.0, "Percent", None, true),
-                    weapon_effect("MaxVelocityLead", 5.0, "Assign", None, true),
-                ],
-            }),
-            ..Tech::default()
-        };
-        let mut database = Database::new();
-        database.techs.push(technology.clone());
-        let mut state = PlayerTechState::default();
-        let _transforms = state.activate(&database, &technology);
-
-        assert!((state.weapon_accuracy("Marine", "Rifle", 0.8) - 0.4).abs() < f32::EPSILON);
-        assert!((state.weapon_accuracy("Marine", "Pistol", 0.8) - 0.8).abs() < f32::EPSILON);
-        assert!(
-            (state.weapon_moving_max_deviation("Marine", "Rifle", 3.0) - 6.0).abs() < f32::EPSILON
-        );
-        assert!(
-            (state.weapon_max_velocity_lead("Marine", "Rifle", 0.0) - 5.0).abs() < f32::EPSILON
-        );
-
-        state.modify_proto_data(
-            "Marine",
-            &ProtoDataModification {
-                data_type: ProtoDataType::Accuracy,
-                amount: 2.0,
-                relativity: ProtoDataRelativity::Percent,
-                all_actions: false,
-                name: Some("Rifle".to_owned()),
-                invert: false,
-                command_type: None,
-                command_data: None,
-            },
-        );
-        assert!((state.weapon_accuracy("Marine", "Rifle", 0.8) - 0.8).abs() < f32::EPSILON);
-    }
-
-    fn weapon_effect(
-        subtype: &str,
-        amount: f32,
-        relativity: &str,
-        action: Option<&str>,
-        all_actions: bool,
-    ) -> TechEffect {
-        TechEffect {
-            effect_type: "Data".to_owned(),
-            subtype: Some(subtype.to_owned()),
-            amount: Some(amount),
-            relativity: Some(relativity.to_owned()),
-            action: action.map(str::to_owned),
-            allactions: Some(all_actions),
-            target: Some(EffectTarget {
-                target_type: Some("ProtoUnit".to_owned()),
-                value: Some("Marine".to_owned()),
-            }),
-            ..TechEffect::default()
-        }
-    }
-}
+mod tests;

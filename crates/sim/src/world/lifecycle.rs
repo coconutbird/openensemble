@@ -28,6 +28,7 @@ impl World {
         self.construction_damage_multiplier = 1.0;
         self.prototype_object_types.clear();
         self.prototype_squads.clear();
+        self.prototype_shield_coverages.clear();
         self.objects.clear();
         self.units.clear();
         self.squads.clear();

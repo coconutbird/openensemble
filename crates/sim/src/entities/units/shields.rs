@@ -8,9 +8,11 @@ use crate::sync::SyncChecksum;
 pub enum ShieldCoverage {
     /// This unit has no integral damage-absorbing shield.
     #[default]
-    None,
+    None = 0,
     /// The shield absorbs damage from every direction.
-    Full,
+    Full = 1,
+    /// The shield absorbs non-directional damage and impacts from the front.
+    FrontHalf = 2,
 }
 
 /// Runtime energy-shield values and recharge-action state.
@@ -99,8 +101,18 @@ impl UnitShields {
     }
 
     /// Absorb already-modified incoming damage and return its HP overflow.
-    pub(crate) fn absorb_damage(&mut self, damage: f32) -> f32 {
-        if self.coverage != ShieldCoverage::Full || self.current <= 0.0 {
+    pub(crate) fn absorb_damage(
+        &mut self,
+        damage: f32,
+        directional: bool,
+        direction_dot_forward: f32,
+    ) -> f32 {
+        let covered = match self.coverage {
+            ShieldCoverage::None => false,
+            ShieldCoverage::Full => true,
+            ShieldCoverage::FrontHalf => !directional || direction_dot_forward <= 0.0,
+        };
+        if !covered || self.current <= 0.0 {
             return damage;
         }
         let absorbed = damage.min(self.current);
@@ -191,10 +203,24 @@ mod tests {
         shields.configure(ShieldCoverage::Full, 10.0);
         shields.set_current(10.0);
 
-        assert!((shields.absorb_damage(6.0) - 0.0).abs() < f32::EPSILON);
+        assert!((shields.absorb_damage(6.0, true, 1.0) - 0.0).abs() < f32::EPSILON);
         assert!((shields.current - 4.0).abs() < f32::EPSILON);
-        assert!((shields.absorb_damage(9.0) - 5.0).abs() < f32::EPSILON);
+        assert!((shields.absorb_damage(9.0, true, 1.0) - 5.0).abs() < f32::EPSILON);
         assert!(shields.current.abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn front_half_shield_bypasses_rear_directional_damage() {
+        let mut shields = UnitShields::default();
+        shields.configure(ShieldCoverage::FrontHalf, 10.0);
+        shields.set_current(10.0);
+
+        assert!((shields.absorb_damage(4.0, true, 1.0) - 4.0).abs() < f32::EPSILON);
+        assert!((shields.current - 10.0).abs() < f32::EPSILON);
+        assert!(shields.absorb_damage(4.0, true, -1.0).abs() < f32::EPSILON);
+        assert!((shields.current - 6.0).abs() < f32::EPSILON);
+        assert!(shields.absorb_damage(2.0, false, 1.0).abs() < f32::EPSILON);
+        assert!((shields.current - 4.0).abs() < f32::EPSILON);
     }
 
     #[test]

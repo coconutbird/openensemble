@@ -3,8 +3,9 @@ use super::*;
 use crate::gameplay::{AreaDamageProfile, AttackAccuracyProfile, AttackAnimation};
 use crate::random::SimRandom;
 use pipeline::database::hw1::tactics::{Action, TacticData, Weapon};
+use pipeline::database::hw1::techs::{EffectTarget, EffectsWrapper, TechEffect};
 use pipeline::database::hw1::weapontypes::DamageModifier;
-use pipeline::database::hw1::{Database, ProtoObject, WeaponType};
+use pipeline::database::hw1::{DamageType, Database, ProtoObject, Tech, WeaponType};
 
 fn combat_catalog(area_damage: Option<AreaDamageProfile>) -> GameplayCatalog {
     combat_catalog_with_lead(area_damage, 0.0)
@@ -149,6 +150,43 @@ fn moving_target_velocity_is_led_by_the_launched_projectile() {
     assert!(projectile.target_position.z > 0.2);
     assert!(projectile.target_position.z < 0.21);
     assert!(projectile.base.velocity.z > 0.0);
+}
+
+#[test]
+fn projectile_fallback_launches_and_aims_at_retail_simulation_centers() {
+    let gameplay = combat_catalog(None);
+    let (mut world, attacker_id, target_id) = combat_world();
+    let attacker = world.get_unit_mut(attacker_id).unwrap();
+    attacker.obstruction_half_extents = Vec3::new(1.0, 2.0, 1.5);
+    let target = world.get_unit_mut(target_id).unwrap();
+    target.base.position = Vec3::X * 5.0;
+    target.obstruction_half_extents = Vec3::new(4.0, 3.0, 2.0);
+
+    assert_eq!(
+        world.get_unit(attacker_id).unwrap().simulation_center(),
+        Vec3::Y * 2.0
+    );
+    assert_eq!(
+        world.get_unit(target_id).unwrap().simulation_bounds(),
+        (Vec3::new(5.0, 3.0, 0.0), Vec3::new(4.0, 3.0, 2.0))
+    );
+    world.update_entities_with_gameplay(0.05, &gameplay);
+
+    let projectile = world.projectiles.iter().next().unwrap().1;
+    assert_eq!(projectile.base.position, Vec3::Y * 2.0);
+    assert_eq!(projectile.target_position, Vec3::new(5.0, 3.0, 0.0));
+}
+
+#[test]
+fn flying_unit_simulation_center_remains_at_its_entity_position() {
+    let mut world = World::new();
+    let unit_id = world.create_unit_at(1, Vec3::new(2.0, 7.0, 3.0));
+    let unit = world.get_unit_mut(unit_id).unwrap();
+    unit.flying = true;
+    unit.obstruction_half_extents = Vec3::new(4.0, 5.0, 6.0);
+
+    assert_eq!(unit.simulation_center(), unit.base.position);
+    assert!((unit.obstruction_radius() - 6.0).abs() < f32::EPSILON);
 }
 
 fn combat_world() -> (World, EntityId, EntityId) {
@@ -310,12 +348,260 @@ fn unbuilt_targets_use_the_database_construction_damage_multiplier() {
     target.built = false;
     world.set_construction_damage_multiplier(Some(3.0));
 
-    world.apply_weapon_damage(target_id, 10.0, None, None);
+    world.apply_weapon_damage(1, target_id, 10.0, None, None);
     assert!((world.get_building(target_id).unwrap().hitpoints - 70.0).abs() < f32::EPSILON);
 
     world.get_building_mut(target_id).unwrap().built = true;
-    world.apply_weapon_damage(target_id, 10.0, None, None);
+    world.apply_weapon_damage(1, target_id, 10.0, None, None);
     assert!((world.get_building(target_id).unwrap().hitpoints - 60.0).abs() < f32::EPSILON);
+}
+
+fn directional_damage_catalog() -> GameplayCatalog {
+    let mut database = Database::new();
+    database.objects.push(ProtoObject {
+        name: "directional_target".to_owned(),
+        ..ProtoObject::default()
+    });
+    for name in ["FrontArmor", "BackArmor", "RightArmor", "CoverArmor"] {
+        database.damage_types.push(DamageType {
+            name: name.to_owned(),
+            base_type: Some(true),
+            ..DamageType::default()
+        });
+    }
+    database.weapon_types.push(WeaponType {
+        name: "TestWeapon".to_owned(),
+        damage_modifiers: vec![
+            DamageModifier {
+                damage_type: "FrontArmor".to_owned(),
+                modifier: 2.0,
+                ..DamageModifier::default()
+            },
+            DamageModifier {
+                damage_type: "BackArmor".to_owned(),
+                modifier: 0.5,
+                ..DamageModifier::default()
+            },
+            DamageModifier {
+                damage_type: "CoverArmor".to_owned(),
+                modifier: 3.0,
+                ..DamageModifier::default()
+            },
+        ],
+        ..WeaponType::default()
+    });
+    let mut gameplay = GameplayCatalog::from_tactics(&database, std::iter::empty());
+    let document = pipeline::xmb::Document::from_xml(
+        r#"<Objects><Object name="directional_target">
+            <DamageType direction="Front">FrontArmor</DamageType>
+            <DamageType direction="Back">BackArmor</DamageType>
+            <DamageType direction="Right">RightArmor</DamageType>
+            <DamageType direction="Full" mode="Cover">CoverArmor</DamageType>
+        </Object></Objects>"#,
+    )
+    .expect("valid object data");
+    gameplay.load_test_damage_type_document(&database, &document);
+    gameplay
+}
+
+#[test]
+fn weapon_modifiers_follow_impact_sector_and_target_squad_mode() {
+    let gameplay = directional_damage_catalog();
+    let mut world = World::new();
+    let squad_id = world.create_squad(1);
+    let target_id = world.create_unit(1);
+    assert!(world.attach_unit_to_squad(target_id, squad_id));
+    let target = world.get_unit_mut(target_id).expect("target");
+    target.proto_object_name = "directional_target".to_owned();
+    target.base.set_forward(Vec3::Z);
+
+    world.apply_directional_weapon_damage(
+        1,
+        target_id,
+        10.0,
+        Some("TestWeapon"),
+        Vec3::NEG_Z,
+        Some(&gameplay),
+    );
+    assert!((world.get_unit(target_id).unwrap().hitpoints - 80.0).abs() < f32::EPSILON);
+
+    world.get_unit_mut(target_id).unwrap().hitpoints = 100.0;
+    world.apply_directional_weapon_damage(
+        1,
+        target_id,
+        10.0,
+        Some("TestWeapon"),
+        Vec3::NEG_X,
+        Some(&gameplay),
+    );
+    assert!((world.get_unit(target_id).unwrap().hitpoints - 90.0).abs() < f32::EPSILON);
+
+    world.get_unit_mut(target_id).unwrap().hitpoints = 100.0;
+    world.apply_directional_weapon_damage(
+        1,
+        target_id,
+        10.0,
+        Some("TestWeapon"),
+        Vec3::Z,
+        Some(&gameplay),
+    );
+    assert!((world.get_unit(target_id).unwrap().hitpoints - 95.0).abs() < f32::EPSILON);
+
+    world.get_unit_mut(target_id).unwrap().hitpoints = 100.0;
+    world.apply_weapon_damage(1, target_id, 10.0, Some("TestWeapon"), Some(&gameplay));
+    assert!((world.get_unit(target_id).unwrap().hitpoints - 80.0).abs() < f32::EPSILON);
+
+    world.get_unit_mut(target_id).unwrap().hitpoints = 100.0;
+    world.get_squad_mut(squad_id).unwrap().mode = SquadMode::Cover;
+    world.apply_directional_weapon_damage(
+        1,
+        target_id,
+        10.0,
+        Some("TestWeapon"),
+        Vec3::Z,
+        Some(&gameplay),
+    );
+    assert!((world.get_unit(target_id).unwrap().hitpoints - 70.0).abs() < f32::EPSILON);
+}
+
+#[test]
+fn damage_proxy_receives_health_damage_but_preserves_requested_units_armor() {
+    let gameplay = directional_damage_catalog();
+    let mut world = World::new();
+    let protected_squad = world.create_squad(2);
+    let protected_id = world.create_unit(2);
+    assert!(world.attach_unit_to_squad(protected_id, protected_squad));
+    let target = world.get_unit_mut(protected_id).unwrap();
+    target.proto_object_name = "directional_target".to_owned();
+    target.base.set_forward(Vec3::Z);
+    world.get_squad_mut(protected_squad).unwrap().mode = SquadMode::Cover;
+    let proxy_squad = world.create_squad(2);
+    let proxy_id = world.create_unit(2);
+    assert!(world.attach_unit_to_squad(proxy_id, proxy_squad));
+    let proxy = world.get_unit_mut(proxy_id).unwrap();
+    proxy.proto_object_name = "unarmored_proxy".to_owned();
+    proxy.damage_taken_multiplier = 0.5;
+    world
+        .get_squad_mut(protected_squad)
+        .unwrap()
+        .set_damage_proxy(proxy_squad);
+
+    let dealt = world.apply_directional_weapon_damage(
+        1,
+        protected_id,
+        10.0,
+        Some("TestWeapon"),
+        Vec3::NEG_Z,
+        Some(&gameplay),
+    );
+
+    assert!((dealt - 10.0).abs() < f32::EPSILON);
+    assert!((world.get_unit(protected_id).unwrap().hitpoints - 100.0).abs() < f32::EPSILON);
+    assert!((world.get_unit(proxy_id).unwrap().hitpoints - 85.0).abs() < f32::EPSILON);
+}
+
+#[test]
+fn weapon_damage_modifier_technology_is_owned_by_the_attacking_player() {
+    let gameplay = directional_damage_catalog();
+    let technology = damage_modifier_technology();
+    let mut database = Database::new();
+    database.techs.push(technology);
+    let mut world = World::new();
+    world.init_players(2);
+    assert_eq!(
+        world.activate_technology(1, &database, "TestDamageModifier"),
+        Ok(true)
+    );
+    let attacker_id = world.create_unit(1);
+    let target_id = world.create_unit(2);
+    let target = world.get_unit_mut(target_id).expect("target");
+    target.proto_object_name = "directional_target".to_owned();
+    target.base.set_forward(Vec3::Z);
+
+    world.apply_directional_weapon_damage(
+        1,
+        target_id,
+        10.0,
+        Some("TestWeapon"),
+        Vec3::NEG_Z,
+        Some(&gameplay),
+    );
+    assert!((world.get_unit(target_id).unwrap().hitpoints - 60.0).abs() < f32::EPSILON);
+
+    world.get_unit_mut(target_id).unwrap().hitpoints = 100.0;
+    world.apply_directional_weapon_damage(
+        2,
+        target_id,
+        10.0,
+        Some("TestWeapon"),
+        Vec3::NEG_Z,
+        Some(&gameplay),
+    );
+    assert!((world.get_unit(target_id).unwrap().hitpoints - 80.0).abs() < f32::EPSILON);
+
+    world.get_unit_mut(target_id).unwrap().hitpoints = 100.0;
+    world.apply_directional_weapon_damage(
+        1,
+        target_id,
+        10.0,
+        Some("TestWeapon"),
+        Vec3::NEG_X,
+        Some(&gameplay),
+    );
+    assert!((world.get_unit(target_id).unwrap().hitpoints - 90.0).abs() < f32::EPSILON);
+
+    world.get_unit_mut(target_id).unwrap().hitpoints = 100.0;
+    world.apply_attack_damage(
+        &AttackDamage {
+            attacker_id,
+            attacker_player_id: 1,
+            primary_target_id: Some(target_id),
+            ground_zero: Vec3::ZERO,
+            direction: Vec3::Z,
+            damage: 10.0,
+            weapon_type: Some("TestWeapon".to_owned()),
+            area_damage: Some(AreaDamageProfile {
+                radius: 1.0,
+                primary_target_factor: 1.0,
+                distance_factor: 0.0,
+                damage_factor: 0.0,
+                linear_damage: false,
+                ignores_y_axis: false,
+                friendly_fire: false,
+            }),
+        },
+        Some(&gameplay),
+    );
+    assert!((world.get_unit(target_id).unwrap().hitpoints - 60.0).abs() < f32::EPSILON);
+}
+
+fn damage_modifier_technology() -> Tech {
+    Tech {
+        name: "TestDamageModifier".to_owned(),
+        effects: Some(EffectsWrapper {
+            entries: vec![
+                player_damage_modifier_effect("FrontArmor", 2.0, "Percent"),
+                player_damage_modifier_effect("RightArmor", 9.0, "Assign"),
+            ],
+        }),
+        ..Tech::default()
+    }
+}
+
+fn player_damage_modifier_effect(damage_type: &str, amount: f32, relativity: &str) -> TechEffect {
+    TechEffect {
+        effect_type: "Data".to_owned(),
+        subtype: Some("DamageModifier".to_owned()),
+        amount: Some(amount),
+        relativity: Some(relativity.to_owned()),
+        weapon_type: Some("TestWeapon".to_owned()),
+        damage_type: Some(damage_type.to_owned()),
+        target: Some(EffectTarget {
+            target_type: Some("Player".to_owned()),
+            value: Some("Player".to_owned()),
+        }),
+        ..TechEffect::default()
+    }
 }
 
 #[test]

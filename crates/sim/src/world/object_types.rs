@@ -2,6 +2,7 @@
 
 use super::World;
 use crate::entity_id::{EntityClass, EntityId};
+use crate::gameplay::GameplayCatalog;
 use crate::sync::SyncChecksum;
 use pipeline::database::hw1::{Database, ProtoObject};
 
@@ -25,6 +26,24 @@ impl World {
                 (prototype.name.trim().to_owned(), squad_size(prototype)),
             );
         }
+    }
+
+    pub(crate) fn configure_prototype_damage_profiles(&mut self, gameplay: &GameplayCatalog) {
+        self.prototype_shield_coverages = gameplay
+            .shield_coverages()
+            .map(|(name, coverage)| (name.to_owned(), coverage))
+            .collect();
+    }
+
+    /// Return the scenario-layered shield coverage used by future unit spawns.
+    #[must_use]
+    pub fn prototype_shield_coverage(
+        &self,
+        proto_object_name: &str,
+    ) -> Option<crate::entities::ShieldCoverage> {
+        self.prototype_shield_coverages
+            .get(&proto_object_name.to_ascii_lowercase())
+            .copied()
     }
 
     /// Test whether a proto-object has a concrete or abstract object type.
@@ -154,6 +173,12 @@ impl World {
             checksum.hash_u32(u32::try_from(prototype_name.len()).unwrap_or(u32::MAX));
             checksum.hash_bytes(prototype_name.as_bytes());
             checksum.hash_u32(*maximum_size);
+        }
+        checksum.hash_u32(u32::try_from(self.prototype_shield_coverages.len()).unwrap_or(u32::MAX));
+        for (prototype_name, coverage) in &self.prototype_shield_coverages {
+            checksum.hash_u32(u32::try_from(prototype_name.len()).unwrap_or(u32::MAX));
+            checksum.hash_bytes(prototype_name.as_bytes());
+            checksum.hash_u32(*coverage as u32);
         }
     }
 }

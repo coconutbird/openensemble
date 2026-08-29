@@ -26,6 +26,7 @@ pub use combat::UnitCombat;
 pub use garrison::UnitGarrison;
 pub use rally_points::RallyPoint;
 pub use scalars::UnitDataScalar;
+pub(crate) use scalars::UnitScalarModifiers;
 pub use shields::{ShieldCoverage, UnitShields};
 pub use tower_wall::TowerWallAction;
 
@@ -83,6 +84,27 @@ enum MovementFacing {
     Reverse,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum ExternalShieldState {
+    #[default]
+    Disabled,
+    Enabled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum InvulnerabilityState {
+    #[default]
+    Vulnerable,
+    Invulnerable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum BoardingState {
+    #[default]
+    Free,
+    BeingBoarded,
+}
+
 /// An individual mobile unit or building.
 #[derive(Debug, Clone)]
 pub struct Unit {
@@ -118,6 +140,10 @@ pub struct Unit {
     pub damage_multiplier: f32,
     /// Live incoming damage multiplier.
     pub damage_taken_multiplier: f32,
+    /// Outgoing modifier contributed by an active squad Join relationship.
+    join_damage_multiplier: f32,
+    /// Incoming modifier contributed by an active squad Join relationship.
+    join_damage_taken_multiplier: f32,
     /// Live ranged-attack accuracy multiplier.
     pub accuracy_scalar: f32,
     /// Live ranged-attack dodge modifier applied alongside accuracy.
@@ -132,6 +158,12 @@ pub struct Unit {
     pub weapon_range_scalar: f32,
     /// Whether automatic target acquisition may choose this object.
     auto_attackable: bool,
+    /// Whether retail action state currently rejects all incoming damage.
+    invulnerability: InvulnerabilityState,
+    /// Whether a hostile Board action temporarily reserves this target.
+    boarding_state: BoardingState,
+    /// Whether projectiles and AOE use retail's external-shield volume rules.
+    external_shield: ExternalShieldState,
     /// Whether movement keeps this unit facing opposite its travel direction.
     movement_facing: MovementFacing,
     /// Movement speed in world units per second.
@@ -217,6 +249,8 @@ impl Default for Unit {
             revival: UnitRevival::default(),
             damage_multiplier: 1.0,
             damage_taken_multiplier: 1.0,
+            join_damage_multiplier: 1.0,
+            join_damage_taken_multiplier: 1.0,
             accuracy_scalar: 1.0,
             dodge_scalar: 1.0,
             work_rate_scalar: 1.0,
@@ -224,6 +258,9 @@ impl Default for Unit {
             velocity_scalar: 1.0,
             weapon_range_scalar: 1.0,
             auto_attackable: true,
+            invulnerability: InvulnerabilityState::Vulnerable,
+            boarding_state: BoardingState::Free,
+            external_shield: ExternalShieldState::Disabled,
             movement_facing: MovementFacing::Forward,
             speed: 10.0,
             acceleration: 0.0,
@@ -301,7 +338,11 @@ impl Unit {
     /// Return whether combat may currently target and damage this unit.
     #[must_use]
     pub fn is_attackable(&self) -> bool {
-        self.is_alive() && !self.is_incapacitated() && !self.is_garrisoned()
+        self.is_alive()
+            && !self.is_incapacitated()
+            && !self.is_garrisoned()
+            && !self.is_invulnerable()
+            && !self.is_being_boarded()
     }
 
     /// Return whether automatic combat acquisition may target this object.
@@ -310,17 +351,36 @@ impl Unit {
         self.auto_attackable && self.is_attackable()
     }
 
+    /// Return whether this prototype owns a retail external-shield volume.
+    #[must_use]
+    pub const fn is_external_shield(&self) -> bool {
+        matches!(self.external_shield, ExternalShieldState::Enabled)
+    }
+
+    /// Return retail's synchronized simulation-bounding-box center.
+    #[must_use]
+    pub(crate) fn simulation_center(&self) -> Vec3 {
+        if self.flying {
+            self.base.position
+        } else {
+            self.base.position + Vec3::Y * self.obstruction_half_extents.y.abs()
+        }
+    }
+
+    /// Return the horizontal obstruction radius used by retail range math.
+    #[must_use]
+    pub(crate) fn obstruction_radius(&self) -> f32 {
+        self.obstruction_half_extents
+            .x
+            .abs()
+            .max(self.obstruction_half_extents.z.abs())
+    }
+
     /// Return the authoritative axis-aligned bounds used by sim-space queries.
     pub(crate) fn simulation_bounds(&self) -> (Vec3, Vec3) {
-        self.physics.as_ref().map_or_else(
-            || (self.base.position, self.obstruction_half_extents.abs()),
-            |body| {
-                let collider = body.collider();
-                (
-                    self.base.position + collider.center_offset,
-                    collider.half_extents,
-                )
-            },
+        (
+            self.simulation_center(),
+            self.obstruction_half_extents.abs(),
         )
     }
 
@@ -330,6 +390,42 @@ impl Unit {
 
     pub(crate) fn set_auto_attackable(&mut self, auto_attackable: bool) {
         self.auto_attackable = auto_attackable;
+    }
+
+    /// Return whether a persistent retail action currently prevents damage.
+    #[must_use]
+    pub const fn is_invulnerable(&self) -> bool {
+        matches!(self.invulnerability, InvulnerabilityState::Invulnerable)
+    }
+
+    pub(crate) fn set_invulnerable(&mut self, invulnerable: bool) {
+        self.invulnerability = if invulnerable {
+            InvulnerabilityState::Invulnerable
+        } else {
+            InvulnerabilityState::Vulnerable
+        };
+    }
+
+    /// Return whether a timed Board action currently owns this target.
+    #[must_use]
+    pub const fn is_being_boarded(&self) -> bool {
+        matches!(self.boarding_state, BoardingState::BeingBoarded)
+    }
+
+    pub(crate) fn set_being_boarded(&mut self, being_boarded: bool) {
+        self.boarding_state = if being_boarded {
+            BoardingState::BeingBoarded
+        } else {
+            BoardingState::Free
+        };
+    }
+
+    pub(crate) fn set_external_shield(&mut self, external_shield: bool) {
+        self.external_shield = if external_shield {
+            ExternalShieldState::Enabled
+        } else {
+            ExternalShieldState::Disabled
+        };
     }
 
     /// Return whether retail reverse movement is enabled for this unit.
@@ -443,10 +539,27 @@ impl Unit {
     ///
     /// Returns whether the live unit accepted the damage event.
     pub fn damage(&mut self, amount: f32) -> bool {
-        if !amount.is_finite() || amount <= 0.0 || !self.is_alive() || self.is_incapacitated() {
+        self.damage_oriented(amount, false, Vec3::ZERO)
+    }
+
+    pub(crate) fn damage_directional(&mut self, amount: f32, direction: Vec3) -> bool {
+        self.damage_oriented(amount, true, direction)
+    }
+
+    fn damage_oriented(&mut self, amount: f32, directional: bool, direction: Vec3) -> bool {
+        if !amount.is_finite()
+            || amount <= 0.0
+            || !self.is_alive()
+            || self.is_incapacitated()
+            || self.is_invulnerable()
+            || self.is_being_boarded()
+        {
             return false;
         }
-        let hitpoint_damage = self.shields.absorb_damage(amount);
+        let direction_dot_forward = direction.dot(self.base.forward);
+        let hitpoint_damage =
+            self.shields
+                .absorb_damage(amount, directional, direction_dot_forward);
         self.hitpoints = (self.hitpoints - hitpoint_damage).max(0.0);
         match self.revival.on_damage(self.hitpoints, self.max_hitpoints) {
             DamageDisposition::Mortal => self.kill(),

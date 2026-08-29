@@ -22,15 +22,18 @@ pub mod squads;
 pub mod units;
 
 pub use base::BaseEntity;
+pub(crate) use base_site::BasePlasmaShield;
 pub use base_site::{Base, BaseId};
 pub(crate) use idle::EntityIdle;
 pub use object_state::{DopplePolicy, ObjectState, ScriptedAnimation, TargetingSelection};
 pub use objects::{IconObject, Object, ObjectKind, Revealer};
 pub use projectiles::Projectile;
 pub use squads::{
-    RecoveryType, Squad, SquadArchetype, SquadContainmentState, SquadFormation, SquadGarrison,
-    SquadMode, SquadRecovery, SquadShields, SquadState, SquadTransportFlyIn, TransportFlyInPhase,
+    JoinKind, JoinMergeType, RecoveryType, Squad, SquadArchetype, SquadBoardState,
+    SquadContainmentState, SquadFormation, SquadGarrison, SquadMergeState, SquadMode,
+    SquadRecovery, SquadShields, SquadState, SquadTransportFlyIn, TransportFlyInPhase,
 };
+pub(crate) use units::UnitScalarModifiers;
 pub use units::{
     BuildingProduction, ConstructionKind, ConstructionProgress, ConstructionTask, RallyPoint,
     ResearchProgress, ResearchTask, ShieldCoverage, TowerWallAction, TrainingKind,

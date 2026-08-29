@@ -114,6 +114,16 @@ impl WorkCommand {
         }
     }
 
+    /// Build a persistent Join command for player-owned squads.
+    #[must_use]
+    pub fn join_squads(player_id: i32, recipients: Vec<EntityId>, target: EntityId) -> Self {
+        Self {
+            base: squad_work_command(player_id, recipients, crate::order::OrderType::Join),
+            unit_id: target,
+            ..Self::default()
+        }
+    }
+
     /// Build a garrison command for player-owned squads.
     #[must_use]
     pub fn garrison_squads(player_id: i32, recipients: Vec<EntityId>, target: EntityId) -> Self {

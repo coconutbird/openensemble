@@ -5,6 +5,9 @@
 //! This module resolves those files after the scenario archive has been added,
 //! preserving the same last-loaded-wins behavior as the retail asset manager.
 
+use crate::entities::{ShieldCoverage, SquadMode};
+use crate::player::PlayerTechState;
+use glam::Vec3;
 use pipeline::database::hw1::tactics::{Action, TacticData, Weapon};
 use pipeline::database::hw1::{Database, ProtoObject};
 use pipeline::source::{AssetSource, StdFileProvider};
@@ -12,7 +15,10 @@ use std::collections::BTreeMap;
 
 mod abilities;
 mod analysis;
+mod damage_types;
+mod join;
 pub(crate) mod projectiles;
+mod protection;
 mod revival;
 mod scripted_animations;
 mod selection;
@@ -20,8 +26,13 @@ mod timing;
 
 pub(crate) use abilities::resolve_database_ability;
 pub use abilities::{AbilityGameplay, AbilityRecoveryStart};
+pub use join::{JoinActionProfile, JoinKind, JoinMergeType, MergedSquadProfile};
 pub use projectiles::{
     ProjectileInitialPerturbance, ProjectilePerturbanceProfile, ProjectileProfile,
+};
+pub(crate) use protection::PlasmaSubshieldProfile;
+pub use protection::{
+    BubbleShieldActionProfile, BubbleShieldSquadProfile, PlasmaShieldGeneratorProfile,
 };
 pub use revival::{HeroRevivalProfile, ReviveActionProfile, UnitRevivalProfile};
 pub(crate) use selection::ProjectileCollisionTraits;
@@ -35,6 +46,7 @@ pub struct GameplayCatalog {
     issues: Vec<GameplayLoadIssue>,
     timing_issues: Vec<GameplayTimingIssue>,
     weapon_damage_modifiers: BTreeMap<String, BTreeMap<String, WeaponDamageModifier>>,
+    damage_type_profiles: damage_types::DamageTypeProfiles,
     damage_types: BTreeMap<String, String>,
     damage_type_exemplars: BTreeMap<String, String>,
     ability_names: Vec<String>,
@@ -51,6 +63,12 @@ pub struct GameplayCatalog {
     shield_regen_delay: f32,
     shield_regen_time: f32,
     hero_revival: HeroRevivalProfile,
+    plasma_shield_generators: BTreeMap<String, PlasmaShieldGeneratorProfile>,
+    plasma_subshields: BTreeMap<String, protection::PlasmaSubshieldProfile>,
+    bubble_shield_actions: BTreeMap<String, BubbleShieldActionProfile>,
+    shield_bubble_types: protection::ShieldBubbleTypes,
+    merged_squads: join::MergedSquadProfiles,
+    join_database: join::JoinDatabaseProfiles,
     referenced_tactic_count: usize,
 }
 
@@ -111,16 +129,23 @@ impl GameplayCatalog {
             .iter()
             .filter(|object| object.tactics.is_some())
             .count();
+        let damage_type_profiles = load_damage_type_profiles(database, source);
+        let damage_types = collect_damage_types(&damage_type_profiles);
+        let damage_type_exemplars =
+            analysis::collect_damage_type_exemplars(database, &damage_type_profiles);
+        let target_traits = selection::collect_target_traits(database, &damage_type_profiles);
+        let (shield_bubble_types, merged_squads) = load_squad_gameplay(database, source);
         let mut catalog = Self {
             referenced_tactic_count,
             weapon_damage_modifiers: collect_weapon_damage_modifiers(database),
-            damage_types: collect_damage_types(database),
-            damage_type_exemplars: analysis::collect_damage_type_exemplars(database),
+            damage_type_profiles,
+            damage_types,
+            damage_type_exemplars,
             ability_names: selection::collect_ability_names(database),
             abilities: abilities::collect_abilities(database),
             command_ability_id: abilities::command_ability_id(database),
             object_ability_commands: abilities::collect_object_ability_commands(database),
-            target_traits: selection::collect_target_traits(database),
+            target_traits,
             projectile_profiles: projectiles::collect_projectile_profiles(database),
             projectile_gravity: database
                 .game_data
@@ -140,11 +165,14 @@ impl GameplayCatalog {
             shield_regen_delay: game_data_nonnegative(database, |data| data.shield_regen_delay),
             shield_regen_time: game_data_nonnegative(database, |data| data.shield_regen_time),
             hero_revival: revival::hero_profile(database),
+            plasma_subshields: protection::collect_plasma_subshields(database),
+            shield_bubble_types,
+            merged_squads,
+            join_database: join::JoinDatabaseProfiles::from_database(database),
             ..Self::default()
         };
         let mut cache = BTreeMap::<String, Result<TacticData, String>>::new();
         let mut timing_cache = timing::TimingAssetCache::default();
-
         for object in &database.objects {
             let Some(tactics_ref) = object.tactics.as_deref() else {
                 continue;
@@ -183,6 +211,9 @@ impl GameplayCatalog {
                 }),
             }
         }
+        catalog.plasma_shield_generators =
+            protection::collect_plasma_shield_generators(database, &catalog.objects);
+        catalog.bubble_shield_actions = protection::collect_bubble_shield_actions(&catalog.objects);
 
         catalog
     }
@@ -205,16 +236,22 @@ impl GameplayCatalog {
             .iter()
             .filter(|object| object.tactics.is_some())
             .count();
+        let damage_type_profiles = damage_types::DamageTypeProfiles::from_database(database);
+        let damage_types = collect_damage_types(&damage_type_profiles);
+        let damage_type_exemplars =
+            analysis::collect_damage_type_exemplars(database, &damage_type_profiles);
+        let target_traits = selection::collect_target_traits(database, &damage_type_profiles);
         let mut catalog = Self {
             referenced_tactic_count,
             weapon_damage_modifiers: collect_weapon_damage_modifiers(database),
-            damage_types: collect_damage_types(database),
-            damage_type_exemplars: analysis::collect_damage_type_exemplars(database),
+            damage_type_profiles,
+            damage_types,
+            damage_type_exemplars,
             ability_names: selection::collect_ability_names(database),
             abilities: abilities::collect_abilities(database),
             command_ability_id: abilities::command_ability_id(database),
             object_ability_commands: abilities::collect_object_ability_commands(database),
-            target_traits: selection::collect_target_traits(database),
+            target_traits,
             projectile_profiles: projectiles::collect_projectile_profiles(database),
             projectile_gravity: database
                 .game_data
@@ -234,6 +271,8 @@ impl GameplayCatalog {
             shield_regen_delay: game_data_nonnegative(database, |data| data.shield_regen_delay),
             shield_regen_time: game_data_nonnegative(database, |data| data.shield_regen_time),
             hero_revival: revival::hero_profile(database),
+            plasma_subshields: protection::collect_plasma_subshields(database),
+            join_database: join::JoinDatabaseProfiles::from_database(database),
             ..Self::default()
         };
         for object in &database.objects {
@@ -252,6 +291,9 @@ impl GameplayCatalog {
                 revival::is_hero_death_object(database, object),
             );
         }
+        catalog.plasma_shield_generators =
+            protection::collect_plasma_shield_generators(database, &catalog.objects);
+        catalog.bubble_shield_actions = protection::collect_bubble_shield_actions(&catalog.objects);
         catalog
     }
 
@@ -275,6 +317,26 @@ impl GameplayCatalog {
         catalog
     }
 
+    #[cfg(test)]
+    pub(crate) fn load_test_damage_type_document(
+        &mut self,
+        database: &Database,
+        document: &pipeline::xmb::Document,
+    ) {
+        self.damage_type_profiles =
+            damage_types::DamageTypeProfiles::from_document(database, document);
+        self.damage_types = collect_damage_types(&self.damage_type_profiles);
+        self.damage_type_exemplars =
+            analysis::collect_damage_type_exemplars(database, &self.damage_type_profiles);
+        self.target_traits = selection::collect_target_traits(database, &self.damage_type_profiles);
+        for object in self.objects.values_mut() {
+            object.damage_type = self
+                .damage_type_profiles
+                .base_damage_type(&object.proto_object_name)
+                .map(str::to_owned);
+        }
+    }
+
     fn insert_object(
         &mut self,
         object: &ProtoObject,
@@ -283,11 +345,16 @@ impl GameplayCatalog {
         attack_profiles: BTreeMap<String, AttackProfile>,
         hero_death: bool,
     ) {
+        let damage_type = self
+            .damage_type_profiles
+            .base_damage_type(&object.name)
+            .map(str::to_owned)
+            .or_else(|| object.damage_type.clone());
         self.objects.insert(
             object.name.to_ascii_lowercase(),
             ObjectGameplay {
                 proto_object_name: object.name.clone(),
-                damage_type: object.damage_type.clone(),
+                damage_type,
                 tactics_path,
                 tactics,
                 attack_profiles,
@@ -381,18 +448,77 @@ impl GameplayCatalog {
     /// Player tech effects can later layer on this immutable database value.
     #[must_use]
     pub fn weapon_damage_modifier(&self, weapon_type: Option<&str>, target_proto: &str) -> f32 {
-        let Some(weapon_type) = weapon_type else {
-            return 1.0;
-        };
         let Some(damage_type) = self.damage_types.get(&target_proto.to_ascii_lowercase()) else {
             return 1.0;
         };
-        self.weapon_damage_modifiers
+        self.weapon_modifier_for_damage_type(weapon_type, damage_type, None)
+    }
+
+    pub(crate) fn directional_weapon_damage_modifier(
+        &self,
+        weapon_type: Option<&str>,
+        target_proto: &str,
+        direction: Vec3,
+        forward: Vec3,
+        mode: SquadMode,
+        technologies: Option<&PlayerTechState>,
+    ) -> f32 {
+        let Some(damage_type) =
+            self.damage_type_profiles
+                .damage_type(target_proto, direction, forward, mode)
+        else {
+            return 1.0;
+        };
+        self.weapon_modifier_for_damage_type(weapon_type, damage_type, technologies)
+    }
+
+    fn weapon_modifier_for_damage_type(
+        &self,
+        weapon_type: Option<&str>,
+        damage_type: &str,
+        technologies: Option<&PlayerTechState>,
+    ) -> f32 {
+        let Some(weapon_type) = weapon_type else {
+            return 1.0;
+        };
+        let Some(modifier) = self
+            .weapon_damage_modifiers
             .get(&weapon_type.to_ascii_lowercase())
-            .and_then(|modifiers| modifiers.get(damage_type))
-            .map(|modifier| modifier.damage)
-            .filter(|modifier| modifier.is_finite())
-            .unwrap_or(1.0)
+            .and_then(|modifiers| modifiers.get(&damage_type.to_ascii_lowercase()))
+        else {
+            return 1.0;
+        };
+        let effective = technologies.map_or(modifier.damage, |technologies| {
+            technologies.weapon_type_damage_modifier(weapon_type, damage_type, modifier.damage)
+        });
+        if effective.is_finite() {
+            effective.max(0.0)
+        } else {
+            1.0
+        }
+    }
+
+    /// Return the authored shield-facing rule for one proto object.
+    #[must_use]
+    pub fn shield_coverage(&self, proto_object_name: &str) -> ShieldCoverage {
+        self.damage_type_profiles.shield_coverage(proto_object_name)
+    }
+
+    /// Resolve the armor category selected by an incoming impact vector.
+    #[must_use]
+    pub fn directional_damage_type(
+        &self,
+        proto_object_name: &str,
+        direction: Vec3,
+        forward: Vec3,
+        mode: SquadMode,
+    ) -> Option<&str> {
+        self.damage_type_profiles
+            .damage_type(proto_object_name, direction, forward, mode)
+    }
+
+    pub(crate) fn shield_coverages(&self) -> impl Iterator<Item = (&str, ShieldCoverage)> + '_ {
+        self.damage_type_profiles.shield_coverages()
     }
 
     /// Look up immutable projectile movement data by proto-object name.
@@ -480,6 +606,19 @@ impl GameplayCatalog {
         }
         revival::revive_action_profile(&object.tactics.actions).map(UnitRevivalProfile::Revive)
     }
+}
+
+fn load_squad_gameplay(
+    database: &Database,
+    source: &mut AssetSource<StdFileProvider>,
+) -> (protection::ShieldBubbleTypes, join::MergedSquadProfiles) {
+    let Some(document) = source.read_xmb("data\\squads.xml") else {
+        return Default::default();
+    };
+    (
+        protection::ShieldBubbleTypes::from_document(database, &document),
+        join::MergedSquadProfiles::from_document(database, &document),
+    )
 }
 
 impl ObjectGameplay {
@@ -602,22 +741,20 @@ fn collect_weapon_damage_modifiers(
         .collect()
 }
 
-fn collect_damage_types(database: &Database) -> BTreeMap<String, String> {
-    database
-        .objects
-        .iter()
-        .filter_map(|object| {
-            object
-                .damage_type
-                .as_ref()
-                .filter(|damage_type| !damage_type.eq_ignore_ascii_case("Shielded"))
-                .map(|damage_type| {
-                    (
-                        object.name.to_ascii_lowercase(),
-                        damage_type.to_ascii_lowercase(),
-                    )
-                })
-        })
+fn load_damage_type_profiles(
+    database: &Database,
+    source: &mut AssetSource<StdFileProvider>,
+) -> damage_types::DamageTypeProfiles {
+    source.read_xmb("data\\objects.xml").map_or_else(
+        || damage_types::DamageTypeProfiles::from_database(database),
+        |document| damage_types::DamageTypeProfiles::from_document(database, &document),
+    )
+}
+
+fn collect_damage_types(profiles: &damage_types::DamageTypeProfiles) -> BTreeMap<String, String> {
+    profiles
+        .base_damage_types()
+        .map(|(object, damage_type)| (object.to_owned(), damage_type.to_ascii_lowercase()))
         .collect()
 }
 

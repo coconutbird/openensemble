@@ -395,6 +395,42 @@ impl World {
         }
     }
 
+    pub(in crate::world) fn contain_join_squad(
+        &mut self,
+        passenger_squad_id: EntityId,
+        target_squad_id: EntityId,
+    ) -> Option<EntityId> {
+        let target_unit_id = self
+            .squads
+            .get(target_squad_id)?
+            .unit_ids
+            .iter()
+            .find(|unit_id| self.units.get(**unit_id).is_some_and(Unit::is_operational))
+            .copied()?;
+        let target = self.units.get(target_unit_id)?;
+        let container = ContainerSnapshot {
+            unit_id: target_unit_id,
+            parent_squad: Some(target_squad_id),
+            position: target.base.position,
+            forward: normalized_forward(target.base.forward),
+            radius: unit_obstruction_radius(target),
+            teleporter: false,
+        };
+        self.complete_garrison(passenger_squad_id, container);
+        self.squads
+            .get(passenger_squad_id)
+            .and_then(|squad| squad.garrison.container_id())
+    }
+
+    pub(in crate::world) fn release_join_passenger(
+        &mut self,
+        squad_id: EntityId,
+        position: Vec3,
+        forward: Vec3,
+    ) {
+        self.emergency_release_squad(squad_id, position, forward);
+    }
+
     fn update_teleporter_passenger(
         &mut self,
         squad_id: EntityId,

@@ -4,6 +4,7 @@
 //! A squad is a group of units that move and act together.
 
 mod garrison;
+mod join;
 pub mod marine;
 mod mode;
 mod orders;
@@ -13,6 +14,7 @@ mod transport;
 pub mod warthog;
 
 pub use garrison::{SquadContainmentState, SquadGarrison};
+pub use join::{JoinKind, JoinMergeType, SquadBoardState, SquadMergeState};
 pub use mode::SquadMode;
 pub use recovery::{RecoveryType, SquadRecovery};
 pub use shields::SquadShields;
@@ -104,6 +106,8 @@ pub struct Squad {
     pub proto_squad_id: i32,
     /// Proto-squad name retained for diagnostics and deterministic checksums.
     pub proto_squad_name: String,
+    /// Current retail veterancy level earned by this squad.
+    veterancy_level: i32,
     /// Nominal pathing turn radius from the proto squad.
     pub turn_radius: f32,
     /// Minimum pathing turn radius from the proto squad.
@@ -126,6 +130,12 @@ pub struct Squad {
     pub train_limit_bucket: Option<u8>,
     /// Destination squad used by the retail hot-drop/teleporter action.
     pub teleporter_destination: Option<EntityId>,
+    /// Persistent retail Join action and its owned `BubbleShield` state.
+    pub(crate) join: join::SquadJoin,
+    /// Target-side provenance for an immediate Merge transformation.
+    merge_state: Option<SquadMergeState>,
+    /// Squad whose first child receives damage intended for this squad.
+    damage_proxy: Option<EntityId>,
     /// Ordered retail entity references linking this source to wall endpoints.
     associated_wall_tower_ids: Vec<EntityId>,
     /// Towing squad this squad is currently hitched to.
@@ -162,6 +172,7 @@ impl Default for Squad {
             turn_rate_degrees: 0.0,
             proto_squad_id: -1,
             proto_squad_name: String::new(),
+            veterancy_level: 0,
             turn_radius: 0.0,
             min_turn_radius: 0.0,
             max_turn_radius: 0.0,
@@ -173,6 +184,9 @@ impl Default for Squad {
             trained_by: None,
             train_limit_bucket: None,
             teleporter_destination: None,
+            join: join::SquadJoin::default(),
+            merge_state: None,
+            damage_proxy: None,
             associated_wall_tower_ids: Vec::new(),
             towing_partner: None,
             trailer_partner: None,
@@ -202,6 +216,16 @@ impl Squad {
     #[must_use]
     pub fn position(&self) -> Vec3 {
         self.base.position
+    }
+
+    /// Return this squad's earned veterancy level.
+    #[must_use]
+    pub const fn veterancy_level(&self) -> i32 {
+        self.veterancy_level
+    }
+
+    pub(crate) fn set_veterancy_level(&mut self, level: i32) {
+        self.veterancy_level = level.max(0);
     }
 
     /// Return whether this squad currently owns a retail idle action.
@@ -253,6 +277,7 @@ impl Squad {
         self.attack_range = 0.0;
         self.attack_ability_id = None;
         self.ability_used_unit_ids.clear();
+        self.join.cancel();
         self.base.velocity = Vec3::ZERO;
         if self.is_alive() {
             self.state = SquadState::Idle;
@@ -273,6 +298,7 @@ impl Squad {
         }
         self.garrison.cancel_pending();
         self.cancel_scripted_move_orders();
+        self.join.cancel();
         self.attack_target = Some(target);
         self.attack_range = valid_attack_range(range);
         if let Some(mode) = mode {
@@ -333,6 +359,7 @@ impl Squad {
         self.attack_range = 0.0;
         self.attack_ability_id = None;
         self.ability_used_unit_ids.clear();
+        self.join.cancel();
         self.base.velocity = Vec3::ZERO;
         self.cancel_idle_action();
     }
@@ -362,6 +389,28 @@ impl Squad {
     pub(crate) fn clear_teleporter_destination(&mut self, removed: EntityId) {
         if self.teleporter_destination == Some(removed) {
             self.teleporter_destination = None;
+        }
+    }
+
+    /// Redirect member damage to the first child of another squad.
+    pub fn set_damage_proxy(&mut self, proxy: EntityId) {
+        self.damage_proxy = (!proxy.is_invalid()).then_some(proxy);
+    }
+
+    /// Remove this squad's active damage redirection.
+    pub fn clear_damage_proxy(&mut self) {
+        self.damage_proxy = None;
+    }
+
+    /// Return the squad currently receiving this squad's damage.
+    #[must_use]
+    pub const fn damage_proxy(&self) -> Option<EntityId> {
+        self.damage_proxy
+    }
+
+    pub(crate) fn clear_damage_proxy_target(&mut self, removed: EntityId) {
+        if self.damage_proxy == Some(removed) {
+            self.damage_proxy = None;
         }
     }
 

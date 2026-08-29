@@ -15,6 +15,10 @@ impl SquadShields {
         self.recharge_requested = true;
     }
 
+    pub(crate) fn clear_recharge_request(&mut self) {
+        self.recharge_requested = false;
+    }
+
     /// Record retail's squad `Damaged` notification.
     pub(crate) fn notify_damaged(&mut self) {
         self.recharge_requested = true;

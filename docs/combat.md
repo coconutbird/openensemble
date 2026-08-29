@@ -49,13 +49,18 @@ Recovered source corroboration comes from `unitactionrangedattack.cpp`,
 `damagehelper.cpp`, `projectile.cpp`, `movementhelper.cpp`, `world.cpp`,
 `TerrainSimRep.cpp`, `tactic.cpp`, `protovisual.cpp`, and `visualitem.cpp`, plus
 `unit.cpp`, `unitactionshieldregen.cpp`, `squadactionshieldregen.cpp`,
-`techeffect.cpp`, and `actionmanager.cpp` in the recovered Halo Wars source tree.
+`techeffect.cpp`, `actionmanager.cpp`, `unitactionbubbleshield.cpp`, and
+`unitactionplasmashieldgen.cpp`, `unitactionjoin.cpp`, `tactic.cpp`,
+`protosquad.cpp`, and `squad.cpp` in the recovered Halo Wars source tree. The
+Join work used those recovered named sources; it did not inspect additional IDA
+functions beyond the renamed functions listed above.
 
 ## Implemented retail contracts
 
 - Scenario ERAs are mounted before database parsing. Scenario-local database,
   tactic, visual, and UAX files therefore participate in last-loaded-wins
-  resolution.
+  resolution. The typed pipeline database, raw gameplay tables, and
+  authoritative sim are all built from that same already-layered source.
 - Tactic target rules are evaluated at runtime in authored order. The selector
   applies relation, current squad mode, manual/auto-target mode gates,
   `NoAutoTarget`, ability matching and fallback, target state, damage/object
@@ -72,6 +77,10 @@ Recovered source corroboration comes from `unitactionrangedattack.cpp`,
   trigger-time `ModifyProtoData` operations layer after active technologies.
   Hit-point effects rescale existing units by the new/old maximum ratio,
   while future units spawn with the modified maximum.
+- Player-targeted `DamageModifier` technology effects mutate one authored
+  weapon-type/damage-type pair without creating missing table entries. Direct
+  hits, non-directional AOE, and AI attack-rating reconstruction all read the
+  attacking player's value; other players retain the layered database base.
 - `TransformProtoSquad` keeps the player's logical prototype ID stable, changes
   the effective definition for future spawns, and adds only newly introduced
   members to existing squads. As in retail, removing the technology does not
@@ -122,6 +131,13 @@ Recovered source corroboration comes from `unitactionrangedattack.cpp`,
   initial unit hit once and disappear later without another damage event. The
   motion state, attachment target, and local transform are checksummed, and the
   renderer continues to consume only the resulting projectile transform.
+- Ordinary ranged attacks now launch from and aim at retail's synchronized
+  simulation-bounding-box centers. Ground objects add their scenario-layered
+  Y obstruction radius to the entity origin; flying objects retain their
+  origin. Tracking retains that center offset as the target moves, projectile
+  and AOE intersections share the same simulation bounds, and ballistic target
+  radius uses the retail maximum of the X/Z obstruction radii. Target locations
+  are clamped above the loaded scenario XSD terrain before flight begins.
 - `MaxProjectileHeight` and effective weapon range drive retail's per-shot
   ballistic launch velocity and gravity, including distance-squared height
   scaling and target obstruction radius. Moving targets receive launch-time
@@ -141,14 +157,28 @@ Recovered source corroboration comes from `unitactionrangedattack.cpp`,
   weapon friendly-fire rules. The nearest eligible intersection becomes the
   actual primary target, and the impact point advances 0.01 units inside its
   bounds so AOE distance is zero for the hit unit.
+- Scenario-layered `ExternalShield` prototype flags select retail's special
+  shield volume instead of the ordinary object AABB. Its collision radius is
+  derived from the X/Z obstruction radii and clipped by the Y radius. These
+  shields intercept projectiles even without `ProjectileObstructable`; a
+  projectile whose immutable launch point is already inside a non-wall shield
+  may escape, while `_WallShield` and `_BaseShield` retain the retail exception
+  that catches such shots. External-shield impacts preserve the projectile's
+  post-step position rather than applying ordinary 0.01-unit penetration.
 - XSD height queries now reproduce retail's bilinear `getHeightRaycast`
   interpolation. Projectile terrain checks preserve the short-segment
   8-unit/0.25-height early-outs, intersect the two authored triangles in each
   crossed height tile, and place ground zero 0.25 units above the surface.
   Unit hits are resolved first; a terrain or targets-foot impact has no direct
   primary target and therefore supplies the full base-damage pool to AOE.
-- Impact damage applies attacker damage, optional height bonus, database weapon
-  type versus damage type, and the target's live damage-taken multiplier.
+- Impact damage applies attacker damage, optional height bonus, the attacking
+  player's weapon type versus damage type, and the target's live damage-taken
+  multiplier.
+  Direct projectile and instant-hit vectors select retail's six front/side/back
+  armor sectors. A matching secondary squad mode (notably Cover) uses its
+  authored sector and falls back to Normal only when that sector is absent.
+  Authored AOE damage remains non-directional, so it deliberately uses front
+  armor regardless of the projectile travel vector.
 - Positive `AOERadius` weapons use retail's shared damage-pool contract for
   both instant hits and projectile impacts. The primary factor is applied
   first, the remaining pool is capped before weapon-type modifiers, nonlinear
@@ -156,10 +186,60 @@ Recovered source corroboration comes from `unitactionrangedattack.cpp`,
   consumes base damage nearest-target-first. The two-interval distance falloff,
   vertical-axis ignore, friendly-fire filtering, attacker exclusion, and
   uncapped non-Cover Gaia damage all come from the scenario-layered tactic.
-- Retail `Shielded` damage-type entries are treated as full shield coverage,
-  not as an armor multiplier. Units spawn with empty shields and immediately
-  request recharge. A hit drains shields first and sends same-hit overflow to
-  hit points after all existing damage scalars have been applied.
+- Squads retain retail's synchronized damage-proxy reference. Raw damage and
+  weapon hits intended for a member follow live proxy squads to child zero,
+  including valid proxy chains; dead, empty, missing, and cyclic references
+  terminate deterministically. The proxy owns shields, construction state,
+  incoming-damage scalar, hit points, revival, and damage notifications, while
+  the originally requested unit still supplies weapon-vs-armor type and squad
+  mode, matching `BDamageHelper`'s target-ID quirk. Removing a proxy squad
+  clears every reference immediately, and proxy state participates in the
+  world checksum.
+- Scenario-layered persistent `PlasmaShieldGen` actions create an authoritative
+  main base-shield squad and proxy the base anchor into it. Generator count
+  applies retail's `1/N` incoming-damage scalar, primary ownership transfers
+  deterministically, base hit-point percentage drives the shield object's hit
+  points, and the authored action duration plus shield `BuildPoints` gate
+  reconstruction after combat. Eligible socket buildings receive their
+  authored `ShieldType` subshield squads; those proxies relay through the main
+  shield and mirror its shield percentage. All generated squads and lifecycle
+  timers are ordinary checksummed sim state.
+- Work command order 9 now drives persistent Follow joins. The scenario-layered
+  monitor tactic supplies its work range and `BubbleShield` action, while raw
+  layered `ShieldBubbleTypes` data selects the default or target-specific
+  shield squad. Once in range, the sim makes the monitor unselectable and
+  invulnerable, creates the mapped bubble at the target transform with 0.1
+  initial shield points, owns its damage proxy, and recreates it only after the
+  strict player/leader shield delay. At connection the monitor adopts twice
+  the protected squad's effective speed, matching retail Follow joins. Moving
+  targets, target loss, source loss, and shield destruction are resolved
+  entirely by authoritative squad state.
+- FollowAttack uses the same persistent Join state and authored work range, but
+  keeps its source operational and synchronized to the moving target rather
+  than applying Follow's hidden/invulnerable connection contract.
+- Raw scenario-layered `MergedSquads` entries create the retail
+  `merged_{target}_{joining}` synthetic prototype identities after the typed
+  squad table. A compatible Merge transfers the joining unit into the target,
+  preserves population accounting, applies Join modifiers only to the original
+  target members, and deterministically restores the source or target prototype
+  when one side of the merged composition is eliminated.
+- Board joins reserve their channel while approaching and during the authored
+  timer, mark the target as being boarded and nonattackable, then transfer enemy
+  ownership and force-contain the joining Spartan in the captured target. The
+  contained source is invulnerable and unselectable; target loss releases it,
+  clears Join modifiers, and applies the authored revert-health fraction only
+  after a completed takeover. Ownership, containment, timers, modifier layers,
+  and cleanup all live in checksummed sim state.
+- When an AOE primary target resolves through a proxy to an external shield,
+  other candidate centers within the shield's authored X/Y volume are removed
+  before damage-pool normalization. The original primary remains eligible for
+  its retail splash pass, whose damage redirects back to the proxy.
+- Retail `Shielded` damage-type entries are treated as shield coverage, not as
+  an armor multiplier. `Full` shields absorb every hit; `FrontHalf` shields
+  absorb non-directional damage and direct vectors traveling against the
+  target's forward, while rear direct hits bypass them. Units spawn with empty
+  shields and immediately request recharge. A covered hit drains shields first
+  and sends same-hit overflow to hit points after existing damage scalars.
 - Squad members share the squad's last-damaged recharge clock. Recharge begins
   only when elapsed time is strictly greater than the player delay multiplied
   by the leader unit's delay scalar; a zero initial timestamp starts the spawn
@@ -195,16 +275,16 @@ This is the deterministic baseline, not a claim of complete combat parity.
 Remaining retail systems include unsupported technology effect families,
 ability ammunition, non-attack
 recovery start events, tactic-state membership, lockdown minimum-range
-behavior, merge/garrison/melee-attacker predicates, hardpoint and hit-zone
-launch offsets, oriented hit-zone/visual-mesh projectile intersection,
-directional damage and directional shield arcs, hit-zone shields, external
-shields, damage proxies, runtime `Unhittable`, invulnerability and destructible
+behavior, remaining garrison and melee-attacker predicates, visual bone/animation
+hardpoint overrides, targeted hit-zone offsets and oriented hit-zone/visual-mesh
+projectile intersection, hit-zone shields, broader runtime `Unhittable` and
+invulnerability controls, and destructible
 non-unit AOE recipients, dodge/deflect, sticky visual-mesh/bone intersections,
 timer damage reapplication, beam/needler behaviors, hero death/revival
-presentation, death effects, and ranged-action savegame compatibility. The
-current database schema retains only
-the shield marker, but every shipped `Shielded` object inspected so far omits a
-direction attribute and therefore uses full coverage.
+presentation, death effects, and ranged-action savegame compatibility. Join
+boundaries still include hijack attachment presentation, full veterancy/XP
+transfer, combat-value-derived Join modifiers, manual Board disconnect, and
+fatality animation/controller presentation.
 
 ## Installed-data validation
 
@@ -233,6 +313,31 @@ against the weapon in the scenario-layered tactic.
 The Marine rocket join verifies the shipped tracking projectile's perturbance
 chance, velocity, and duration interval directly against that same layered
 database before combat runs it through the authoritative projectile pool.
+The catalog check also reads repeated raw `DamageType` nodes from the mounted
+object table and verifies the shipped Jackal's `FrontHalf` shield plus its
+Normal `Light` and Cover `LightInCover` armor modes. This guards against the
+typed object schema collapsing those repeated nodes before they reach the sim.
+It also spawns the shipped `env_generic_wallshield_01` from that layered table
+and verifies that `ExternalShield` plus the authored `0.5/20/39` obstruction
+radii reach the authoritative unit state used by collision and AOE queries.
+The protection check resolves the shipped Covenant generator's 30-second
+rebuild and 5-second attack wait, creates its 50,000-point base shield, and
+verifies the real anchor proxy. It also resolves `for_air_monitor_04`'s Follow
+join, spawns a real Scorpion and Protector monitor, selects
+`sys_bubbleshield_med_01` from the raw layered squad table, and verifies bubble
+creation, proxy ownership, and target-loss teardown in the sim.
+It also resolves the shipped Spartan `InfantryJoin` through the raw
+`MergedSquads` compatibility table and verifies a real Spartan/Marine Merge,
+then resolves `VehicleTakeOver` against a Scorpion and verifies the authored
+8-second Board timer, ownership transfer, containment, and release on target
+death.
+
+The non-ignored `scenario-database-layering` test builds encrypted synthetic
+`root.era` and scenario archives. It proves that scenario-local `gamedata.xml`
+and `squads.xml` replace their base copies before the pipeline database is
+parsed, that the resulting difficulty initializes the authoritative player,
+and that the raw scenario-local `MergedSquads` mapping enters the same gameplay
+catalog.
 
 The same installed-data test now also spawns a shipped Barracks, issues the
 retail building command for the first Marine upgrade, verifies its authored

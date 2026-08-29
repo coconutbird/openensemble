@@ -63,6 +63,7 @@ impl<'database> CommandExecutor<'database> {
         match order_type {
             Some(OrderType::Move) => Self::execute_move(world, cmd),
             Some(OrderType::Attack) => self.execute_attack(world, cmd),
+            Some(OrderType::Join) => self.execute_join(world, cmd),
             Some(OrderType::Garrison) => Self::execute_garrison(world, cmd),
             Some(OrderType::Ungarrison) => Self::execute_ungarrison(world, cmd),
             Some(OrderType::Hitch) => Self::execute_hitch(world, cmd),
@@ -139,6 +140,33 @@ impl<'database> CommandExecutor<'database> {
         for &recipient_id in &cmd.base.recipients {
             let _result =
                 world.issue_garrison_order(player_id, recipient_id, cmd.unit_id, cmd.range);
+        }
+    }
+
+    fn execute_join(&self, world: &mut World, cmd: &WorkCommand) {
+        let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
+            return;
+        };
+        if cmd.unit_id.is_invalid() {
+            return;
+        }
+        let ability_id = if cmd.ability_id == -1 {
+            None
+        } else {
+            let Ok(id) = u8::try_from(cmd.ability_id) else {
+                return;
+            };
+            if self
+                .database
+                .is_some_and(|database| usize::from(id) >= database.abilities.len())
+            {
+                return;
+            }
+            Some(id)
+        };
+        for &recipient_id in &cmd.base.recipients {
+            let _accepted =
+                world.issue_join_order(player_id, recipient_id, cmd.unit_id, ability_id);
         }
     }
 
@@ -514,6 +542,31 @@ mod tests {
         let squad = world.get_squad(squad_id).unwrap();
         assert_eq!(squad.move_target, Some(second_target));
         assert!(squad.is_executing_attack_move());
+    }
+
+    #[test]
+    fn join_command_reaches_persistent_squad_state() {
+        let mut world = World::new();
+        world.init_players(1);
+        let source_id = world.create_squad(1);
+        let source_unit_id = world.create_unit(1);
+        assert!(world.attach_unit_to_squad(source_unit_id, source_id));
+        let target_id = world.create_squad(1);
+        let target_unit_id = world.create_unit(1);
+        assert!(world.attach_unit_to_squad(target_unit_id, target_id));
+        let entry = CommandEntry {
+            command: QueuedCommand::Work(WorkCommand::join_squads(1, vec![source_id], target_id)),
+            exec_time: 0,
+            sequence: 0,
+            source_client: 1,
+        };
+
+        CommandExecutor::new().execute(&mut world, &entry);
+
+        assert_eq!(
+            world.get_squad(source_id).unwrap().join_target(),
+            Some(target_id)
+        );
     }
 
     #[test]

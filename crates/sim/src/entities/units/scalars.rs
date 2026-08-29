@@ -1,6 +1,76 @@
 //! Retail per-unit runtime data scalars.
 
 use super::Unit;
+use pipeline::database::hw1::objects::VeterancyLevel;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct UnitScalarModifiers {
+    damage: f32,
+    damage_taken: f32,
+    velocity: f32,
+    accuracy: f32,
+    work_rate: f32,
+    weapon_range: f32,
+}
+
+impl Default for UnitScalarModifiers {
+    fn default() -> Self {
+        Self {
+            damage: 1.0,
+            damage_taken: 1.0,
+            velocity: 1.0,
+            accuracy: 1.0,
+            work_rate: 1.0,
+            weapon_range: 1.0,
+        }
+    }
+}
+
+impl UnitScalarModifiers {
+    pub(crate) fn from_veterancy_levels(
+        levels: &[VeterancyLevel],
+        start_level: i32,
+        target_level: i32,
+    ) -> Self {
+        let mut modifiers = Self::default();
+        for level in start_level.max(0).saturating_add(1)..=target_level.max(0) {
+            let Some(authored) = levels.iter().find(|entry| entry.level == level) else {
+                continue;
+            };
+            modifiers.damage *= finite_or_one(authored.damage);
+            modifiers.damage_taken *= finite_or_one(authored.damage_taken);
+            modifiers.velocity *= finite_or_one(authored.velocity);
+            modifiers.accuracy *= finite_or_one(authored.accuracy);
+            modifiers.work_rate *= finite_or_one(authored.work_rate);
+            modifiers.weapon_range *= finite_or_one(authored.weapon_range);
+        }
+        modifiers
+    }
+
+    pub(crate) const fn components(self) -> [f32; 6] {
+        [
+            self.damage,
+            self.damage_taken,
+            self.velocity,
+            self.accuracy,
+            self.work_rate,
+            self.weapon_range,
+        ]
+    }
+
+    pub(crate) fn apply(self, unit: &mut Unit) {
+        unit.adjust_data_scalar(UnitDataScalar::Damage, self.damage);
+        unit.adjust_data_scalar(UnitDataScalar::DamageTaken, self.damage_taken);
+        unit.adjust_data_scalar(UnitDataScalar::Velocity, self.velocity);
+        unit.adjust_data_scalar(UnitDataScalar::Accuracy, self.accuracy);
+        unit.adjust_data_scalar(UnitDataScalar::WorkRate, self.work_rate);
+        unit.adjust_data_scalar(UnitDataScalar::WeaponRange, self.weapon_range);
+    }
+}
+
+fn finite_or_one(value: Option<f32>) -> f32 {
+    value.filter(|value| value.is_finite()).unwrap_or(1.0)
+}
 
 /// Selector used by retail's `ModifyDataScalar` trigger effect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +113,32 @@ impl UnitDataScalar {
 }
 
 impl Unit {
+    pub(crate) fn set_join_damage_modifiers(&mut self, damage: f32, damage_taken: f32) {
+        self.join_damage_multiplier = damage;
+        self.join_damage_taken_multiplier = damage_taken;
+    }
+
+    pub(crate) fn clear_join_damage_modifiers(&mut self) {
+        self.join_damage_multiplier = 1.0;
+        self.join_damage_taken_multiplier = 1.0;
+    }
+
+    pub(crate) const fn effective_damage_multiplier(&self) -> f32 {
+        self.damage_multiplier * self.join_damage_multiplier
+    }
+
+    pub(crate) const fn effective_damage_taken_multiplier(&self) -> f32 {
+        self.damage_taken_multiplier * self.join_damage_taken_multiplier
+    }
+
+    pub(crate) const fn join_damage_multiplier(&self) -> f32 {
+        self.join_damage_multiplier
+    }
+
+    pub(crate) const fn join_damage_taken_multiplier(&self) -> f32 {
+        self.join_damage_taken_multiplier
+    }
+
     /// Read one live scalar exactly as retail exposes it for synchronization.
     #[must_use]
     pub const fn data_scalar(&self, scalar: UnitDataScalar) -> f32 {

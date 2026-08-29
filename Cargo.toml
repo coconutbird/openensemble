@@ -25,6 +25,7 @@ data = { path = "crates/data" }
 # ensemble-assets (sibling repo) — single dependency for all game data
 pipeline = { path = "../ensemble-assets/crates/pipeline" }
 ecf = { path = "../ensemble-formats/crates/ecf" }
+era = { path = "../ensemble-formats/crates/era" }
 
 # Windowing and Graphics (pure Rust)
 winit = "0.30"

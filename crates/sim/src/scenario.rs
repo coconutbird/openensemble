@@ -22,7 +22,9 @@ use crate::entities::squads::marine::{MarineSquadSpec, is_marine_squad};
 use crate::entities::squads::warthog::{WarthogSquadSpec, is_warthog_squad};
 use crate::entities::units::marine::{MARINE_HITPOINTS, MarineUnitSpec, is_marine_unit};
 use crate::entities::units::warthog::{WarthogUnitSpec, is_warthog_unit};
-use crate::entities::{BaseId, ShieldCoverage, SquadArchetype, SquadFormation, UnitArchetype};
+use crate::entities::{
+    BaseId, ShieldCoverage, SquadArchetype, SquadFormation, UnitArchetype, UnitScalarModifiers,
+};
 use crate::entity_id::EntityId;
 use crate::gameplay::GameplayCatalog;
 use crate::physics::{BoxCollider, PhysicsBody};
@@ -268,6 +270,7 @@ fn load_scenario_into_world_with_max_players(
 ) -> LoadedScenario {
     let mut world = World::new();
     world.configure_prototype_catalogs(db);
+    world.configure_prototype_damage_profiles(&gameplay);
     world.set_construction_damage_multiplier(
         db.game_data
             .as_ref()
@@ -487,6 +490,11 @@ pub(crate) fn create_squad_from_prototype(
         squad.proto_squad_id =
             logical_proto.map_or(-1, |(index, squad)| database_id(squad.dbid, index));
         proto_name.clone_into(&mut squad.proto_squad_name);
+        squad.set_veterancy_level(
+            proto
+                .and_then(|(_, prototype)| prototype.level)
+                .unwrap_or_default(),
+        );
         squad.archetype = if is_warthog_squad(proto_name) {
             SquadArchetype::Warthog
         } else if is_marine_squad(proto_name) {
@@ -559,14 +567,16 @@ pub(crate) fn add_squad_member_from_prototype(
     proto_object_name: &str,
     db: &Database,
 ) -> Option<EntityId> {
-    let (player_id, position, archetype, slot) = world.get_squad(squad_id).map(|squad| {
-        (
-            squad.base.player_id,
-            squad.base.position,
-            squad.archetype,
-            squad.unit_ids.len(),
-        )
-    })?;
+    let (player_id, position, archetype, slot, veterancy_level) =
+        world.get_squad(squad_id).map(|squad| {
+            (
+                squad.base.player_id,
+                squad.base.position,
+                squad.archetype,
+                squad.unit_ids.len(),
+                squad.veterancy_level(),
+            )
+        })?;
     let unit_id = world.create_unit_at(player_id, position);
     configure_unit(world, unit_id, proto_object_name, db);
     if !world.attach_unit_to_squad(unit_id, squad_id) {
@@ -580,6 +590,8 @@ pub(crate) fn add_squad_member_from_prototype(
         debug_assert!(assigned, "attached Marine should accept a formation offset");
     }
     if let Some((_, prototype)) = find_proto_object(db, proto_object_name) {
+        UnitScalarModifiers::from_veterancy_levels(&prototype.veterancy, 0, veterancy_level)
+            .apply(world.get_unit_mut(unit_id)?);
         sockets::materialize_authored_sockets(world, unit_id, prototype, db);
     }
     Some(unit_id)
@@ -650,22 +662,16 @@ fn configure_unit(world: &mut World, unit_id: EntityId, proto_name: &str, db: &D
     configure_unit_from_proto(world, unit_id, proto_name, proto_index, proto);
 }
 
-fn configure_unit_from_proto(
+pub(crate) fn configure_unit_from_proto(
     world: &mut World,
     unit_id: EntityId,
     proto_name: &str,
     proto_index: usize,
     proto: &ProtoObject,
 ) {
-    let shield_coverage = if proto
-        .damage_type
-        .as_deref()
-        .is_some_and(|damage_type| damage_type.eq_ignore_ascii_case("Shielded"))
-    {
-        ShieldCoverage::Full
-    } else {
-        ShieldCoverage::None
-    };
+    let shield_coverage = world
+        .prototype_shield_coverage(proto_name)
+        .unwrap_or_else(|| typed_shield_coverage(proto));
     let technologies = world
         .get_unit(unit_id)
         .and_then(|unit| world.get_player(unit.base.player_id))
@@ -693,6 +699,7 @@ fn configure_unit_from_proto(
     let prototype_non_mobile = unit.is_building() || prototype_has_flag(proto, "Immoveable");
     unit.base.configure_prototype_mobility(prototype_non_mobile);
     unit.set_auto_attackable(!prototype_has_flag(proto, "DontAutoAttackMe"));
+    unit.set_external_shield(prototype_has_flag(proto, "ExternalShield"));
     garrison::configure_unit(unit, proto);
     if let Some(hitpoints) = adjusted_hitpoints {
         unit.set_max_hitpoints(hitpoints);
@@ -716,6 +723,18 @@ fn configure_unit_from_proto(
         && let Some(collider) = obstruction_collider(proto)
     {
         unit.physics = Some(PhysicsBody::static_obstruction(collider));
+    }
+}
+
+fn typed_shield_coverage(proto: &ProtoObject) -> ShieldCoverage {
+    if proto
+        .damage_type
+        .as_deref()
+        .is_some_and(|damage_type| damage_type.eq_ignore_ascii_case("Shielded"))
+    {
+        ShieldCoverage::Full
+    } else {
+        ShieldCoverage::None
     }
 }
 

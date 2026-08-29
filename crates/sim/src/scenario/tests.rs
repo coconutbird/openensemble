@@ -114,7 +114,7 @@ fn loads_squad_members_buildings_and_base_anchors() {
 }
 
 #[test]
-fn loads_class_zero_visual_objects_and_preserves_scenario_mapping() {
+fn loads_implicit_class_zero_visual_objects_and_preserves_scenario_mapping() {
     let scenario = ScenarioData::from_xml_str(
         r#"<Scenario>
             <Players><Player Name="P1" Team="1" /></Players>
@@ -130,7 +130,6 @@ fn loads_class_zero_visual_objects_and_preserves_scenario_mapping() {
         objects: vec![ProtoObject {
             name: "env_harvest_forebridge_01".to_owned(),
             dbid: Some(2308),
-            object_class: Some("Object".to_owned()),
             visual: Some("environment\\harvest\\forebridge_01\\forebridge_01.vis".to_owned()),
             ..ProtoObject::default()
         }],
