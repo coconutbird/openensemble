@@ -52,6 +52,7 @@ struct VertexInput {
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) alpha_uv: vec2<f32>,
+    @location(1) static_alpha: f32,
 };
 
 fn dynamic_alpha_enabled(grid_coord: vec2<u32>) -> bool {
@@ -126,19 +127,19 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     // Transform to light clip space
     out.clip_position = camera.view_proj * vec4<f32>(pos, 1.0);
     out.alpha_uv = vec2<f32>(u, v);
+    out.static_alpha = textureSampleLevel(t_alpha, s_alpha, out.alpha_uv, 0.0).r;
 
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let static_alpha = textureSample(t_alpha, s_alpha, in.alpha_uv).r;
     let num_verts = u32(shadow_params.terrain_info.x);
     let grid_coord = vec2<u32>(
         min(u32(saturate(in.alpha_uv.x) * f32(num_verts - 1u)), num_verts - 1u),
         min(u32(saturate(in.alpha_uv.y) * f32(num_verts - 1u)), num_verts - 1u),
     );
-    let alpha = select(0.0, static_alpha, dynamic_alpha_enabled(grid_coord));
+    let alpha = select(0.0, in.static_alpha, dynamic_alpha_enabled(grid_coord));
     if alpha < 0.5 {
         discard;
     }

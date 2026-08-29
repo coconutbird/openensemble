@@ -2,7 +2,7 @@
 
 use super::{
     Condition, ConditionResult, ConditionType, Database, PlayerType, TriggerScript, World,
-    can_pay_cost, check_diplomacy, check_resource_totals, command_state, compare_bool,
+    ammunition, can_pay_cost, check_diplomacy, check_resource_totals, command_state, compare_bool,
     compare_cost, compare_elapsed, compare_f32, compare_i32, compare_identity,
     compare_player_squad_count, compare_player_unit_count, compare_population, compare_string,
     compare_time, contains_garrisoned, events, forbids, game_settings, has_garrisoned, hitch,
@@ -59,6 +59,7 @@ fn evaluate_core_condition(
         ConditionType::CompareString => compare_string(condition, script),
         ConditionType::CompareVector => spatial::compare_vector(condition, script),
         ConditionType::CompareCost => compare_cost(condition, script),
+        ConditionType::CompareAmmoPercent => ammunition::compare_percent(condition, script, world),
         ConditionType::CanPayCost => can_pay_cost(condition, script, world),
         ConditionType::CheckResourceTotals => check_resource_totals(condition, script, world),
         ConditionType::TechStatus => tech_status(condition, script, world, database),

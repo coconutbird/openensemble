@@ -5,14 +5,18 @@
 //! cloning the complete database into every [`Player`](super::Player).
 
 mod proto_data;
+mod transforms;
 
 pub(crate) use proto_data::{ProtoDataModification, ProtoDataRelativity, ProtoDataType};
+pub(crate) use transforms::{
+    AppliedPrototypeTransform, AppliedSquadTransform, AppliedUnitTransform,
+};
 
 use crate::sync::SyncChecksum;
 use pipeline::database::hw1::techs::TechEffect;
 use pipeline::database::hw1::{Database, Tech};
 use proto_data::RuntimeProtoData;
-use std::collections::BTreeMap;
+use transforms::PrototypeTransforms;
 
 /// The technology state owned by one player.
 #[derive(Debug, Clone, Default)]
@@ -24,12 +28,15 @@ pub struct PlayerTechState {
     weapon_type_modifier_effects: Vec<WeaponTypeModifierEffect>,
     hitpoint_effects: Vec<ProtoScalarEffect>,
     shieldpoint_effects: Vec<ProtoScalarEffect>,
+    ammunition_maximum_effects: Vec<ProtoScalarEffect>,
+    ammunition_regeneration_rate_effects: Vec<ProtoScalarEffect>,
     player_shield_regen_rate_effects: Vec<ScalarOperation>,
     player_shield_regen_delay_effects: Vec<ScalarOperation>,
     unit_shield_regen_rate_effects: Vec<ProtoScalarEffect>,
     unit_shield_regen_delay_effects: Vec<ProtoScalarEffect>,
     ability_recovery_effects: Vec<AbilityScalarEffect>,
-    squad_transforms: BTreeMap<String, String>,
+    death_spawn_effects: Vec<DeathSpawnEffect>,
+    transforms: PrototypeTransforms,
     runtime_proto_data: RuntimeProtoData,
 }
 
@@ -74,6 +81,12 @@ struct AbilityScalarEffect {
     operation: ScalarOperation,
 }
 
+#[derive(Debug, Clone)]
+struct DeathSpawnEffect {
+    proto_object: String,
+    proto_squad: String,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ScalarOperation {
     amount: f32,
@@ -88,17 +101,6 @@ enum ScalarRelativity {
     Percent,
     Assign,
     BasePercentAssign,
-}
-
-/// One persistent proto-squad transformation applied by a newly active tech.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AppliedSquadTransform {
-    /// Logical player proto that remains the squad's type.
-    pub from: String,
-    /// Definition installed in that logical proto before this effect.
-    pub previous_definition: String,
-    /// Definition installed by this effect.
-    pub new_definition: String,
 }
 
 impl PlayerTechState {
@@ -291,6 +293,33 @@ impl PlayerTechState {
         )
     }
 
+    /// Apply player-owned changes to one Ram weapon's per-impact damage cap.
+    #[must_use]
+    pub(crate) fn weapon_max_damage_per_ram(
+        &self,
+        proto_object: &str,
+        weapon: &str,
+        base: f32,
+    ) -> f32 {
+        self.weapon_scalar(ProtoDataType::MaxDamagePerRam, proto_object, weapon, base)
+    }
+
+    /// Apply player-owned changes to one Ram weapon's global reflection factor.
+    #[must_use]
+    pub(crate) fn weapon_reflect_damage_factor(
+        &self,
+        proto_object: &str,
+        weapon: &str,
+        base: f32,
+    ) -> f32 {
+        self.weapon_scalar(
+            ProtoDataType::ReflectDamageFactor,
+            proto_object,
+            weapon,
+            base,
+        )
+    }
+
     fn weapon_scalar(
         &self,
         data_type: ProtoDataType,
@@ -329,6 +358,40 @@ impl PlayerTechState {
             base,
             current,
         )
+    }
+
+    /// Apply player technology and trigger effects to an ammunition maximum.
+    #[must_use]
+    pub fn ammunition_maximum(&self, proto_object: &str, base: f32) -> f32 {
+        let current =
+            apply_proto_scalar_effects(&self.ammunition_maximum_effects, proto_object, None, base);
+        let current = self.runtime_proto_data.scalar(
+            ProtoDataType::AmmoMax,
+            proto_object,
+            None,
+            base,
+            current,
+        );
+        valid_scalar_result(current, base)
+    }
+
+    /// Apply player technology and trigger effects to ammunition regeneration.
+    #[must_use]
+    pub fn ammunition_regeneration_rate(&self, proto_object: &str, base: f32) -> f32 {
+        let current = apply_proto_scalar_effects(
+            &self.ammunition_regeneration_rate_effects,
+            proto_object,
+            None,
+            base,
+        );
+        let current = self.runtime_proto_data.scalar(
+            ProtoDataType::AmmoRegenRate,
+            proto_object,
+            None,
+            base,
+            current,
+        );
+        valid_scalar_result(current, base)
     }
 
     /// Apply player-owned prototype changes to authored line of sight.
@@ -394,12 +457,29 @@ impl PlayerTechState {
         valid_scalar_result(current, base)
     }
 
+    /// Resolve the squad assigned to a proto object's retail death-spawn slot.
+    #[must_use]
+    pub(crate) fn death_spawn_squad<'state>(
+        &'state self,
+        proto_object: &str,
+        authored: Option<&'state str>,
+    ) -> Option<&'state str> {
+        self.death_spawn_effects
+            .iter()
+            .filter(|effect| effect.proto_object.eq_ignore_ascii_case(proto_object))
+            .fold(authored, |_, effect| Some(effect.proto_squad.as_str()))
+    }
+
     /// Resolve the effective definition of a logical player proto squad.
     #[must_use]
     pub fn resolved_squad_prototype<'name>(&'name self, logical_name: &'name str) -> &'name str {
-        self.squad_transforms
-            .get(&normalize(logical_name))
-            .map_or(logical_name, String::as_str)
+        self.transforms.resolve_squad(logical_name)
+    }
+
+    /// Resolve the effective definition of a logical player proto object.
+    #[must_use]
+    pub fn resolved_unit_prototype<'name>(&'name self, logical_name: &'name str) -> &'name str {
+        self.transforms.resolve_unit(logical_name)
     }
 
     pub(crate) fn modify_proto_data(
@@ -420,7 +500,7 @@ impl PlayerTechState {
         &mut self,
         database: &Database,
         technology: &Tech,
-    ) -> Vec<AppliedSquadTransform> {
+    ) -> Vec<AppliedPrototypeTransform> {
         if self.is_active(&technology.name) {
             return Vec::new();
         }
@@ -430,7 +510,7 @@ impl PlayerTechState {
             .as_ref()
             .map_or(&[][..], |effects| effects.entries.as_slice())
             .iter()
-            .filter_map(|effect| self.apply_squad_transform(effect))
+            .filter_map(|effect| self.transforms.apply(effect))
             .collect();
         self.active_technologies.push(technology.name.clone());
         self.rebuild(database);
@@ -450,25 +530,6 @@ impl PlayerTechState {
         true
     }
 
-    fn apply_squad_transform(&mut self, effect: &TechEffect) -> Option<AppliedSquadTransform> {
-        if !effect
-            .effect_type
-            .eq_ignore_ascii_case("TransformProtoSquad")
-        {
-            return None;
-        }
-        let from = nonempty(effect.from_type.as_deref())?;
-        let new_definition = nonempty(effect.to_type.as_deref())?;
-        let previous_definition = self.resolved_squad_prototype(from).to_owned();
-        self.squad_transforms
-            .insert(normalize(from), new_definition.to_owned());
-        Some(AppliedSquadTransform {
-            from: from.to_owned(),
-            previous_definition,
-            new_definition: new_definition.to_owned(),
-        })
-    }
-
     fn rebuild(&mut self, database: &Database) {
         self.action_effects.clear();
         self.command_effects.clear();
@@ -476,11 +537,14 @@ impl PlayerTechState {
         self.weapon_type_modifier_effects.clear();
         self.hitpoint_effects.clear();
         self.shieldpoint_effects.clear();
+        self.ammunition_maximum_effects.clear();
+        self.ammunition_regeneration_rate_effects.clear();
         self.player_shield_regen_rate_effects.clear();
         self.player_shield_regen_delay_effects.clear();
         self.unit_shield_regen_rate_effects.clear();
         self.unit_shield_regen_delay_effects.clear();
         self.ability_recovery_effects.clear();
+        self.death_spawn_effects.clear();
 
         let active = self.active_technologies.clone();
         for active_name in active {
@@ -496,12 +560,12 @@ impl PlayerTechState {
                 .as_ref()
                 .map_or(&[][..], |effects| effects.entries.as_slice())
             {
-                self.apply_data_effect(effect);
+                self.apply_data_effect(database, effect);
             }
         }
     }
 
-    fn apply_data_effect(&mut self, effect: &TechEffect) {
+    fn apply_data_effect(&mut self, database: &Database, effect: &TechEffect) {
         if !effect.effect_type.eq_ignore_ascii_case("Data") {
             return;
         }
@@ -527,6 +591,14 @@ impl PlayerTechState {
             if let Some(effect) = proto_scalar_effect(effect, false) {
                 self.shieldpoint_effects.push(effect);
             }
+        } else if subtype.eq_ignore_ascii_case("AmmoMax") {
+            if let Some(effect) = proto_scalar_effect(effect, false) {
+                self.ammunition_maximum_effects.push(effect);
+            }
+        } else if subtype.eq_ignore_ascii_case("AmmoRegenRate") {
+            if let Some(effect) = proto_scalar_effect(effect, false) {
+                self.ammunition_regeneration_rate_effects.push(effect);
+            }
         } else if subtype.eq_ignore_ascii_case("ShieldRegenRate") {
             collect_shield_regen_effect(
                 effect,
@@ -541,7 +613,29 @@ impl PlayerTechState {
             );
         } else if subtype.eq_ignore_ascii_case("AbilityRecoverTime") {
             self.collect_ability_recovery_effect(effect);
+        } else if subtype.eq_ignore_ascii_case("DeathSpawn") {
+            self.collect_death_spawn_effect(database, effect);
         }
+    }
+
+    fn collect_death_spawn_effect(&mut self, database: &Database, effect: &TechEffect) {
+        let (Some(proto_object), Some(proto_squad)) = (
+            effect_target(effect, "ProtoUnit"),
+            nonempty(effect.squad_name.as_deref()),
+        ) else {
+            return;
+        };
+        let Some(proto_squad) = database
+            .squads
+            .iter()
+            .find(|candidate| candidate.name.eq_ignore_ascii_case(proto_squad))
+        else {
+            return;
+        };
+        self.death_spawn_effects.push(DeathSpawnEffect {
+            proto_object: normalize(proto_object),
+            proto_squad: proto_squad.name.clone(),
+        });
     }
 
     fn collect_action_effect(&mut self, effect: &TechEffect) {
@@ -620,11 +714,7 @@ impl PlayerTechState {
 
     pub(crate) fn hash_state(&self, checksum: &mut SyncChecksum) {
         hash_strings(checksum, &self.active_technologies);
-        checksum.hash_u32(u32::try_from(self.squad_transforms.len()).unwrap_or(u32::MAX));
-        for (from, to) in &self.squad_transforms {
-            hash_string(checksum, from);
-            hash_string(checksum, to);
-        }
+        self.transforms.hash_state(checksum);
         self.runtime_proto_data.hash_state(checksum);
     }
 }
@@ -747,6 +837,8 @@ fn weapon_data_type(subtype: &str) -> Option<ProtoDataType> {
             ProtoDataType::AccuracyDeviationFactor,
         ),
         ("MaxVelocityLead", ProtoDataType::MaxVelocityLead),
+        ("MaxDamagePerRam", ProtoDataType::MaxDamagePerRam),
+        ("ReflectDamageFactor", ProtoDataType::ReflectDamageFactor),
     ]
     .into_iter()
     .find_map(|(name, data_type)| subtype.eq_ignore_ascii_case(name).then_some(data_type))

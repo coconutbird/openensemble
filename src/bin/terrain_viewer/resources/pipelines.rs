@@ -139,13 +139,20 @@ impl TerrainViewer {
         inputs: &CompositorInputs<'_>,
         chunk_grid: TerrainChunkGrid,
     ) {
-        let config = CompositingConfig::for_chunk_grid(chunk_grid.width(), chunk_grid.height())
-            .expect("decoded terrain chunk grid must produce a valid compositor atlas");
+        let max_texture_dimension_2d = device.limits().max_texture_dimension_2d;
+        let config = CompositingConfig::for_chunk_grid_with_limit(
+            chunk_grid.width(),
+            chunk_grid.height(),
+            max_texture_dimension_2d,
+        )
+        .expect("decoded terrain chunk grid must fit the device texture limit");
         log::info!(
-            "Initializing GPU compositor: {}×{} atlas ({} chunks)",
+            "Initializing GPU compositor: {}×{} atlas ({} chunks at {}px each; device limit {})",
             config.atlas_width,
             config.atlas_height,
-            config.total_chunks()
+            config.total_chunks(),
+            config.chunk_texture_size,
+            max_texture_dimension_2d
         );
         let compositor = CompositorResources::new(device, config);
         let (_, decal_alpha_view) = self.create_decal_alpha_atlas(device, queue, chunk_grid);

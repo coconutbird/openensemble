@@ -15,8 +15,6 @@ const ALPHA_CHUNK_SIZE: u32 = 64;
 const ALPHA_CHUNK_SIZE_USIZE: usize = 64;
 const ALPHA_CHANNEL_COUNT: usize = 4;
 const ALPHA_CHANNEL_COUNT_U32: u32 = 4;
-const ALPHA_SLICE_BYTES: usize =
-    ALPHA_CHUNK_SIZE_USIZE * ALPHA_CHUNK_SIZE_USIZE * ALPHA_CHANNEL_COUNT;
 
 fn create_array_texture(
     device: &wgpu::Device,
@@ -375,38 +373,56 @@ fn create_decal_array(
     (texture, view)
 }
 
-fn empty_alpha_array(chunk_grid: TerrainChunkGrid) -> Vec<u8> {
-    let byte_count = ALPHA_SLICE_BYTES
-        .checked_mul(chunk_grid.total_chunks())
-        .expect("alpha texture array size must fit usize");
+fn alpha_atlas_dimensions(chunk_grid: TerrainChunkGrid) -> (u32, u32) {
+    let width = chunk_grid
+        .width()
+        .checked_mul(ALPHA_CHUNK_SIZE)
+        .expect("alpha atlas width must fit u32");
+    let height = chunk_grid
+        .height()
+        .checked_mul(ALPHA_CHUNK_SIZE)
+        .expect("alpha atlas height must fit u32");
+    (width, height)
+}
+
+fn empty_alpha_atlas(chunk_grid: TerrainChunkGrid) -> Vec<u8> {
+    let (width, height) = alpha_atlas_dimensions(chunk_grid);
+    let byte_count = usize::try_from(u64::from(width) * u64::from(height))
+        .expect("alpha atlas texel count must fit usize")
+        .checked_mul(ALPHA_CHANNEL_COUNT)
+        .expect("alpha atlas byte count must fit usize");
     vec![0; byte_count]
 }
 
 fn populate_alpha_data<'a>(
-    array_data: &mut [u8],
+    atlas_data: &mut [u8],
     chunks: impl IntoIterator<Item = (i32, i32, &'a [Vec<u8>])>,
     first_map: usize,
     channel_count: usize,
     chunk_grid: TerrainChunkGrid,
 ) {
+    let (atlas_width, _) = alpha_atlas_dimensions(chunk_grid);
+    let atlas_width = usize::try_from(atlas_width).expect("alpha atlas width must fit usize");
     for (grid_x, grid_z, alpha_maps) in chunks {
-        let Some(chunk_index) = chunk_grid.chunk_index(grid_x, grid_z) else {
+        let Some((world_x, world_z)) = chunk_grid.world_chunk_coords(grid_x, grid_z) else {
             continue;
         };
-        let slice_offset = chunk_index * ALPHA_SLICE_BYTES;
+        let chunk_x = usize::try_from(world_x).expect("alpha chunk X must fit usize");
+        let chunk_z = usize::try_from(world_z).expect("alpha chunk Z must fit usize");
 
         for row in 0..ALPHA_CHUNK_SIZE_USIZE {
             for column in 0..ALPHA_CHUNK_SIZE_USIZE {
                 // XTT stores x=Z and y=X, so transpose while building the texture.
                 let source_index = column * ALPHA_CHUNK_SIZE_USIZE + row;
-                let target_index =
-                    slice_offset + (row * ALPHA_CHUNK_SIZE_USIZE + column) * ALPHA_CHANNEL_COUNT;
+                let atlas_x = chunk_x * ALPHA_CHUNK_SIZE_USIZE + column;
+                let atlas_y = chunk_z * ALPHA_CHUNK_SIZE_USIZE + row;
+                let target_index = (atlas_y * atlas_width + atlas_x) * ALPHA_CHANNEL_COUNT;
                 for channel in 0..channel_count {
                     let map_index = first_map + channel;
                     if let Some(alpha_map) = alpha_maps.get(map_index)
                         && let Some(&alpha) = alpha_map.get(source_index)
                     {
-                        array_data[target_index + channel] = alpha;
+                        atlas_data[target_index + channel] = alpha;
                     }
                 }
             }
@@ -418,15 +434,16 @@ fn create_alpha_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     label: &str,
-    array_data: &[u8],
+    atlas_data: &[u8],
     chunk_grid: TerrainChunkGrid,
 ) -> (wgpu::Texture, wgpu::TextureView) {
+    let (width, height) = alpha_atlas_dimensions(chunk_grid);
     let texture = create_array_texture(
         device,
         label,
-        ALPHA_CHUNK_SIZE,
-        ALPHA_CHUNK_SIZE,
-        chunk_grid.total_chunks_u32(),
+        width,
+        height,
+        1,
         1,
         wgpu::TextureFormat::Rgba8Unorm,
     );
@@ -437,19 +454,19 @@ fn create_alpha_texture(
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
-        array_data,
+        atlas_data,
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(ALPHA_CHANNEL_COUNT_U32 * ALPHA_CHUNK_SIZE),
-            rows_per_image: Some(ALPHA_CHUNK_SIZE),
+            bytes_per_row: Some(ALPHA_CHANNEL_COUNT_U32 * width),
+            rows_per_image: Some(height),
         },
         wgpu::Extent3d {
-            width: ALPHA_CHUNK_SIZE,
-            height: ALPHA_CHUNK_SIZE,
-            depth_or_array_layers: chunk_grid.total_chunks_u32(),
+            width,
+            height,
+            depth_or_array_layers: 1,
         },
     );
-    let view = array_view(&texture);
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     (texture, view)
 }
 
@@ -497,7 +514,7 @@ impl TerrainViewer {
         }
     }
 
-    /// Creates one 64×64 RGBA alpha slice per decoded terrain chunk.
+    /// Creates a spatial RGBA alpha atlas with one 64×64 tile per terrain chunk.
     pub(crate) fn create_alpha_atlas(
         &self,
         device: &wgpu::Device,
@@ -510,9 +527,9 @@ impl TerrainViewer {
             .expect("scene must be loaded")
             .chunk_splat_data;
         if chunks.is_empty() {
-            log::info!("No splat data, using empty alpha texture array");
+            log::info!("No splat data, using empty alpha texture atlas");
         } else {
-            log::info!("Creating alpha texture array from {} chunks", chunks.len());
+            log::info!("Creating alpha texture atlas from {} chunks", chunks.len());
             for (index, chunk) in chunks.iter().take(5).enumerate() {
                 let non_zero = chunk
                     .alpha_maps
@@ -529,7 +546,7 @@ impl TerrainViewer {
             }
         }
 
-        let mut data = empty_alpha_array(chunk_grid);
+        let mut data = empty_alpha_atlas(chunk_grid);
         populate_alpha_data(
             &mut data,
             chunks
@@ -539,7 +556,7 @@ impl TerrainViewer {
             4,
             chunk_grid,
         );
-        create_alpha_texture(device, queue, "Alpha Texture Array", &data, chunk_grid)
+        create_alpha_texture(device, queue, "Alpha Texture Atlas", &data, chunk_grid)
     }
 
     /// Creates the high alpha atlas for overflow layers 5 through 7.
@@ -554,7 +571,7 @@ impl TerrainViewer {
             .as_ref()
             .expect("scene must be loaded")
             .chunk_splat_data;
-        let mut data = empty_alpha_array(chunk_grid);
+        let mut data = empty_alpha_atlas(chunk_grid);
         populate_alpha_data(
             &mut data,
             chunks
@@ -564,7 +581,7 @@ impl TerrainViewer {
             3,
             chunk_grid,
         );
-        create_alpha_texture(device, queue, "Alpha Texture Array Hi", &data, chunk_grid)
+        create_alpha_texture(device, queue, "Alpha Texture Atlas Hi", &data, chunk_grid)
     }
 
     /// Creates the decal alpha atlas texture.
@@ -588,7 +605,7 @@ impl TerrainViewer {
             );
         }
 
-        let mut data = empty_alpha_array(chunk_grid);
+        let mut data = empty_alpha_atlas(chunk_grid);
         populate_alpha_data(
             &mut data,
             chunks
@@ -613,7 +630,7 @@ impl TerrainViewer {
             .as_ref()
             .expect("scene must be loaded")
             .chunk_decal_data;
-        let mut data = empty_alpha_array(chunk_grid);
+        let mut data = empty_alpha_atlas(chunk_grid);
         populate_alpha_data(
             &mut data,
             chunks
@@ -640,5 +657,35 @@ impl TerrainViewer {
         let (_, diffuse) = create_decal_array(device, queue, decals, false);
         let (_, opacity) = create_decal_array(device, queue, decals, true);
         (diffuse, opacity)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alpha_chunks_are_transposed_into_spatial_atlas_tiles() {
+        let chunk_grid = TerrainChunkGrid::from_terrain_dimension(128).expect("valid grid");
+        let mut alpha_map = vec![0; ALPHA_CHUNK_SIZE_USIZE * ALPHA_CHUNK_SIZE_USIZE];
+        let source_column = 3;
+        let source_row = 5;
+        alpha_map[source_column * ALPHA_CHUNK_SIZE_USIZE + source_row] = 211;
+        let alpha_maps = [alpha_map];
+        let mut atlas = empty_alpha_atlas(chunk_grid);
+
+        populate_alpha_data(
+            &mut atlas,
+            [(0, 1, alpha_maps.as_slice())],
+            0,
+            1,
+            chunk_grid,
+        );
+
+        let atlas_width = 2 * ALPHA_CHUNK_SIZE_USIZE;
+        let atlas_x = ALPHA_CHUNK_SIZE_USIZE + source_column;
+        let target = (source_row * atlas_width + atlas_x) * ALPHA_CHANNEL_COUNT;
+        assert_eq!(atlas[target], 211);
+        assert_eq!(atlas[target + 1], 0);
     }
 }

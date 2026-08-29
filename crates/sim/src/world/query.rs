@@ -6,6 +6,32 @@ use crate::{EntityId, PlayerId};
 use glam::Vec3;
 
 impl World {
+    pub(super) fn find_squads_by_leader_type_in_area(
+        &self,
+        object_type: &str,
+        center: Vec3,
+        radius: f32,
+    ) -> Vec<EntityId> {
+        self.squads
+            .iter()
+            .filter_map(|(squad_id, squad)| {
+                let leader = squad
+                    .unit_ids
+                    .iter()
+                    .find_map(|unit_id| self.units.get(*unit_id))?;
+                (leader.is_object_type(object_type)
+                    && entity_is_in_area(
+                        leader.base.position,
+                        leader.obstruction_half_extents,
+                        leader.is_building(),
+                        center,
+                        radius,
+                    ))
+                .then_some(squad_id)
+            })
+            .collect()
+    }
+
     /// Select live class-1 units using the filters exposed by retail
     /// `GetUnits` v3.
     ///

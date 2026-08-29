@@ -66,16 +66,34 @@ impl CompositingConfig {
     /// Creates a 512-pixel-per-chunk atlas for the supplied terrain grid.
     #[must_use]
     pub fn for_chunk_grid(chunks_x: u32, chunks_z: u32) -> Option<Self> {
-        const CHUNK_TEXTURE_SIZE: u32 = 512;
+        Self::for_chunk_grid_with_limit(chunks_x, chunks_z, u32::MAX)
+    }
+
+    /// Creates the highest-resolution power-of-two chunk atlas that fits the
+    /// supplied GPU 2D texture dimension, up to 512 pixels per chunk.
+    #[must_use]
+    pub fn for_chunk_grid_with_limit(
+        chunks_x: u32,
+        chunks_z: u32,
+        max_texture_dimension_2d: u32,
+    ) -> Option<Self> {
+        const PREFERRED_CHUNK_TEXTURE_SIZE: u32 = 512;
         if chunks_x == 0 || chunks_z == 0 {
             return None;
         }
+        let longest_axis = chunks_x.max(chunks_z);
+        let max_chunk_size = max_texture_dimension_2d / longest_axis;
+        if max_chunk_size == 0 {
+            return None;
+        }
+        let fitting_power_of_two = 1_u32.checked_shl(max_chunk_size.ilog2())?;
+        let chunk_texture_size = PREFERRED_CHUNK_TEXTURE_SIZE.min(fitting_power_of_two);
         Some(Self {
-            chunk_texture_size: CHUNK_TEXTURE_SIZE,
+            chunk_texture_size,
             chunks_x,
             chunks_z,
-            atlas_width: chunks_x.checked_mul(CHUNK_TEXTURE_SIZE)?,
-            atlas_height: chunks_z.checked_mul(CHUNK_TEXTURE_SIZE)?,
+            atlas_width: chunks_x.checked_mul(chunk_texture_size)?,
+            atlas_height: chunks_z.checked_mul(chunk_texture_size)?,
         })
     }
 
@@ -106,6 +124,15 @@ mod config_tests {
     fn empty_chunk_grids_are_rejected() {
         assert!(CompositingConfig::for_chunk_grid(0, 14).is_none());
         assert!(CompositingConfig::for_chunk_grid(14, 0).is_none());
+    }
+
+    #[test]
+    fn fort_deen_atlas_scales_to_the_device_texture_limit() {
+        let config = CompositingConfig::for_chunk_grid_with_limit(20, 20, 8192)
+            .expect("Fort Deen grid must fit");
+        assert_eq!(config.chunk_texture_size, 256);
+        assert_eq!(config.atlas_width, 5120);
+        assert_eq!(config.atlas_height, 5120);
     }
 }
 
@@ -149,6 +176,15 @@ fn sampled_array_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
         wgpu::ShaderStages::FRAGMENT,
         wgpu::TextureSampleType::Float { filterable: true },
         wgpu::TextureViewDimension::D2Array,
+    )
+}
+
+fn sampled_2d_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    texture_layout_entry(
+        binding,
+        wgpu::ShaderStages::FRAGMENT,
+        wgpu::TextureSampleType::Float { filterable: true },
+        wgpu::TextureViewDimension::D2,
     )
 }
 
@@ -265,18 +301,18 @@ fn create_composite_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
                 count: None,
             },
             sampled_array_entry(1),
-            sampled_array_entry(2),
+            sampled_2d_entry(2),
             storage_buffer_entry(3),
             storage_buffer_entry(4),
             filtering_sampler_entry(5),
             filtering_sampler_entry(6),
-            sampled_array_entry(7),
-            sampled_array_entry(8),
+            sampled_2d_entry(7),
+            sampled_2d_entry(8),
             storage_buffer_entry(9),
             storage_buffer_entry(10),
             storage_buffer_entry(11),
             sampled_array_entry(12),
-            sampled_array_entry(13),
+            sampled_2d_entry(13),
             sampled_array_entry(14),
             sampled_array_entry(15),
             sampled_array_entry(16),

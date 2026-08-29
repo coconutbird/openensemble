@@ -187,6 +187,7 @@ struct VertexOutput {
     @location(5) fog_densities: vec2<f32>,  // x = radial, y = planar
     @location(6) light_color: vec3<f32>,    // pre-baked light texture (HWDE v8.xyz)
     @location(7) @interpolate(linear) bump_fadeout: f32, // normal map distance fadeout (HWDE v8.w)
+    @location(8) static_alpha: f32,
 };
 
 fn dynamic_alpha_enabled(grid_coord: vec2<u32>) -> bool {
@@ -291,6 +292,17 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let light_sample = textureSampleLevel(t_light, s_terrain, vec2<f32>(global_u, global_v), 0.0).r;
     let light_rgb = vec3<f32>(light_sample, light_sample, light_sample);
 
+    // The PC domain shader samples the static XTD alpha once per generated
+    // terrain vertex. Its interpolated varying is thresholded by the pixel
+    // shader, avoiding false holes from sampling and thresholding it again per
+    // fragment.
+    let static_alpha = textureSampleLevel(
+        t_alpha,
+        s_terrain,
+        vec2<f32>(global_u, global_v),
+        0.0,
+    ).r;
+
     // Compute bump fadeout factor (HWDE VS lines 208-215)
     // fadeout = 1.0 - saturate((dist - fadeout_min) / (fadeout_max - fadeout_min + fadeout_bias))
     // fadeout_min = cb4[35].x, fadeout_range = cb4[35].y - cb4[35].x + cb4[35].z
@@ -312,6 +324,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.fog_densities = vec2<f32>(z_fog_density, planar_fog_density);
     out.light_color = light_rgb;
     out.bump_fadeout = fadeout;
+    out.static_alpha = static_alpha;
 
     return out;
 }
@@ -356,13 +369,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // XTD/unique texture UV: same grid-based UV.
     let xtd_uv = sample_uv;
 
-    // Sample alpha texture for terrain holes/transparency (XTD-decoded)
-    let alpha = textureSample(t_alpha, s_terrain, xtd_uv).r;
+    // Threshold the interpolated domain-stage alpha like the PC pixel shader.
     let alpha_grid = vec2<u32>(
         min(u32(saturate(xtd_uv.x) * f32(num_verts - 1u)), num_verts - 1u),
         min(u32(saturate(xtd_uv.y) * f32(num_verts - 1u)), num_verts - 1u),
     );
-    let combined_alpha = select(0.0, alpha, dynamic_alpha_enabled(alpha_grid));
+    let combined_alpha = select(0.0, in.static_alpha, dynamic_alpha_enabled(alpha_grid));
     if combined_alpha < 0.66666 {
         discard;
     }

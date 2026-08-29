@@ -1,9 +1,12 @@
 use glam::{Mat4, Vec3};
 use pipeline::database::hw1::Visual;
-use pipeline::database::hw1::visual::{Asset, Component, Logic, LogicEntry, Model as VisualModel};
+use pipeline::database::hw1::visual::{
+    Asset, Attachment, Component, Logic, LogicEntry, Model as VisualModel,
+};
+use pipeline::source::{AssetSource, StdFileProvider};
 
 use super::{
-    UnitAttachmentKind, UnitAttachmentTrigger, UnitLoadError, attachment_transform,
+    Unit, UnitAttachmentKind, UnitAttachmentTrigger, UnitLoadError, attachment_transform,
     canonical_animation_path, canonical_model_path, model_asset_path,
 };
 
@@ -96,6 +99,39 @@ fn scenario_variation_index_selects_and_clamps_model_asset() {
     assert_eq!(model_asset_path(&visual, model, Some(0)), Some("crate_01"));
     assert_eq!(model_asset_path(&visual, model, Some(1)), Some("crate_02"));
     assert_eq!(model_asset_path(&visual, model, Some(99)), Some("crate_02"));
+}
+
+#[test]
+fn particle_only_visual_retains_renderer_attachment_metadata() {
+    let visual = Visual {
+        default_model: Some("Default".to_owned()),
+        models: vec![VisualModel {
+            name: "Default".to_owned(),
+            component: Some(Component {
+                assets: vec![Asset {
+                    asset_type: "Particle".to_owned(),
+                    file: Some("effects/rage_hands".to_owned()),
+                    ..Asset::default()
+                }],
+                attachments: vec![Attachment {
+                    attach_type: "LightFile".to_owned(),
+                    name: "effects/rage_light".to_owned(),
+                    ..Attachment::default()
+                }],
+                ..Component::default()
+            }),
+            ..VisualModel::default()
+        }],
+        ..Visual::default()
+    };
+    let mut source = AssetSource::with_provider(StdFileProvider);
+
+    let unit = Unit::load(&mut source, &visual).unwrap();
+
+    assert_eq!(unit.component_count(), 0);
+    assert_eq!(unit.attachments().len(), 2);
+    assert_eq!(unit.attachments()[0].kind, UnitAttachmentKind::Particle);
+    assert_eq!(unit.attachments()[1].kind, UnitAttachmentKind::Light);
 }
 
 fn model_asset(path: &str) -> Asset {

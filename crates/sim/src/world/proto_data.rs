@@ -13,6 +13,7 @@ impl World {
         player_id: PlayerId,
         prototype: &ProtoObject,
         modification: &ProtoDataModification,
+        database: &pipeline::database::hw1::Database,
     ) -> bool {
         let data_type = modification.data_type;
         let amount = modification.amount;
@@ -47,6 +48,10 @@ impl World {
             }
             ProtoDataType::ShieldRegenDelay => {
                 self.assign_unit_shield_delay(player_id, &prototype.name, amount);
+            }
+            ProtoDataType::AmmoMax | ProtoDataType::AmmoRegenRate => {
+                self.reconcile_ammunition_profile(player_id, prototype);
+                self.refresh_player_squad_ammunition(player_id, database);
             }
             _ => {}
         }
@@ -123,6 +128,25 @@ impl World {
             }
         }
     }
+
+    fn reconcile_ammunition_profile(&mut self, player_id: PlayerId, prototype: &ProtoObject) {
+        let base_maximum = finite_or_zero(prototype.ammo_max);
+        let base_rate = finite_or_zero(prototype.ammo_regen_rate);
+        let Some(player) = self.get_player(player_id) else {
+            return;
+        };
+        let maximum = player
+            .technologies
+            .ammunition_maximum(&prototype.name, base_maximum);
+        let rate = player
+            .technologies
+            .ammunition_regeneration_rate(&prototype.name, base_rate);
+        for unit_id in matching_unit_ids(self, player_id, &prototype.name) {
+            if let Some(unit) = self.units.get_mut(unit_id) {
+                unit.ammunition.reconcile_profile(maximum, rate);
+            }
+        }
+    }
 }
 
 fn matching_unit_ids(world: &World, player_id: PlayerId, proto_object: &str) -> Vec<EntityId> {
@@ -159,8 +183,19 @@ fn live_scalar(player: &Player, prototype: &ProtoObject, data_type: ProtoDataTyp
                     .unwrap_or_default(),
             ),
         ),
+        ProtoDataType::AmmoMax => Some(
+            technologies.ammunition_maximum(&prototype.name, finite_or_zero(prototype.ammo_max)),
+        ),
+        ProtoDataType::AmmoRegenRate => Some(technologies.ammunition_regeneration_rate(
+            &prototype.name,
+            finite_or_zero(prototype.ammo_regen_rate),
+        )),
         _ => None,
     }
+}
+
+fn finite_or_zero(value: Option<f32>) -> f32 {
+    value.filter(|value| value.is_finite()).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -168,6 +203,10 @@ mod tests {
     use super::*;
     use crate::entities::ShieldCoverage;
     use crate::player::ProtoDataRelativity;
+    use crate::scenario::create_squad_from_prototype;
+    use glam::Vec3;
+    use pipeline::database::hw1::Squad as ProtoSquad;
+    use pipeline::database::hw1::squads::{UnitEntry, UnitsWrapper};
 
     fn modification(data_type: ProtoDataType, amount: f32) -> ProtoDataModification {
         ProtoDataModification {
@@ -200,21 +239,26 @@ mod tests {
             max_velocity: Some(10.0),
             ..ProtoObject::default()
         };
+        let mut database = pipeline::database::hw1::Database::new();
+        database.objects.push(prototype.clone());
 
         assert!(world.modify_player_proto_data(
             1,
             &prototype,
             &modification(ProtoDataType::Hitpoints, 2.0),
+            &database,
         ));
         assert!(world.modify_player_proto_data(
             1,
             &prototype,
             &modification(ProtoDataType::Shieldpoints, 2.0),
+            &database,
         ));
         assert!(world.modify_player_proto_data(
             1,
             &prototype,
             &modification(ProtoDataType::MaximumVelocity, 0.5),
+            &database,
         ));
 
         let unit = world.get_unit(unit_id).unwrap();
@@ -222,6 +266,65 @@ mod tests {
         assert_close(unit.max_hitpoints, 200.0);
         assert_close(unit.shields.maximum, 40.0);
         assert_close(unit.speed, 5.0);
+    }
+
+    #[test]
+    fn ammunition_proto_changes_scale_units_and_refresh_squad_maximums() {
+        let prototype = ProtoObject {
+            name: "ammo_unit".to_owned(),
+            object_class: Some("Unit".to_owned()),
+            ammo_max: Some(100.0),
+            ammo_regen_rate: Some(2.0),
+            ..ProtoObject::default()
+        };
+        let mut database = pipeline::database::hw1::Database::new();
+        database.objects.push(prototype.clone());
+        database.squads.push(ProtoSquad {
+            name: "ammo_squad".to_owned(),
+            units: Some(UnitsWrapper {
+                entries: vec![UnitEntry {
+                    proto_object: prototype.name.clone(),
+                    count: 1,
+                    ..UnitEntry::default()
+                }],
+            }),
+            ..ProtoSquad::default()
+        });
+        let mut world = World::new();
+        world.init_players(1);
+        let squad_id = create_squad_from_prototype(
+            &mut world,
+            1,
+            Vec3::ZERO,
+            Vec3::Z,
+            "ammo_squad",
+            &database,
+        );
+        let unit_id = world.get_squad(squad_id).unwrap().unit_ids[0];
+        world
+            .get_unit_mut(unit_id)
+            .unwrap()
+            .ammunition
+            .set_current(50.0);
+
+        assert!(world.modify_player_proto_data(
+            1,
+            &prototype,
+            &modification(ProtoDataType::AmmoMax, 2.0),
+            &database,
+        ));
+        let ammunition = world.unit_ammunition(unit_id).unwrap();
+        assert_close(ammunition.current(), 100.0);
+        assert_close(ammunition.maximum(), 200.0);
+        assert_eq!(world.squad_ammunition(squad_id), Some((100.0, 200.0)));
+
+        let mut rate = modification(ProtoDataType::AmmoRegenRate, 5.0);
+        rate.relativity = ProtoDataRelativity::Assign;
+        assert!(world.modify_player_proto_data(1, &prototype, &rate, &database));
+        assert_close(
+            world.unit_ammunition(unit_id).unwrap().regeneration_rate(),
+            5.0,
+        );
     }
 
     fn assert_close(actual: f32, expected: f32) {

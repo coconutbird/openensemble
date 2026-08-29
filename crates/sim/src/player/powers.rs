@@ -293,6 +293,86 @@ impl Player {
         }
     }
 
+    pub(crate) fn consume_power_use(
+        &mut self,
+        proto_power_id: ProtoPowerId,
+        squad_id: EntityId,
+        rules: PowerRules,
+        auto_recharge_ms: u32,
+        game_time_ms: u32,
+    ) -> bool {
+        let Some(entry) = self
+            .powers
+            .entries
+            .iter_mut()
+            .find(|entry| entry.proto_power_id == proto_power_id)
+        else {
+            return false;
+        };
+        let item_index = if rules.multi_recharge {
+            entry.items.iter().position(PowerEntryItem::is_available)
+        } else {
+            entry
+                .items
+                .iter()
+                .position(|item| item.squad_id == squad_id && item.is_available())
+                .or_else(|| {
+                    (!squad_id.is_invalid()).then(|| {
+                        entry
+                            .items
+                            .iter()
+                            .position(|item| item.squad_id.is_invalid() && item.is_available())
+                    })?
+                })
+        };
+        let Some(item) = item_index.and_then(|index| entry.items.get_mut(index)) else {
+            return false;
+        };
+        if !item.infinite_uses {
+            item.uses_remaining = item.uses_remaining.saturating_sub(1);
+            if auto_recharge_ms > 0 && item.uses_remaining < item.charge_cap {
+                item.recharging = true;
+                item.next_grant_time = game_time_ms.wrapping_add(auto_recharge_ms);
+            }
+        }
+        item.times_used = item.times_used.wrapping_add(1);
+        entry.times_used = entry.times_used.wrapping_add(1);
+        true
+    }
+
+    pub(crate) fn update_power_recharges(
+        &mut self,
+        game_time_ms: u32,
+        mut settings: impl FnMut(ProtoPowerId) -> (u32, i32),
+    ) {
+        for entry in &mut self.powers.entries {
+            let (auto_recharge_ms, use_limit) = settings(entry.proto_power_id);
+            for item in &mut entry.items {
+                if item.infinite_uses || item.uses_remaining >= item.charge_cap {
+                    item.recharging = false;
+                    continue;
+                }
+                let may_recharge = use_limit == 0 || item.times_used < use_limit;
+                if !may_recharge {
+                    item.recharging = false;
+                    continue;
+                }
+                if !item.recharging {
+                    if auto_recharge_ms > 0 {
+                        item.recharging = true;
+                        item.next_grant_time = game_time_ms.wrapping_add(auto_recharge_ms);
+                    }
+                    continue;
+                }
+                if game_time_ms >= item.next_grant_time {
+                    item.uses_remaining =
+                        item.uses_remaining.saturating_add(1).min(item.charge_cap);
+                    item.recharging = false;
+                }
+            }
+        }
+    }
+
     pub(crate) fn hash_power_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_u32(u32::try_from(self.powers.entries.len()).unwrap_or(u32::MAX));
         for entry in &self.powers.entries {
@@ -332,6 +412,7 @@ impl Player {
             for _ in 0..grant.uses {
                 entry.items.push(PowerEntryItem {
                     uses_remaining: 1,
+                    charge_cap: 1,
                     ..PowerEntryItem::default()
                 });
             }

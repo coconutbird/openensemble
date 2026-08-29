@@ -179,6 +179,13 @@ fn configure_synthetic_squad(
     squad.base.set_forward(forward);
     squad.proto_squad_id = proto_squad_id;
     prototype.name.clone_into(&mut squad.proto_squad_name);
+    squad.archetype = SquadArchetype::Generic;
+    squad.formation = SquadFormation::Generic;
+    squad.turn_radius = 0.0;
+    squad.min_turn_radius = 0.0;
+    squad.max_turn_radius = 0.0;
+    squad.aggro_distance = 0.0;
+    squad.leash_distance = 0.0;
     if is_warthog_squad(&prototype.name) {
         let spec = WarthogSquadSpec::default();
         squad.archetype = SquadArchetype::Warthog;
@@ -200,6 +207,25 @@ fn configure_synthetic_squad(
             squad.leash_distance = leash_distance;
         }
     }
+}
+
+pub(crate) fn transform_synthetic_squad(
+    world: &mut World,
+    squad_id: EntityId,
+    source_proto_object: &str,
+    target: &ProtoObject,
+    database: &Database,
+) {
+    let Some(forward) = world.get_squad(squad_id).and_then(|squad| {
+        squad
+            .proto_squad_name
+            .eq_ignore_ascii_case(source_proto_object)
+            .then_some(squad.base.forward)
+    }) else {
+        return;
+    };
+    configure_synthetic_squad(world, squad_id, target, database, forward);
+    refresh_squad_member_settings(world, squad_id);
 }
 
 fn synthetic_proto_squad_id(database: &Database, prototype: &ProtoObject) -> i32 {

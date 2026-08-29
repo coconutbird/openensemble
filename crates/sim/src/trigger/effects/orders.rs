@@ -161,7 +161,9 @@ pub(super) fn work(
             continue;
         };
         let order = match target {
-            MoveDestination::Position(position) => ContextualWorkOrder::Move(position),
+            MoveDestination::Position(position) => {
+                resolve_contextual_location_work(world, squad_id, position, do_ability, gameplay)
+            }
             MoveDestination::Entity(target_id) => {
                 resolve_contextual_work(world, squad_id, target_id, do_ability, gameplay)
             }
@@ -203,7 +205,67 @@ enum ContextualWorkOrder {
     },
     Hitch(EntityId),
     Unhitch(EntityId),
+    Mines {
+        target: MoveDestination,
+        ability_id: u8,
+    },
     Unsupported,
+}
+
+fn resolve_contextual_location_work(
+    world: &World,
+    squad_id: EntityId,
+    target: Vec3,
+    do_ability: bool,
+    gameplay: Option<&GameplayCatalog>,
+) -> ContextualWorkOrder {
+    if !do_ability {
+        return ContextualWorkOrder::Move(target);
+    }
+    let Some(gameplay) = gameplay else {
+        return ContextualWorkOrder::Move(target);
+    };
+    let Some(ability_id) = gameplay.command_ability_id() else {
+        return ContextualWorkOrder::Move(target);
+    };
+    let Some(squad) = world.get_squad(squad_id) else {
+        return ContextualWorkOrder::Unsupported;
+    };
+    let Some(source) = squad.unit_ids.iter().find_map(|unit_id| {
+        world
+            .get_unit(*unit_id)
+            .filter(|unit| unit.is_operational())
+    }) else {
+        return ContextualWorkOrder::Unsupported;
+    };
+    let query = AttackQuery {
+        relation: TacticRelation::Enemy,
+        squad_mode: squad.mode,
+        ability_id: Some(ability_id),
+        target_proto_object_name: None,
+        tactic_state: source.tactic_state(),
+        flags: AttackQueryFlags::empty(),
+    };
+    let selected = gameplay.select_mine_action(&source.proto_object_name, &query, |action| {
+        let authored_enabled = action.start_disabled != Some(true);
+        let player_enabled =
+            world
+                .get_player(source.base.player_id)
+                .map_or(authored_enabled, |player| {
+                    player.technologies.action_enabled(
+                        &source.proto_object_name,
+                        &action.name,
+                        authored_enabled,
+                    )
+                });
+        source.actions.is_enabled(&action.name, !player_enabled)
+    });
+    selected.map_or(ContextualWorkOrder::Move(target), |_| {
+        ContextualWorkOrder::Mines {
+            target: MoveDestination::Position(target),
+            ability_id,
+        }
+    })
 }
 
 fn work_destination(
@@ -269,6 +331,7 @@ fn resolve_contextual_work(
             .map_or(crate::entities::SquadMode::Normal, |squad| squad.mode),
         ability_id,
         target_proto_object_name: Some(&target.proto_object_name),
+        tactic_state: source.tactic_state(),
         flags,
     };
     let selected = gameplay.select_work_action(&source.proto_object_name, &query, |action| {
@@ -319,6 +382,14 @@ fn resolve_contextual_work(
         Some(kind) if kind.eq_ignore_ascii_case("Hitch") => ContextualWorkOrder::Hitch(target_id),
         Some(kind) if kind.eq_ignore_ascii_case("Unhitch") => {
             ContextualWorkOrder::Unhitch(target_id)
+        }
+        Some(kind) if kind.eq_ignore_ascii_case("Mines") => {
+            ability_id.map_or(ContextualWorkOrder::Unsupported, |ability_id| {
+                ContextualWorkOrder::Mines {
+                    target: MoveDestination::Entity(target_id),
+                    ability_id,
+                }
+            })
         }
         _ => ContextualWorkOrder::Unsupported,
     }
@@ -413,6 +484,20 @@ fn issue_contextual_work(
         ContextualWorkOrder::Unhitch(target) => world
             .issue_unhitch_order(player_id, squad_id, target)
             .is_ok(),
+        ContextualWorkOrder::Mines { target, ability_id } => {
+            let (target_entity, target_position) = match target {
+                MoveDestination::Entity(entity) => (Some(entity), None),
+                MoveDestination::Position(position) => (None, Some(position)),
+            };
+            world.issue_mines_order(
+                player_id,
+                squad_id,
+                target_entity,
+                target_position,
+                None,
+                ability_id,
+            )
+        }
         ContextualWorkOrder::Unsupported => false,
     }
 }
@@ -669,4 +754,68 @@ fn list_at<'a>(
         EntityListKind::Squad,
         value_at(effect, script, signature_id)?,
     )
+}
+
+#[cfg(test)]
+mod mines_tests {
+    use super::*;
+    use crate::gameplay::GameplayCatalog;
+    use pipeline::database::hw1::tactics::{Action, TacticData, TacticRules, TargetRule};
+    use pipeline::database::hw1::{Ability, Database, ProtoObject};
+
+    #[test]
+    fn contextual_location_ability_issues_mines_instead_of_renderer_side_work() {
+        let mut database = Database::new();
+        database.abilities.extend([
+            Ability {
+                name: "Command".to_owned(),
+                ..Ability::default()
+            },
+            Ability {
+                name: "LayMines".to_owned(),
+                objects: vec!["mine".to_owned()],
+                ammo_cost: Some(1.0),
+                ..Ability::default()
+            },
+        ]);
+        database.objects.push(ProtoObject {
+            name: "minelayer".to_owned(),
+            tactics: Some("minelayer.tactics".to_owned()),
+            ability_command: Some("LayMines".to_owned()),
+            ..ProtoObject::default()
+        });
+        let tactics = TacticData {
+            actions: vec![Action {
+                name: "PlaceMine".to_owned(),
+                action_type: Some("Mines".to_owned()),
+                work_range: Some(4.0),
+                ..Action::default()
+            }],
+            tactic: Some(TacticRules {
+                target_rules: vec![TargetRule {
+                    relation: Some("Any".to_owned()),
+                    action: Some("PlaceMine".to_owned()),
+                    ability: Some("Command".to_owned()),
+                    ..TargetRule::default()
+                }],
+                ..TacticRules::default()
+            }),
+            ..TacticData::default()
+        };
+        let gameplay =
+            GameplayCatalog::from_tactics(&database, [("minelayer".to_owned(), tactics)]);
+        let mut world = World::new();
+        world.init_players(1);
+        let squad_id = world.create_squad_at(1, Vec3::ZERO);
+        let unit_id = world.create_unit_at(1, Vec3::ZERO);
+        world.get_unit_mut(unit_id).unwrap().proto_object_name = "minelayer".to_owned();
+        assert!(world.attach_unit_to_squad(unit_id, squad_id));
+
+        let order =
+            resolve_contextual_location_work(&world, squad_id, Vec3::ZERO, true, Some(&gameplay));
+        assert!(issue_contextual_work(
+            &mut world, 1, squad_id, order, false, false
+        ));
+        assert!(world.get_squad(squad_id).unwrap().is_placing_mines());
+    }
 }

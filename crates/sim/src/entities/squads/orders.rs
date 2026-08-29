@@ -183,7 +183,7 @@ impl Squad {
         self.start_moving_to(order.target);
     }
 
-    fn begin_next_queued_move(&mut self) -> bool {
+    pub(super) fn begin_next_queued_move(&mut self) -> bool {
         let Some(order) = self.orders.queued_moves.pop_front() else {
             return false;
         };
@@ -200,6 +200,8 @@ impl Squad {
     }
 
     fn start_moving_to(&mut self, target: Vec3) {
+        self.mines.cancel();
+        self.detonate.cancel();
         self.cancel_idle_action();
         self.move_target = Some(target);
         self.state = SquadState::Moving;

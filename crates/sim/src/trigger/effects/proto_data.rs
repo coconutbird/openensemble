@@ -88,7 +88,8 @@ pub(super) fn modify_proto_data(
         .collect::<Vec<_>>();
     for prototype in prototypes {
         for &player_id in &players {
-            let _changed = world.modify_player_proto_data(player_id, prototype, &modification);
+            let _changed =
+                world.modify_player_proto_data(player_id, prototype, &modification, database);
         }
     }
     EffectOutcome::Applied

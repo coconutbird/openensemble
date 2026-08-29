@@ -2,25 +2,29 @@
 
 use crate::entities::squads::{formation_offset_to_local, formation_offset_to_world};
 use crate::entities::{Base, BaseId, Object, Projectile, ShieldCoverage, Squad, Unit};
-use crate::entity::{Entity, EntityManager};
+use crate::entity::EntityManager;
 use crate::entity_id::{EntityClass, EntityId};
-use crate::physics::{
-    prepare_squad_movement, resolve_unit_collisions, substeps, sync_squad_members,
-};
+use crate::gameplay::GroundVehiclePhysicsProfile;
 use crate::player::{GAIA_PLAYER, MAX_TEAMS, Player, PlayerId, TeamRelation};
 use crate::random::{Random, SimRandom};
 use glam::Vec3;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod ability;
+mod ammunition;
 mod attachments;
 mod bounds;
 mod checksum;
+mod collision_attacks;
 mod combat;
 mod construction;
 mod control;
+mod cryo;
 mod custom_commands;
+mod death_replacements;
+mod death_spawns;
 mod design_lines;
+mod detonate;
 mod events;
 mod game_settings;
 mod garrison;
@@ -31,6 +35,7 @@ mod idle;
 mod lifecycle;
 #[cfg(test)]
 mod lifecycle_tests;
+mod mines;
 mod object_state;
 mod object_types;
 mod objectives;
@@ -44,6 +49,7 @@ mod protection;
 mod proto_data;
 mod query;
 mod rally_points;
+mod repair;
 mod research;
 mod resources;
 mod revival;
@@ -61,6 +67,7 @@ mod tower_walls;
 mod training;
 mod transports;
 mod triggers;
+mod update;
 mod veterancy;
 mod visibility;
 
@@ -76,7 +83,14 @@ pub use garrison::GarrisonError;
 pub use health::UnitHealth;
 pub use hitch::HitchError;
 pub use objectives::ObjectiveState;
-pub use powers::power_prototype_id;
+pub use powers::{
+    CryoPowerError, CryoPowerExecution, CryoPowerInvocation, DisruptionPowerError,
+    DisruptionPowerExecution, DisruptionPowerInvocation, NativePowerError, NativePowerInput,
+    NativePowerInvocation, OdstDrop, OdstPowerError, OdstPowerExecution, OdstPowerInvocation,
+    PowerExecutionId, RagePowerError, RagePowerExecution, RagePowerInvocation, RagePowerPhase,
+    RepairPowerError, RepairPowerExecution, RepairPowerInvocation, power_prototype_id,
+    TransportPowerError, TransportPowerExecution, TransportPowerInvocation,
+};
 pub use presentation::{
     CameraControlPermissions, CameraDirective, CameraShake, HintCallout, HintCalloutAnchor,
     HudItem, ObjectivePointer, PlayerPresentationState, RumbleMotor, RumbleRequest,
@@ -127,7 +141,7 @@ pub struct World {
     terrain_simulation: Option<terrain::TerrainSimulation>,
     /// Deterministic configuration symbols visible to retail trigger scripts.
     config_symbols: BTreeSet<String>,
-    veterancy_enabled: bool,
+    veterancy: game_settings::VeterancySetting,
     /// Retail general-event subscriptions and completion state.
     general_events: events::GeneralEventState,
     /// Renderer-facing requests authored by the authoritative simulation.
@@ -142,6 +156,8 @@ pub struct World {
     next_custom_command_id: i32,
     /// Paid custom-command work waiting on authoritative completion timers.
     custom_command_executions: Vec<custom_commands::CustomCommandExecution>,
+    /// Running native powers and their deterministic execution IDs.
+    power_manager: powers::PowerManagerState,
     /// Current game time in milliseconds.
     pub game_time_ms: u32,
     /// Deterministic RNG for the world.
@@ -156,6 +172,8 @@ pub struct World {
     prototype_squads: BTreeMap<i32, (String, u32)>,
     /// Scenario-layered integral shield coverage keyed by proto-object name.
     prototype_shield_coverages: BTreeMap<String, ShieldCoverage>,
+    /// Scenario-layered supported vehicle bodies keyed by proto-object name.
+    prototype_ground_vehicle_physics: BTreeMap<String, GroundVehiclePhysicsProfile>,
     /// Class-0 invisible and world-control objects.
     pub objects: EntityManager<Object>,
     /// Unit pool. Mobile units and buildings both use vanilla class 1.
@@ -196,8 +214,8 @@ impl World {
             terrain_bounds: None,
             playable_bounds: None,
             terrain_simulation: None,
-            config_symbols: BTreeSet::new(),
-            veterancy_enabled: true,
+            config_symbols: game_settings::default_config_symbols(),
+            veterancy: game_settings::VeterancySetting::Enabled,
             general_events: events::GeneralEventState::default(),
             presentation: events::PresentationState::default(),
             presentation_control: presentation::PresentationControlState::default(),
@@ -205,6 +223,7 @@ impl World {
             custom_commands: BTreeMap::new(),
             next_custom_command_id: 0,
             custom_command_executions: Vec::new(),
+            power_manager: powers::PowerManagerState::default(),
             game_time_ms: 0,
             rng: Random::new(),
             sim_rng: SimRandom::new(),
@@ -212,6 +231,7 @@ impl World {
             prototype_object_types: BTreeMap::new(),
             prototype_squads: BTreeMap::new(),
             prototype_shield_coverages: BTreeMap::new(),
+            prototype_ground_vehicle_physics: BTreeMap::new(),
             objects: EntityManager::new(EntityClass::Object),
             units: EntityManager::new(EntityClass::Unit),
             squads: EntityManager::new(EntityClass::Squad),
@@ -501,6 +521,7 @@ impl World {
         unit.shields.clear_recharge_request();
         unit.formation_offset = formation_offset;
         unit.stop();
+        self.apply_squad_cryo_to_unit(squad_id, unit_id);
         true
     }
 
@@ -540,6 +561,7 @@ impl World {
         };
         unit.squad_id = None;
         unit.shields.request_recharge();
+        unit.clear_cryo_effect();
         unit.stop();
         true
     }
@@ -622,88 +644,6 @@ impl World {
             let _removed = self.remove_unit(building_id);
         }
         true
-    }
-
-    /// Update all entities for one tick.
-    pub fn update_entities(&mut self, dt: f32) {
-        self.update_entities_internal(dt, None);
-    }
-
-    /// Update entities plus tactic-backed attack pursuit for one tick.
-    pub fn update_entities_with_gameplay(
-        &mut self,
-        dt: f32,
-        gameplay: &crate::gameplay::GameplayCatalog,
-    ) {
-        self.update_entities_internal(dt, Some(gameplay));
-    }
-
-    fn update_entities_internal(
-        &mut self,
-        dt: f32,
-        gameplay: Option<&crate::gameplay::GameplayCatalog>,
-    ) {
-        self.update_game_timers();
-        self.update_camera_shakes();
-        self.update_rumbles();
-        self.update_screen_fade();
-        let Some((step_count, step_duration)) = substeps(dt) else {
-            return;
-        };
-        for _ in 0..step_count {
-            self.update_entity_substep(step_duration, gameplay);
-        }
-        self.update_revealers(dt);
-        self.update_idle_actions(dt);
-        self.update_object_states();
-    }
-
-    fn update_entity_substep(
-        &mut self,
-        dt: f32,
-        gameplay: Option<&crate::gameplay::GameplayCatalog>,
-    ) {
-        if let Some(gameplay) = gameplay {
-            self.update_revivals(dt, gameplay);
-            self.update_attack_move_orders(gameplay);
-            self.update_combat_orders(dt, gameplay);
-            self.update_protection(dt, gameplay);
-            self.update_shields(dt, gameplay);
-        }
-        self.update_transport_fly_ins(dt);
-        let physics_anchors = prepare_squad_movement(&self.squads, &mut self.units);
-        for (_, squad) in self.squads.iter_mut() {
-            squad.update_recovery(dt);
-            if !physics_anchors.contains_key(&squad.base.id) {
-                squad.update(dt);
-            }
-        }
-        let dead_squads: Vec<_> = self
-            .squads
-            .iter()
-            .filter_map(|(id, squad)| (!squad.is_alive()).then_some(id))
-            .collect();
-        for id in dead_squads {
-            let _removed = self.remove_squad(id);
-        }
-
-        for (_, unit) in self.units.iter_mut() {
-            unit.update(dt);
-        }
-        resolve_unit_collisions(&mut self.units);
-        sync_squad_members(&mut self.squads, &mut self.units, &physics_anchors);
-        self.sync_associated_socket_transforms();
-        self.synchronize_attachments();
-        self.update_garrisons(gameplay);
-        self.update_projectiles(dt, gameplay);
-        let dead_units: Vec<_> = self
-            .units
-            .iter()
-            .filter_map(|(id, unit)| (!unit.is_alive()).then_some(id))
-            .collect();
-        for id in dead_units {
-            let _removed = self.remove_unit(id);
-        }
     }
 
     fn allocate_base_id(&mut self) -> BaseId {
@@ -966,7 +906,6 @@ mod tests {
             .unwrap()
             .move_to(Vec3::new(10.0, 0.0, 0.0));
         world.update_entities(0.1);
-
         let squad = world.get_squad(squad_id).unwrap();
         let unit = world.get_unit(unit_id).unwrap();
         let world_offset = unit.base.position - squad.base.position;

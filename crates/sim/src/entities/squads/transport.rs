@@ -4,6 +4,11 @@ use crate::entity_id::EntityId;
 use crate::sync::SyncChecksum;
 use glam::Vec3;
 
+mod power;
+
+pub(crate) use power::SquadPowerTransportPlan;
+pub use power::{PowerTransportPhase, SquadPowerTransport};
+
 /// Authoritative phase of a trigger-created transport flight.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportFlyInPhase {

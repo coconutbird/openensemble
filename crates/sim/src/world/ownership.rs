@@ -15,6 +15,45 @@ struct UnitOwnershipCost {
 }
 
 impl World {
+    pub(crate) fn change_unit_owner(&mut self, unit_id: EntityId, new_owner: PlayerId) -> bool {
+        if self.get_player(new_owner).is_none() {
+            return false;
+        }
+        let Some(cost) = self.units.get(unit_id).map(|unit| UnitOwnershipCost {
+            unit_id,
+            old_owner: unit.base.player_id,
+            population: unit.population_costs.clone(),
+            population_cap: unit.population_cap_additions.clone(),
+            built: unit.built,
+        }) else {
+            return false;
+        };
+        if cost.old_owner == new_owner {
+            return true;
+        }
+        if let Some(player) = self.get_player_mut(cost.old_owner) {
+            player.release_population(&cost.population);
+            if cost.built {
+                player.adjust_population_cap(&cost.population_cap, false);
+            }
+        }
+        if let Some(player) = self.get_player_mut(new_owner) {
+            player.add_population(&cost.population);
+            if cost.built {
+                player.adjust_population_cap(&cost.population_cap, true);
+            }
+        }
+        if let Some(unit) = self.units.get_mut(unit_id) {
+            unit.base.player_id = new_owner;
+        }
+        for base in self.bases.values_mut() {
+            if base.anchor_building_id == unit_id {
+                base.player_id = new_owner;
+            }
+        }
+        true
+    }
+
     /// Transfer a squad and all of its member units to an existing player.
     ///
     /// Live population and built population-cap contributions move with the

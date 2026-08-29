@@ -112,7 +112,11 @@ impl World {
         self.objects.get(id)?;
         self.remove_owned_attachments(id);
         self.detach_attachment_from_parent(id);
-        self.objects.remove(id)
+        let removed = self.objects.remove(id);
+        if removed.is_some() {
+            self.power_manager.forget_visual(id);
+        }
+        removed
     }
 
     /// Get authoritative revealer state for one class-0 object.

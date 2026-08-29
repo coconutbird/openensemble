@@ -1,7 +1,7 @@
 //! Immutable tactic calculations used by retail AI squad analysis.
 
 use super::damage_types::DamageTypeProfiles;
-use super::{GameplayCatalog, ObjectGameplay, selection};
+use super::{GameplayCatalog, ObjectGameplay, selection, unit_attacks};
 use crate::player::PlayerTechState;
 use pipeline::database::hw1::Database;
 use pipeline::database::hw1::tactics::{Action, TargetRule, Weapon};
@@ -211,12 +211,15 @@ fn default_weapon_modifier() -> super::WeaponDamageModifier {
     super::WeaponDamageModifier {
         damage: 1.0,
         rating: 1.0,
+        reflect_damage_factor: 0.0,
+        bowlable: false,
+        rammable: false,
     }
 }
 
 fn ai_action_kind(action: &Action) -> Option<AIActionKind> {
     let kind = action.action_type.as_deref()?;
-    if kind.eq_ignore_ascii_case("RangedAttack") {
+    if unit_attacks::uses_ranged_attack_executor(action) {
         Some(AIActionKind::Ranged)
     } else if kind.eq_ignore_ascii_case("SecondaryTurretAttack") {
         Some(AIActionKind::SecondaryTurret)
@@ -291,7 +294,7 @@ mod tests {
             }],
             actions: vec![Action {
                 name: "Attack".to_owned(),
-                action_type: Some("RangedAttack".to_owned()),
+                action_type: Some("HandAttack".to_owned()),
                 weapon: Some("Gun".to_owned()),
                 ..Action::default()
             }],

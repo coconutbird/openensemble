@@ -35,12 +35,14 @@ impl World {
             checksum.hash_u32(0);
         }
         hash_config_symbols(&mut checksum, self.config_symbols());
-        checksum.hash_u32(u32::from(self.veterancy_enabled));
+        checksum.hash_u32(u32::from(self.scenario_allows_veterancy()));
+        checksum.hash_u32(u32::from(self.veterancy_enabled()));
         self.general_events.hash_state(&mut checksum);
         self.presentation.hash_state(&mut checksum);
         self.presentation_control.hash_state(&mut checksum);
         self.game_timers.hash_state(&mut checksum);
         self.hash_custom_commands(&mut checksum);
+        self.power_manager.hash_state(&mut checksum);
         checksum.hash_f32(self.construction_damage_multiplier);
         self.hash_prototype_catalogs(&mut checksum);
         hash_players(&mut checksum, &self.players);
@@ -180,14 +182,7 @@ fn hash_units(checksum: &mut SyncChecksum, units: &EntityManager<Unit>) {
         checksum.hash_u32(unit.archetype as u32);
         checksum.hash_u32(unit.state as u32);
         unit.idle.hash_state(checksum);
-        checksum.hash_i32(unit.proto_object_id);
-        checksum.hash_u32(u32::try_from(unit.proto_object_name.len()).unwrap_or(u32::MAX));
-        checksum.hash_bytes(unit.proto_object_name.as_bytes());
-        checksum.hash_u32(u32::try_from(unit.object_types.len()).unwrap_or(u32::MAX));
-        for object_type in &unit.object_types {
-            checksum.hash_u32(u32::try_from(object_type.len()).unwrap_or(u32::MAX));
-            checksum.hash_bytes(object_type.as_bytes());
-        }
+        hash_unit_prototype(checksum, unit);
         checksum.hash_u32(u32::from(unit.flying));
         checksum.hash_u32(u32::from(unit.auto_attackable_setting()));
         checksum.hash_u32(u32::from(unit.is_invulnerable()));
@@ -202,6 +197,7 @@ fn hash_units(checksum: &mut SyncChecksum, units: &EntityManager<Unit>) {
         checksum.hash_f32(unit.damage_taken_multiplier);
         checksum.hash_f32(unit.join_damage_multiplier());
         checksum.hash_f32(unit.join_damage_taken_multiplier());
+        unit.hash_cryo_state(checksum);
         checksum.hash_f32(unit.accuracy_scalar);
         checksum.hash_f32(unit.dodge_scalar);
         checksum.hash_f32(unit.work_rate_scalar);
@@ -227,8 +223,14 @@ fn hash_units(checksum: &mut SyncChecksum, units: &EntityManager<Unit>) {
         checksum.hash_f32(unit.attack_range);
         checksum.hash_u32(unit.attack_ability_id.map_or(u32::MAX, u32::from));
         unit.actions.hash_state(checksum);
+        unit.hash_tactic_state(checksum);
         unit.garrison.hash_state(checksum);
         unit.combat.hash_state(checksum);
+        unit.ammunition.hash_state(checksum);
+        unit.collision_attack.hash_state(checksum);
+        unit.hash_detonate_state(checksum);
+        unit.hash_physics_replacement_state(checksum);
+        unit.hash_static_death_replacement_state(checksum);
         if let Some(tower_wall) = unit.tower_wall {
             checksum.hash_u32(1);
             tower_wall.hash_state(checksum);
@@ -267,6 +269,20 @@ fn hash_units(checksum: &mut SyncChecksum, units: &EntityManager<Unit>) {
     }
 }
 
+fn hash_unit_prototype(checksum: &mut SyncChecksum, unit: &Unit) {
+    checksum.hash_i32(unit.proto_object_id);
+    checksum.hash_u32(u32::try_from(unit.proto_object_name.len()).unwrap_or(u32::MAX));
+    checksum.hash_bytes(unit.proto_object_name.as_bytes());
+    let logical_name = unit.logical_proto_object_name();
+    checksum.hash_u32(u32::try_from(logical_name.len()).unwrap_or(u32::MAX));
+    checksum.hash_bytes(logical_name.as_bytes());
+    checksum.hash_u32(u32::try_from(unit.object_types.len()).unwrap_or(u32::MAX));
+    for object_type in &unit.object_types {
+        checksum.hash_u32(u32::try_from(object_type.len()).unwrap_or(u32::MAX));
+        checksum.hash_bytes(object_type.as_bytes());
+    }
+}
+
 fn hash_projectiles(checksum: &mut SyncChecksum, projectiles: &EntityManager<Projectile>) {
     checksum.hash_u32(u32::try_from(projectiles.len()).unwrap_or(u32::MAX));
     for (_, projectile) in projectiles.iter() {
@@ -290,6 +306,7 @@ fn hash_squads(checksum: &mut SyncChecksum, squads: &EntityManager<Squad>) {
         checksum.hash_i32(squad.proto_squad_id);
         checksum.hash_u32(u32::try_from(squad.proto_squad_name.len()).unwrap_or(u32::MAX));
         checksum.hash_bytes(squad.proto_squad_name.as_bytes());
+        checksum.hash_f32(squad.ammunition_maximum());
         checksum.hash_f32(squad.experience());
         checksum.hash_f32(squad.banked_experience());
         checksum.hash_i32(squad.veterancy_level());
@@ -301,12 +318,17 @@ fn hash_squads(checksum: &mut SyncChecksum, squads: &EntityManager<Squad>) {
         checksum.hash_u32(u32::from(squad.is_reverse_moving()));
         hash_optional_vec3(checksum, squad.move_target);
         squad.hash_order_state(checksum);
+        squad.hash_mines_state(checksum);
+        squad.hash_detonate_state(checksum);
         hash_optional_entity_id(checksum, squad.attack_target);
         checksum.hash_f32(squad.attack_range);
         checksum.hash_u32(squad.mode as u32);
         checksum.hash_u32(squad.attack_ability_id.map_or(u32::MAX, u32::from));
         squad.recovery.hash_state(checksum);
         squad.shields.hash_state(checksum);
+        squad.hash_cryo_state(checksum);
+        squad.repair.hash_state(checksum);
+        squad.rage.hash_state(checksum);
         checksum.hash_u32(squad.last_damaged_time);
         squad.hash_join_state(checksum);
         squad.hash_ability_execution(checksum);
@@ -328,6 +350,10 @@ fn hash_squads(checksum: &mut SyncChecksum, squads: &EntityManager<Squad>) {
         squad.garrison.hash_state(checksum);
         checksum.hash_u32(u32::from(squad.transport_fly_in.is_some()));
         if let Some(action) = &squad.transport_fly_in {
+            action.hash_state(checksum);
+        }
+        checksum.hash_u32(u32::from(squad.power_transport.is_some()));
+        if let Some(action) = &squad.power_transport {
             action.hash_state(checksum);
         }
     }

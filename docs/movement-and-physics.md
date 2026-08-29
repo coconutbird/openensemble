@@ -13,6 +13,7 @@ base ERAs + scenario ERA
           ▼
 sim::load_scenario_from_game_dir
   ├─ parses the layered database
+  ├─ resolves referenced .physics → .blueprint → .shp chains
   ├─ parses SCN players, starts, and objects
   ├─ creates player-owned initial base anchors
   └─ creates sim::World entities
@@ -25,7 +26,10 @@ UnitSceneRenderer reads position/facing from sim::World
 ```
 
 The scenario ERA is pushed before `Database::load`, so a database table stored
-in the scenario participates in the pipeline's last-loaded-wins resolution. The
+in the scenario participates in the pipeline's last-loaded-wins resolution.
+The sim then resolves supported vehicle physics through that same layered
+source. A scenario-local `.physics`, `.blueprint`, or `.shp` therefore changes
+the authoritative spawn configuration rather than only presentation data. The
 renderer no longer expands SCN objects or owns a second movement transform; it
 only presents entity state owned by `sim::World`.
 
@@ -115,6 +119,21 @@ radius range rather than hard-coding renderer motion.
 | `0x1407B8C10` | `PhysicsObject_writeSavegame` | Writes body parameters, transform, velocity, state, and callback flags. |
 | `0x1407B9460` | `PhysicsObject_readSavegame` | Restores body parameters, transform, velocity, state, and callback flags. |
 
+The pipeline's lightweight runtime world intentionally does not resolve full
+physics chains. `gameplay/vehicle_physics.rs` follows each layered
+`PhysicsInfo` reference itself, reads the primary blueprint and Havok box
+shape, and sanitizes its material, center offset, and half extents. Supported
+profiles are copied into the world's checksummed prototype catalog before any
+scenario objects spawn, so later training, trigger creation, and protection
+systems receive the same body as initial placements.
+
+Ghosts now instantiate that body through `entities/units/vehicle.rs`. Their
+zero-speed response uses the `cFwdK = 2.5` proportional term in the named
+recovered `BPhysicsGhostAction::calcMovement` source; contacts remain owned by
+the deterministic sim physics loop. The stock Warthog continues through its
+specialized movement profile while the layered Warthog chain is retained in
+the immutable catalog for subsequent controller parity work.
+
 ## Formation serialization
 
 | Address | IDA name |
@@ -135,6 +154,8 @@ ID, flock velocity, position, and offset.
 | --- | --- |
 | Deterministic fixed substeps and rigid-body state | `crates/sim/src/physics.rs` |
 | Vehicle acceleration, braking, yaw, turn radii | `entities/units/warthog.rs` plus `physics.rs` |
+| Layered ground-vehicle physics chains | `gameplay/vehicle_physics.rs` |
+| Spawned Ghost rigid-body configuration | `entities/units/vehicle.rs` |
 | Marine velocity, acceleration, turn rate, and obstruction size | `entities/units/marine.rs` |
 | Warthog squad physics anchor | `entities/squads/warthog.rs` and `world.rs` |
 | Marine four-member Flock seed and local offsets | `entities/squads/marine.rs` and `entities/squads/mod.rs` |

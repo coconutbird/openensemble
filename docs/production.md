@@ -123,7 +123,8 @@ sim state.
 - `NoBuildUnderAttack`, construction-queue parking, auto-parking-lot creation,
   child-object instantiation at `onBuilt`, and co-op purchasing-player color
   propagation remain explicit follow-up work.
-- Scenario initialization does not yet activate every civilization, leader, and
-  shadow technology that retail installs. Consequently, the `CommandEnable`
-  state is authoritative once a tech is active, but the complete initial tech
-  bootstrap remains future work.
+- Scenario and lobby initialization activate civilization and leader
+  technologies in retail order before normal starting-force placement.
+  Eligible root and technology-dependent Shadow techs cascade in database
+  order. Rechecking shadows solely in response to later unit-count changes
+  remains future work.

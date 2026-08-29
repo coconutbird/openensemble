@@ -6,6 +6,7 @@
 
 use crate::EntityId;
 use crate::sync::SyncChecksum;
+use glam::Vec3;
 use num_traits::ToPrimitive;
 
 /// Trigger-authored animation selected and timed by the authoritative sim.
@@ -141,39 +142,81 @@ impl DopplePolicy {
     }
 }
 
+/// Compact synchronized flags common to the simulation's `BObject` derivatives.
+#[derive(Debug, Clone, Copy, Default)]
+struct ObjectRuntimeFlags(u8);
+
+impl ObjectRuntimeFlags {
+    const NO_RENDER: Self = Self(1 << 0);
+    const GRAY_MAP_DOPPLES: Self = Self(1 << 1);
+    const DOPPLES: Self = Self(1 << 2);
+    const FORCE_VISIBILITY_UPDATE: Self = Self(1 << 3);
+
+    const fn contains(self, flag: Self) -> bool {
+        self.0 & flag.0 != 0
+    }
+
+    fn set(&mut self, flag: Self, enabled: bool) {
+        if enabled {
+            self.0 |= flag.0;
+        } else {
+            self.0 &= !flag.0;
+        }
+    }
+}
+
 /// Authoritative state common to the simulation's `BObject` derivatives.
 #[derive(Debug, Clone)]
 pub struct ObjectState {
+    runtime_flags: ObjectRuntimeFlags,
+    visual_variation_index: i32,
     override_tint: [u8; 4],
     targeting_selection: Option<TargetingSelection>,
     scripted_animation: Option<ScriptedAnimation>,
     scripted_animation_revision: u32,
     attachments: Vec<EntityId>,
     attached_to: Option<EntityId>,
-    gray_map_dopples: bool,
-    dopples: bool,
+    attachment_local_offset: Vec3,
     dopple_reset_revision: u32,
-    force_visibility_update_next_frame: bool,
 }
 
 impl Default for ObjectState {
     fn default() -> Self {
         Self {
+            runtime_flags: ObjectRuntimeFlags::default(),
+            visual_variation_index: -1,
             override_tint: [0, 0, 0, u8::MAX],
             targeting_selection: None,
             scripted_animation: None,
             scripted_animation_revision: 0,
             attachments: Vec::new(),
             attached_to: None,
-            gray_map_dopples: false,
-            dopples: false,
+            attachment_local_offset: Vec3::ZERO,
             dopple_reset_revision: 0,
-            force_visibility_update_next_frame: false,
         }
     }
 }
 
 impl ObjectState {
+    /// Whether presentation clients should project this live object.
+    ///
+    /// Retail exposes this as the synchronized `NoRender` object flag. It is
+    /// distinct from fog visibility: a disabled object remains authoritative
+    /// simulation state but has no renderer-facing representation.
+    #[must_use]
+    pub const fn is_render_enabled(&self) -> bool {
+        !self.runtime_flags.contains(ObjectRuntimeFlags::NO_RENDER)
+    }
+
+    /// Return the scenario-selected visual variation.
+    ///
+    /// `None` preserves retail's `-1` sentinel, which asks visual logic to
+    /// select a variation rather than forcing an authored index.
+    #[must_use]
+    pub fn visual_variation_index(&self) -> Option<usize> {
+        usize::try_from(self.visual_variation_index).ok()
+    }
+
     /// Return the active targeting-selection request, if any.
     #[must_use]
     pub const fn targeting_selection(&self) -> Option<TargetingSelection> {
@@ -198,14 +241,24 @@ impl ObjectState {
         self.attached_to
     }
 
+    /// Parent-local translation retained by an offset attachment.
+    #[must_use]
+    pub const fn attachment_local_offset(&self) -> Vec3 {
+        self.attachment_local_offset
+    }
+
     /// Return the current fog-memory policy and invalidation state.
     #[must_use]
     pub const fn dopple_policy(&self) -> DopplePolicy {
         DopplePolicy {
-            gray_map_dopples: self.gray_map_dopples,
-            dopples: self.dopples,
+            gray_map_dopples: self
+                .runtime_flags
+                .contains(ObjectRuntimeFlags::GRAY_MAP_DOPPLES),
+            dopples: self.runtime_flags.contains(ObjectRuntimeFlags::DOPPLES),
             reset_revision: self.dopple_reset_revision,
-            visibility_update_pending: self.force_visibility_update_next_frame,
+            visibility_update_pending: self
+                .runtime_flags
+                .contains(ObjectRuntimeFlags::FORCE_VISIBILITY_UPDATE),
         }
     }
 
@@ -243,11 +296,22 @@ impl ObjectState {
         }
     }
 
+    pub(crate) fn set_visual_variation_index(&mut self, index: i32) {
+        self.visual_variation_index = index.max(-1);
+    }
+
+    pub(crate) fn set_render_enabled(&mut self, enabled: bool) {
+        self.runtime_flags
+            .set(ObjectRuntimeFlags::NO_RENDER, !enabled);
+    }
+
     pub(crate) fn reset_dopples(&mut self, gray_map_dopples: bool, dopples: bool) {
-        self.gray_map_dopples = gray_map_dopples;
-        self.dopples = dopples;
+        self.runtime_flags
+            .set(ObjectRuntimeFlags::GRAY_MAP_DOPPLES, gray_map_dopples);
+        self.runtime_flags.set(ObjectRuntimeFlags::DOPPLES, dopples);
         self.dopple_reset_revision = self.dopple_reset_revision.wrapping_add(1);
-        self.force_visibility_update_next_frame = true;
+        self.runtime_flags
+            .set(ObjectRuntimeFlags::FORCE_VISIBILITY_UPDATE, true);
     }
 
     pub(crate) fn play_scripted_animation(
@@ -267,6 +331,11 @@ impl ObjectState {
         });
     }
 
+    pub(crate) fn notify_prototype_transformed(&mut self, now_ms: u32) {
+        self.visual_variation_index = -1;
+        self.play_scripted_animation(now_ms, "Idle".to_owned(), None, 0);
+    }
+
     pub(crate) fn add_attachment(&mut self, entity_id: EntityId) {
         self.attachments.push(entity_id);
     }
@@ -281,6 +350,17 @@ impl ObjectState {
 
     pub(crate) fn set_attached_to(&mut self, parent_id: Option<EntityId>) {
         self.attached_to = parent_id;
+        if parent_id.is_none() {
+            self.attachment_local_offset = Vec3::ZERO;
+        }
+    }
+
+    pub(crate) fn set_attachment_local_offset(&mut self, offset: Vec3) {
+        self.attachment_local_offset = if offset.is_finite() {
+            offset
+        } else {
+            Vec3::ZERO
+        };
     }
 
     pub(crate) fn update(&mut self, now_ms: u32) {
@@ -291,10 +371,13 @@ impl ObjectState {
         {
             self.targeting_selection = None;
         }
-        self.force_visibility_update_next_frame = false;
+        self.runtime_flags
+            .set(ObjectRuntimeFlags::FORCE_VISIBILITY_UPDATE, false);
     }
 
     pub(crate) fn hash_state(&self, checksum: &mut SyncChecksum) {
+        checksum.hash_u32(u32::from(self.is_render_enabled()));
+        checksum.hash_i32(self.visual_variation_index);
         for channel in self.override_tint {
             checksum.hash_u32(u32::from(channel));
         }
@@ -339,10 +422,23 @@ impl ObjectState {
         } else {
             checksum.hash_u32(0);
         }
-        checksum.hash_u32(u32::from(self.gray_map_dopples));
-        checksum.hash_u32(u32::from(self.dopples));
+        checksum.hash_vec3(
+            self.attachment_local_offset.x,
+            self.attachment_local_offset.y,
+            self.attachment_local_offset.z,
+        );
+        checksum.hash_u32(u32::from(
+            self.runtime_flags
+                .contains(ObjectRuntimeFlags::GRAY_MAP_DOPPLES),
+        ));
+        checksum.hash_u32(u32::from(
+            self.runtime_flags.contains(ObjectRuntimeFlags::DOPPLES),
+        ));
         checksum.hash_u32(self.dopple_reset_revision);
-        checksum.hash_u32(u32::from(self.force_visibility_update_next_frame));
+        checksum.hash_u32(u32::from(
+            self.runtime_flags
+                .contains(ObjectRuntimeFlags::FORCE_VISIBILITY_UPDATE),
+        ));
     }
 }
 
@@ -357,6 +453,29 @@ fn timeout_is_no_later(existing: Option<u32>, incoming: Option<u32>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::ObjectState;
+
+    #[test]
+    fn visual_variation_preserves_retails_random_selection_sentinel() {
+        let mut state = ObjectState::default();
+        assert_eq!(state.visual_variation_index(), None);
+
+        state.set_visual_variation_index(3);
+        assert_eq!(state.visual_variation_index(), Some(3));
+
+        state.set_visual_variation_index(-2);
+        assert_eq!(state.visual_variation_index(), None);
+    }
+
+    #[test]
+    fn runtime_no_render_state_is_independent_of_visual_selection() {
+        let mut state = ObjectState::default();
+        assert!(state.is_render_enabled());
+
+        state.set_visual_variation_index(3);
+        state.set_render_enabled(false);
+        assert!(!state.is_render_enabled());
+        assert_eq!(state.visual_variation_index(), Some(3));
+    }
 
     #[test]
     fn indefinite_retrigger_does_not_replace_a_timed_additive_texture() {

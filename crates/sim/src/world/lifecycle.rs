@@ -16,20 +16,22 @@ impl World {
         self.objectives.clear();
         self.terrain_bounds = None;
         self.playable_bounds = None;
-        self.config_symbols.clear();
-        self.veterancy_enabled = true;
+        self.config_symbols = super::game_settings::default_config_symbols();
+        self.veterancy = super::game_settings::VeterancySetting::Enabled;
         self.general_events = events::GeneralEventState::default();
         self.presentation = events::PresentationState::default();
         self.presentation_control = presentation::PresentationControlState::default();
         self.custom_commands.clear();
         self.next_custom_command_id = 0;
         self.custom_command_executions.clear();
+        self.power_manager.reset();
         self.game_timers = super::timers::GameTimerState::default();
         self.game_time_ms = 0;
         self.construction_damage_multiplier = 1.0;
         self.prototype_object_types.clear();
         self.prototype_squads.clear();
         self.prototype_shield_coverages.clear();
+        self.prototype_ground_vehicle_physics.clear();
         self.objects.clear();
         self.units.clear();
         self.squads.clear();
@@ -59,6 +61,12 @@ impl World {
     pub fn kill_unit(&mut self, unit_id: EntityId, immediate: bool) -> bool {
         if immediate {
             return self.remove_unit(unit_id).is_some();
+        }
+        if self
+            .get_unit(unit_id)
+            .is_some_and(crate::entities::Unit::is_static_death_replacement)
+        {
+            return false;
         }
         if self
             .get_unit(unit_id)

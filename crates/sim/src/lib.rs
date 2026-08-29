@@ -32,28 +32,33 @@ pub use command::{Command, CommandType, EntityType};
 pub use command_queue::{CommandEntry, CommandQueue, QueuedCommand};
 pub use commands::{
     BuildingCommand, BuildingCommandType, GameCommand, GameCommandType, PowerCommand,
-    PowerCommandType, WorkCommand,
+    PowerCommandType, PowerInputCommand, PowerInputCommandType, PowerUserId, WorkCommand,
 };
 pub use dispatcher::{CommandDispatcher, DispatchError, DispatchedCommand};
 pub use entities::{
     Base, BaseEntity, BaseId, BuildingProduction, ConstructionKind, ConstructionProgress,
     ConstructionTask, DopplePolicy, IconObject, Object, ObjectKind, ObjectState, Projectile,
     RallyPoint, RecoveryType, ResearchProgress, ResearchTask, Revealer, ScriptedAnimation,
-    ShieldCoverage, Squad, SquadArchetype, SquadBoardState, SquadContainmentState, SquadFormation,
-    SquadGarrison, SquadMergeState, SquadMode, SquadRecovery, SquadShields, SquadState,
+    PowerTransportPhase, ShieldCoverage, Squad, SquadArchetype, SquadBoardState,
+    SquadContainmentState, SquadCryoState, SquadDetonatePhase, SquadFormation, SquadGarrison,
+    SquadMergeState, SquadMode, SquadPowerTransport, SquadRecovery, SquadShields, SquadState,
     SquadTransportFlyIn, TargetingSelection, TowerWallAction, TrainingKind, TrainingProgress,
-    TrainingTask, TransportFlyInPhase, Unit, UnitActions, UnitArchetype, UnitDataScalar,
-    UnitGarrison, UnitKind, UnitShields, UnitState,
+    TrainingTask, TransportFlyInPhase, Unit, UnitActions, UnitAmmunition, UnitArchetype,
+    UnitDataScalar, UnitDetonatePhase, UnitGarrison, UnitKind, UnitShields, UnitState,
 };
 pub use entity::{Entity, EntityManager, MAX_ENTITY_SLOTS};
 pub use entity_id::{EntityClass, EntityId};
 pub use executor::CommandExecutor;
 pub use gameplay::{
     AbilityGameplay, AbilityRecoveryStart, AreaDamageProfile, AttackAccuracyProfile,
-    AttackAnimation, AttackProfile, AttackQuery, AttackQueryFlags, GameplayCatalog,
-    GameplayLoadIssue, HeroRevivalProfile, JoinActionProfile, JoinKind, JoinMergeType,
-    MergedSquadProfile, ObjectGameplay, ProjectileInitialPerturbance, ProjectilePerturbanceProfile,
-    ProjectileProfile, RangedAction, ReviveActionProfile, TacticRelation, UnitRevivalProfile,
+    AttackAnimation, AttackProfile, AttackQuery, AttackQueryFlags, CollisionAttackProfile,
+    DetonateActionProfile, DetonateDurationProfile, DetonateThrowProfile, GameplayCatalog,
+    GameplayLoadIssue, GroundVehicleKind, GroundVehiclePhysicsProfile, HeroRevivalProfile,
+    JoinActionProfile, JoinKind, JoinMergeType, MergedSquadProfile, MineActionProfile,
+    ObjectGameplay, PhysicsReplacementLoadIssue, PhysicsReplacementProfile,
+    ProjectileInitialPerturbance, ProjectilePerturbanceProfile, ProjectileProfile, RangedAction,
+    ReviveActionProfile, TacticRelation, TacticStateId, TacticStateProfile, UnitRevivalProfile,
+    VehiclePhysicsLoadIssue,
 };
 pub use order::OrderType;
 pub use packet::{ChannelPacketHeader, PacketError};
@@ -90,11 +95,17 @@ pub use trigger::{
 };
 pub use world::{
     CameraControlPermissions, CameraDirective, CameraShake, ChatRequest, CinematicRequest,
-    ConstructionError, ConstructionQueueResult, CustomCommand, CustomCommandFlags, DesignLineId,
-    GameTimer, GameTimerAudience, GarrisonError, GeneralEvent, GeneralEventType, HintCallout,
-    HintCalloutAnchor, HudItem, MAX_PLAYERS, MAX_TRAIN_BATCH, ObjectivePointer, ObjectiveState,
-    PlayerPresentationState, PresentationRequest, ProductionUpdate, ResearchError,
+    ConstructionError, ConstructionQueueResult, CryoPowerError, CryoPowerExecution,
+    CryoPowerInvocation, CustomCommand, CustomCommandFlags, DesignLineId, DisruptionPowerError,
+    DisruptionPowerExecution, DisruptionPowerInvocation, GameTimer, GameTimerAudience,
+    GarrisonError, GeneralEvent, GeneralEventType, HintCallout, HintCalloutAnchor, HudItem,
+    MAX_PLAYERS, MAX_TRAIN_BATCH, NativePowerError, NativePowerInput, NativePowerInvocation,
+    ObjectivePointer, ObjectiveState, OdstDrop, OdstPowerError, OdstPowerExecution,
+    OdstPowerInvocation, PlayerPresentationState, PowerExecutionId, PresentationRequest,
+    ProductionUpdate, RagePowerError, RagePowerExecution, RagePowerInvocation, RagePowerPhase,
+    RepairPowerError, RepairPowerExecution, RepairPowerInvocation, ResearchError,
     ResearchQueueResult, RumbleMotor, RumbleRequest, ScenarioScoreInfo, ScreenFadeOverlay,
     ScreenFadeSequence, TechnologyError, TrainingError, TrainingQueueResult, World,
-    object_runtime_id, power_prototype_id, squad_runtime_id, technology_prototype_id,
+    TransportPowerError, TransportPowerExecution, TransportPowerInvocation, object_runtime_id,
+    power_prototype_id, squad_runtime_id, technology_prototype_id,
 };

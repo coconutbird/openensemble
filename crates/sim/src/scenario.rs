@@ -20,23 +20,21 @@
 
 use crate::entities::squads::marine::{MarineSquadSpec, is_marine_squad};
 use crate::entities::squads::warthog::{WarthogSquadSpec, is_warthog_squad};
-use crate::entities::units::marine::{MARINE_HITPOINTS, MarineUnitSpec, is_marine_unit};
-use crate::entities::units::warthog::{WarthogUnitSpec, is_warthog_unit};
-use crate::entities::{
-    BaseId, ShieldCoverage, SquadArchetype, SquadFormation, UnitArchetype, UnitScalarModifiers,
-};
+use crate::entities::{BaseId, SquadArchetype, SquadFormation};
 use crate::entity_id::EntityId;
 use crate::gameplay::GameplayCatalog;
-use crate::physics::{BoxCollider, PhysicsBody};
 use crate::player::{DEFAULT_PLAYER_DIFFICULTY, PlayerId, PlayerType};
 use crate::world::World;
 use glam::Vec3;
-use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad};
+#[cfg(test)]
+use pipeline::database::hw1::ProtoObject;
+use pipeline::database::hw1::{Database, Squad as ProtoSquad};
 use pipeline::source::{AssetSource, StdFileProvider};
 use std::collections::{BTreeMap, HashMap};
 
 mod garrison;
 
+mod config;
 mod coordinates;
 mod design_lines;
 mod forbids;
@@ -48,16 +46,23 @@ mod resources;
 mod settings;
 mod sockets;
 mod starts;
+mod technology;
 mod triggers;
+mod units;
+
+pub(crate) use units::{
+    add_squad_member_from_prototype, configure_unit_from_player_proto, configure_unit_from_proto,
+    create_object_from_prototype, create_unbuilt_building_from_prototype,
+};
 
 // Re-export scenario types from pipeline for convenience
 pub use coordinates::ScenarioPositionAxes;
 pub use design_lines::DesignLineLoadError;
 pub use objectives::ObjectiveLoadError;
 pub use pipeline::hw1::scenario::{ScenarioData, ScenarioObject, ScenarioPlayer, ScenarioPosition};
+pub(crate) use prototypes::{PlacedUnitKind, classify_proto_object};
 use prototypes::{
-    PlacedUnitKind, classify_proto_object, creates_base, database_id, find_proto_object,
-    find_proto_squad, is_class_zero_object, prototype_has_flag,
+    creates_base, database_id, find_proto_object, find_proto_squad, is_class_zero_object,
 };
 
 /// Result of loading a scenario into a world.
@@ -167,6 +172,7 @@ pub fn load_scenario_from_game_dir(
     scenario: &str,
 ) -> Result<LoadedGameScenario, ScenarioAssetLoadError> {
     let mut source = pipeline::hw1::loader::load_game_dir(game_dir);
+    let config_symbols = config::load_startup_config(&mut source);
     if !source.load_scenario(scenario) {
         return Err(ScenarioAssetLoadError::ScenarioArchiveNotFound {
             scenario: scenario.to_owned(),
@@ -203,13 +209,16 @@ pub fn load_scenario_from_game_dir(
             path: scenario_path.clone(),
         }
     })?;
-    let veterancy_enabled = settings::allows_veterancy(&trigger_document);
+    let scenario_allows_veterancy = settings::allows_veterancy(&trigger_document);
+    let visual_variation_indices = settings::visual_variation_indices(&trigger_document);
     let mut simulation = load_scenario_into_world_with_max_players(
         scenario_data,
         &content.database,
         max_players,
         gameplay,
-        veterancy_enabled,
+        scenario_allows_veterancy,
+        Some(&visual_variation_indices),
+        Some(&config_symbols),
     );
     if let Some(terrain) = &content.terrain_data {
         let minimum = Vec3::from_array(terrain.header.world_min);
@@ -262,7 +271,15 @@ pub fn load_scenario_from_game_dir(
 /// ```
 #[must_use]
 pub fn load_scenario_into_world(scenario: &ScenarioData, db: &Database) -> LoadedScenario {
-    load_scenario_into_world_with_max_players(scenario, db, None, GameplayCatalog::default(), true)
+    load_scenario_into_world_with_max_players(
+        scenario,
+        db,
+        None,
+        GameplayCatalog::default(),
+        true,
+        None,
+        None,
+    )
 }
 
 fn load_scenario_into_world_with_max_players(
@@ -270,12 +287,18 @@ fn load_scenario_into_world_with_max_players(
     db: &Database,
     max_players: Option<u32>,
     gameplay: GameplayCatalog,
-    veterancy_enabled: bool,
+    scenario_allows_veterancy: bool,
+    visual_variation_indices: Option<&BTreeMap<i32, i32>>,
+    config_symbols: Option<&std::collections::BTreeSet<String>>,
 ) -> LoadedScenario {
     let mut world = World::new();
-    world.set_veterancy_enabled(veterancy_enabled);
+    if let Some(config_symbols) = config_symbols {
+        world.configure_startup_configs(config_symbols.iter().map(String::as_str));
+    }
+    world.set_scenario_allows_veterancy(scenario_allows_veterancy);
     world.configure_prototype_catalogs(db);
     world.configure_prototype_damage_profiles(&gameplay);
+    world.configure_prototype_vehicle_physics(&gameplay);
     world.set_construction_damage_multiplier(
         db.game_data
             .as_ref()
@@ -295,6 +318,11 @@ fn load_scenario_into_world_with_max_players(
         let Some(entity_id) = create_scenario_object(&mut world, obj, db) else {
             continue;
         };
+        let visual_variation_index = visual_variation_indices
+            .map_or(obj.visual_variation_index, |indices| {
+                indices.get(&obj.id).copied().unwrap_or(-1)
+            });
+        apply_scenario_visual_variation(&mut world, entity_id, visual_variation_index);
         if obj.id >= 0 {
             if let Some(unit_id) = representative_unit_id(&world, entity_id) {
                 scenario_id_to_unit_id.insert(obj.id, unit_id);
@@ -312,6 +340,26 @@ fn load_scenario_into_world_with_max_players(
         scenario_id_to_entity_id,
         scenario_id_to_unit_id,
         initial_base_ids,
+    }
+}
+
+fn apply_scenario_visual_variation(world: &mut World, entity_id: EntityId, index: i32) {
+    if let Some(object) = world.get_object_mut(entity_id) {
+        object.object_state.set_visual_variation_index(index);
+        return;
+    }
+    if let Some(unit) = world.get_unit_mut(entity_id) {
+        unit.object_state.set_visual_variation_index(index);
+        return;
+    }
+    let member_ids = world
+        .get_squad(entity_id)
+        .map(|squad| squad.unit_ids.clone())
+        .unwrap_or_default();
+    for member_id in member_ids {
+        if let Some(unit) = world.get_unit_mut(member_id) {
+            unit.object_state.set_visual_variation_index(index);
+        }
     }
 }
 
@@ -370,6 +418,7 @@ fn configure_players(world: &mut World, players: &[ScenarioPlayer], db: &Databas
         }
         player.initialize_resource_totals();
     }
+    technology::activate_all_starting_technologies(world, db);
     world.configure_standard_team_relations();
 }
 
@@ -417,6 +466,7 @@ pub fn configure_player_leader(
     apply_leader_population(player, database, leader_id, population_names);
     resources::apply_leader_starting_resources(player, database, leader_id);
     player.adjust_population_cap(&live_cap_additions, true);
+    technology::activate_player_starting_technologies(world, database, player_id);
     true
 }
 
@@ -551,6 +601,7 @@ pub(crate) fn create_squad_from_prototype(
         create_squad_members(world, squad_id, proto, db);
         population::apply_squad_population(world, squad_id, db, proto);
     }
+    world.refresh_squad_ammunition(squad_id, db);
     refresh_squad_member_settings(world, squad_id);
     squad_id
 }
@@ -565,235 +616,6 @@ fn create_squad_members(world: &mut World, squad_id: EntityId, proto: &ProtoSqua
                 add_squad_member_from_prototype(world, squad_id, entry.proto_object.trim(), db);
         }
     }
-}
-
-pub(crate) fn add_squad_member_from_prototype(
-    world: &mut World,
-    squad_id: EntityId,
-    proto_object_name: &str,
-    db: &Database,
-) -> Option<EntityId> {
-    let (player_id, position, archetype, slot, veterancy_level) =
-        world.get_squad(squad_id).map(|squad| {
-            (
-                squad.base.player_id,
-                squad.base.position,
-                squad.archetype,
-                squad.unit_ids.len(),
-                squad.veterancy_level(),
-            )
-        })?;
-    let unit_id = world.create_unit_at(player_id, position);
-    configure_unit(world, unit_id, proto_object_name, db);
-    if !world.attach_unit_to_squad(unit_id, squad_id) {
-        let _removed = world.remove_unit(unit_id);
-        return None;
-    }
-    if archetype == SquadArchetype::Marine
-        && let Some(offset) = MarineSquadSpec::default().initial_formation_offset(slot)
-    {
-        let assigned = world.set_squad_member_formation_offset(unit_id, offset);
-        debug_assert!(assigned, "attached Marine should accept a formation offset");
-    }
-    if let Some((_, prototype)) = find_proto_object(db, proto_object_name) {
-        UnitScalarModifiers::from_veterancy_levels(&prototype.veterancy, 0, veterancy_level)
-            .apply(world.get_unit_mut(unit_id)?);
-        sockets::materialize_authored_sockets(world, unit_id, prototype, db);
-    }
-    Some(unit_id)
-}
-
-pub(crate) fn create_object_from_prototype(
-    world: &mut World,
-    player_id: PlayerId,
-    position: Vec3,
-    forward: Vec3,
-    proto_name: &str,
-    db: &Database,
-) -> Option<EntityId> {
-    let (proto_index, proto) = find_proto_object(db, proto_name)?;
-    let kind = classify_proto_object(proto)?;
-    let unit_id = match kind {
-        PlacedUnitKind::Mobile => world.create_unit_at(player_id, position),
-        PlacedUnitKind::Building => world.create_building_at(player_id, position),
-    };
-    configure_unit_from_proto(world, unit_id, proto_name, proto_index, proto);
-    population::apply_object_population(world, unit_id, db, proto);
-    if let Some(unit) = world.get_unit_mut(unit_id) {
-        unit.base.set_forward(forward);
-    }
-    sockets::materialize_authored_sockets(world, unit_id, proto, db);
-    if kind == PlacedUnitKind::Building && creates_base(proto) {
-        let _base_id = world.register_base(unit_id);
-    }
-    Some(unit_id)
-}
-
-pub(crate) fn create_unbuilt_building_from_prototype(
-    world: &mut World,
-    player_id: PlayerId,
-    position: Vec3,
-    forward: Vec3,
-    proto_name: &str,
-    db: &Database,
-) -> Option<EntityId> {
-    let (proto_index, proto) = find_proto_object(db, proto_name)?;
-    if classify_proto_object(proto) != Some(PlacedUnitKind::Building) {
-        return None;
-    }
-    let unit_id = world.create_building_at(player_id, position);
-    configure_unit_from_proto(world, unit_id, proto_name, proto_index, proto);
-    if let Some(unit) = world.get_unit_mut(unit_id) {
-        unit.built = false;
-        unit.base.set_forward(forward);
-    }
-    sockets::materialize_authored_sockets(world, unit_id, proto, db);
-    population::initialize_object_population(world, unit_id, db, proto, false);
-    Some(unit_id)
-}
-
-fn configure_unit(world: &mut World, unit_id: EntityId, proto_name: &str, db: &Database) {
-    let Some((proto_index, proto)) = find_proto_object(db, proto_name) else {
-        if let Some(unit) = world.get_unit_mut(unit_id) {
-            proto_name.clone_into(&mut unit.proto_object_name);
-            if is_warthog_unit(proto_name, None) {
-                configure_warthog(unit, WarthogUnitSpec::default());
-            } else if is_marine_unit(proto_name) {
-                unit.set_max_hitpoints(MARINE_HITPOINTS);
-                configure_marine(unit, MarineUnitSpec::default());
-            }
-        }
-        return;
-    };
-    configure_unit_from_proto(world, unit_id, proto_name, proto_index, proto);
-}
-
-pub(crate) fn configure_unit_from_proto(
-    world: &mut World,
-    unit_id: EntityId,
-    proto_name: &str,
-    proto_index: usize,
-    proto: &ProtoObject,
-) {
-    let shield_coverage = world
-        .prototype_shield_coverage(proto_name)
-        .unwrap_or_else(|| typed_shield_coverage(proto));
-    let technologies = world
-        .get_unit(unit_id)
-        .and_then(|unit| world.get_player(unit.base.player_id))
-        .map(|player| &player.technologies);
-    let adjusted_hitpoints = proto
-        .hitpoints
-        .map(|base| technologies.map_or(base, |state| state.hitpoints(proto_name, base)));
-    let base_shieldpoints = valid_nonnegative(proto.shieldpoints)
-        .filter(|_| shield_coverage != ShieldCoverage::None)
-        .unwrap_or_default();
-    let shield_settings = technologies.map_or((base_shieldpoints, 1.0, 1.0), |state| {
-        (
-            state.shieldpoints(proto_name, base_shieldpoints),
-            state.unit_shield_regen_rate(proto_name),
-            state.unit_shield_regen_delay(proto_name),
-        )
-    });
-    let adjusted_velocity = valid_nonnegative(proto.max_velocity.or(proto.velocity))
-        .map(|base| technologies.map_or(base, |state| state.maximum_velocity(proto_name, base)));
-    let Some(unit) = world.get_unit_mut(unit_id) else {
-        return;
-    };
-    unit.proto_object_id = database_id(proto.dbid, proto_index);
-    proto_name.clone_into(&mut unit.proto_object_name);
-    let prototype_non_mobile = unit.is_building() || prototype_has_flag(proto, "Immoveable");
-    unit.base.configure_prototype_mobility(prototype_non_mobile);
-    unit.set_auto_attackable(!prototype_has_flag(proto, "DontAutoAttackMe"));
-    unit.set_external_shield(prototype_has_flag(proto, "ExternalShield"));
-    garrison::configure_unit(unit, proto);
-    if let Some(hitpoints) = adjusted_hitpoints {
-        unit.set_max_hitpoints(hitpoints);
-    }
-    unit.shields.configure(shield_coverage, shield_settings.0);
-    unit.shields
-        .set_regen_scalars(shield_settings.1, shield_settings.2);
-    if !unit.is_building()
-        && let Some(speed) = adjusted_velocity
-    {
-        unit.speed = speed;
-    }
-    unit.acceleration = valid_nonnegative(proto.acceleration).unwrap_or_default();
-    unit.turn_rate_degrees = valid_nonnegative(proto.turn_rate).unwrap_or_default();
-    unit.obstruction_half_extents = obstruction_half_extents(proto).unwrap_or(Vec3::ZERO);
-    if is_warthog_unit(proto_name, proto.physics_info.as_deref()) {
-        configure_warthog(unit, warthog_spec_from_proto(proto, adjusted_velocity));
-    } else if is_marine_unit(proto_name) {
-        configure_marine(unit, marine_spec_from_proto(proto, adjusted_velocity));
-    } else if unit.is_building()
-        && let Some(collider) = obstruction_collider(proto)
-    {
-        unit.physics = Some(PhysicsBody::static_obstruction(collider));
-    }
-}
-
-fn typed_shield_coverage(proto: &ProtoObject) -> ShieldCoverage {
-    if proto
-        .damage_type
-        .as_deref()
-        .is_some_and(|damage_type| damage_type.eq_ignore_ascii_case("Shielded"))
-    {
-        ShieldCoverage::Full
-    } else {
-        ShieldCoverage::None
-    }
-}
-
-fn configure_warthog(unit: &mut crate::entities::Unit, spec: WarthogUnitSpec) {
-    unit.archetype = UnitArchetype::Warthog;
-    unit.speed = spec.max_speed;
-    unit.acceleration = spec.acceleration;
-    unit.turn_rate_degrees = spec.turn_rate_degrees;
-    unit.obstruction_half_extents = spec.half_extents;
-    unit.physics = Some(spec.physics_body(unit.base.position.y));
-}
-
-fn configure_marine(unit: &mut crate::entities::Unit, spec: MarineUnitSpec) {
-    unit.archetype = UnitArchetype::Marine;
-    unit.speed = spec.max_speed;
-    unit.acceleration = spec.acceleration;
-    unit.turn_rate_degrees = spec.turn_rate_degrees;
-    unit.obstruction_half_extents = spec.half_extents;
-    unit.physics = None;
-}
-
-fn warthog_spec_from_proto(proto: &ProtoObject, max_speed: Option<f32>) -> WarthogUnitSpec {
-    let mut spec = WarthogUnitSpec::default();
-    spec.max_speed = max_speed.unwrap_or(spec.max_speed);
-    spec.acceleration = valid_nonnegative(proto.acceleration).unwrap_or(spec.acceleration);
-    spec.turn_rate_degrees = valid_nonnegative(proto.turn_rate).unwrap_or(spec.turn_rate_degrees);
-    spec.half_extents.x = valid_positive(proto.obstruction_radius_x).unwrap_or(spec.half_extents.x);
-    spec.half_extents.y = valid_positive(proto.obstruction_radius_y).unwrap_or(spec.half_extents.y);
-    spec.half_extents.z = valid_positive(proto.obstruction_radius_z).unwrap_or(spec.half_extents.z);
-    spec
-}
-
-fn marine_spec_from_proto(proto: &ProtoObject, max_speed: Option<f32>) -> MarineUnitSpec {
-    let mut spec = MarineUnitSpec::default();
-    spec.max_speed = max_speed.unwrap_or(spec.max_speed);
-    spec.acceleration = valid_nonnegative(proto.acceleration).unwrap_or(spec.acceleration);
-    spec.turn_rate_degrees = valid_nonnegative(proto.turn_rate).unwrap_or(spec.turn_rate_degrees);
-    spec.half_extents = obstruction_half_extents(proto).unwrap_or(spec.half_extents);
-    spec
-}
-
-fn obstruction_half_extents(proto: &ProtoObject) -> Option<Vec3> {
-    let x = valid_positive(proto.obstruction_radius_x)?;
-    let z = valid_positive(proto.obstruction_radius_z)?;
-    let y = valid_positive(proto.obstruction_radius_y).unwrap_or(1.0);
-    Some(Vec3::new(x, y, z))
-}
-
-fn obstruction_collider(proto: &ProtoObject) -> Option<BoxCollider> {
-    Some(BoxCollider::new(
-        obstruction_half_extents(proto)?,
-        Vec3::ZERO,
-    ))
 }
 
 fn apply_squad_member_movement_settings(world: &mut World, squad_id: EntityId) {
@@ -849,10 +671,6 @@ fn apply_squad_physics_settings(world: &mut World, squad_id: EntityId) {
             body.set_turn_radius_range(minimum, maximum);
         }
     }
-}
-
-fn valid_positive(value: Option<f32>) -> Option<f32> {
-    value.filter(|value| value.is_finite() && *value > 0.0)
 }
 
 fn valid_nonnegative(value: Option<f32>) -> Option<f32> {

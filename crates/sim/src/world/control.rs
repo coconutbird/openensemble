@@ -5,6 +5,22 @@ use crate::EntityId;
 use glam::Vec3;
 
 impl World {
+    /// Return the synchronized runtime render override for any `BObject`-derived entity.
+    #[must_use]
+    pub fn entity_is_render_enabled(&self, entity_id: EntityId) -> Option<bool> {
+        self.entity_object_state(entity_id)
+            .map(crate::entities::ObjectState::is_render_enabled)
+    }
+
+    /// Change the synchronized runtime render override for any `BObject`-derived entity.
+    pub fn set_entity_render_enabled(&mut self, entity_id: EntityId, enabled: bool) -> bool {
+        let Some(state) = self.entity_object_state_mut(entity_id) else {
+            return false;
+        };
+        state.set_render_enabled(enabled);
+        true
+    }
+
     /// Return the live selectable override for any represented entity class.
     #[must_use]
     pub fn entity_is_selectable(&self, entity_id: EntityId) -> Option<bool> {

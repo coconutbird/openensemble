@@ -12,7 +12,7 @@ use crate::entity_id::EntityId;
 use crate::sync::SyncChecksum;
 use glam::Vec3;
 use num_traits::ToPrimitive;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// Largest integration step used by the deterministic physics loop.
 pub const MAX_PHYSICS_STEP_SECONDS: f32 = 0.05;
@@ -105,6 +105,7 @@ pub struct PhysicsBody {
     accumulated_force: Vec3,
     accumulated_torque: Vec3,
     contacts_this_step: u16,
+    ground_impact_speed_this_step: f32,
 }
 
 impl PhysicsBody {
@@ -126,6 +127,35 @@ impl PhysicsBody {
             accumulated_force: Vec3::ZERO,
             accumulated_torque: Vec3::ZERO,
             contacts_this_step: 0,
+            ground_impact_speed_this_step: 0.0,
+        }
+    }
+
+    /// Create an unconstrained dynamic body used by death replacements.
+    #[must_use]
+    pub fn dynamic_replacement(
+        material: PhysicsMaterial,
+        collider: BoxCollider,
+        ground_height: f32,
+        position_y: f32,
+    ) -> Self {
+        let ground_height = finite_or_zero(ground_height);
+        Self {
+            motion_type: MotionType::Dynamic,
+            material: sanitize_material(material),
+            collider,
+            max_speed: 0.0,
+            acceleration: 0.0,
+            turn_rate_radians: 0.0,
+            min_turn_radius: 0.0,
+            max_turn_radius: 0.0,
+            ground_height,
+            grounded: position_y <= ground_height,
+            angular_velocity: Vec3::ZERO,
+            accumulated_force: Vec3::ZERO,
+            accumulated_torque: Vec3::ZERO,
+            contacts_this_step: 0,
+            ground_impact_speed_this_step: 0.0,
         }
     }
 
@@ -154,6 +184,7 @@ impl PhysicsBody {
             accumulated_force: Vec3::ZERO,
             accumulated_torque: Vec3::ZERO,
             contacts_this_step: 0,
+            ground_impact_speed_this_step: 0.0,
         }
     }
 
@@ -222,6 +253,16 @@ impl PhysicsBody {
         self.contacts_this_step
     }
 
+    /// Return the normal speed of the latest ground contact this substep.
+    #[must_use]
+    pub const fn ground_impact_speed_this_step(&self) -> f32 {
+        self.ground_impact_speed_this_step
+    }
+
+    fn begin_substep(&mut self) {
+        self.ground_impact_speed_this_step = 0.0;
+    }
+
     /// Accumulate a world-space force for the next integration substep.
     pub fn apply_force(&mut self, force: Vec3) {
         if self.motion_type == MotionType::Dynamic && force.is_finite() {
@@ -258,6 +299,7 @@ impl PhysicsBody {
         velocity_scalar: f32,
         reverse_move: bool,
     ) -> bool {
+        self.ground_impact_speed_this_step = 0.0;
         if self.motion_type == MotionType::Static || !valid_step(dt) {
             self.clear_accumulators();
             return false;
@@ -289,6 +331,7 @@ impl PhysicsBody {
         hash_vec3(checksum, self.accumulated_force);
         hash_vec3(checksum, self.accumulated_torque);
         checksum.hash_u32(u32::from(self.contacts_this_step));
+        checksum.hash_f32(self.ground_impact_speed_this_step);
     }
 
     fn inverse_mass(&self) -> f32 {
@@ -394,6 +437,7 @@ impl PhysicsBody {
             return;
         }
         entity.position.y = self.ground_height;
+        self.ground_impact_speed_this_step = entity.velocity.y.abs();
         let rebound = (-entity.velocity.y * self.material.restitution).max(0.0);
         if rebound > GROUND_SNAP_SPEED {
             entity.velocity.y = rebound;
@@ -442,9 +486,14 @@ pub(crate) fn prepare_squad_movement(
     squads: &EntityManager<Squad>,
     units: &mut EntityManager<Unit>,
 ) -> BTreeMap<EntityId, EntityId> {
+    for (_, unit) in units.iter_mut() {
+        if let Some(body) = &mut unit.physics {
+            body.begin_substep();
+        }
+    }
     let mut anchors = BTreeMap::new();
     for (squad_id, squad) in squads.iter() {
-        if squad.garrison.is_garrisoned() || !squad.base.is_mobile() {
+        if squad.garrison.is_garrisoned() || squad.is_cryo_frozen() || !squad.base.is_mobile() {
             for &unit_id in &squad.unit_ids {
                 if let Some(unit) = units.get_mut(unit_id)
                     && unit.is_physics_driven()
@@ -473,7 +522,7 @@ pub(crate) fn prepare_squad_movement(
             if let Some(target) = squad.move_target {
                 let offset = formation_offset_to_world(squad.base.forward, unit.formation_offset);
                 unit.move_as_squad_member(target + offset);
-            } else {
+            } else if unit.physics.as_ref().is_none_or(PhysicsBody::is_grounded) {
                 unit.stop();
             }
         }
@@ -481,14 +530,24 @@ pub(crate) fn prepare_squad_movement(
     anchors
 }
 
+/// One unique obstruction contact and its greatest pre-solver normal speed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct UnitCollisionContact {
+    pub first: EntityId,
+    pub second: EntityId,
+    pub projected_velocity: f32,
+}
+
 /// Resolve deterministic unit/building obstruction contacts.
-pub(crate) fn resolve_unit_collisions(units: &mut EntityManager<Unit>) {
+pub(crate) fn resolve_unit_collisions(
+    units: &mut EntityManager<Unit>,
+) -> Vec<UnitCollisionContact> {
     for (_, unit) in units.iter_mut() {
         if let Some(body) = &mut unit.physics {
             body.contacts_this_step = 0;
         }
     }
-    let mut contact_pairs = BTreeSet::new();
+    let mut contacts = BTreeMap::<(EntityId, EntityId), f32>::new();
     for _ in 0..SOLVER_ITERATIONS {
         let snapshots = collision_snapshots(units);
         let mut deltas = BTreeMap::new();
@@ -504,8 +563,12 @@ pub(crate) fn resolve_unit_collisions(units: &mut EntityManager<Unit>) {
                     continue;
                 };
                 found_overlap = true;
-                contact_pairs.insert((first.id, second.id));
-                accumulate_contact_deltas(&mut deltas, first, second, contact);
+                let projected_velocity =
+                    accumulate_contact_deltas(&mut deltas, first, second, contact).abs();
+                contacts
+                    .entry((first.id, second.id))
+                    .and_modify(|maximum| *maximum = maximum.max(projected_velocity))
+                    .or_insert(projected_velocity);
             }
         }
         apply_collision_deltas(units, deltas);
@@ -513,7 +576,17 @@ pub(crate) fn resolve_unit_collisions(units: &mut EntityManager<Unit>) {
             break;
         }
     }
-    record_contact_counts(units, &contact_pairs);
+    record_contact_counts(units, &contacts);
+    contacts
+        .into_iter()
+        .map(
+            |((first, second), projected_velocity)| UnitCollisionContact {
+                first,
+                second,
+                projected_velocity,
+            },
+        )
+        .collect()
 }
 
 /// Synchronize physical squad origins and every non-physical formation member.
@@ -581,16 +654,31 @@ fn collision_snapshots(units: &EntityManager<Unit>) -> Vec<BodySnapshot> {
     units
         .iter()
         .filter_map(|(id, unit)| {
-            let body = unit.physics.as_ref()?;
-            (unit.is_alive() && !unit.is_garrisoned()).then_some(BodySnapshot {
-                id,
-                squad_id: unit.squad_id,
-                position: unit.base.position,
-                velocity: unit.base.velocity,
-                collider: body.collider,
-                inverse_mass: body.inverse_mass(),
-                material: body.material,
-            })
+            if !unit.is_alive() || unit.is_garrisoned() {
+                return None;
+            }
+            let (collider, inverse_mass, material) = unit.physics.as_ref().map_or_else(
+                || {
+                    let half_extents = unit.obstruction_half_extents.abs();
+                    (
+                        BoxCollider::new(half_extents, Vec3::Y * half_extents.y),
+                        0.0,
+                        PhysicsMaterial::default(),
+                    )
+                },
+                |body| (body.collider, body.inverse_mass(), body.material),
+            );
+            (collider.half_extents.x > 0.0 && collider.half_extents.z > 0.0).then_some(
+                BodySnapshot {
+                    id,
+                    squad_id: unit.squad_id,
+                    position: unit.base.position,
+                    velocity: unit.base.velocity,
+                    collider,
+                    inverse_mass,
+                    material,
+                },
+            )
         })
         .collect()
 }
@@ -633,15 +721,18 @@ fn accumulate_contact_deltas(
     first: BodySnapshot,
     second: BodySnapshot,
     contact: Contact,
-) {
+) -> f32 {
     let inverse_mass_sum = first.inverse_mass + second.inverse_mass;
+    let relative_velocity = second.velocity - first.velocity;
+    let normal_speed = relative_velocity.dot(contact.normal);
+    if inverse_mass_sum <= 0.0 {
+        return normal_speed;
+    }
     let correction = contact.normal * ((contact.penetration + COLLISION_SLOP) / inverse_mass_sum);
     add_position_delta(deltas, first.id, -correction * first.inverse_mass);
     add_position_delta(deltas, second.id, correction * second.inverse_mass);
-    let relative_velocity = second.velocity - first.velocity;
-    let normal_speed = relative_velocity.dot(contact.normal);
     if normal_speed >= 0.0 {
-        return;
+        return normal_speed;
     }
     let restitution = first.material.restitution.min(second.material.restitution);
     let normal_impulse_size = -(1.0 + restitution) * normal_speed / inverse_mass_sum;
@@ -657,6 +748,7 @@ fn accumulate_contact_deltas(
     let impulse = normal_impulse + friction_impulse;
     add_velocity_delta(deltas, first.id, -impulse * first.inverse_mass);
     add_velocity_delta(deltas, second.id, impulse * second.inverse_mass);
+    normal_speed
 }
 
 fn calculate_friction_impulse(
@@ -701,9 +793,9 @@ fn add_velocity_delta(deltas: &mut BTreeMap<EntityId, CollisionDelta>, id: Entit
 
 fn record_contact_counts(
     units: &mut EntityManager<Unit>,
-    contacts: &BTreeSet<(EntityId, EntityId)>,
+    contacts: &BTreeMap<(EntityId, EntityId), f32>,
 ) {
-    for &(first_id, second_id) in contacts {
+    for &(first_id, second_id) in contacts.keys() {
         increment_contacts(units, first_id);
         increment_contacts(units, second_id);
     }
@@ -833,110 +925,4 @@ fn hash_vec3(checksum: &mut SyncChecksum, value: Vec3) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::entities::Unit;
-    use crate::entity_id::EntityClass;
-
-    fn dynamic_body(position: Vec3) -> (BaseEntity, PhysicsBody) {
-        let id = EntityId::new(EntityClass::Unit, 0);
-        let mut entity = BaseEntity::new(id, 1);
-        entity.position = position;
-        let body = PhysicsBody::ground_vehicle(
-            PhysicsMaterial {
-                mass: 100.0,
-                friction: 1.0,
-                restitution: 0.5,
-                linear_damping: 0.0,
-                angular_damping: 0.1,
-            },
-            BoxCollider::new(Vec3::splat(1.0), Vec3::ZERO),
-            position.y,
-            40.0,
-            60.0,
-            450.0,
-        );
-        (entity, body)
-    }
-
-    #[test]
-    fn vehicle_accelerates_and_turns_with_limits() {
-        let (mut entity, mut body) = dynamic_body(Vec3::ZERO);
-        let arrived = body.update(
-            &mut entity,
-            Some(Vec3::new(100.0, 0.0, 0.0)),
-            0.05,
-            1.0,
-            false,
-        );
-
-        assert!(!arrived);
-        assert!(entity.velocity.length() <= 3.0 + f32::EPSILON);
-        assert!(entity.forward.x > 0.0);
-        assert!(entity.forward.z > 0.0);
-    }
-
-    #[test]
-    fn reverse_vehicle_faces_away_while_accelerating_toward_target() {
-        let (mut entity, mut body) = dynamic_body(Vec3::ZERO);
-        let arrived = body.update(
-            &mut entity,
-            Some(Vec3::new(100.0, 0.0, 0.0)),
-            0.05,
-            1.0,
-            true,
-        );
-
-        assert!(!arrived);
-        assert!(entity.forward.x < 0.0);
-        assert!(entity.velocity.x > 0.0);
-    }
-
-    #[test]
-    fn off_center_impulse_changes_linear_and_angular_velocity() {
-        let (mut entity, mut body) = dynamic_body(Vec3::ZERO);
-        body.apply_impulse_at_point(
-            &mut entity,
-            Vec3::new(100.0, 20.0, 0.0),
-            Vec3::new(0.0, 0.0, 1.0),
-        );
-
-        assert!(entity.velocity.x > 0.0);
-        assert!(entity.velocity.y > 0.0);
-        assert!(body.angular_velocity().y > 0.0);
-        assert!(!body.is_grounded());
-    }
-
-    #[test]
-    fn dynamic_body_is_separated_from_static_obstruction() {
-        let mut units = EntityManager::new(EntityClass::Unit);
-        let moving_id = units.allocate_id();
-        let mut moving = Unit::new(moving_id, 1);
-        moving.base.position = Vec3::new(-0.5, 0.0, 0.0);
-        moving.physics = Some(dynamic_body(moving.base.position).1);
-        moving.base.velocity = Vec3::X;
-        units.insert(moving_id, moving);
-
-        let static_id = units.allocate_id();
-        let mut obstruction = Unit::new_building(static_id, 0);
-        obstruction.physics = Some(PhysicsBody::static_obstruction(BoxCollider::new(
-            Vec3::splat(1.0),
-            Vec3::ZERO,
-        )));
-        units.insert(static_id, obstruction);
-
-        resolve_unit_collisions(&mut units);
-
-        let moving = units.get(moving_id).unwrap();
-        assert!(moving.base.position.x <= -2.0);
-        assert_eq!(moving.physics.as_ref().unwrap().contacts_this_step(), 1);
-    }
-
-    #[test]
-    fn substeps_bound_large_updates() {
-        let (count, duration) = substeps(0.2).unwrap();
-        assert_eq!(count, 4);
-        assert!((duration - 0.05).abs() < f32::EPSILON);
-        assert!(substeps(f32::NAN).is_none());
-    }
-}
+mod tests;

@@ -114,6 +114,61 @@ fn loads_squad_members_buildings_and_base_anchors() {
 }
 
 #[test]
+fn scenario_visual_variation_reaches_every_squad_member_and_checksum() {
+    use pipeline::database::hw1::squads::{UnitEntry, UnitsWrapper};
+
+    let database = Database {
+        objects: vec![ProtoObject {
+            name: "marine".to_owned(),
+            object_class: Some("Unit".to_owned()),
+            ..ProtoObject::default()
+        }],
+        squads: vec![ProtoSquad {
+            name: "marine_squad".to_owned(),
+            units: Some(UnitsWrapper {
+                entries: vec![UnitEntry {
+                    proto_object: "marine".to_owned(),
+                    count: 2,
+                    role: None,
+                }],
+            }),
+            ..ProtoSquad::default()
+        }],
+        ..Database::default()
+    };
+    let load = |variation| {
+        let scenario = ScenarioData::from_xml_str(&format!(
+            r#"<Scenario><Players><Player Name="P1" /></Players><Objects>
+                <Object IsSquad="true" Player="1" ID="10" VisualVariationIndex="{variation}">
+                    marine_squad
+                </Object>
+            </Objects></Scenario>"#
+        ))
+        .expect("valid scenario");
+        load_scenario_into_world(&scenario, &database)
+    };
+
+    let first = load(1);
+    let squad = first
+        .world
+        .get_squad(first.get_entity_id(10).unwrap())
+        .unwrap();
+    assert_eq!(squad.unit_ids.len(), 2);
+    assert!(squad.unit_ids.iter().all(|&unit_id| {
+        first
+            .world
+            .get_unit(unit_id)
+            .unwrap()
+            .object_state
+            .visual_variation_index()
+            == Some(1)
+    }));
+
+    let second = load(2);
+    assert_ne!(first.world.checksum(), second.world.checksum());
+}
+
+#[test]
 fn loads_implicit_class_zero_visual_objects_and_preserves_scenario_mapping() {
     let scenario = ScenarioData::from_xml_str(
         r#"<Scenario>
@@ -152,11 +207,18 @@ fn loads_implicit_class_zero_visual_objects_and_preserves_scenario_mapping() {
 fn lobby_leader_selection_configures_database_population_slots() {
     use pipeline::database::hw1::gamedata::PopsWrapper;
     use pipeline::database::hw1::leaders::PopEntry;
-    use pipeline::database::hw1::{GameData, Leader};
+    use pipeline::database::hw1::{Civ, GameData, Leader, Tech};
 
     let database = Database {
+        civs: vec![Civ {
+            name: "UNSC".to_owned(),
+            civ_tech: Some("UnscBootstrap".to_owned()),
+            ..Civ::default()
+        }],
         leaders: vec![Leader {
             name: "Cutter".to_owned(),
+            civ: Some("UNSC".to_owned()),
+            tech: Some("CutterBootstrap".to_owned()),
             pops: vec![PopEntry {
                 pop_type: "Unit".to_owned(),
                 count: 30.0,
@@ -170,6 +232,16 @@ fn lobby_leader_selection_configures_database_population_slots() {
             }),
             ..GameData::default()
         }),
+        techs: vec![
+            Tech {
+                name: "UnscBootstrap".to_owned(),
+                ..Tech::default()
+            },
+            Tech {
+                name: "CutterBootstrap".to_owned(),
+                ..Tech::default()
+            },
+        ],
         ..Database::default()
     };
     let mut world = World::new();
@@ -184,6 +256,14 @@ fn lobby_leader_selection_configures_database_population_slots() {
     assert!(configure_player_leader(&mut world, &database, 1, 0));
     let player = world.get_player(1).unwrap();
     assert_eq!(player.leader_id, 0);
+    assert_eq!(player.civ_id, 0);
+    assert_eq!(
+        player
+            .technologies
+            .active_technologies()
+            .collect::<Vec<_>>(),
+        ["UnscBootstrap", "CutterBootstrap"]
+    );
     assert_eq!(player.population.len(), 2);
     assert!((player.population[0].cap - 35.0).abs() <= f32::EPSILON);
     assert!((player.population[0].max - 99.0).abs() <= f32::EPSILON);

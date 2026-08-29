@@ -2,9 +2,14 @@
 
 use super::World;
 use crate::entity_id::EntityId;
-use crate::player::{AppliedSquadTransform, PlayerId};
-use crate::scenario::{add_squad_member_from_prototype, refresh_squad_member_settings};
-use pipeline::database::hw1::{Database, Squad as ProtoSquad};
+use crate::player::{
+    AppliedPrototypeTransform, AppliedSquadTransform, AppliedUnitTransform, PlayerId,
+};
+use crate::scenario::{
+    add_squad_member_from_prototype, configure_unit_from_player_proto,
+    refresh_squad_member_settings,
+};
+use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad, Tech};
 
 /// Failure to change one player's technology state.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -59,6 +64,7 @@ impl World {
 
         let hitpoints = self.hitpoint_snapshots(player_id, database);
         let shieldpoints = self.shieldpoint_snapshots(player_id, database);
+        let ammunition = self.ammunition_snapshots(player_id, database);
         let Some(player) = self.get_player_mut(player_id) else {
             return Err(TechnologyError::PlayerNotFound(player_id));
         };
@@ -66,10 +72,80 @@ impl World {
         self.apply_hitpoint_changes(player_id, &hitpoints);
         self.apply_shieldpoint_changes(player_id, &shieldpoints);
         self.refresh_shield_regen_scalars(player_id);
+        self.reconcile_player_ammunition(player_id, &ammunition, database);
         for transform in transforms {
-            self.apply_squad_transform(player_id, database, &transform);
+            match transform {
+                AppliedPrototypeTransform::Unit(transform) => {
+                    self.apply_unit_transform(player_id, database, &transform);
+                }
+                AppliedPrototypeTransform::Squad(transform) => {
+                    self.apply_squad_transform(player_id, database, &transform);
+                }
+            }
         }
+        self.activate_dependent_shadow_technologies(player_id, database, &technology.name);
         Ok(true)
+    }
+
+    pub(crate) fn initialize_shadow_technologies(
+        &mut self,
+        player_id: PlayerId,
+        database: &Database,
+    ) {
+        let candidates = database
+            .techs
+            .iter()
+            .map(|technology| technology.name.clone())
+            .collect::<Vec<_>>();
+        for candidate in candidates {
+            let Some(technology) = find_technology(database, &candidate) else {
+                continue;
+            };
+            if self.shadow_technology_is_eligible(player_id, database, technology) {
+                let _activation = self.activate_technology(player_id, database, &candidate);
+            }
+        }
+    }
+
+    fn activate_dependent_shadow_technologies(
+        &mut self,
+        player_id: PlayerId,
+        database: &Database,
+        activated_name: &str,
+    ) {
+        let candidates = database
+            .techs
+            .iter()
+            .filter(|technology| technology_depends_on(technology, activated_name))
+            .map(|technology| technology.name.clone())
+            .collect::<Vec<_>>();
+        for candidate in candidates {
+            let Some(technology) = find_technology(database, &candidate) else {
+                continue;
+            };
+            if self.shadow_technology_is_eligible(player_id, database, technology) {
+                let _activation = self.activate_technology(player_id, database, &candidate);
+            }
+        }
+    }
+
+    fn shadow_technology_is_eligible(
+        &self,
+        player_id: PlayerId,
+        database: &Database,
+        technology: &Tech,
+    ) -> bool {
+        let Some(player) = self.get_player(player_id) else {
+            return false;
+        };
+        !technology.name.trim().is_empty()
+            && super::research::has_flag(technology, "Shadow")
+            && !super::research::has_flag(technology, "UniqueProtoUnitInstance")
+            && !super::research::has_flag(technology, "Forbid")
+            && !super::research::authored_unobtainable(technology)
+            && technology_alpha_is_enabled(self, technology)
+            && !player.technologies.is_active(&technology.name)
+            && super::research::prerequisites_met(self, player, database, technology)
     }
 
     /// Deactivate one player technology and rebuild reversible proto effects.
@@ -95,6 +171,7 @@ impl World {
         }
         let hitpoints = self.hitpoint_snapshots(player_id, database);
         let shieldpoints = self.shieldpoint_snapshots(player_id, database);
+        let ammunition = self.ammunition_snapshots(player_id, database);
         let Some(player) = self.get_player_mut(player_id) else {
             return Err(TechnologyError::PlayerNotFound(player_id));
         };
@@ -103,6 +180,7 @@ impl World {
             self.apply_hitpoint_changes(player_id, &hitpoints);
             self.apply_shieldpoint_changes(player_id, &shieldpoints);
             self.refresh_shield_regen_scalars(player_id);
+            self.reconcile_player_ammunition(player_id, &ammunition, database);
         }
         Ok(changed)
     }
@@ -128,7 +206,9 @@ impl World {
                 Some(HitpointSnapshot {
                     unit_id,
                     base,
-                    previous: player.technologies.hitpoints(&unit.proto_object_name, base),
+                    previous: player
+                        .technologies
+                        .hitpoints(unit.logical_proto_object_name(), base),
                 })
             })
             .collect()
@@ -143,7 +223,7 @@ impl World {
                 .get_player(player_id)
                 .expect("validated player")
                 .technologies
-                .hitpoints(&unit.proto_object_name, snapshot.base);
+                .hitpoints(unit.logical_proto_object_name(), snapshot.base);
             let unchanged_tolerance =
                 f32::EPSILON * next.abs().max(snapshot.previous.abs()).max(1.0);
             if snapshot.previous <= 0.0 || (next - snapshot.previous).abs() <= unchanged_tolerance {
@@ -185,7 +265,7 @@ impl World {
                     base,
                     previous: player
                         .technologies
-                        .shieldpoints(&unit.proto_object_name, base),
+                        .shieldpoints(unit.logical_proto_object_name(), base),
                 })
             })
             .collect()
@@ -204,7 +284,7 @@ impl World {
                 .get_player(player_id)
                 .expect("validated player")
                 .technologies
-                .shieldpoints(&unit.proto_object_name, snapshot.base);
+                .shieldpoints(unit.logical_proto_object_name(), snapshot.base);
             let tolerance = f32::EPSILON * next.abs().max(snapshot.previous.abs()).max(1.0);
             if (next - snapshot.previous).abs() <= tolerance {
                 continue;
@@ -226,22 +306,18 @@ impl World {
             .filter_map(|(unit_id, unit)| (unit.base.player_id == player_id).then_some(unit_id))
             .collect::<Vec<_>>();
         for unit_id in unit_ids {
-            let Some(proto_object_name) = self
+            let Some(logical_name) = self
                 .units
                 .get(unit_id)
-                .map(|unit| unit.proto_object_name.clone())
+                .map(|unit| unit.logical_proto_object_name().to_owned())
             else {
                 continue;
             };
             let Some(player) = self.get_player(player_id) else {
                 continue;
             };
-            let rate = player
-                .technologies
-                .unit_shield_regen_rate(&proto_object_name);
-            let delay = player
-                .technologies
-                .unit_shield_regen_delay(&proto_object_name);
+            let rate = player.technologies.unit_shield_regen_rate(&logical_name);
+            let delay = player.technologies.unit_shield_regen_delay(&logical_name);
             if let Some(unit) = self.units.get_mut(unit_id) {
                 unit.shields.set_regen_scalars(rate, delay);
             }
@@ -278,6 +354,111 @@ impl World {
             add_missing_transform_members(self, database, squad_id, old_proto, new_proto);
             refresh_squad_member_settings(self, squad_id);
         }
+    }
+
+    fn apply_unit_transform(
+        &mut self,
+        player_id: PlayerId,
+        database: &Database,
+        transform: &AppliedUnitTransform,
+    ) {
+        if transform
+            .previous_definition
+            .eq_ignore_ascii_case(&transform.new_definition)
+        {
+            return;
+        }
+        let Some((logical_index, logical_proto)) = find_object(database, &transform.from) else {
+            return;
+        };
+        let Some((_, new_proto)) = find_object(database, &transform.new_definition) else {
+            return;
+        };
+        let logical_id = database_id(logical_proto, logical_index);
+        let unit_ids = transformed_unit_ids(self, player_id, transform);
+        let mut squads = Vec::new();
+        for unit_id in unit_ids {
+            let Some(snapshot) = UnitTransformSnapshot::capture(self, unit_id) else {
+                continue;
+            };
+            configure_unit_from_player_proto(
+                self,
+                unit_id,
+                &transform.from,
+                logical_id,
+                &transform.new_definition,
+                new_proto,
+            );
+            snapshot.restore(self, unit_id);
+            if let Some(squad_id) = snapshot.squad_id
+                && !squads.contains(&squad_id)
+            {
+                squads.push(squad_id);
+            }
+        }
+        for squad_id in squads {
+            self.refresh_squad_ammunition(squad_id, database);
+            refresh_squad_member_settings(self, squad_id);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct UnitTransformSnapshot {
+    hitpoint_ratio: f32,
+    ammunition_ratio: f32,
+    shieldpoints: f32,
+    squad_id: Option<EntityId>,
+}
+
+impl UnitTransformSnapshot {
+    fn capture(world: &World, unit_id: EntityId) -> Option<Self> {
+        let unit = world.get_unit(unit_id)?;
+        Some(Self {
+            hitpoint_ratio: ratio_or_one(unit.hitpoints, unit.max_hitpoints),
+            ammunition_ratio: ratio_or_one(unit.ammunition.current(), unit.ammunition.maximum()),
+            shieldpoints: unit.shields.current,
+            squad_id: unit.squad_id,
+        })
+    }
+
+    fn restore(self, world: &mut World, unit_id: EntityId) {
+        let Some(unit) = world.get_unit_mut(unit_id) else {
+            return;
+        };
+        unit.hitpoints = (unit.max_hitpoints * self.hitpoint_ratio).clamp(0.0, unit.max_hitpoints);
+        unit.ammunition
+            .set_current(unit.ammunition.maximum() * self.ammunition_ratio);
+        unit.shields.set_current(self.shieldpoints);
+    }
+}
+
+fn transformed_unit_ids(
+    world: &World,
+    player_id: PlayerId,
+    transform: &AppliedUnitTransform,
+) -> Vec<EntityId> {
+    world
+        .units
+        .iter()
+        .filter_map(|(id, unit)| {
+            (unit.base.player_id == player_id
+                && unit
+                    .logical_proto_object_name()
+                    .eq_ignore_ascii_case(&transform.from)
+                && unit
+                    .proto_object_name
+                    .eq_ignore_ascii_case(&transform.previous_definition))
+            .then_some(id)
+        })
+        .collect()
+}
+
+fn ratio_or_one(current: f32, maximum: f32) -> f32 {
+    if maximum.is_finite() && maximum.abs() >= f32::EPSILON {
+        current / maximum
+    } else {
+        1.0
     }
 }
 
@@ -325,6 +506,31 @@ fn find_technology<'database>(
         .find(|technology| technology.name.eq_ignore_ascii_case(name.trim()))
 }
 
+fn technology_depends_on(technology: &Tech, prerequisite: &str) -> bool {
+    technology
+        .prereqs
+        .iter()
+        .chain(technology.or_prereqs.iter())
+        .flat_map(|prerequisites| &prerequisites.entries)
+        .any(|entry| {
+            entry
+                .text
+                .as_deref()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or(&entry.tech)
+                .trim()
+                .eq_ignore_ascii_case(prerequisite.trim())
+        })
+}
+
+fn technology_alpha_is_enabled(world: &World, technology: &Tech) -> bool {
+    match technology.alpha {
+        Some(0) => !world.is_config_defined("Alpha"),
+        Some(1) => world.is_config_defined("Alpha"),
+        _ => true,
+    }
+}
+
 fn find_squad<'database>(
     database: &'database Database,
     name: &str,
@@ -333,4 +539,21 @@ fn find_squad<'database>(
         .squads
         .iter()
         .find(|squad| squad.name.eq_ignore_ascii_case(name.trim()))
+}
+
+fn find_object<'database>(
+    database: &'database Database,
+    name: &str,
+) -> Option<(usize, &'database ProtoObject)> {
+    database
+        .objects
+        .iter()
+        .enumerate()
+        .find(|(_, object)| object.name.eq_ignore_ascii_case(name.trim()))
+}
+
+fn database_id(prototype: &ProtoObject, index: usize) -> i32 {
+    prototype
+        .dbid
+        .unwrap_or_else(|| i32::try_from(index).unwrap_or(-1))
 }

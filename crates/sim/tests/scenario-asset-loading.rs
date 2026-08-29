@@ -581,7 +581,22 @@ fn assert_archive_and_database_layers(loaded: &LoadedGameScenario) {
     );
     assert!(loaded.content.scenario_data.is_some());
     assert!(loaded.simulation.world.player_count() > 1);
+    assert!(loaded.simulation.world.is_config_defined("vEtErAnCy"));
     assert!(loaded.simulation.world.veterancy_enabled());
+    assert!(
+        loaded
+            .simulation
+            .world
+            .objects
+            .iter()
+            .any(|(_, object)| object.object_state.visual_variation_index() == Some(0))
+            || loaded
+                .simulation
+                .world
+                .units
+                .iter()
+                .any(|(_, unit)| { unit.object_state.visual_variation_index() == Some(0) })
+    );
 }
 
 fn assert_loaded_terrain_bounds(loaded: &LoadedGameScenario) {

@@ -44,7 +44,9 @@ as evidence.
   XTT `grid_z` advances along world X. The compositor therefore places a
   linker at world `(grid_z, grid_x)`, or atlas slot `grid_x * 16 + grid_z`.
 - Up to eight splat layers, static/dynamic alpha, decals, albedo, normals,
-  colored specular, and the complete compositor mip chain are wired.
+  colored specular, and the complete compositor mip chain are wired. Static
+  alpha is sampled by generated terrain vertices and interpolated before the
+  pixel shader's threshold, matching the PC domain/pixel split.
 - The lit diagnostic path includes AO, the XTD light texture, SH fill,
   directional and local lighting, cascaded shadows, fog, and blackmap logic.
 - Display mode 12 is the canonical viewer path. It samples the GPU-composited
@@ -67,7 +69,9 @@ for this map's canonical comparison.
 - The PC vertex shader derives one scalar random value from the local blade
   index and reuses it for X/Z jitter, rotation, and height variation. The WGSL
   now does the same instead of generating two independent values.
-- Blade UVs are passed through exactly as stored. There is no V inversion.
+- The PC vertex shader loads runtime UV from structured-buffer offset 24 and
+  passes it through. XML source V is therefore inverted while packing blade
+  geometry, equivalent to the Xbox source shader's `1 - norm0.w` conversion.
 - The shader's packed local 64×64 blade index uses the opposite X/Z order from
   the viewer. Only that local location, rotated blade geometry, and normal are
   transposed; the already-resolved parent chunk origin stays fixed. Terrain

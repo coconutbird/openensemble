@@ -75,6 +75,72 @@ fn player_damage_modifiers_are_pair_specific_and_rebuild_on_deactivation() {
     assert!((state.weapon_type_damage_modifier("Plasma", "Heavy", 1.5) - 1.5).abs() < f32::EPSILON);
 }
 
+#[test]
+fn ammunition_effects_layer_with_runtime_proto_changes() {
+    let technology = Tech {
+        name: "MoreAmmo".to_owned(),
+        effects: Some(EffectsWrapper {
+            entries: vec![
+                proto_effect("AmmoMax", 1.25, "Percent"),
+                proto_effect("AmmoRegenRate", 2.0, "Percent"),
+            ],
+        }),
+        ..Tech::default()
+    };
+    let mut database = Database::new();
+    database.techs.push(technology.clone());
+    let mut state = PlayerTechState::default();
+    let _transforms = state.activate(&database, &technology);
+
+    assert_close(state.ammunition_maximum("Marine", 200.0), 250.0);
+    assert_close(state.ammunition_regeneration_rate("Marine", 9.0), 18.0);
+    state.modify_proto_data(
+        "Marine",
+        &ProtoDataModification {
+            data_type: ProtoDataType::AmmoMax,
+            amount: 2.0,
+            relativity: ProtoDataRelativity::Percent,
+            all_actions: true,
+            name: None,
+            invert: false,
+            command_type: None,
+            command_data: None,
+        },
+    );
+    assert_close(state.ammunition_maximum("Marine", 200.0), 500.0);
+}
+
+#[test]
+fn ram_weapon_caps_and_reflection_use_action_scoped_technology() {
+    let technology = Tech {
+        name: "RamUpgrade".to_owned(),
+        effects: Some(EffectsWrapper {
+            entries: vec![
+                weapon_effect("MaxDamagePerRam", 0.5, "Percent", Some("Ram"), false),
+                weapon_effect("ReflectDamageFactor", 0.1, "Absolute", Some("Ram"), false),
+            ],
+        }),
+        ..Tech::default()
+    };
+    let mut database = Database::new();
+    database.techs.push(technology.clone());
+    let mut state = PlayerTechState::default();
+    let _transforms = state.activate(&database, &technology);
+
+    assert_close(
+        state.weapon_max_damage_per_ram("Marine", "Ram", 10_000.0),
+        5_000.0,
+    );
+    assert_close(
+        state.weapon_reflect_damage_factor("Marine", "Ram", 0.4),
+        0.5,
+    );
+    assert_close(
+        state.weapon_max_damage_per_ram("Marine", "Rifle", 10_000.0),
+        10_000.0,
+    );
+}
+
 fn damage_modifier_effect(amount: f32, relativity: &str) -> TechEffect {
     TechEffect {
         effect_type: "Data".to_owned(),
@@ -111,4 +177,22 @@ fn weapon_effect(
         }),
         ..TechEffect::default()
     }
+}
+
+fn proto_effect(subtype: &str, amount: f32, relativity: &str) -> TechEffect {
+    TechEffect {
+        effect_type: "Data".to_owned(),
+        subtype: Some(subtype.to_owned()),
+        amount: Some(amount),
+        relativity: Some(relativity.to_owned()),
+        target: Some(EffectTarget {
+            target_type: Some("ProtoUnit".to_owned()),
+            value: Some("Marine".to_owned()),
+        }),
+        ..TechEffect::default()
+    }
+}
+
+fn assert_close(actual: f32, expected: f32) {
+    assert!((actual - expected).abs() <= f32::EPSILON * expected.abs().max(1.0));
 }

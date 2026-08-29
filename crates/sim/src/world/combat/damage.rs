@@ -2,6 +2,7 @@
 
 use super::World;
 use crate::entities::SquadMode;
+use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::GameplayCatalog;
 use crate::player::PlayerId;
@@ -85,6 +86,23 @@ impl World {
             weapon_type,
             None,
             gameplay,
+        )
+    }
+
+    pub(in crate::world) fn apply_reflected_collision_damage(
+        &mut self,
+        source_id: EntityId,
+        source_player_id: PlayerId,
+        target_id: EntityId,
+        damage: f32,
+        gameplay: &GameplayCatalog,
+    ) -> f32 {
+        self.apply_attributed_weapon_damage(
+            DamageAttribution::combat(source_id, source_player_id),
+            target_id,
+            damage,
+            None,
+            Some(gameplay),
         )
     }
 
@@ -186,6 +204,10 @@ impl World {
             .map_or((health_before, hitpoints_before), |target| {
                 (target.hitpoints + target.shields.current, target.hitpoints)
             });
+        let killed = self
+            .units
+            .get(receiving_target_id)
+            .is_some_and(|target| !target.is_alive());
         if let (Some(attacker_id), Some(gameplay)) = (attribution.unit_id, gameplay) {
             self.bank_combat_experience(
                 attacker_id,
@@ -194,8 +216,19 @@ impl World {
                 gameplay,
             );
         }
-        ((health_before - health_after).max(0.0) / final_multiplier)
+        let dealt = ((health_before - health_after).max(0.0) / final_multiplier)
             .min(damage)
-            .max(0.0)
+            .max(0.0);
+        if killed && let Some(gameplay) = gameplay {
+            let _replacement = self.create_physics_detonate_replacement(
+                receiving_target_id,
+                attribution.player_id,
+                gameplay,
+            );
+        }
+        if killed && let Some(attacker_id) = attribution.unit_id {
+            self.queue_rage_kill(attacker_id, target_proto_object);
+        }
+        dealt
     }
 }

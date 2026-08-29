@@ -15,19 +15,19 @@ struct CompositeParams {
 
 @group(0) @binding(0) var<uniform> params: CompositeParams;
 @group(0) @binding(1) var t_terrain_array: texture_2d_array<f32>;
-@group(0) @binding(2) var t_alpha_atlas: texture_2d_array<f32>;
+@group(0) @binding(2) var t_alpha_atlas: texture_2d<f32>;
 @group(0) @binding(3) var<storage, read> chunk_layers: array<u32>;
 @group(0) @binding(4) var<storage, read> texture_scales: array<vec2<f32>>;
 @group(0) @binding(5) var s_terrain: sampler;
 @group(0) @binding(6) var s_alpha: sampler;
-@group(0) @binding(7) var t_alpha_atlas_hi: texture_2d_array<f32>;
-@group(0) @binding(8) var t_decal_alpha_atlas: texture_2d_array<f32>;
+@group(0) @binding(7) var t_alpha_atlas_hi: texture_2d<f32>;
+@group(0) @binding(8) var t_decal_alpha_atlas: texture_2d<f32>;
 @group(0) @binding(9) var<storage, read> chunk_decal_layers: array<u32>;
 // xyz = rotation/center, w contains bitcast<u32>(decal texture index).
 @group(0) @binding(10) var<storage, read> decal_instances: array<vec4<f32>>;
 @group(0) @binding(11) var<storage, read> decal_uv_scales: array<vec2<f32>>;
 @group(0) @binding(12) var t_normal_array: texture_2d_array<f32>;
-@group(0) @binding(13) var t_decal_alpha_atlas_hi: texture_2d_array<f32>;
+@group(0) @binding(13) var t_decal_alpha_atlas_hi: texture_2d<f32>;
 @group(0) @binding(14) var t_decal_diffuse_array: texture_2d_array<f32>;
 @group(0) @binding(15) var t_decal_opacity_array: texture_2d_array<f32>;
 @group(0) @binding(16) var t_specular_array: texture_2d_array<f32>;
@@ -126,13 +126,15 @@ fn rotate_decal_uv(
 fn fs_main(in: VertexOutput) -> CompositeOutput {
     let chunk_index = params.chunk_index;
     let chunks_x = max(params.chunks_x, 1u);
-    let chunks_z = max(textureNumLayers(t_alpha_atlas) / chunks_x, 1u);
+    let alpha_dimensions = textureDimensions(t_alpha_atlas, 0);
+    let chunks_z = max(alpha_dimensions.y / 64u, 1u);
     let grid_z = chunk_index / chunks_x;
     let grid_x = chunk_index % chunks_x;
-    let half_pixel = 0.5 / 64.0;
-    let alpha_uv = mix(vec2<f32>(half_pixel), vec2<f32>(1.0 - half_pixel), in.uv);
-    let alpha_low = textureSampleLevel(t_alpha_atlas, s_alpha, alpha_uv, chunk_index, 0.0);
-    let alpha_high = textureSampleLevel(t_alpha_atlas_hi, s_alpha, alpha_uv, chunk_index, 0.0);
+    let alpha_origin = vec2<f32>(f32(grid_x * 64u), f32(grid_z * 64u));
+    let alpha_texel = alpha_origin + mix(vec2<f32>(0.5), vec2<f32>(63.5), in.uv);
+    let alpha_uv = alpha_texel / vec2<f32>(alpha_dimensions);
+    let alpha_low = textureSampleLevel(t_alpha_atlas, s_alpha, alpha_uv, 0.0);
+    let alpha_high = textureSampleLevel(t_alpha_atlas_hi, s_alpha, alpha_uv, 0.0);
     let tiling_uv = vec2<f32>(f32(grid_z) + in.uv.y, f32(grid_x) + in.uv.x);
     let layer_base = chunk_index * 8u;
     let base_layer = chunk_layers[layer_base];
@@ -185,14 +187,12 @@ fn fs_main(in: VertexOutput) -> CompositeOutput {
             t_decal_alpha_atlas,
             s_alpha,
             alpha_uv,
-            chunk_index,
             0.0,
         );
         let decal_alpha_high = textureSampleLevel(
             t_decal_alpha_atlas_hi,
             s_alpha,
             alpha_uv,
-            chunk_index,
             0.0,
         );
         let decal_base = chunk_index * 8u;

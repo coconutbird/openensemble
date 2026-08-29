@@ -35,6 +35,13 @@ impl World {
             .collect();
     }
 
+    pub(crate) fn configure_prototype_vehicle_physics(&mut self, gameplay: &GameplayCatalog) {
+        self.prototype_ground_vehicle_physics = gameplay
+            .ground_vehicle_physics_profiles()
+            .map(|(name, profile)| (name.to_owned(), profile.clone()))
+            .collect();
+    }
+
     /// Return the scenario-layered shield coverage used by future unit spawns.
     #[must_use]
     pub fn prototype_shield_coverage(
@@ -44,6 +51,14 @@ impl World {
         self.prototype_shield_coverages
             .get(&proto_object_name.to_ascii_lowercase())
             .copied()
+    }
+
+    pub(crate) fn prototype_ground_vehicle_physics(
+        &self,
+        proto_object_name: &str,
+    ) -> Option<&crate::gameplay::GroundVehiclePhysicsProfile> {
+        self.prototype_ground_vehicle_physics
+            .get(&proto_object_name.to_ascii_lowercase())
     }
 
     /// Test whether a proto-object has a concrete or abstract object type.
@@ -179,6 +194,14 @@ impl World {
             checksum.hash_u32(u32::try_from(prototype_name.len()).unwrap_or(u32::MAX));
             checksum.hash_bytes(prototype_name.as_bytes());
             checksum.hash_u32(*coverage as u32);
+        }
+        checksum.hash_u32(
+            u32::try_from(self.prototype_ground_vehicle_physics.len()).unwrap_or(u32::MAX),
+        );
+        for (prototype_name, profile) in &self.prototype_ground_vehicle_physics {
+            checksum.hash_u32(u32::try_from(prototype_name.len()).unwrap_or(u32::MAX));
+            checksum.hash_bytes(prototype_name.as_bytes());
+            profile.hash_state(checksum);
         }
     }
 }

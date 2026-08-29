@@ -1,6 +1,6 @@
 //! Immutable ability definitions joined to per-object command mappings.
 
-use crate::entities::RecoveryType;
+use crate::entities::{RecoveryType, SquadMode};
 use pipeline::database::hw1::{Ability, Database};
 use std::collections::BTreeMap;
 
@@ -18,6 +18,12 @@ pub enum AbilityRecoveryStart {
 pub struct AbilityGameplay {
     database_id: u8,
     name: String,
+    ability_type: Option<String>,
+    target_type: Option<String>,
+    objects: Vec<String>,
+    ammunition_cost: f32,
+    squad_mode: Option<SquadMode>,
+    keep_squad_mode: bool,
     recovery_start: Option<AbilityRecoveryStart>,
     recovery_type: Option<RecoveryType>,
     recovery_time: f32,
@@ -34,6 +40,42 @@ impl AbilityGameplay {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Return the authored ability category, such as `Work`.
+    #[must_use]
+    pub fn ability_type(&self) -> Option<&str> {
+        self.ability_type.as_deref()
+    }
+
+    /// Return the authored target category, such as `Location`.
+    #[must_use]
+    pub fn target_type(&self) -> Option<&str> {
+        self.target_type.as_deref()
+    }
+
+    /// Return the ability's authored proto-object list in database order.
+    #[must_use]
+    pub fn objects(&self) -> &[String] {
+        &self.objects
+    }
+
+    /// Return the finite, nonnegative ammunition charged per use.
+    #[must_use]
+    pub const fn ammunition_cost(&self) -> f32 {
+        self.ammunition_cost
+    }
+
+    /// Return the behavior mode entered while this ability executes.
+    #[must_use]
+    pub const fn squad_mode(&self) -> Option<SquadMode> {
+        self.squad_mode
+    }
+
+    /// Return whether the authored mode remains after ability completion.
+    #[must_use]
+    pub const fn keeps_squad_mode(&self) -> bool {
+        self.keep_squad_mode
     }
 
     /// Return the authored recovery-start event.
@@ -64,6 +106,18 @@ pub(super) fn collect_abilities(database: &Database) -> Vec<AbilityGameplay> {
             Some(AbilityGameplay {
                 database_id: u8::try_from(index).ok()?,
                 name: ability.name.clone(),
+                ability_type: ability.ability_type.clone(),
+                target_type: ability.target_type.clone(),
+                objects: ability.objects.clone(),
+                ammunition_cost: ability
+                    .ammo_cost
+                    .filter(|cost| cost.is_finite() && *cost >= 0.0)
+                    .unwrap_or_default(),
+                squad_mode: ability
+                    .squad_mode
+                    .as_deref()
+                    .and_then(SquadMode::from_authored),
+                keep_squad_mode: ability.keep_squad_mode.unwrap_or(false),
                 recovery_start: parse_recovery_start(ability.recover_start.as_deref()),
                 recovery_type: ability
                     .recover_type

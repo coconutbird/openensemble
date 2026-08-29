@@ -114,6 +114,38 @@ impl WorkCommand {
         }
     }
 
+    /// Build a targeted Detonate work command for player-owned squads.
+    #[must_use]
+    pub fn detonate_squads(
+        player_id: i32,
+        recipients: Vec<EntityId>,
+        target: EntityId,
+        ability_id: u8,
+    ) -> Self {
+        Self {
+            base: squad_work_command(player_id, recipients, crate::order::OrderType::Detonate),
+            unit_id: target,
+            ability_id: i32::from(ability_id),
+            ..Self::default()
+        }
+    }
+
+    /// Build a Mines work command targeting a world location.
+    #[must_use]
+    pub fn place_mines_at(
+        player_id: i32,
+        recipients: Vec<EntityId>,
+        target: Vec3,
+        ability_id: u8,
+    ) -> Self {
+        Self {
+            base: squad_work_command(player_id, recipients, crate::order::OrderType::Mines),
+            terrain_point: Some(target),
+            ability_id: i32::from(ability_id),
+            ..Self::default()
+        }
+    }
+
     /// Build a persistent Join command for player-owned squads.
     #[must_use]
     pub fn join_squads(player_id: i32, recipients: Vec<EntityId>, target: EntityId) -> Self {

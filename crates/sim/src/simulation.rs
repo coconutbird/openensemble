@@ -216,9 +216,10 @@ impl Simulation {
         world.game_time_ms = self.game_time_ms;
         CommandExecutor::with_database(database).execute_all(world, &commands);
         world.update_player_resources(SECONDS_PER_TICK);
+        world.update_player_power_recharges(database);
         let _custom_commands = world.update_custom_commands(SECONDS_PER_TICK);
         let _production = world.update_production(SECONDS_PER_TICK, database);
-        world.update_entities(SECONDS_PER_TICK);
+        world.update_entities_with_database(SECONDS_PER_TICK, database);
         let _triggers = world.update_triggers_with_database(database);
         commands
     }
@@ -233,11 +234,14 @@ impl Simulation {
         scenario.world.game_time_ms = self.game_time_ms;
         CommandExecutor::with_database(database).execute_all(&mut scenario.world, &commands);
         scenario.world.update_player_resources(SECONDS_PER_TICK);
+        scenario.world.update_player_power_recharges(database);
         let _custom_commands = scenario.world.update_custom_commands(SECONDS_PER_TICK);
         let _production = scenario.world.update_production(SECONDS_PER_TICK, database);
-        scenario
-            .world
-            .update_entities_with_gameplay(SECONDS_PER_TICK, &scenario.gameplay);
+        scenario.world.update_entities_with_database_and_gameplay(
+            SECONDS_PER_TICK,
+            database,
+            &scenario.gameplay,
+        );
         let _triggers = scenario
             .world
             .update_triggers_with_gameplay(database, &scenario.gameplay);

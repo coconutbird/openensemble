@@ -173,7 +173,7 @@ pub struct FoliageSet {
     pub num_verts_per_blade: u32,
     /// Blade vertex data stored as line texture format:
     /// positions.xyz + uv.x stored in positions texture
-    /// normals.xyz + uv.y stored in normals texture
+    /// normals.xyz + runtime (source-inverted) uv.y stored in normals texture
     pub blade_positions: Vec<[f32; 4]>,
     pub blade_normals: Vec<[f32; 4]>,
     /// Albedo/diffuse texture (RGBA).

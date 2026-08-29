@@ -244,7 +244,7 @@ pub(super) fn create_gpu_texture_layout(device: &wgpu::Device) -> wgpu::BindGrou
             sampler_layout_entry(4, both),
             buffer_layout_entry(5, fragment, wgpu::BufferBindingType::Uniform),
             texture_layout_entry(6, fragment, filterable, wgpu::TextureViewDimension::D2),
-            texture_layout_entry(7, fragment, filterable, wgpu::TextureViewDimension::D2),
+            texture_layout_entry(7, both, filterable, wgpu::TextureViewDimension::D2),
             texture_layout_entry(14, fragment, filterable, wgpu::TextureViewDimension::D2),
             buffer_layout_entry(15, both, wgpu::BufferBindingType::Uniform),
             texture_layout_entry(

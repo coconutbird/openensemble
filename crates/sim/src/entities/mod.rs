@@ -29,14 +29,15 @@ pub use object_state::{DopplePolicy, ObjectState, ScriptedAnimation, TargetingSe
 pub use objects::{IconObject, Object, ObjectKind, Revealer};
 pub use projectiles::Projectile;
 pub use squads::{
-    JoinKind, JoinMergeType, RecoveryType, Squad, SquadArchetype, SquadBoardState,
-    SquadContainmentState, SquadFormation, SquadGarrison, SquadMergeState, SquadMode,
-    SquadRecovery, SquadShields, SquadState, SquadTransportFlyIn, TransportFlyInPhase,
+    JoinKind, JoinMergeType, PowerTransportPhase, RecoveryType, Squad, SquadArchetype,
+    SquadBoardState, SquadContainmentState, SquadCryoState, SquadDetonatePhase, SquadFormation,
+    SquadGarrison, SquadMergeState, SquadMode, SquadPowerTransport, SquadRecovery, SquadShields,
+    SquadState, SquadTransportFlyIn, TransportFlyInPhase,
 };
 pub(crate) use units::UnitScalarModifiers;
 pub use units::{
     BuildingProduction, ConstructionKind, ConstructionProgress, ConstructionTask, RallyPoint,
     ResearchProgress, ResearchTask, ShieldCoverage, TowerWallAction, TrainingKind,
-    TrainingProgress, TrainingTask, Unit, UnitActions, UnitArchetype, UnitDataScalar, UnitGarrison,
-    UnitKind, UnitShields, UnitState,
+    TrainingProgress, TrainingTask, Unit, UnitActions, UnitAmmunition, UnitArchetype,
+    UnitDataScalar, UnitDetonatePhase, UnitGarrison, UnitKind, UnitShields, UnitState,
 };

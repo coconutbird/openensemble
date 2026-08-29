@@ -10,6 +10,7 @@ use crate::world::World;
 use num_traits::ToPrimitive;
 use pipeline::database::hw1::Database;
 
+mod ammunition;
 mod command_state;
 mod dispatch;
 mod events;

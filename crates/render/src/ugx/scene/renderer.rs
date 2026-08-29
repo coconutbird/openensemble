@@ -20,6 +20,7 @@ use crate::{RenderPhase, WorldRenderer};
 struct RenderedPlacement {
     entity_id: EntityId,
     proto_name: String,
+    visual_variation_index: Option<usize>,
     animation_revision: u32,
     transform: Mat4,
     visible: bool,
@@ -127,6 +128,7 @@ impl UnitSceneRenderer {
             .map(|placement| RenderedPlacement {
                 entity_id: placement.entity_id(),
                 proto_name: placement.proto_name().to_owned(),
+                visual_variation_index: placement.visual_variation_index(),
                 animation_revision: placement.animation_revision(),
                 transform: placement.transform,
                 visible: true,
@@ -166,6 +168,7 @@ impl UnitSceneRenderer {
                     && rendered
                         .proto_name
                         .eq_ignore_ascii_case(placement.proto_name())
+                    && rendered.visual_variation_index == placement.visual_variation_index()
                     && rendered.animation_revision == placement.animation_revision()
                 {
                     rendered.transform = placement.transform;
@@ -175,6 +178,7 @@ impl UnitSceneRenderer {
                 RenderedPlacement {
                     entity_id: placement.entity_id(),
                     proto_name: placement.proto_name().to_owned(),
+                    visual_variation_index: placement.visual_variation_index(),
                     animation_revision: placement.animation_revision(),
                     transform: placement.transform,
                     visible: true,

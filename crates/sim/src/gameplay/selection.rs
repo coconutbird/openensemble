@@ -1,7 +1,8 @@
 //! Runtime evaluation of authored tactic target rules.
 
 use super::damage_types::DamageTypeProfiles;
-use super::{AttackProfile, GameplayCatalog, ObjectGameplay, RangedAction, is_ranged_attack};
+use super::unit_attacks::{is_hand_attack, uses_ranged_attack_executor};
+use super::{AttackProfile, GameplayCatalog, ObjectGameplay, RangedAction, TacticStateId};
 use crate::entities::SquadMode;
 use pipeline::database::hw1::tactics::{Action, TargetRule};
 use pipeline::database::hw1::{Database, ProtoObject};
@@ -43,6 +44,8 @@ impl AttackQueryFlags {
     pub const TARGET_MELEE_ATTACKER: Self = Self(1 << 7);
     /// The acting unit simultaneously has contained and attached units.
     pub const SOURCE_CONTAINED_AND_ATTACHED: Self = Self(1 << 8);
+    /// The concrete target unit is currently occupying infantry cover.
+    pub const TARGET_IN_COVER: Self = Self(1 << 9);
 
     /// Return an empty condition set.
     #[must_use]
@@ -73,6 +76,8 @@ pub struct AttackQuery<'target> {
     pub ability_id: Option<u8>,
     /// Concrete target proto-object name.
     pub target_proto_object_name: Option<&'target str>,
+    /// Current per-unit tactic state, or retail's unrestricted default state.
+    pub tactic_state: Option<TacticStateId>,
     /// Dynamic boolean conditions used by rule predicates.
     pub flags: AttackQueryFlags,
 }
@@ -84,6 +89,7 @@ impl Default for AttackQuery<'_> {
             squad_mode: SquadMode::Normal,
             ability_id: None,
             target_proto_object_name: None,
+            tactic_state: None,
             flags: AttackQueryFlags::empty(),
         }
     }
@@ -249,7 +255,8 @@ impl ObjectGameplay {
             let Some(action) = self.resolve_rule_work_action(rule) else {
                 continue;
             };
-            if !action_is_enabled(action)
+            if !self.action_available_in_tactic_state(query.tactic_state, action)
+                || !action_is_enabled(action)
                 || !rule_matches(rule, action, query, requested_ability, target)
             {
                 continue;
@@ -275,7 +282,8 @@ impl ObjectGameplay {
                 let Some(action) = self.resolve_rule_action(rule) else {
                     continue;
                 };
-                if !action_is_enabled(action.action)
+                if !self.action_available_in_tactic_state(query.tactic_state, action.action)
+                    || !action_is_enabled(action.action)
                     || !rule_matches(rule, action.action, query, requested_ability, target)
                 {
                     continue;
@@ -289,10 +297,12 @@ impl ObjectGameplay {
 
         fallback
             .or_else(|| {
-                self.ranged_actions()
-                    .find(|action| action.action.default == Some(true))
+                self.ranged_actions().find(|action| {
+                    action.action.default == Some(true)
+                        && self.action_available_in_tactic_state(query.tactic_state, action.action)
+                })
             })
-            .or_else(|| self.unambiguous_fixture_action(action_is_enabled))
+            .or_else(|| self.unambiguous_fixture_action(query.tactic_state, action_is_enabled))
     }
 
     fn resolve_rule_action(&self, rule: &TargetRule) -> Option<RangedAction<'_>> {
@@ -302,7 +312,7 @@ impl ObjectGameplay {
             .actions
             .iter()
             .find(|action| action.name.eq_ignore_ascii_case(name))?;
-        is_ranged_attack(action).then(|| self.resolve_action(action))?
+        uses_ranged_attack_executor(action).then(|| self.resolve_action(action))?
     }
 
     fn resolve_rule_work_action(&self, rule: &TargetRule) -> Option<&Action> {
@@ -315,14 +325,16 @@ impl ObjectGameplay {
 
     fn unambiguous_fixture_action(
         &self,
+        tactic_state: Option<TacticStateId>,
         mut action_is_enabled: impl FnMut(&Action) -> bool,
     ) -> Option<RangedAction<'_>> {
         if self.tactics.tactic.is_some() {
             return None;
         }
-        let mut enabled = self
-            .ranged_actions()
-            .filter(|action| action_is_enabled(action.action));
+        let mut enabled = self.ranged_actions().filter(|action| {
+            self.action_available_in_tactic_state(tactic_state, action.action)
+                && action_is_enabled(action.action)
+        });
         let first = enabled.next()?;
         enabled.next().is_none().then_some(first)
     }
@@ -360,11 +372,17 @@ fn rule_matches(
     if !ownership_matches(rule, query, target) || !target_state_matches(rule, query) {
         return false;
     }
-    if is_ranged_attack(action)
+    if uses_ranged_attack_executor(action)
         && (query.flags.contains(AttackQueryFlags::TARGET_INVULNERABLE)
             || target.is_some_and(|traits| {
                 traits.is_invulnerable(query.flags.contains(AttackQueryFlags::TARGET_GAIA))
             }))
+    {
+        return false;
+    }
+    if is_hand_attack(action)
+        && (query.flags.contains(AttackQueryFlags::TARGET_IN_COVER)
+            || target.is_some_and(|traits| traits.is_type("Cover")))
     {
         return false;
     }
@@ -892,6 +910,69 @@ mod tests {
                 .select_ranged_action("unit", &automatic, authored_enabled)
                 .map(|action| action.action.name.as_str()),
             Some("Normal")
+        );
+    }
+
+    #[test]
+    fn hand_attacks_reject_occupied_and_authored_cover_targets() {
+        let mut database = Database::new();
+        database.objects.extend([
+            ProtoObject {
+                name: "attacker".to_owned(),
+                tactics: Some("attacker.tactics".to_owned()),
+                ..ProtoObject::default()
+            },
+            ProtoObject {
+                name: "infantry".to_owned(),
+                object_types: vec!["Infantry".to_owned()],
+                ..ProtoObject::default()
+            },
+            ProtoObject {
+                name: "cover_object".to_owned(),
+                object_types: vec!["Cover".to_owned()],
+                ..ProtoObject::default()
+            },
+        ]);
+        let tactics = TacticData {
+            weapons: vec![weapon("Hammer", 3.0)],
+            actions: vec![Action {
+                name: "HammerAttack".to_owned(),
+                action_type: Some("HandAttack".to_owned()),
+                weapon: Some("Hammer".to_owned()),
+                ..Action::default()
+            }],
+            tactic: Some(TacticRules {
+                target_rules: vec![TargetRule {
+                    action: Some("HammerAttack".to_owned()),
+                    ..TargetRule::default()
+                }],
+                ..TacticRules::default()
+            }),
+            ..TacticData::default()
+        };
+        let catalog = GameplayCatalog::from_tactics(&database, [("attacker".to_owned(), tactics)]);
+        let mut query = AttackQuery {
+            target_proto_object_name: Some("infantry"),
+            ..AttackQuery::default()
+        };
+
+        assert!(
+            catalog
+                .select_ranged_action("attacker", &query, authored_enabled)
+                .is_some()
+        );
+        query.flags.insert(AttackQueryFlags::TARGET_IN_COVER);
+        assert!(
+            catalog
+                .select_ranged_action("attacker", &query, authored_enabled)
+                .is_none()
+        );
+        query.flags = AttackQueryFlags::empty();
+        query.target_proto_object_name = Some("cover_object");
+        assert!(
+            catalog
+                .select_ranged_action("attacker", &query, authored_enabled)
+                .is_none()
         );
     }
 }

@@ -60,7 +60,7 @@ fn game_setting_conditions_use_checksummed_world_configuration() {
         &mut script,
         1,
         VarType::String,
-        TriggerValue::String("CampaignDebug".to_owned()),
+        TriggerValue::String("cAmPaIgNdEbUg".to_owned()),
     );
     add_value(
         &mut script,

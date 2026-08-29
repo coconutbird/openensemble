@@ -6,6 +6,118 @@ use pipeline::database::hw1::{Database, GameData, ProtoObject, Squad as ProtoSqu
 use sim::{GameplayCatalog, World, spawn_squad_at, squad_prototype_id};
 
 #[test]
+fn proto_unit_transform_updates_live_and_future_members_without_changing_logical_identity() {
+    let database = unit_transform_database();
+    let mut world = World::new();
+    world.init_players(1);
+    let squad_proto_id = squad_prototype_id(&database, "test_logical_squad").unwrap();
+    let first = spawn_squad_at(
+        &mut world,
+        &database,
+        1,
+        squad_proto_id,
+        Vec3::ZERO,
+        Vec3::Z,
+    )
+    .unwrap();
+    let first_unit_id = world.get_squad(first).unwrap().unit_ids[0];
+    let first_unit = world.get_unit_mut(first_unit_id).unwrap();
+    first_unit.hitpoints = 50.0;
+    first_unit.ammunition.set_current(5.0);
+
+    assert!(
+        world
+            .activate_technology(1, &database, "test_unit_upgrade")
+            .unwrap()
+    );
+    assert_transformed_member(&world, first_unit_id, 100.0, 10.0);
+
+    let second =
+        spawn_squad_at(&mut world, &database, 1, squad_proto_id, Vec3::X, Vec3::Z).unwrap();
+    let second_unit_id = world.get_squad(second).unwrap().unit_ids[0];
+    assert_transformed_member(&world, second_unit_id, 200.0, 20.0);
+
+    assert!(
+        world
+            .deactivate_technology(1, &database, "test_unit_upgrade")
+            .unwrap()
+    );
+    let third = spawn_squad_at(
+        &mut world,
+        &database,
+        1,
+        squad_proto_id,
+        Vec3::X * 2.0,
+        Vec3::Z,
+    )
+    .unwrap();
+    let third_unit_id = world.get_squad(third).unwrap().unit_ids[0];
+    assert_transformed_member(&world, third_unit_id, 200.0, 20.0);
+}
+
+fn assert_transformed_member(
+    world: &World,
+    unit_id: sim::EntityId,
+    hitpoints: f32,
+    ammunition: f32,
+) {
+    let unit = world.get_unit(unit_id).unwrap();
+    assert_eq!(unit.proto_object_id, 70);
+    assert_eq!(unit.logical_proto_object_name(), "test_base_member");
+    assert_eq!(unit.proto_object_name, "test_upgraded_member");
+    assert!(nearly_equal(unit.max_hitpoints, 200.0));
+    assert!(nearly_equal(unit.hitpoints, hitpoints));
+    assert!(nearly_equal(unit.ammunition.maximum(), 20.0));
+    assert!(nearly_equal(unit.ammunition.current(), ammunition));
+    assert!(nearly_equal(unit.speed, 12.0));
+    assert!(unit.object_types.iter().any(|kind| kind == "Upgraded"));
+}
+
+fn unit_transform_database() -> Database {
+    Database {
+        objects: vec![
+            ProtoObject {
+                name: "test_base_member".to_owned(),
+                dbid: Some(70),
+                object_class: Some("Unit".to_owned()),
+                hitpoints: Some(100.0),
+                max_velocity: Some(6.0),
+                ammo_max: Some(10.0),
+                flags: vec!["StartAtMaxAmmo".to_owned()],
+                ..ProtoObject::default()
+            },
+            ProtoObject {
+                name: "test_upgraded_member".to_owned(),
+                dbid: Some(71),
+                object_class: Some("Unit".to_owned()),
+                object_types: vec!["Upgraded".to_owned()],
+                hitpoints: Some(200.0),
+                max_velocity: Some(12.0),
+                ammo_max: Some(20.0),
+                flags: vec!["StartAtMaxAmmo".to_owned()],
+                ..ProtoObject::default()
+            },
+        ],
+        squads: vec![marine_squad(
+            "test_logical_squad",
+            80,
+            &[("test_base_member", 1)],
+        )],
+        techs: vec![Tech {
+            name: "test_unit_upgrade".to_owned(),
+            effects: Some(EffectsWrapper {
+                entries: vec![unit_transform_effect(
+                    "test_base_member",
+                    "test_upgraded_member",
+                )],
+            }),
+            ..Tech::default()
+        }],
+        ..Database::default()
+    }
+}
+
+#[test]
 fn marine_technology_chain_updates_live_and_future_sim_entities() {
     let database = marine_database();
     let mut world = World::new();
@@ -181,6 +293,69 @@ fn shield_technology_updates_live_and_future_units_and_recharge_timing() {
     assert!(world.get_unit(first_unit_id).unwrap().shields.current > 1_000.0);
 }
 
+#[test]
+fn ammunition_technology_scales_live_units_future_spawns_and_proto_squad_maximums() {
+    let database = ammunition_database();
+    let mut world = World::new();
+    world.init_players(1);
+    let prototype_id = squad_prototype_id(&database, "ammo_squad").unwrap();
+    let squad_id =
+        spawn_squad_at(&mut world, &database, 1, prototype_id, Vec3::ZERO, Vec3::Z).unwrap();
+    let unit_ids = world.get_squad(squad_id).unwrap().unit_ids.clone();
+    assert_eq!(world.squad_ammunition(squad_id), Some((0.0, 400.0)));
+    for unit_id in &unit_ids {
+        let ammunition = world.unit_ammunition(*unit_id).unwrap();
+        assert!(ammunition.is_enabled());
+        assert!(nearly_equal(ammunition.maximum(), 200.0));
+        assert!(nearly_equal(ammunition.regeneration_rate(), 10.0));
+        world
+            .get_unit_mut(*unit_id)
+            .unwrap()
+            .ammunition
+            .set_current(100.0);
+    }
+
+    let before = world.checksum();
+    assert!(
+        world
+            .activate_technology(1, &database, "ammo_upgrade")
+            .unwrap()
+    );
+    assert_ne!(world.checksum(), before);
+    assert_eq!(world.squad_ammunition(squad_id), Some((250.0, 500.0)));
+    for unit_id in &unit_ids {
+        let ammunition = world.unit_ammunition(*unit_id).unwrap();
+        assert!(nearly_equal(ammunition.current(), 125.0));
+        assert!(nearly_equal(ammunition.maximum(), 250.0));
+        assert!(nearly_equal(ammunition.regeneration_rate(), 12.5));
+    }
+
+    assert!(world.remove_unit(unit_ids[1]).is_some());
+    assert_eq!(world.squad_ammunition(squad_id), Some((125.0, 500.0)));
+    let future = spawn_squad_at(&mut world, &database, 1, prototype_id, Vec3::X, Vec3::Z).unwrap();
+    assert_eq!(world.squad_ammunition(future), Some((0.0, 500.0)));
+    assert!(
+        world
+            .get_squad(future)
+            .unwrap()
+            .unit_ids
+            .iter()
+            .all(|unit_id| {
+                let ammunition = world.unit_ammunition(*unit_id).unwrap();
+                nearly_equal(ammunition.maximum(), 250.0)
+                    && nearly_equal(ammunition.regeneration_rate(), 12.5)
+            })
+    );
+
+    assert!(
+        world
+            .deactivate_technology(1, &database, "ammo_upgrade")
+            .unwrap()
+    );
+    assert_eq!(world.squad_ammunition(squad_id), Some((100.0, 400.0)));
+    assert_eq!(world.squad_ammunition(future), Some((0.0, 400.0)));
+}
+
 fn marine_database() -> Database {
     let mut database = Database::new();
     database.objects.extend([
@@ -258,6 +433,47 @@ fn shield_database() -> Database {
                     "Percent",
                     "Player",
                     None,
+                    None,
+                    false,
+                ),
+            ],
+        }),
+        ..Tech::default()
+    });
+    database
+}
+
+fn ammunition_database() -> Database {
+    let mut database = Database::new();
+    database.objects.push(ProtoObject {
+        name: "ammo_unit".to_owned(),
+        object_class: Some("Unit".to_owned()),
+        ammo_max: Some(200.0),
+        ammo_regen_rate: Some(10.0),
+        ..ProtoObject::default()
+    });
+    database
+        .squads
+        .push(marine_squad("ammo_squad", 30, &[("ammo_unit", 2)]));
+    database.techs.push(Tech {
+        name: "ammo_upgrade".to_owned(),
+        effects: Some(EffectsWrapper {
+            entries: vec![
+                scalar_effect(
+                    "AmmoMax",
+                    1.25,
+                    "Percent",
+                    "ProtoUnit",
+                    Some("ammo_unit"),
+                    None,
+                    false,
+                ),
+                scalar_effect(
+                    "AmmoRegenRate",
+                    1.25,
+                    "Percent",
+                    "ProtoUnit",
+                    Some("ammo_unit"),
                     None,
                     false,
                 ),
@@ -453,6 +669,15 @@ fn ability_recovery_effect(ability: &str, amount: f32) -> TechEffect {
 fn transform_effect(from: &str, to: &str) -> TechEffect {
     TechEffect {
         effect_type: "TransformProtoSquad".to_owned(),
+        from_type: Some(from.to_owned()),
+        to_type: Some(to.to_owned()),
+        ..TechEffect::default()
+    }
+}
+
+fn unit_transform_effect(from: &str, to: &str) -> TechEffect {
+    TechEffect {
+        effect_type: "TransformProtoUnit".to_owned(),
         from_type: Some(from.to_owned()),
         to_type: Some(to.to_owned()),
         ..TechEffect::default()

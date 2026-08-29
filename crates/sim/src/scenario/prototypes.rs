@@ -3,12 +3,12 @@
 use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PlacedUnitKind {
+pub(crate) enum PlacedUnitKind {
     Mobile,
     Building,
 }
 
-pub(super) fn classify_proto_object(proto: &ProtoObject) -> Option<PlacedUnitKind> {
+pub(crate) fn classify_proto_object(proto: &ProtoObject) -> Option<PlacedUnitKind> {
     if proto
         .object_class
         .as_deref()

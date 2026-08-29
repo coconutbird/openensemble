@@ -80,6 +80,7 @@ fn collision_catalog(
         max_velocity_lead: 0.0,
         accuracy: AttackAccuracyProfile::default(),
         damage_per_attack: 5.0,
+        ammunition: crate::gameplay::AttackAmmunition::None,
         animations: vec![AttackAnimation {
             asset_path: "attack.uax".to_owned(),
             weight: 1,

@@ -8,6 +8,7 @@ use crate::sync::SyncChecksum;
 pub(crate) enum ProtoDataType {
     Hitpoints = 1,
     Shieldpoints = 2,
+    AmmoMax = 3,
     LineOfSight = 4,
     MaximumVelocity = 5,
     MaximumRange = 6,
@@ -24,6 +25,9 @@ pub(crate) enum ProtoDataType {
     CommandEnable = 34,
     ShieldRegenDelay = 38,
     Level = 48,
+    MaxDamagePerRam = 51,
+    ReflectDamageFactor = 52,
+    AmmoRegenRate = 58,
     CommandSelectable = 59,
 }
 
@@ -35,6 +39,7 @@ impl ProtoDataType {
         [
             ("Hitpoints", Self::Hitpoints),
             ("Shieldpoints", Self::Shieldpoints),
+            ("AmmoMax", Self::AmmoMax),
             ("LOS", Self::LineOfSight),
             ("MaximumVelocity", Self::MaximumVelocity),
             ("MaximumRange", Self::MaximumRange),
@@ -51,6 +56,9 @@ impl ProtoDataType {
             ("CommandEnable", Self::CommandEnable),
             ("ShieldRegenDelay", Self::ShieldRegenDelay),
             ("Level", Self::Level),
+            ("MaxDamagePerRam", Self::MaxDamagePerRam),
+            ("ReflectDamageFactor", Self::ReflectDamageFactor),
+            ("AmmoRegenRate", Self::AmmoRegenRate),
             ("CommandSelectable", Self::CommandSelectable),
         ]
         .into_iter()
@@ -61,6 +69,7 @@ impl ProtoDataType {
         Some(match value {
             1 => Self::Hitpoints,
             2 => Self::Shieldpoints,
+            3 => Self::AmmoMax,
             4 => Self::LineOfSight,
             5 => Self::MaximumVelocity,
             6 => Self::MaximumRange,
@@ -77,6 +86,9 @@ impl ProtoDataType {
             34 => Self::CommandEnable,
             38 => Self::ShieldRegenDelay,
             48 => Self::Level,
+            51 => Self::MaxDamagePerRam,
+            52 => Self::ReflectDamageFactor,
+            58 => Self::AmmoRegenRate,
             59 => Self::CommandSelectable,
             _ => return None,
         })
@@ -95,6 +107,8 @@ impl ProtoDataType {
                 | Self::AccuracyDistanceFactor
                 | Self::AccuracyDeviationFactor
                 | Self::MaxVelocityLead
+                | Self::MaxDamagePerRam
+                | Self::ReflectDamageFactor
         )
     }
 }
@@ -351,6 +365,21 @@ mod tests {
                 ProtoDataType::AccuracyDeviationFactor,
             ),
             (26, "MaxVelocityLead", ProtoDataType::MaxVelocityLead),
+        ] {
+            assert_eq!(ProtoDataType::from_ordinal(ordinal), Some(expected));
+            assert_eq!(ProtoDataType::from_trigger_value(name), Some(expected));
+        }
+    }
+
+    #[test]
+    fn ram_weapon_types_keep_retail_ordinals_and_names() {
+        for (ordinal, name, expected) in [
+            (51, "MaxDamagePerRam", ProtoDataType::MaxDamagePerRam),
+            (
+                52,
+                "ReflectDamageFactor",
+                ProtoDataType::ReflectDamageFactor,
+            ),
         ] {
             assert_eq!(ProtoDataType::from_ordinal(ordinal), Some(expected));
             assert_eq!(ProtoDataType::from_trigger_value(name), Some(expected));

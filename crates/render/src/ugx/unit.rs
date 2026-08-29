@@ -16,6 +16,7 @@ use crate::terrain::LightingParams;
 use crate::{RenderPhase, WorldRenderer};
 
 mod animations;
+mod attachment_only;
 #[cfg(test)]
 mod tests;
 
@@ -386,17 +387,22 @@ fn load_named_model(
         context.selection.visual,
         definition,
         context.selection.variation_index,
-    )
-    .ok_or_else(|| UnitLoadError::ModelAssetMissing(definition.name.clone()))?;
-    load_model_definition(
-        source,
-        context,
-        definition,
-        path,
-        parent,
-        parent_transform,
-        depth,
-    )
+    );
+    if let Some(path) = path {
+        return load_model_definition(
+            source,
+            context,
+            definition,
+            path,
+            parent,
+            parent_transform,
+            depth,
+        );
+    }
+    if parent.is_none() {
+        return attachment_only::load(definition, parent_transform);
+    }
+    Err(UnitLoadError::ModelAssetMissing(definition.name.clone()))
 }
 
 fn load_model_definition(

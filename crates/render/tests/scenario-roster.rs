@@ -28,6 +28,20 @@ fn spawned_marines_and_projectiles_join_the_authoritative_render_roster() {
         &content.visuals,
         &content.database.objects,
     );
+    assert!(
+        scene
+            .placements()
+            .iter()
+            .any(|placement| placement.visual_variation_index() == Some(0))
+    );
+    assert!(scene.placements().iter().all(|placement| {
+        simulation
+            .world
+            .entity_object_state(placement.entity_id())
+            .is_some_and(|state| {
+                state.visual_variation_index() == placement.visual_variation_index()
+            })
+    }));
     let squad_id = train_real_marine_squad(&mut simulation, &content.database);
     let member_ids = simulation
         .world

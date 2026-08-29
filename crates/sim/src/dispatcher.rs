@@ -1,7 +1,7 @@
 //! Command dispatcher for routing incoming packets to the right command type.
 
 use crate::command::CommandType;
-use crate::commands::{BuildingCommand, GameCommand, PowerCommand, WorkCommand};
+use crate::commands::{BuildingCommand, GameCommand, PowerCommand, PowerInputCommand, WorkCommand};
 use crate::packet::{ChannelPacketHeader, PacketError, channel_packet_type};
 use crate::serialize::{SerializeError, deserialize_command};
 use std::io::{Cursor, Read};
@@ -29,10 +29,10 @@ pub enum DispatchError {
 pub enum DispatchedCommand {
     Work(WorkCommand),
     Power(PowerCommand),
+    PowerInput(PowerInputCommand),
     Building(BuildingCommand),
     Game(GameCommand),
     // TODO: Add other command types as needed
-    // PowerInput(PowerInputCommand),
     // Trigger(TriggerCommand),
     // GeneralEvent(GeneralEventCommand),
 }
@@ -89,6 +89,15 @@ impl CommandDispatcher {
                 };
                 cmd.deserialize_fields(reader)?;
                 Ok(DispatchedCommand::Power(cmd))
+            }
+            channel_packet_type::COMMAND_POWER_INPUT => {
+                let base = deserialize_command(reader)?;
+                let mut cmd = PowerInputCommand {
+                    base,
+                    ..Default::default()
+                };
+                cmd.deserialize_fields(reader)?;
+                Ok(DispatchedCommand::PowerInput(cmd))
             }
             channel_packet_type::COMMAND_BUILDING => {
                 let base = deserialize_command(reader)?;

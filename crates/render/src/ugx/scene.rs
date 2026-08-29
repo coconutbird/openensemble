@@ -23,6 +23,7 @@ pub use sim::{
 pub struct UnitPlacement {
     entity_id: EntityId,
     proto_name: String,
+    visual_variation_index: Option<usize>,
     animation_revision: u32,
     transform: Mat4,
     unit: Arc<Unit>,
@@ -39,6 +40,12 @@ impl UnitPlacement {
     #[must_use]
     pub fn proto_name(&self) -> &str {
         &self.proto_name
+    }
+
+    /// Return the visual variation selected by authoritative simulation state.
+    #[must_use]
+    pub const fn visual_variation_index(&self) -> Option<usize> {
+        self.visual_variation_index
     }
 
     /// Return the sim animation revision captured by this decoded visual.
@@ -89,7 +96,7 @@ pub struct UnitScene {
     placements: Vec<UnitPlacement>,
     issues: Vec<UnitSceneIssue>,
     decoded_visuals: HashMap<String, Option<Arc<Unit>>>,
-    simulation_entity_states: Vec<(EntityId, u32)>,
+    simulation_entity_states: Vec<(EntityId, u32, Option<usize>)>,
     simulation_entity_count: usize,
     unique_visual_count: usize,
     skipped_no_render_count: usize,
@@ -102,8 +109,8 @@ pub struct UnitScene {
 impl UnitScene {
     /// Resolve visual assets for every renderable entity in the authoritative sim world.
     ///
-    /// Asset decoding is cached by proto name. The resulting placements retain
-    /// only entity IDs; the GPU renderer fetches current transforms from
+    /// Asset decoding is cached by prototype, sim-selected variation, and
+    /// scripted animation. The GPU renderer fetches current transforms from
     /// [`SimWorld`] every frame.
     #[must_use]
     pub fn load_world(
@@ -117,9 +124,9 @@ impl UnitScene {
 
     /// Refresh presentation assets when the authoritative entity roster changes.
     ///
-    /// Existing decoded visuals are retained by prototype name, so spawning
-    /// another instance normally allocates only per-instance presentation data.
-    /// Returns whether the roster changed.
+    /// Existing decoded visuals are retained by prototype, variation, and
+    /// animation, so an identical spawn normally allocates only per-instance
+    /// presentation data. Returns whether the roster changed.
     pub fn sync_world(
         &mut self,
         source: &mut AssetSource<StdFileProvider>,
@@ -186,6 +193,7 @@ impl UnitScene {
                 source,
                 &visuals[visual_name],
                 &lookup_name,
+                entity.visual_variation_index,
                 entity.animation_asset,
                 &mut asset_cache,
                 &mut units,
@@ -205,6 +213,7 @@ impl UnitScene {
             scene.placements.push(UnitPlacement {
                 entity_id,
                 proto_name: proto_name.to_owned(),
+                visual_variation_index: entity.visual_variation_index,
                 animation_revision: entity.animation_revision,
                 transform,
                 unit,
@@ -299,21 +308,19 @@ fn load_cached_unit(
     source: &mut AssetSource<StdFileProvider>,
     visual: &Visual,
     lookup_name: &str,
+    visual_variation_index: Option<usize>,
     animation_asset: Option<&str>,
     asset_cache: &mut UnitAssetCache,
     units: &mut HashMap<String, Option<Arc<Unit>>>,
 ) -> Result<Arc<Unit>, Option<String>> {
-    let cache_key = animation_asset.map_or_else(
-        || lookup_name.to_owned(),
-        |asset| format!("{lookup_name}\0{}", asset.to_ascii_lowercase()),
-    );
+    let cache_key = visual_cache_key(lookup_name, visual_variation_index, animation_asset);
     if let Some(cached) = units.get(&cache_key) {
         return cached.clone().ok_or(None);
     }
     match Unit::load_variant_with_animation_cache(
         source,
         visual,
-        None,
+        visual_variation_index,
         animation_asset,
         asset_cache,
     ) {
@@ -329,6 +336,17 @@ fn load_cached_unit(
     }
 }
 
+fn visual_cache_key(
+    lookup_name: &str,
+    visual_variation_index: Option<usize>,
+    animation_asset: Option<&str>,
+) -> String {
+    let variation =
+        visual_variation_index.map_or_else(|| "random".to_owned(), |index| index.to_string());
+    let animation = animation_asset.map_or_else(String::new, str::to_ascii_lowercase);
+    format!("{lookup_name}\0variation={variation}\0animation={animation}")
+}
+
 fn prototype_is_hidden(proto: &ProtoObject) -> bool {
     proto
         .flags
@@ -339,13 +357,22 @@ fn prototype_is_hidden(proto: &ProtoObject) -> bool {
 struct SimulationVisual<'a> {
     id: EntityId,
     proto_name: &'a str,
+    visual_variation_index: Option<usize>,
     animation_asset: Option<&'a str>,
     animation_revision: u32,
     transform: Option<Mat4>,
 }
 
-fn simulation_entity_states(world: &SimWorld) -> impl Iterator<Item = (EntityId, u32)> + '_ {
-    simulation_visuals(world).map(|visual| (visual.id, visual.animation_revision))
+fn simulation_entity_states(
+    world: &SimWorld,
+) -> impl Iterator<Item = (EntityId, u32, Option<usize>)> + '_ {
+    simulation_visuals(world).map(|visual| {
+        (
+            visual.id,
+            visual.animation_revision,
+            visual.visual_variation_index,
+        )
+    })
 }
 
 /// Iterate prototype names for every renderer-facing entity in the sim roster.
@@ -356,18 +383,20 @@ pub fn simulation_proto_names(world: &SimWorld) -> impl Iterator<Item = &str> {
     world
         .objects
         .iter()
-        .filter(|(_, object)| object.is_visual())
+        .filter(|(_, object)| object.is_visual() && object.object_state.is_render_enabled())
         .map(|(_, object)| object.proto_object_name.as_str())
         .chain(
             world
                 .units
                 .iter()
+                .filter(|(_, unit)| unit.object_state.is_render_enabled())
                 .map(|(_, unit)| unit.proto_object_name.as_str()),
         )
         .chain(
             world
                 .projectiles
                 .iter()
+                .filter(|(_, projectile)| projectile.object_state.is_render_enabled())
                 .map(|(_, projectile)| projectile.proto_object_name.as_str()),
         )
 }
@@ -376,10 +405,11 @@ fn simulation_visuals(world: &SimWorld) -> impl Iterator<Item = SimulationVisual
     world
         .objects
         .iter()
-        .filter(|(_, object)| object.is_visual())
+        .filter(|(_, object)| object.is_visual() && object.object_state.is_render_enabled())
         .map(|(id, object)| SimulationVisual {
             id,
             proto_name: &object.proto_object_name,
+            visual_variation_index: object.object_state.visual_variation_index(),
             animation_asset: object
                 .object_state
                 .scripted_animation()
@@ -390,36 +420,46 @@ fn simulation_visuals(world: &SimWorld) -> impl Iterator<Item = SimulationVisual
                 .map_or(0, sim::ScriptedAnimation::revision),
             transform: simulation_object_transform(object),
         })
-        .chain(world.units.iter().map(|(id, unit)| {
-            SimulationVisual {
-                id,
-                proto_name: &unit.proto_object_name,
-                animation_asset: unit
-                    .object_state
-                    .scripted_animation()
-                    .and_then(sim::ScriptedAnimation::asset_path),
-                animation_revision: unit
-                    .object_state
-                    .scripted_animation()
-                    .map_or(0, sim::ScriptedAnimation::revision),
-                transform: simulation_unit_model_transform(unit),
-            }
-        }))
-        .chain(world.projectiles.iter().map(|(id, projectile)| {
-            SimulationVisual {
-                id,
-                proto_name: &projectile.proto_object_name,
-                animation_asset: projectile
-                    .object_state
-                    .scripted_animation()
-                    .and_then(sim::ScriptedAnimation::asset_path),
-                animation_revision: projectile
-                    .object_state
-                    .scripted_animation()
-                    .map_or(0, sim::ScriptedAnimation::revision),
-                transform: simulation_projectile_transform(projectile),
-            }
-        }))
+        .chain(
+            world
+                .units
+                .iter()
+                .filter(|(_, unit)| unit.object_state.is_render_enabled())
+                .map(|(id, unit)| SimulationVisual {
+                    id,
+                    proto_name: &unit.proto_object_name,
+                    visual_variation_index: unit.object_state.visual_variation_index(),
+                    animation_asset: unit
+                        .object_state
+                        .scripted_animation()
+                        .and_then(sim::ScriptedAnimation::asset_path),
+                    animation_revision: unit
+                        .object_state
+                        .scripted_animation()
+                        .map_or(0, sim::ScriptedAnimation::revision),
+                    transform: simulation_unit_model_transform(unit),
+                }),
+        )
+        .chain(
+            world
+                .projectiles
+                .iter()
+                .filter(|(_, projectile)| projectile.object_state.is_render_enabled())
+                .map(|(id, projectile)| SimulationVisual {
+                    id,
+                    proto_name: &projectile.proto_object_name,
+                    visual_variation_index: projectile.object_state.visual_variation_index(),
+                    animation_asset: projectile
+                        .object_state
+                        .scripted_animation()
+                        .and_then(sim::ScriptedAnimation::asset_path),
+                    animation_revision: projectile
+                        .object_state
+                        .scripted_animation()
+                        .map_or(0, sim::ScriptedAnimation::revision),
+                    transform: simulation_projectile_transform(projectile),
+                }),
+        )
 }
 
 /// Resolve a render transform for any sim entity represented by this scene.
@@ -427,16 +467,18 @@ fn simulation_visuals(world: &SimWorld) -> impl Iterator<Item = SimulationVisual
 pub fn simulation_entity_transform(world: &SimWorld, entity_id: EntityId) -> Option<Mat4> {
     world
         .get_object(entity_id)
-        .filter(|object| object.is_visual())
+        .filter(|object| object.is_visual() && object.object_state.is_render_enabled())
         .and_then(simulation_object_transform)
         .or_else(|| {
             world
                 .get_unit(entity_id)
+                .filter(|unit| unit.object_state.is_render_enabled())
                 .and_then(simulation_unit_transform)
         })
         .or_else(|| {
             world
                 .get_projectile(entity_id)
+                .filter(|projectile| projectile.object_state.is_render_enabled())
                 .and_then(simulation_projectile_transform)
         })
 }
@@ -476,7 +518,7 @@ pub fn simulation_entity_animation(
 /// Build a model-to-world matrix solely from authoritative simulation state.
 #[must_use]
 pub fn simulation_unit_transform(unit: &sim::Unit) -> Option<Mat4> {
-    if unit.is_garrisoned() {
+    if unit.is_garrisoned() || !unit.object_state.is_render_enabled() {
         return None;
     }
     simulation_unit_model_transform(unit)
@@ -613,7 +655,7 @@ mod tests {
         let mut world = sim::World::new();
         let first = world.create_unit(0);
         let mut scene = super::UnitScene {
-            simulation_entity_states: vec![(first, 0)],
+            simulation_entity_states: vec![(first, 0, None)],
             simulation_entity_count: 1,
             ..super::UnitScene::default()
         };
@@ -624,13 +666,77 @@ mod tests {
         assert_ne!(first, replacement);
         assert!(!scene.roster_matches(&world));
 
-        scene.simulation_entity_states = vec![(replacement, 0)];
+        scene.simulation_entity_states = vec![(replacement, 0, None)];
         assert!(scene.roster_matches(&world));
 
         assert!(world.play_entity_animation(replacement, "Death".to_owned(), None, 1_000));
         assert!(!scene.roster_matches(&world));
-        scene.simulation_entity_states = vec![(replacement, 1)];
+        scene.simulation_entity_states = vec![(replacement, 1, None)];
         assert!(scene.roster_matches(&world));
+    }
+
+    #[test]
+    fn runtime_no_render_state_removes_and_restores_the_sim_projection() {
+        let mut world = sim::World::new();
+        let unit_id = world.create_unit(0);
+        world.get_unit_mut(unit_id).unwrap().proto_object_name = "drop_unit".to_owned();
+        assert_eq!(
+            simulation_proto_names(&world).collect::<Vec<_>>(),
+            ["drop_unit"]
+        );
+        assert!(simulation_entity_transform(&world, unit_id).is_some());
+
+        assert!(world.set_entity_render_enabled(unit_id, false));
+        assert!(simulation_proto_names(&world).next().is_none());
+        assert!(simulation_entity_transform(&world, unit_id).is_none());
+
+        assert!(world.set_entity_render_enabled(unit_id, true));
+        assert_eq!(
+            simulation_proto_names(&world).collect::<Vec<_>>(),
+            ["drop_unit"]
+        );
+        assert!(simulation_entity_transform(&world, unit_id).is_some());
+    }
+
+    #[test]
+    fn visual_cache_distinguishes_random_explicit_and_animated_variants() {
+        let random = super::visual_cache_key("marine", None, None);
+        let first = super::visual_cache_key("marine", Some(0), None);
+        let second = super::visual_cache_key("marine", Some(1), None);
+        let animated = super::visual_cache_key("marine", Some(1), Some("Art\\Attack.UAX"));
+
+        assert_ne!(random, first);
+        assert_ne!(first, second);
+        assert_ne!(second, animated);
+    }
+
+    #[test]
+    fn scenario_visual_variation_is_projected_only_from_sim_state() {
+        let scenario = sim::ScenarioData::from_xml_str(
+            r#"<Scenario><Objects>
+                <Object ID="7" VisualVariationIndex="2">variation_crate</Object>
+            </Objects></Scenario>"#,
+        )
+        .expect("valid scenario");
+        let database = Database {
+            objects: vec![ProtoObject {
+                name: "variation_crate".to_owned(),
+                visual: Some("variation_crate".to_owned()),
+                ..ProtoObject::default()
+            }],
+            ..Database::default()
+        };
+        let loaded = sim::load_scenario_into_world(&scenario, &database);
+        let entity_id = loaded.get_entity_id(7).unwrap();
+        let projected = super::simulation_visuals(&loaded.world)
+            .find(|visual| visual.id == entity_id)
+            .expect("class-zero visual should enter the sim projection");
+
+        assert_eq!(projected.visual_variation_index, Some(2));
+        assert_eq!(
+            super::simulation_entity_states(&loaded.world).collect::<Vec<_>>(),
+            vec![(entity_id, 0, Some(2))]
+        );
     }
 
     #[test]

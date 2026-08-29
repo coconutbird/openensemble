@@ -5,30 +5,46 @@
 //! distinction without inventing a separate entity class.
 
 mod actions;
+mod ammunition;
 mod building;
+mod collision_attack;
 mod combat;
+mod cryo;
+mod death_replacement;
+mod detonate;
 mod garrison;
 pub mod marine;
+mod physics_replacement;
 pub(crate) mod rally_points;
 mod revival;
 mod scalars;
 mod shields;
+mod tactic_state;
 mod tower_wall;
+mod vehicle;
 pub mod warthog;
 
 pub use actions::UnitActions;
+pub use ammunition::UnitAmmunition;
 pub use building::{
     BuildingProduction, ConstructionKind, ConstructionProgress, ConstructionTask, ResearchProgress,
     ResearchTask, TrainingKind, TrainingProgress, TrainingTask,
 };
 pub(crate) use building::{ProductionTask, TriggerCommandStateRef};
+pub(crate) use collision_attack::UnitCollisionAttack;
 pub use combat::UnitCombat;
+pub(crate) use cryo::UnitCryo;
+pub(crate) use death_replacement::UnitStaticDeathReplacement;
+pub use detonate::UnitDetonatePhase;
+pub(crate) use detonate::{UnitDetonateTriggerConfig, UnitDetonation};
 pub use garrison::UnitGarrison;
+pub(crate) use physics_replacement::UnitPhysicsReplacement;
 pub use rally_points::RallyPoint;
 pub use scalars::UnitDataScalar;
 pub(crate) use scalars::UnitScalarModifiers;
 pub use shields::{ShieldCoverage, UnitShields};
 pub use tower_wall::TowerWallAction;
+pub(crate) use vehicle::configure_ground_vehicle_physics;
 
 use super::{BaseEntity, BaseId, EntityIdle, ObjectState};
 use crate::entity::Entity;
@@ -122,8 +138,10 @@ pub struct Unit {
     pub(crate) idle: EntityIdle,
     /// Database proto-object ID, or `-1` when unresolved.
     pub proto_object_id: i32,
-    /// Proto-object name retained for diagnostics and deterministic checksums.
+    /// Effective player-prototype name used by gameplay and presentation.
     pub proto_object_name: String,
+    /// Logical database prototype whose player-owned definition was transformed.
+    pub(crate) logical_proto_object_name: String,
     /// Authored object-type memberships used by containment and targeting rules.
     pub object_types: Vec<String>,
     /// Retail flying flag derived from the prototype movement type.
@@ -186,10 +204,24 @@ pub struct Unit {
     pub attack_ability_id: Option<u8>,
     /// Live enablement state for authored tactic actions.
     pub actions: UnitActions,
+    /// Current authored tactic state and its deterministic transition revision.
+    tactic_state: tactic_state::UnitTacticState,
     /// Containment state and immutable container capabilities.
     pub garrison: UnitGarrison,
     /// Per-unit authored attack animation/cooldown state.
     pub combat: UnitCombat,
+    /// Persistent retail ammunition amount and regeneration action.
+    pub ammunition: UnitAmmunition,
+    /// Per-unit effects projected from the owning squad's cryo action.
+    pub(crate) cryo: UnitCryo,
+    /// Persistent collision-attack lifecycle and targets hit by this action.
+    pub(crate) collision_attack: UnitCollisionAttack,
+    /// Persistent arming and immediate Detonate child-action state.
+    pub(crate) detonate: detonate::UnitDetonate,
+    /// Whether this entity is a physics death replacement awaiting cleanup.
+    pub(crate) physics_replacement: UnitPhysicsReplacement,
+    /// In-place static replacement retained after the source unit dies.
+    pub(crate) static_death_replacement: UnitStaticDeathReplacement,
     /// Persistent retail tower-wall action after a destination is assigned.
     pub tower_wall: Option<TowerWallAction>,
     /// Research/production work owned by building units.
@@ -241,6 +273,7 @@ impl Default for Unit {
             idle: EntityIdle::default(),
             proto_object_id: -1,
             proto_object_name: String::new(),
+            logical_proto_object_name: String::new(),
             object_types: Vec::new(),
             flying: false,
             hitpoints: 100.0,
@@ -272,8 +305,15 @@ impl Default for Unit {
             attack_range: 0.0,
             attack_ability_id: None,
             actions: UnitActions::default(),
+            tactic_state: tactic_state::UnitTacticState::default(),
             garrison: UnitGarrison::default(),
             combat: UnitCombat::default(),
+            ammunition: UnitAmmunition::default(),
+            cryo: UnitCryo::default(),
+            collision_attack: UnitCollisionAttack::default(),
+            detonate: detonate::UnitDetonate::default(),
+            physics_replacement: UnitPhysicsReplacement::default(),
+            static_death_replacement: UnitStaticDeathReplacement::default(),
             tower_wall: None,
             production: BuildingProduction::default(),
             rally_points: rally_points::UnitRallyPoints::default(),
@@ -318,6 +358,12 @@ impl Unit {
         };
         building.base.configure_prototype_mobility(true);
         building
+    }
+
+    /// Return the stable logical prototype name retained across technology transforms.
+    #[must_use]
+    pub fn logical_proto_object_name(&self) -> &str {
+        &self.logical_proto_object_name
     }
 
     /// Check whether this unit is a building.
@@ -648,6 +694,8 @@ impl Unit {
         self.attack_range = 0.0;
         self.attack_ability_id = None;
         self.combat.reset();
+        self.cancel_detonate_action();
+        self.clear_tactic_state();
         self.move_target = None;
         self.base.velocity = Vec3::ZERO;
         self.state = UnitState::Idle;
@@ -664,6 +712,7 @@ impl Unit {
         self.attack_range = 0.0;
         self.attack_ability_id = None;
         self.combat.reset();
+        self.clear_tactic_state();
         self.cancel_idle_action();
         self.stop();
     }
@@ -785,14 +834,18 @@ impl Unit {
 
     fn update_movement(&mut self, dt: f32) {
         let reverse_move = self.is_reverse_moving();
+        let velocity_scalar = self.effective_velocity_scalar();
+        let physics_replacement = self.is_physics_replacement();
         if let Some(body) = &mut self.physics {
-            if body.update(
+            let arrived = body.update(
                 &mut self.base,
                 self.move_target,
                 dt,
-                self.velocity_scalar,
+                velocity_scalar,
                 reverse_move,
-            ) {
+            );
+            if arrived || (!physics_replacement && self.move_target.is_none() && body.is_grounded())
+            {
                 self.stop();
             }
             return;
@@ -802,7 +855,7 @@ impl Unit {
         };
         let to_target = target - self.base.position;
         let distance = to_target.length();
-        let speed = self.speed * self.velocity_scalar;
+        let speed = self.speed * velocity_scalar;
         if distance < ARRIVAL_THRESHOLD || speed * dt >= distance {
             self.base.position = target;
             self.stop();
@@ -830,10 +883,17 @@ impl Entity for Unit {
     }
 
     fn update(&mut self, dt: f32) {
+        self.ammunition.advance(dt);
+        let airborne = self
+            .physics
+            .as_ref()
+            .is_some_and(|body| !body.is_grounded());
         if self.base.is_mobile()
             && !self.is_incapacitated()
             && !self.is_garrisoned()
-            && (self.state == UnitState::Moving
+            && (airborne
+                || self.is_physics_replacement()
+                || self.state == UnitState::Moving
                 || (self.state == UnitState::Attacking && self.move_target.is_some()))
         {
             self.update_movement(dt);

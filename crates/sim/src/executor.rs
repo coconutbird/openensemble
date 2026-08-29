@@ -5,15 +5,19 @@
 use crate::command_queue::{CommandEntry, QueuedCommand};
 use crate::commands::{
     BuildingCommand, BuildingCommandType, GameCommand, GameCommandType, PowerCommand,
-    PowerCommandType, WorkCommand, work_command_flags,
+    PowerCommandType, PowerInputCommand, PowerInputCommandType, PowerUserId, WorkCommand,
+    power_command_flags, power_input_command_flags, work_command_flags,
 };
 use crate::entities::{RecoveryType, SquadMode, TrainingKind};
 use crate::gameplay::resolve_database_ability;
 use crate::order::OrderType;
 use crate::player::PowerGrant;
 use crate::spawn::{MAX_SPAWN_BATCH, spawn_object_at, spawn_squads_at};
-use crate::world::World;
+use crate::world::{NativePowerInvocation, World};
 use pipeline::database::hw1::Database;
+
+mod detonate;
+mod mines;
 
 #[cfg(test)]
 use glam::Vec3;
@@ -51,6 +55,7 @@ impl<'database> CommandExecutor<'database> {
         match &entry.command {
             QueuedCommand::Work(cmd) => self.execute_work(world, cmd),
             QueuedCommand::Power(cmd) => self.execute_power(world, cmd),
+            QueuedCommand::PowerInput(cmd) => self.execute_power_input(world, cmd),
             QueuedCommand::Building(cmd) => self.execute_building(world, cmd),
             QueuedCommand::Game(cmd) => self.execute_game(world, cmd),
         }
@@ -63,11 +68,13 @@ impl<'database> CommandExecutor<'database> {
         match order_type {
             Some(OrderType::Move) => Self::execute_move(world, cmd),
             Some(OrderType::Attack) => self.execute_attack(world, cmd),
+            Some(OrderType::Detonate) => self.execute_detonate(world, cmd),
             Some(OrderType::Join) => self.execute_join(world, cmd),
             Some(OrderType::Garrison) => Self::execute_garrison(world, cmd),
             Some(OrderType::Ungarrison) => Self::execute_ungarrison(world, cmd),
             Some(OrderType::Hitch) => Self::execute_hitch(world, cmd),
             Some(OrderType::Unhitch) => Self::execute_unhitch(world, cmd),
+            Some(OrderType::Mines) => self.execute_mines(world, cmd),
             _ => {}
         }
     }
@@ -124,7 +131,9 @@ impl<'database> CommandExecutor<'database> {
                 recipient_id,
                 cmd.unit_id,
                 cmd.range,
-                squad_mode,
+                squad_mode.or_else(|| {
+                    ability_id.and_then(|id| self.ability_squad_mode(world, recipient_id, id))
+                }),
                 ability_id,
             );
         }
@@ -229,6 +238,27 @@ impl<'database> CommandExecutor<'database> {
             .is_some_and(|recovery_type| squad.recovery.blocks(recovery_type))
     }
 
+    fn ability_squad_mode(
+        &self,
+        world: &World,
+        recipient_id: crate::EntityId,
+        requested_id: u8,
+    ) -> Option<SquadMode> {
+        let database = self.database?;
+        let squad = world.get_squad(recipient_id)?;
+        let proto_object_name = squad
+            .unit_ids
+            .iter()
+            .find_map(|unit_id| world.get_unit(*unit_id))?
+            .proto_object_name
+            .as_str();
+        let (_, ability) = resolve_database_ability(database, proto_object_name, requested_id)?;
+        ability
+            .squad_mode
+            .as_deref()
+            .and_then(SquadMode::from_authored)
+    }
+
     fn move_owned_recipients(world: &mut World, cmd: &WorkCommand, target: glam::Vec3) {
         let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
             return;
@@ -255,21 +285,66 @@ impl<'database> CommandExecutor<'database> {
         else {
             return;
         };
-        if cmd.power_type == PowerCommandType::GrantPower {
-            let _granted = world.grant_player_power(
-                player_id,
-                database,
-                PowerGrant {
-                    proto_power_id: cmd.proto_power_id,
-                    squad_id: crate::EntityId::INVALID,
-                    uses: cmd.num_uses,
-                    icon_location: -1,
-                    ignore_cost: false,
-                    ignore_tech_prerequisites: false,
-                    ignore_population: false,
-                },
-            );
+        match cmd.power_type {
+            PowerCommandType::GrantPower => {
+                let _granted = world.grant_player_power(
+                    player_id,
+                    database,
+                    PowerGrant {
+                        proto_power_id: cmd.proto_power_id,
+                        squad_id: crate::EntityId::INVALID,
+                        uses: cmd.num_uses,
+                        icon_location: -1,
+                        ignore_cost: false,
+                        ignore_tech_prerequisites: false,
+                        ignore_population: false,
+                    },
+                );
+            }
+            PowerCommandType::InvokePower2 => {
+                let Ok(power_level) = u32::try_from(cmd.power_level) else {
+                    return;
+                };
+                let _started = world.invoke_native_power(
+                    database,
+                    NativePowerInvocation {
+                        player_id,
+                        proto_power_id: cmd.proto_power_id,
+                        power_level,
+                        squad_id: cmd.squad_id,
+                        target_location: cmd.target_location.truncate(),
+                        ignore_requirements: cmd.base.has_flag(power_command_flags::NO_COST),
+                        power_user_id: PowerUserId::from_raw(cmd.power_user_id.cast_unsigned()),
+                    },
+                );
+            }
+            PowerCommandType::Undefined
+            | PowerCommandType::InvokePower
+            | PowerCommandType::InvokeAbility => {}
         }
+    }
+
+    /// Route synchronized input to the matching running native power.
+    fn execute_power_input(&self, world: &mut World, cmd: &PowerInputCommand) {
+        let Some(database) = self.database else {
+            return;
+        };
+        let input = match cmd.input_type {
+            PowerInputCommandType::Confirm => {
+                crate::world::NativePowerInput::Confirm(cmd.vector.truncate())
+            }
+            PowerInputCommandType::Position => {
+                crate::world::NativePowerInput::Position(cmd.vector.truncate())
+            }
+            PowerInputCommandType::Direction => {
+                crate::world::NativePowerInput::Direction(cmd.vector.truncate())
+            }
+            PowerInputCommandType::Shutdown => crate::world::NativePowerInput::Shutdown,
+            PowerInputCommandType::Undefined => return,
+        };
+        let no_cost = cmd.base.has_flag(power_input_command_flags::NO_COST);
+        let _accepted =
+            world.submit_native_power_input(database, cmd.power_user_id, input, no_cost);
     }
 
     /// Execute supported building production commands.

@@ -4,6 +4,7 @@ use super::World;
 use super::icons::IconObjectSpawn;
 use crate::entities::Object;
 use crate::entities::objects::is_icon_prototype;
+use crate::entities::squads::{formation_offset_to_local, formation_offset_to_world};
 use crate::entity_id::{EntityClass, EntityId};
 use crate::spawn::find_object_by_id;
 use glam::Vec3;
@@ -21,6 +22,25 @@ impl World {
         unit_id: EntityId,
         prototype_id: i32,
     ) -> Option<EntityId> {
+        self.add_prototype_attachment_to_unit_with_offset(
+            database,
+            unit_id,
+            prototype_id,
+            Vec3::ZERO,
+        )
+    }
+
+    /// Create an attachment at a world-space offset and retain it as the unit turns.
+    pub fn add_prototype_attachment_to_unit_with_offset(
+        &mut self,
+        database: &Database,
+        unit_id: EntityId,
+        prototype_id: i32,
+        world_offset: Vec3,
+    ) -> Option<EntityId> {
+        if !world_offset.is_finite() {
+            return None;
+        }
         let (owner, position, forward) = self
             .units
             .get(unit_id)
@@ -39,7 +59,7 @@ impl World {
                 &IconObjectSpawn {
                     player_id: owner,
                     prototype_id,
-                    position,
+                    position: position + world_offset,
                     forward,
                     color_override: None,
                     force_visible_to_all: false,
@@ -50,12 +70,14 @@ impl World {
                 owner,
                 prototype_id,
                 prototype.name.clone(),
-                position,
+                position + world_offset,
                 forward,
             )
         };
-        self.entity_object_state_mut(attachment_id)?
-            .set_attached_to(Some(unit_id));
+        let local_offset = formation_offset_to_local(forward, world_offset);
+        let attachment = self.entity_object_state_mut(attachment_id)?;
+        attachment.set_attached_to(Some(unit_id));
+        attachment.set_attachment_local_offset(local_offset);
         self.entity_object_state_mut(unit_id)?
             .add_attachment(attachment_id);
         Some(attachment_id)
@@ -92,7 +114,8 @@ impl World {
     /// Synchronize child root transforms after all parent motion for a substep.
     pub(super) fn synchronize_attachments(&mut self) {
         let snapshots = self.attachment_snapshots();
-        for (parent_id, child_id, position, forward) in snapshots {
+        for (parent_id, child_id, position, forward, local_offset) in snapshots {
+            let position = position + formation_offset_to_world(forward, local_offset);
             if !self.set_attachment_transform(child_id, position, forward)
                 && let Some(parent) = self.entity_object_state_mut(parent_id)
             {
@@ -127,6 +150,29 @@ impl World {
         }
     }
 
+    pub(crate) fn remove_unit_attachments_by_prototype(
+        &mut self,
+        unit_id: EntityId,
+        prototype_id: i32,
+    ) -> usize {
+        let attachments = self
+            .entity_object_state(unit_id)
+            .map_or(&[][..], crate::entities::ObjectState::attachments)
+            .iter()
+            .copied()
+            .filter(|attachment_id| {
+                self.objects
+                    .get(*attachment_id)
+                    .is_some_and(|object| object.proto_object_id == prototype_id)
+            })
+            .collect::<Vec<_>>();
+        let count = attachments.len();
+        for attachment_id in attachments {
+            let _removed = self.remove_object(attachment_id);
+        }
+        count
+    }
+
     fn insert_visual_attachment(
         &mut self,
         owner: u8,
@@ -141,7 +187,7 @@ impl World {
         id
     }
 
-    fn attachment_snapshots(&self) -> Vec<(EntityId, EntityId, Vec3, Vec3)> {
+    fn attachment_snapshots(&self) -> Vec<(EntityId, EntityId, Vec3, Vec3, Vec3)> {
         self.objects
             .iter()
             .map(|(id, object)| (id, &object.base, &object.object_state))
@@ -156,11 +202,19 @@ impl World {
                     .map(|(id, projectile)| (id, &projectile.base, &projectile.object_state)),
             )
             .flat_map(|(parent_id, base, state)| {
-                state
-                    .attachments()
-                    .iter()
-                    .copied()
-                    .map(move |child_id| (parent_id, child_id, base.position, base.forward))
+                state.attachments().iter().copied().map(move |child_id| {
+                    let local_offset = self.entity_object_state(child_id).map_or(
+                        Vec3::ZERO,
+                        crate::entities::ObjectState::attachment_local_offset,
+                    );
+                    (
+                        parent_id,
+                        child_id,
+                        base.position,
+                        base.forward,
+                        local_offset,
+                    )
+                })
             })
             .collect()
     }
@@ -247,5 +301,51 @@ mod tests {
 
         assert!(world.kill_unit(unit_id, true));
         assert!(world.get_object(attachment_id).is_none());
+    }
+
+    #[test]
+    fn offset_attachment_retains_parent_local_translation_and_can_be_removed_by_type() {
+        let database = database();
+        let mut world = World::new();
+        world.init_players(1);
+        let unit_id = world.create_unit_at(1, Vec3::new(1.0, 2.0, 3.0));
+        let attachment_id = world
+            .add_prototype_attachment_to_unit_with_offset(
+                &database,
+                unit_id,
+                27,
+                Vec3::new(2.0, 4.0, 0.0),
+            )
+            .unwrap();
+        assert_eq!(
+            world.get_object(attachment_id).unwrap().base.position,
+            Vec3::new(3.0, 6.0, 3.0)
+        );
+        assert_eq!(
+            world
+                .entity_object_state(attachment_id)
+                .unwrap()
+                .attachment_local_offset(),
+            Vec3::new(2.0, 4.0, 0.0)
+        );
+
+        let unit = world.get_unit_mut(unit_id).unwrap();
+        unit.base.position = Vec3::new(10.0, 1.0, 20.0);
+        unit.base.set_forward(Vec3::X);
+        world.synchronize_attachments();
+        assert_eq!(
+            world.get_object(attachment_id).unwrap().base.position,
+            Vec3::new(10.0, 5.0, 18.0)
+        );
+
+        assert_eq!(world.remove_unit_attachments_by_prototype(unit_id, 27), 1);
+        assert!(world.get_object(attachment_id).is_none());
+        assert!(
+            world
+                .entity_object_state(unit_id)
+                .unwrap()
+                .attachments()
+                .is_empty()
+        );
     }
 }

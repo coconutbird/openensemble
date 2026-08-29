@@ -105,7 +105,7 @@ impl World {
         let veterancy_modifiers = if veterancy_enabled {
             gameplay.join_veterancy_modifiers(joining_proto_object, 0, source_veterancy_level)
         } else {
-            Default::default()
+            crate::entities::UnitScalarModifiers::default()
         };
         let attachment = gameplay.resolve_join_attachment(action).map(|profile| {
             (

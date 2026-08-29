@@ -139,7 +139,9 @@ impl Unit {
     }
 
     pub(crate) const fn effective_damage_taken_multiplier(&self) -> f32 {
-        self.damage_taken_multiplier * self.join_damage_taken_multiplier
+        self.damage_taken_multiplier
+            * self.join_damage_taken_multiplier
+            * self.cryo_damage_taken_modifier()
     }
 
     pub(crate) const fn join_damage_multiplier(&self) -> f32 {

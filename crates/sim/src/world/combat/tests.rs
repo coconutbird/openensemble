@@ -1,4 +1,4 @@
-use super::test_catalog::ability_catalog;
+use super::test_catalog::{ability_catalog, hand_attack_catalog};
 use super::*;
 use crate::gameplay::{AreaDamageProfile, AttackAccuracyProfile, AttackAnimation};
 use crate::random::SimRandom;
@@ -85,6 +85,7 @@ fn combat_catalog_with_tuning(
         max_velocity_lead,
         accuracy,
         damage_per_attack: 5.0,
+        ammunition: crate::gameplay::AttackAmmunition::None,
         animations: vec![AttackAnimation {
             asset_path: "test_attack.uax".to_owned(),
             weight: 1,
@@ -208,6 +209,21 @@ fn combat_world() -> (World, EntityId, EntityId) {
     target.damage_taken_multiplier = 0.5;
     assert!(world.issue_attack_order(1, attacker_id, target_id, 0.0));
     (world, attacker_id, target_id)
+}
+
+#[test]
+fn hand_attack_uses_shared_timing_and_instant_damage_executor() {
+    let gameplay = hand_attack_catalog();
+    let (mut world, attacker_id, target_id) = combat_world();
+
+    world.update_entities_with_gameplay(0.05, &gameplay);
+
+    assert!(world.projectiles.is_empty());
+    assert_eq!(
+        world.get_unit(attacker_id).unwrap().combat.action_name(),
+        Some("HammerAttack")
+    );
+    assert!((world.get_unit(target_id).unwrap().hitpoints - 97.5).abs() < f32::EPSILON);
 }
 
 #[test]

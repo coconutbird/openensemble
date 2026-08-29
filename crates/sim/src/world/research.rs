@@ -505,7 +505,7 @@ fn add_cost_entry(
     Ok(())
 }
 
-fn authored_unobtainable(technology: &Tech) -> bool {
+pub(super) fn authored_unobtainable(technology: &Tech) -> bool {
     technology
         .status
         .as_deref()
@@ -513,14 +513,14 @@ fn authored_unobtainable(technology: &Tech) -> bool {
         || has_flag(technology, "Unobtainable")
 }
 
-fn has_flag(technology: &Tech, expected: &str) -> bool {
+pub(super) fn has_flag(technology: &Tech, expected: &str) -> bool {
     technology
         .flags
         .iter()
         .any(|flag| flag.trim().eq_ignore_ascii_case(expected))
 }
 
-fn prerequisites_met(
+pub(super) fn prerequisites_met(
     world: &World,
     player: &Player,
     database: &Database,

@@ -103,8 +103,8 @@ signature behavior:
   equality with the capacity loaded from its layered proto-squad definition.
 - DBID 513 `CompareProtoSquad` applies the full retail ordered-operator table to
   the two resolved database IDs. DBID 627 `IsCoop` reads synchronized world
-  setup, and DBID 629 `IsConfigDefined` tests an exact case-sensitive ASCII
-  configuration symbol.
+  setup, and DBID 629 `IsConfigDefined` tests a retail case-insensitive ASCII
+  configuration symbol loaded into synchronized world state.
 - DBID 972 `CheckDifficulty` reads the selected player's continuous difficulty
   scalar. Version 1 tests equality; version 2 applies its authored comparison
   operator to the standard Easy/Normal/Hard/Legendary category derived from
@@ -123,6 +123,9 @@ Resource, technology, and combat-readiness predicates use checksummed sim state:
   compare as `Unobtainable`, matching retail. Version-2 unit scoping works for
   ordinary technologies; per-unit `UniqueProtoUnitInstance` state remains a
   deliberate false result until unique technology ownership is modeled.
+- DBID 256 `CompareAmmoPercent` version 2 reads a unit's authoritative current-
+  over-maximum ratio, writes the optional ratio output, and applies the authored
+  comparison operator. A stale unit reads and writes zero before comparison.
 - DBID 461 `IsUnderAttack` supports versions 1 and 2. Accepted member damage
   records the squad's game-time timestamp; a nonzero timestamp passes when its
   wrapping elapsed time is within the authored inclusive interval. Version 2
@@ -186,6 +189,21 @@ production and conditions:
   index in the active layered database and use the normal world technology
   path. Existing entities and future spawns therefore observe the same
   transforms and modifiers.
+- `ModifyProtoData` and ordinary technology activation support retail proto-
+  data ordinals 3 `AmmoMax` and 58 `AmmoRegenRate`. Existing enabled units
+  reconcile immediately, future units use the effective values at spawn, and
+  proto-squad maximums retain authored member counts.
+
+Ammunition effects share that same synchronized unit and squad state:
+
+- DBID 389 `GetAmmo` version 1 reads Unit and version 2 adds Squad. A used Unit
+  takes precedence; amount and percentage outputs are written only for a valid
+  selected target. Squad current ammunition sums live ammo-enabled children,
+  while its denominator is the effective proto-squad maximum.
+- DBID 390 `SetAmmo` has the same versioned target slots and Unit precedence.
+  Amount takes precedence over percentage. Unit assignment is the retail raw
+  setter; a squad amount is converted through its proto maximum, and a squad
+  percentage assigns each current child its own maximum times that ratio.
 
 Entity effects preserve the representable retail contracts:
 

@@ -434,6 +434,7 @@ impl World {
             squad_mode: source_squad.mode,
             ability_id: source_squad.join_ability_id(),
             target_proto_object_name: Some(&target.proto_object_name),
+            tactic_state: source.tactic_state(),
             flags: target.query_flags,
         };
         gameplay.select_join_action_for_squads(

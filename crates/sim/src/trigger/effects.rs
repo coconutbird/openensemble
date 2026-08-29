@@ -1,6 +1,7 @@
 //! Authoritative implementations of supported retail trigger effects.
 
 mod ai;
+mod ammunition;
 mod animations;
 mod attachments;
 mod commands;

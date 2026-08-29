@@ -1,5 +1,6 @@
 //! Authoritative attack-order targeting and pursuit.
 
+mod ammunition;
 mod area_damage;
 mod damage;
 mod deviation;
@@ -70,6 +71,7 @@ struct ConcreteTargetSnapshot {
     proto_object_name: String,
     damaged: bool,
     unbuilt: bool,
+    in_cover: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -220,6 +222,7 @@ impl World {
             .filter_map(|(id, squad)| {
                 (squad.state == SquadState::Moving
                     && squad.is_executing_attack_move()
+                    && !squad.is_cryo_frozen()
                     && squad.aggro_distance.is_finite()
                     && squad.aggro_distance > 0.0)
                     .then_some(id)
@@ -262,7 +265,7 @@ impl World {
                 if distance_squared > maximum_distance_squared {
                     return None;
                 }
-                let target = concrete_target_snapshot(unit_id, unit);
+                let target = concrete_target_snapshot(unit_id, unit, self.unit_is_in_cover(unit));
                 let can_attack = squad.unit_ids.iter().any(|member_id| {
                     self.units.get(*member_id).is_some_and(|member| {
                         self.selected_ranged_action(member, &target, gameplay, true)
@@ -287,6 +290,15 @@ impl World {
             .filter_map(|(id, squad)| (squad.state == SquadState::Attacking).then_some(id))
             .collect::<Vec<_>>();
         for squad_id in squad_ids {
+            let Some(squad) = self.squads.get(squad_id) else {
+                continue;
+            };
+            let member_ids = squad.unit_ids.clone();
+            let range_override = squad.attack_range;
+            if squad.is_cryo_frozen() {
+                self.stop_unit_firing(&member_ids);
+                continue;
+            }
             let motion = self.squad_combat_motion(squad_id, gameplay);
             let completed_attack = matches!(motion, CombatMotion::Clear)
                 && self
@@ -294,13 +306,6 @@ impl World {
                     .get(squad_id)
                     .and_then(|squad| squad.attack_target)
                     .is_some_and(|target_id| self.attack_target_is_defeated(target_id));
-            let Some((member_ids, range_override)) = self
-                .squads
-                .get(squad_id)
-                .map(|squad| (squad.unit_ids.clone(), squad.attack_range))
-            else {
-                continue;
-            };
             if completed_attack {
                 self.apply_squad_experience_bank(squad_id, gameplay);
             }
@@ -419,13 +424,32 @@ impl World {
                 continue;
             }
 
+            let authored_damage =
+                self.units
+                    .get(engagement.attacker_id)
+                    .map_or(profile.damage_per_attack, |unit| {
+                        ammunition::effective_damage(
+                            unit,
+                            profile,
+                            self.get_player(attacker.player_id)
+                                .map(|player| &player.technologies),
+                        )
+                    });
             let advance = {
                 let (units, rng) = (&mut self.units, &mut self.rng);
                 let Some(unit) = units.get_mut(engagement.attacker_id) else {
                     continue;
                 };
                 face_position(unit, target.position);
-                unit.combat.advance(dt, target.id, profile, rng)
+                let (combat, unit_ammunition) = (&mut unit.combat, &mut unit.ammunition);
+                combat.advance(
+                    dt,
+                    target.id,
+                    profile,
+                    unit_ammunition,
+                    authored_damage,
+                    rng,
+                )
             };
             if advance.completed_cycles > 0
                 && let Some(squad_id) = ability_squad_id
@@ -433,15 +457,6 @@ impl World {
             {
                 squad.mark_unit_ability_complete(engagement.attacker_id);
             }
-            let authored_damage =
-                self.get_player(attacker.player_id)
-                    .map_or(profile.damage_per_attack, |player| {
-                        player.technologies.weapon_damage(
-                            &attacker.proto_object_name,
-                            &profile.weapon_name,
-                            profile.damage_per_attack,
-                        )
-                    });
             let damage = scaled_launch_damage(
                 authored_damage,
                 attacker.damage_multiplier,
@@ -487,7 +502,7 @@ impl World {
                     )
                 });
         let speed = unit.base.velocity.length();
-        let desired_speed = unit.speed * unit.velocity_scalar;
+        let desired_speed = unit.speed * unit.effective_velocity_scalar();
         Some(AttackerSnapshot {
             player_id: unit.base.player_id,
             position: unit.base.position,
@@ -668,7 +683,8 @@ impl World {
             let Some(concrete_target) = self.concrete_attack_target(target.id) else {
                 return CombatMotion::Clear;
             };
-            self.squad_tactic_range(squad, &concrete_target, gameplay)
+            self.collision_attack_range(squad, gameplay)
+                .or_else(|| self.squad_tactic_range(squad, &concrete_target, gameplay))
         };
         combat_motion(squad.base.position, target, range)
     }
@@ -703,7 +719,11 @@ impl World {
             .get(requested_id)
             .filter(|unit| unit.is_attackable())
         {
-            return Some(concrete_target_snapshot(requested_id, unit));
+            return Some(concrete_target_snapshot(
+                requested_id,
+                unit,
+                self.unit_is_in_cover(unit),
+            ));
         }
         let squad = self.squads.get(requested_id).filter(|squad| {
             squad.is_alive()
@@ -721,7 +741,15 @@ impl World {
                     .map(|unit| (unit_id, unit))
             })
             .min_by_key(|(unit_id, _)| *unit_id)
-            .map(|(unit_id, unit)| concrete_target_snapshot(unit_id, unit))
+            .map(|(unit_id, unit)| {
+                concrete_target_snapshot(unit_id, unit, self.unit_is_in_cover(unit))
+            })
+    }
+
+    fn unit_is_in_cover(&self, unit: &Unit) -> bool {
+        unit.squad_id
+            .and_then(|squad_id| self.squads.get(squad_id))
+            .is_some_and(|squad| squad.mode == SquadMode::Cover)
     }
 
     fn attack_target_snapshot(&self, requested_id: EntityId) -> Option<TargetSnapshot> {
@@ -856,11 +884,15 @@ impl World {
         if target.unbuilt {
             flags.insert(AttackQueryFlags::TARGET_UNBUILT);
         }
+        if target.in_cover {
+            flags.insert(AttackQueryFlags::TARGET_IN_COVER);
+        }
         let query = AttackQuery {
             relation: self.tactic_relation(unit.base.player_id, target.player_id),
             squad_mode,
             ability_id,
             target_proto_object_name: Some(&target.proto_object_name),
+            tactic_state: unit.tactic_state(),
             flags,
         };
         gameplay.select_ranged_action(&unit.proto_object_name, &query, |action| {
@@ -874,7 +906,14 @@ impl World {
                             authored_enabled,
                         )
                     });
+            let profile = gameplay
+                .object(&unit.proto_object_name)
+                .and_then(|object| object.attack_profile(&action.name));
+            let technologies = self
+                .get_player(unit.base.player_id)
+                .map(|player| &player.technologies);
             unit.actions.is_enabled(&action.name, !player_enabled)
+                && ammunition::can_select(unit, profile, technologies)
         })
     }
 
@@ -938,7 +977,7 @@ fn combat_motion(position: Vec3, target: TargetSnapshot, range: Option<f32>) -> 
     }
 }
 
-fn concrete_target_snapshot(id: EntityId, unit: &Unit) -> ConcreteTargetSnapshot {
+fn concrete_target_snapshot(id: EntityId, unit: &Unit, in_cover: bool) -> ConcreteTargetSnapshot {
     ConcreteTargetSnapshot {
         id,
         player_id: unit.base.player_id,
@@ -949,6 +988,7 @@ fn concrete_target_snapshot(id: EntityId, unit: &Unit) -> ConcreteTargetSnapshot
         proto_object_name: unit.proto_object_name.clone(),
         damaged: unit.hitpoints < unit.max_hitpoints,
         unbuilt: unit.is_building() && !unit.built,
+        in_cover,
     }
 }
 

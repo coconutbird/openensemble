@@ -182,31 +182,51 @@ pub(super) fn collect_projectile_profiles(
         .enumerate()
         .filter(|(_, object)| is_projectile(object))
         .map(|(index, object)| {
-            let speed = positive_or(object.velocity, 1.0);
-            let fuel = nonnegative_or_zero(object.fuel);
-            let profile = ProjectileProfile {
-                proto_object_id: object
-                    .dbid
-                    .unwrap_or_else(|| i32::try_from(index).unwrap_or(-1)),
-                proto_object_name: object.name.clone(),
-                speed,
-                starting_speed: positive_or(object.starting_velocity, speed),
-                fuel,
-                acceleration: if fuel > f32::EPSILON {
-                    nonnegative_or_zero(object.acceleration)
-                } else {
-                    0.0
-                },
-                max_projectile_height: nonnegative_or_zero(object.max_projectile_height),
-                lifespan: positive_or(object.lifespan, 10.0),
-                tracking_delay: nonnegative_or_zero(object.tracking_delay),
-                turn_rate_degrees: nonnegative_or_zero(object.turn_rate),
-                perturbance: perturbance_profile(object),
-                behavior: ProjectileBehavior::from_proto(object),
-            };
-            (object.name.to_ascii_lowercase(), profile)
+            (
+                object.name.to_ascii_lowercase(),
+                profile_from_object(index, object),
+            )
         })
         .collect()
+}
+
+pub(crate) fn projectile_profile(
+    database: &Database,
+    proto_object_name: &str,
+) -> Option<ProjectileProfile> {
+    database
+        .objects
+        .iter()
+        .enumerate()
+        .find(|(_, object)| {
+            is_projectile(object) && object.name.eq_ignore_ascii_case(proto_object_name.trim())
+        })
+        .map(|(index, object)| profile_from_object(index, object))
+}
+
+fn profile_from_object(index: usize, object: &ProtoObject) -> ProjectileProfile {
+    let speed = positive_or(object.velocity, 1.0);
+    let fuel = nonnegative_or_zero(object.fuel);
+    ProjectileProfile {
+        proto_object_id: object
+            .dbid
+            .unwrap_or_else(|| i32::try_from(index).unwrap_or(-1)),
+        proto_object_name: object.name.clone(),
+        speed,
+        starting_speed: positive_or(object.starting_velocity, speed),
+        fuel,
+        acceleration: if fuel > f32::EPSILON {
+            nonnegative_or_zero(object.acceleration)
+        } else {
+            0.0
+        },
+        max_projectile_height: nonnegative_or_zero(object.max_projectile_height),
+        lifespan: positive_or(object.lifespan, 10.0),
+        tracking_delay: nonnegative_or_zero(object.tracking_delay),
+        turn_rate_degrees: nonnegative_or_zero(object.turn_rate),
+        perturbance: perturbance_profile(object),
+        behavior: ProjectileBehavior::from_proto(object),
+    }
 }
 
 fn perturbance_profile(object: &ProtoObject) -> ProjectilePerturbanceProfile {

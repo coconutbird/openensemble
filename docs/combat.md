@@ -56,7 +56,24 @@ Join work used those recovered named sources; it did not inspect additional IDA
 functions beyond the renamed functions listed above. Veterancy and XP recovery
 likewise used the named `squad.cpp`, `unit.cpp`, `protosquad.cpp`,
 `squadactionattack.cpp`, and `triggereffect.cpp` sources, so this work introduced
-no additional inspected IDA functions requiring a rename.
+no additional inspected IDA functions requiring a rename. Ammunition recovery
+used the already-named `unit.cpp`, `squad.cpp`, `techeffect.cpp`,
+`triggercondition.cpp`, and `triggereffect.cpp` sources together with
+`unitactionammoregen.cpp` and `unitactionrangedattack.cpp`; it likewise did not
+inspect additional IDA functions. Mines reconstruction used the already-named
+`unitactionmines.cpp`, `unit.cpp`, `squad.cpp`, `tactic.cpp`, and `ability.cpp`
+sources and likewise introduced no additional IDA functions requiring rename.
+Hand-attack reconstruction used the named `database.cpp`, `tactic.cpp`,
+`action.cpp`, `squad.cpp`, `opportunity.cpp`, and
+`unitactionrangedattack.cpp` sources and likewise introduced no additional IDA
+functions requiring rename.
+Tactic-state reconstruction used the named `unit.cpp`, `tactic.cpp`,
+`unitactionrangedattack.cpp`, and `UnitActionCollisionAttack.cpp` sources and
+likewise introduced no additional IDA functions requiring rename.
+Detonate reconstruction used the named `squadactiondetonate.cpp`,
+`unitactiondetonate.cpp`, `unit.cpp`, `squad.cpp`, `tactic.cpp`, and
+`damagehelper.cpp` sources and likewise introduced no additional IDA functions
+requiring rename.
 
 ## Implemented retail contracts
 
@@ -68,6 +85,13 @@ no additional inspected IDA functions requiring a rename.
   applies relation, current squad mode, manual/auto-target mode gates,
   `NoAutoTarget`, ability matching and fallback, target state, damage/object
   type, Gaia, and invulnerability predicates.
+- Every unit owns retail's optional 8-bit tactic-state index plus a deterministic
+  transition revision, and both participate in the world checksum. Contextual
+  work and attack selection rejects actions outside a valid non-empty state
+  action list. An invalid/default state and a valid state with no listed actions
+  both use all actions, matching `BTactic::getProtoAction`. The layered catalog
+  exposes state animation overrides without allowing the renderer to choose or
+  mutate the state.
 - Work-command squad-mode and ability bytes are retained in authoritative order
   state. Per-unit action enablement begins at `StartDisabled`, then applies the
   owning player's active `ActionEnable` technology effects and explicit unit
@@ -79,7 +103,9 @@ no additional inspected IDA functions requiring a rename.
   factor, velocity lead, and ability recovery read that state at use time;
   trigger-time `ModifyProtoData` operations layer after active technologies.
   Hit-point effects rescale existing units by the new/old maximum ratio,
-  while future units spawn with the modified maximum.
+  while future units spawn with the modified maximum. `AmmoMax` and
+  `AmmoRegenRate` follow the same live player-prototype path; changing the
+  maximum rescales an enabled existing unit's current ammunition.
 - Player-targeted `DamageModifier` technology effects mutate one authored
   weapon-type/damage-type pair without creating missing table entries. Direct
   hits, non-directional AOE, and AI attack-rating reconstruction all read the
@@ -96,6 +122,98 @@ no additional inspected IDA functions requiring a rename.
 - VIS model selection and weighted UAX durations produce immutable attack
   profiles. Normalized `Attack` tags drive shot timing, including pre/post
   cooldowns, visual ammo, and reload duration.
+- Authored `RangedAttack` and `HandAttack` both map to retail's
+  `BUnitActionRangedAttack` executor. Both therefore use the same tactic-rule,
+  visual-tag, cooldown, ammunition, damage, technology, and checksum paths.
+  Projectile presence selects projectile launch; its absence applies the hit
+  immediately. `HandAttack` additionally rejects authored Cover objects and
+  live target members whose authoritative squad mode is Cover. Retail AI
+  attack-rating analysis includes both authored names through that same action
+  type. The renderer only observes the resulting transforms and health.
+- Unit ammunition is authoritative, persistent, and checksummed. Scenario-
+  layered prototypes plus live player technology set maximum and regeneration
+  rate at spawn; `StartAtMaxAmmo` selects maximum rather than zero as the
+  initial amount. The first regeneration update only starts the action and
+  later updates add rate times elapsed time up to the live maximum. An authored
+  `UsesAmmo` ranged action starts only when the unit can pay every `Attack` tag
+  in the animation at its player-modified damage per attack, then spends that
+  amount at each tag. Squad current ammunition sums surviving enabled members,
+  while its maximum retains the authored proto-squad member counts.
+- Work command order 16 now drives retail's latent Mines action. Generic
+  `Command` resolves through the source object's `AbilityCommand`; the concrete
+  ability supplies its first mine object and per-placement `AmmoCost`, while
+  authored tactic-rule selection supplies `ActionType=Mines` and `WorkRange`.
+  The squad owns checksummed target and per-member progress. Every operational
+  member places at most one object per fixed substep, charging its own
+  ammunition before placement and refunding the exact charge if database-
+  backed creation fails. Insufficient ammunition, target loss, range failure,
+  or placement exhaustion completes a member successfully only after that
+  member placed at least one object, matching the recovered action result
+  boundary.
+- Mine placement reproduces the recovered 5-unit snapped spiral and 20-unit
+  search extent in deterministic entity order. Spawned objects use the active
+  scenario-layered prototype, acting player, terrain height, and ordinary
+  class-1 unit pool. They therefore participate in ownership, lifecycle,
+  checksums, and renderer roster projection without any UI-side game logic.
+  The fixed-step scenario update now receives both the layered database and
+  gameplay catalog so actions that create prototype-backed entities cannot
+  accidentally consult a different data source.
+- Work command order 12 now drives retail's targeted squad Detonate action.
+  Because the shipped Suicide Grunt tactic has no target-rule block, the
+  selector scans authored `Detonate` actions in order while still applying
+  tactic-state membership, `StartDisabled`, player `ActionEnable` technology,
+  and unit overrides. The shipped upgrades therefore select `SuicideBomb`,
+  `SprintSuicideBomb`, and `SuicideCorrosiveBomb` in sequence. Generic
+  `Command` resolves to `CovGruntSuicideExplode` and retains its Attack-started
+  20-second Ability recovery.
+- Detonate squad state is split into checksummed moving, glowing, and attacking
+  phases under `entities/squads/`. Edge-distance arming uses the action's
+  `DodgeChanceMax` (50 in the installed Suicide Grunt XMB); attack entry uses
+  target obstruction plus half the recovered 0.1 constructor-default
+  `WorkRange`. Arming applies the action velocity scalar and retail's hard-coded
+  tactic state zero to every member. Attack entry moves the authoritative squad
+  into `HitAndRun`, ends collision attacks, and creates per-unit opportunities
+  only when a member enters the target simulation hull.
+- Each member owns a checksummed pending/working Detonate action under
+  `entities/units/`. The second action update applies the weapon's
+  `DamagePerSecond` directly as a no-primary-target AOE pool, including live
+  damage technology, armor, distance, linear-pool, and friendly-fire rules,
+  then kills the detonating unit. Target loss or leaving glowing range clears
+  state zero, restores the action movement scalar, ends HitAndRun, and leaves
+  the renderer to observe only the resulting sim transforms, state, health,
+  and lifecycle.
+- Non-command Detonate actions use the same unit state machine. Authored
+  duration/spread, death, enemy-proximity, rigid-body collision, and ground-
+  impact triggers are checksummed and update in recovered retail order.
+  `PhysicsDetonateOnDeath` prototypes resolve their replacement material and
+  collider through the active scenario source, replace the dead unit
+  immediately, retain attacker-team attribution, run the authored Detonate
+  timer, apply `DetonateThrow`, and remain renderer-visible until their
+  authoritative physics cleanup completes.
+- Scenario-layered `CollisionAttack` actions now drive vehicle Ram entirely in
+  the simulation. An authored ability mode enters `HitAndRun`, initializes each
+  rammer's juice from its live ammunition maximum, and pursues to physical
+  contact instead of firing the tactic's companion ranged action. Contact
+  candidates are ordered by hit points and entity ID. The sim applies the
+  weapon's `MaxDamagePerRam`, spends pre-armor damage capped by target hit
+  points, resolves directional weapon-type damage, fires `GameEntityRammed` on
+  a kill, applies per-armor bowlable/rammable behavior and reflection, starts
+  authored Attack recovery, and ends HitAndRun after a surviving rammable
+  impact. `MaxDamagePerRam` and `ReflectDamageFactor` technology effects remain
+  action-scoped. A collision action's authored `NewTacticState` is set while
+  its squad remains in HitAndRun and cleared outside that mode. Collision
+  lifecycle, impacted IDs, and tactic-state transitions are checksummed.
+- Dynamic vehicle bodies also test contacts against non-rigid authored
+  obstruction boxes, allowing Warthogs to hit Marine-style formation units.
+  Live rigid targets and rammer bounce use the recovered mass-scaled launch
+  impulses; non-rigid bowlable squads receive a deterministic displacement
+  that remains authoritative and renderer-visible.
+- Supported ground-vehicle bodies resolve each proto object's `PhysicsInfo`
+  through the scenario-layered `.physics`, primary `.blueprint`, and Havok
+  `.shp` records. Material, box half extents, and center offset are retained in
+  the checksummed world prototype catalog before initial placements and future
+  spawns. Ghosts use the loaded body and the named recovered controller's 2.5
+  forward response, so their RamState now leads to real sim-owned contacts.
 - Squad and standalone attack orders retain generational entity targets,
   canonicalize clicked squad members to their parent squad, chase to authored
   range, and deterministically select a live concrete member when firing. Both
@@ -104,8 +222,9 @@ no additional inspected IDA functions requiring a rename.
 - Class-4 projectile entities carry launch-time damage, weapon type, area-
   damage profile, target, lifespan, acceleration, tracking, turn rate, and
   gravity and perturbance state. Their pool and every unit combat timer
-  participate in the world checksum. Active player technologies, squad
-  recovery, and in-progress ability participation are also checksummed.
+  participate in the world checksum. Unit and squad ammunition, active player
+  technologies, squad recovery, and in-progress ability participation are also
+  checksummed.
 - Projectile acceleration is enabled only when the prototype has positive
   fuel. Tracking begins after its authored delay or once less than 0.4 seconds
   of current-speed travel remains, follows the live target position, and
@@ -266,9 +385,11 @@ no additional inspected IDA functions requiring a rename.
   levels. Trigger effect DBID 852 (`AddXP`) uses the retail scalar-before-list
   signature and preserves duplicate squad-list applications.
 - The authoritative world retains a checksummed effective veterancy gate. The
-  installed-scenario loader reads the raw root-level `AllowVeterancy` value
-  before creating any entities, including retail's missing-element `false` and
-  present-empty-element `true` defaults. A disabled scenario suppresses
+  installed-scenario loader snapshots retail's case-insensitive startup config
+  before mounting the scenario ERA, then requires both its `Veterancy`
+  definition and the raw root-level `AllowVeterancy` flag. The latter retains
+  retail's missing-element `false` and present-empty-element `true` defaults.
+  A disabled effective gate suppresses
   prototype starting levels and their unit scalars, combat and trigger XP,
   Board level inheritance, and later Spartan-to-vehicle propagation. The
   `ScenarioData`-only helper defaults the gate on because that lossy pipeline
@@ -318,21 +439,76 @@ no additional inspected IDA functions requiring a rename.
 
 This is the deterministic baseline, not a claim of complete combat parity.
 Remaining retail systems include unsupported technology effect families,
-ability ammunition, non-attack
-recovery start events, tactic-state membership, lockdown minimum-range
-behavior, remaining garrison and melee-attacker predicates, visual bone/animation
-hardpoint overrides, targeted hit-zone offsets and oriented hit-zone/visual-mesh
-projectile intersection, hit-zone shields, broader runtime `Unhittable` and
-invulnerability controls, and destructible
-non-unit AOE recipients, dodge/deflect, sticky visual-mesh/bone intersections,
-timer damage reapplication, beam/needler behaviors, hero death/revival
-presentation, death effects, and ranged-action savegame compatibility. Join
-boundaries still include manual Board disconnect and fatality
-animation/controller presentation. Automatic discovery of retail's separate
-`cConfigVeterancy` runtime definition and veterancy presentation effects remain
-to be reconstructed; scenario `AllowVeterancy` is authoritative today.
+collision-attack evade opportunities and the full
+thrown-unit/leash action, the depleted ranged-action `Done` versus `Failed`
+  control result, non-attack recovery start events, tactic-state transitions for
+  action families other than CollisionAttack and Detonate, lockdown minimum-
+  range behavior, remaining garrison and melee-
+attacker predicates, visual bone/animation hardpoint overrides, targeted hit-
+zone offsets and oriented hit-zone/visual-mesh projectile intersection, hit-
+zone shields, broader runtime `Unhittable` and invulnerability controls,
+destructible non-unit AOE recipients, dodge/deflect, sticky visual-mesh/bone
+intersections, timer damage reapplication, beam/needler behaviors, hero death/
+  revival presentation, death effects, Detonate's forearm projectile/scream and
+  detonated animation presentation, and its BaseShield target remap,
+  HandAttack-specific infection, pickup,
+throw, knockback, and fatality side effects, and ranged-action savegame
+compatibility.
+Join boundaries still include manual Board disconnect and fatality animation/
+controller presentation. Veterancy presentation effects remain to be
+reconstructed. The Mines object activation/detonation behavior and retail's
+full pather/LOS placement suggestion remain separate slices; the implemented
+placement action currently uses authoritative playable bounds, terrain height,
+and obstruction boxes.
 
 ## Installed-data validation
+
+The opt-in `scenario-ammunition` integration test loads Blood Gulch through the
+normal scenario path and verifies that its already-mounted database supplies
+the shipped Marine `200/9` and Warthog `800/40` maximum/regeneration values.
+It checks the empty-versus-full spawn flags, the regeneration action's first-
+update transition, the proto-squad maximum, and the real
+`unsc_warthog_upgrade1` `1.25` `AmmoMax`/`AmmoRegenRate` effects on live state.
+
+The opt-in `scenario-ram` integration test uses the same scenario loader and
+its already-mounted database. It verifies that the runtime XMB supplies the
+Warthog's `PersistentCollisionAttack`, `WarthogRam`, 40-unit bowl radius, and
+10,000-point per-impact cap, then resolves generic `Command` to `UnscRam` and
+its `HitAndRun`/10-second Ability recovery contract. Two real spawned Warthogs
+exercise contact damage, juice spending, impulse state, mode teardown, and
+recovery in the authoritative world.
+
+The opt-in `scenario-tactic-states` integration tests load Blood Gulch and all
+15 campaign scenarios through the normal layered loader. They prove the shipped
+catalog contains exactly Suicide Grunt's unrestricted `SuicideRun` state and
+Ghost's unrestricted `RamState`, plus Ghost's
+`PersistentCollisionAttack -> RamState` transition. A real spawned Ghost then
+resolves generic `Command` to `CovGhostRam`, receives the shipped Ghost physics
+material and Havok box, enters the checksummed state while HitAndRun is active,
+physically contacts another Ghost, spends Ram juice, applies damage, and clears
+the state when that authoritative squad mode ends.
+The same installed test selects the shipped Suicide Grunt's `SuicideBomb`,
+`Bomb`, Basic weapon type, grenade projectile, 1,400 DPS, 12-unit AOE, 50-unit
+glowing range, state-zero `SuicideRun`, and `CovGruntSuicideExplode` recovery
+directly from the already-layered catalog. A real four-member squad then runs
+through the work-command phases, enters state zero and HitAndRun, creates
+two-update unit actions on hull contact, damages a real enemy squad, kills each
+detonating member, starts recovery, and clears surviving members on target
+loss. Activating the shipped second and third upgrades proves that live action
+selection changes to `SprintSuicideBomb` and `SuicideCorrosiveBomb`.
+The methane-tank coverage resolves `PhysicsReplacementInfo`, its layered
+physics material/collider, `DetonateDeath`, 0.5-second duration, 6,000 damage,
+and 15-unit AOE. Real Marine projectile damage then replaces the original tank,
+runs that passive action, preserves the Marine instigator team's health, and
+removes the settled replacement after detonation.
+
+The opt-in `scenario-hand-attacks` integration test loads the shipped Brute
+Chief tactic and its weighted `MeleeAttack` UAX tags through Blood Gulch's
+already-layered source. It verifies the authored `HandAttack`, 3-unit range,
+non-projectile profile, and cover rejection, then sends a real spawned Brute
+Chief squad through the work-command pipeline. A covered target takes no
+damage; leaving cover starts `HammerAttackAction`, applies authoritative
+instant damage, and creates no projectile entity.
 
 The opt-in `scenario-asset-loading` integration test mounts Blood Gulch before
 database parsing, verifies that canonical tables and scenario assets share one
@@ -385,11 +561,32 @@ to the captured Scorpion and confirms the proportional Board split commits to
 both authoritative squads without duplication.
 
 The non-ignored `scenario-database-layering` test builds encrypted synthetic
-`root.era` and scenario archives. It proves that scenario-local `gamedata.xml`
-and `squads.xml` replace their base copies before the pipeline database is
-parsed, that the resulting difficulty initializes the authoritative player,
-and that the raw scenario-local `MergedSquads` mapping enters the same gameplay
-catalog.
+`root.era` and scenario archives. It proves that scenario-local `gamedata.xml`,
+`abilities.xml`, `objects.xml`, `powers.xml`, and `squads.xml` replace their base
+copies before the pipeline database is parsed, that the resulting difficulty
+initializes the authoritative player, and that the raw scenario-local
+`MergedSquads` mapping enters the same gameplay catalog. Scenario-authored cryo
+resistance, thaw timing, and movement modifiers drive the authoritative
+squad/unit freeze state directly. A scenario-local Cryo profile executes from
+an `InvokePower2` command and selects those same layered object/squad values.
+Its scenario-local Mines ability, tactic, source prototype, and mine prototype
+then execute through the command, ammunition, and spawn path in the loaded
+world. Scenario-local civilization, leader, and technology tables also
+bootstrap the player in retail order, cascade a dependent Shadow technology,
+and modify a subsequently spawned unit.
+The same archive overrides a synthetic Ghost `.physics`, `.blueprint`, and
+`.shp` chain over conflicting base copies; the gameplay catalog and a later
+authoritative spawn both expose only the scenario material, collider, center
+offset, and movement configuration.
+It also proves that startup config is parsed before scenario mounting,
+configuration names compare case-insensitively, and a scenario archive cannot
+retroactively define the `Veterancy` gate.
+
+The opt-in `scenario-mines` audit loads Blood Gulch and all 15 shipped campaign
+scenarios. None contains an ability with `AmmoCost`, a mine-named ability, or a
+mine-named ability object. Mines is therefore retained as a recovered latent
+engine contract with synthetic execution coverage rather than being presented
+as behavior exercised by shipped scenario data.
 
 The same installed-data test now also spawns a shipped Barracks, issues the
 retail building command for the first Marine upgrade, verifies its authored
@@ -400,4 +597,14 @@ contract and remaining boundaries.
 ```powershell
 $env:OPENENSEMBLE_GAME_DIR='C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE'
 cargo test -p sim --test scenario-asset-loading -- --ignored
+cargo test -p sim --test scenario-ram -- --ignored
+cargo test -p sim --test scenario-hand-attacks -- --ignored
+cargo test -p sim --test scenario-mines -- --ignored
+cargo test -p sim --test scenario-cryo-power -- --ignored
+cargo test -p render --test scenario-cryo-power -- --ignored
+cargo test -p sim --test scenario-disruption-power -- --ignored
+cargo test -p render --test scenario-disruption-power -- --ignored
+cargo test -p sim --test scenario-repair-power -- --ignored
+cargo test -p render --test scenario-repair-power -- --ignored
+cargo test -p sim --test scenario-tactic-states -- --ignored
 ```

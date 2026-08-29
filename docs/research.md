@@ -29,6 +29,17 @@ table, not the authored DBID, because retail data can contain duplicate DBIDs.
 - Scenario ERAs are mounted before database parsing, so scenario-local object,
   technology, game-data, tactic, visual, and UAX records are part of the same
   layered database used to construct and tick the simulation.
+- Fresh scenario players activate the layered civilization `CivTech` first and
+  leader `Tech` second before placed or starting entities are materialized.
+  `configure_player_leader` uses the same path and updates existing entities.
+  This matches the recovered `BPlayer::init` calls to
+  `BTechTree::activateTech`; activation order and effects are checksummed.
+- Technology activation scans its authored dependents in database order and
+  recursively activates eligible `Shadow` technologies. Initial root shadows
+  are evaluated before civilization/leader activation, matching
+  `BTechTree::init`; `Forbid`, `Unobtainable`, unique-instance, Alpha-config,
+  ordinary/OR technology prerequisites, and current type-count prerequisites
+  gate the same authoritative path.
 - The lockstep packet dispatcher decodes `COMMAND_BUILDING`, queues the exact
   payload, and executes `Research` commands against recipient buildings.
   Positive counts enqueue exactly one item, as retail does; negative counts
@@ -52,6 +63,10 @@ table, not the authored DBID, because retail data can contain duplicate DBIDs.
   research building clears and refunds all of its outstanding items.
 - Completion activates the existing simulation technology-effect pipeline.
   `Instant` technologies activate immediately after validation and payment.
+- The shipped `DeathSpawn` data subtype assigns a player-specific squad to a
+  proto object's death slot. Activation and deactivation rebuild that mapping
+  in technology order; normal unit cleanup consumes it through the same
+  database-backed lifecycle as static `<DeathSpawnSquad>` data.
 - Player research assignments, points, building queues, costs, and active
   technology state participate in deterministic world checksums.
 - `World::technology_status` and `World::research_progress` expose UI-ready
@@ -71,16 +86,24 @@ spawns the shipped `unsc_bldg_barracks_01`, submits a building command for
 `unsc_marine_upgrade1`, verifies its real 200 Supplies/1 Power cost and 40
 research points, and observes the technology become active.
 
+The opt-in `scenario-starting-technologies` test mounts `PHXscn01` and verifies
+that each authored campaign player receives its scenario-layered civilization
+and leader technologies in retail order and reaches a real shipped Shadow
+technology through the dependent cascade.
+
 ```powershell
 $env:OPENENSEMBLE_GAME_DIR='C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE'
 cargo test -p sim --test scenario-asset-loading -- --ignored
+cargo test -p sim --test scenario-starting-technologies -- --ignored
 ```
 
 ## Deliberate next boundaries
 
-This slice implements normal player-global research. Remaining retail work
-includes per-unit `UniqueProtoUnitInstance`
-technology state, automatic `Shadow` activation, cooperative per-player
+This slice implements normal player-global research, the direct
+civilization/leader bootstrap, and technology-dependent Shadow activation.
+Remaining retail work includes per-unit `UniqueProtoUnitInstance` technology
+state, rechecking type-count-only Shadow dependencies whenever unit counts
+change, cooperative per-player
 research slots, quick-build and AI work-rate modifiers, repeated `Perpetual`
 effects, research sound/events, research savegame compatibility, and the
 remaining non-research `BBuildingCommand` subtypes such as construction. Unit

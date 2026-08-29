@@ -2,12 +2,12 @@
 
 use super::{
     ControlAction, Database, Effect, EffectOutcome, EffectType, GameplayCatalog, TriggerScript,
-    World, adjust_count, ai, animations, attachments, commands, copy_value, design_lines, economy,
-    entities, entity_flags, entity_visuals, events, execute_control_effect, filters, fog, forbids,
-    game_state, health, icons, is_copy_effect, iterators, list_processing, lists, math, objectives,
-    orders, ownership, powers, presentation, proto_data, rally_points, relationships, resources,
-    revealers, set_teleporter, spatial, support, timers, tower_walls, unit_data, value_lists,
-    veterancy,
+    World, adjust_count, ai, ammunition, animations, attachments, commands, copy_value,
+    design_lines, economy, entities, entity_flags, entity_visuals, events, execute_control_effect,
+    filters, fog, forbids, game_state, health, icons, is_copy_effect, iterators, list_processing,
+    lists, math, objectives, orders, ownership, powers, presentation, proto_data, rally_points,
+    relationships, resources, revealers, set_teleporter, spatial, support, timers, tower_walls,
+    unit_data, value_lists, veterancy,
 };
 
 pub(crate) fn execute_effect(
@@ -24,6 +24,9 @@ pub(crate) fn execute_effect(
         return (outcome, None);
     }
     if let Some(outcome) = game_state::execute(effect, script, world) {
+        return (outcome, None);
+    }
+    if let Some(outcome) = ammunition::execute(effect, script, world) {
         return (outcome, None);
     }
     if let Some(outcome) = objectives::execute(effect, script, world) {

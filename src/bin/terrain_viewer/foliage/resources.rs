@@ -275,11 +275,11 @@ impl FoliageResources {
 
                 // Left vertex
                 positions.push([-width, y, 0.0, u_min]); // x, y, z, u
-                normals.push([0.0, 0.0, 1.0, 1.0 - t]); // nx, ny, nz, v
+                normals.push([0.0, 0.0, 1.0, 1.0 - t]); // nx, ny, nz, runtime v
 
                 // Right vertex
                 positions.push([width, y, 0.0, u_max]); // x, y, z, u
-                normals.push([0.0, 0.0, 1.0, 1.0 - t]); // nx, ny, nz, v
+                normals.push([0.0, 0.0, 1.0, 1.0 - t]); // nx, ny, nz, runtime v
             }
         }
 

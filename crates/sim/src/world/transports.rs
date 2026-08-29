@@ -7,6 +7,8 @@ use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use glam::Vec3;
 
+mod power;
+
 impl World {
     /// Attach a newly created squad to a synthetic transport and start flight.
     pub(crate) fn start_transport_fly_in(
@@ -111,6 +113,7 @@ impl World {
                 }
             }
         }
+        self.update_power_transport_flights(dt);
     }
 
     fn advance_transport(

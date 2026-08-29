@@ -12,10 +12,11 @@ used because they do not describe the binaries being rendered here.
 | Terrain Y decode | Subtract the DXBC default `g_yOffset = 0.00048828125` before multiplying by the Y range. Foliage and roads intentionally do not use that terrain-only bias. |
 | Terrain patches | 16 cells per patch and 17 vertices per side, with final-edge clamping. Levels 0/1/2/3 select factors 16/8/4/2, patch metadata follows the same source-to-world transpose, and shared edges take the finer neighbor. |
 | Terrain position LOD | The main domain variant uses normalized global X as its explicit position-texture LOD; the renderer supplies the required generated mip. |
+| Terrain alpha | Static XTD alpha is sampled by generated terrain vertices and interpolated. The pixel shader combines it with the dynamic-alpha bit and applies the `0.66666` threshold. |
 | XTT chunk axes | XTT `(grid_x, grid_z)` maps to world `(z, x)`; the atlas slot is `grid_x * 16 + grid_z`. |
 | Repeating material UV | Uses the shader's independent `(Z, X)` convention; this is not the chunk-address convention. |
 | Foliage random | One scalar `fract((fract(index * 0.0012385598) * 257 + 1)^2)` drives both jitter axes, rotation, and height. |
-| Foliage UV | Stored U and V pass through directly; V is not inverted. |
+| Foliage UV | The PC vertex shader passes runtime UV through from structured-buffer offset 24. XML source V is inverted while packing that runtime geometry, equivalent to the Xbox shader's `1 - norm0.w`. |
 | Foliage placement | The oracle local grid is `x = index / 64 + 0.5`, `z = index & 63`, followed by scalar jitter. The XTD visual parent already selects the viewer world chunk, so its origin stays fixed while only the local grid and blade geometry are transposed to viewer `(x, z) = (local z, local x)`. |
 | Foliage indices | Big-endian packed `u32`: blade type in the upper half, blade/vertex index in the lower half, with strip restarts. |
 | Foliage DDS | DXGI 98/99 is BC7, decoded through the local `../ensemble-formats` crate rather than the previous BC3 approximation. |
@@ -26,6 +27,12 @@ The compositor writes per-chunk albedo, normal, and colored-specular results
 into matching atlases. It supports eight splat layers, alpha channels, decal
 transforms, and every atlas mip. Hardware sRGB sampling/output performs the
 linearization and encoding around the blend.
+
+Chunk alpha and decal masks use spatial 64-pixel tiles instead of texture-array
+layers, so maps with more than 256 chunks do not exceed the common array-layer
+limit. The output atlas selects the largest power-of-two chunk resolution up to
+512 that fits the device's 2D texture limit; Fort Deen's 20×20 grid uses 256
+pixels per chunk in a 5120×5120 atlas on an 8192-limit device.
 
 Blood Gulch's XTT bytes identify 256 linkers. Linker order increments XTT
 `grid_x` first, which is world Z; compositor placement transposes that into the

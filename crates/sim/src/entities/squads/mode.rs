@@ -36,6 +36,14 @@ pub enum SquadMode {
 }
 
 impl SquadMode {
+    /// Decode a database squad-mode spelling without case sensitivity.
+    #[must_use]
+    pub fn from_authored(value: &str) -> Option<Self> {
+        (0..=12)
+            .filter_map(Self::from_i32)
+            .find(|mode| mode.as_str().eq_ignore_ascii_case(value.trim()))
+    }
+
     /// Decode the numeric mode carried by a work command.
     #[must_use]
     pub const fn from_i32(value: i32) -> Option<Self> {
@@ -94,5 +102,10 @@ mod tests {
             Some("ScarabKill")
         );
         assert_eq!(SquadMode::from_i32(13), None);
+        assert_eq!(
+            SquadMode::from_authored(" hitandrun "),
+            Some(SquadMode::HitAndRun)
+        );
+        assert_eq!(SquadMode::from_authored("unknown"), None);
     }
 }

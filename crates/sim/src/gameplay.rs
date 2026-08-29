@@ -11,23 +11,32 @@ use glam::Vec3;
 use pipeline::database::hw1::tactics::{Action, TacticData, Weapon};
 use pipeline::database::hw1::{Database, ProtoObject};
 use pipeline::source::{AssetSource, StdFileProvider};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 mod abilities;
 mod analysis;
+mod collision_attacks;
 mod damage_types;
+mod detonate;
 mod join;
+mod mines;
 pub(crate) mod projectiles;
 mod protection;
 mod revival;
 mod scripted_animations;
 mod selection;
+mod tactic_states;
 mod timing;
+mod unit_attacks;
+mod vehicle_physics;
 mod veterancy;
 
 pub(crate) use abilities::resolve_database_ability;
 pub use abilities::{AbilityGameplay, AbilityRecoveryStart};
+pub use collision_attacks::CollisionAttackProfile;
+pub use detonate::{DetonateActionProfile, DetonateDurationProfile, DetonateThrowProfile};
 pub use join::{JoinActionProfile, JoinKind, JoinMergeType, MergedSquadProfile};
+pub use mines::MineActionProfile;
 pub use projectiles::{
     ProjectileInitialPerturbance, ProjectilePerturbanceProfile, ProjectileProfile,
 };
@@ -38,7 +47,14 @@ pub use protection::{
 pub use revival::{HeroRevivalProfile, ReviveActionProfile, UnitRevivalProfile};
 pub(crate) use selection::ProjectileCollisionTraits;
 pub use selection::{AttackQuery, AttackQueryFlags, TacticRelation};
-pub use timing::{AreaDamageProfile, AttackAccuracyProfile, AttackAnimation, AttackProfile};
+pub use tactic_states::{TacticStateId, TacticStateProfile};
+pub use timing::{
+    AreaDamageProfile, AttackAccuracyProfile, AttackAmmunition, AttackAnimation, AttackProfile,
+};
+pub use vehicle_physics::{
+    GroundVehicleKind, GroundVehiclePhysicsProfile, PhysicsReplacementLoadIssue,
+    PhysicsReplacementProfile, VehiclePhysicsLoadIssue,
+};
 
 /// Gameplay definitions for every proto object with a resolvable tactic file.
 #[derive(Debug, Clone, Default)]
@@ -55,6 +71,9 @@ pub struct GameplayCatalog {
     command_ability_id: Option<u8>,
     object_ability_commands: BTreeMap<String, u8>,
     target_traits: BTreeMap<String, selection::ObjectTargetTraits>,
+    neutral_objects: BTreeSet<String>,
+    vehicle_physics: vehicle_physics::GroundVehiclePhysicsCatalog,
+    physics_replacements: vehicle_physics::PhysicsReplacementCatalog,
     projectile_profiles: BTreeMap<String, ProjectileProfile>,
     scripted_animation_clips:
         BTreeMap<(String, String), scripted_animations::ScriptedAnimationClip>,
@@ -98,6 +117,9 @@ pub struct RangedAction<'a> {
 struct WeaponDamageModifier {
     damage: f32,
     rating: f32,
+    reflect_damage_factor: f32,
+    bowlable: bool,
+    rammable: bool,
 }
 
 /// A tactic file that could not participate in the gameplay catalog.
@@ -108,7 +130,7 @@ pub struct GameplayLoadIssue {
     reason: String,
 }
 
-/// An authored ranged action whose visual attack timing could not be resolved.
+/// An authored shared-executor attack whose visual timing could not be resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameplayTimingIssue {
     proto_object_name: String,
@@ -148,6 +170,11 @@ impl GameplayCatalog {
             command_ability_id: abilities::command_ability_id(database),
             object_ability_commands: abilities::collect_object_ability_commands(database),
             target_traits,
+            neutral_objects: collect_neutral_objects(database),
+            vehicle_physics: vehicle_physics::GroundVehiclePhysicsCatalog::load(database, source),
+            physics_replacements: vehicle_physics::PhysicsReplacementCatalog::load(
+                database, source,
+            ),
             projectile_profiles: projectiles::collect_projectile_profiles(database),
             projectile_gravity: database
                 .game_data
@@ -255,6 +282,7 @@ impl GameplayCatalog {
             command_ability_id: abilities::command_ability_id(database),
             object_ability_commands: abilities::collect_object_ability_commands(database),
             target_traits,
+            neutral_objects: collect_neutral_objects(database),
             projectile_profiles: projectiles::collect_projectile_profiles(database),
             projectile_gravity: database
                 .game_data
@@ -373,6 +401,13 @@ impl GameplayCatalog {
         self.objects.get(&proto_object_name.to_ascii_lowercase())
     }
 
+    /// Return whether the prototype carries retail's neutral-target flag.
+    #[must_use]
+    pub fn object_is_neutral(&self, proto_object_name: &str) -> bool {
+        self.neutral_objects
+            .contains(&proto_object_name.to_ascii_lowercase())
+    }
+
     /// Resolve the work range of the object's enabled teleporter hot-drop action.
     #[must_use]
     pub fn teleporter_work_range(&self, proto_object_name: &str) -> Option<f32> {
@@ -426,12 +461,12 @@ impl GameplayCatalog {
         &self.timing_issues
     }
 
-    /// Resolve the baseline Normal-mode ranged action in retail rule order.
+    /// Resolve the baseline Normal-mode unit attack in retail rule order.
     ///
     /// Authored target rules are checked in order, matching `BTactic`. If no
-    /// applicable Normal-mode rule exists, a ranged action marked `Default` is
-    /// used. As a final safe fallback, a tactic with exactly one enabled ranged
-    /// action is unambiguous. Multiple actions are deliberately not ranked by
+    /// applicable Normal-mode rule exists, an attack marked `Default` is used.
+    /// As a final safe fallback, a tactic with exactly one enabled attack is
+    /// unambiguous. Multiple actions are deliberately not ranked by
     /// DPS because tech effects and other squad modes enable Marine grenades,
     /// rockets, and cover actions dynamically.
     #[must_use]
@@ -439,7 +474,7 @@ impl GameplayCatalog {
         self.initial_ranged_action_for(proto_object_name)
     }
 
-    /// Resolve both the initial ranged action and its authored attack timing.
+    /// Resolve both the initial shared-executor action and its attack timing.
     #[must_use]
     pub fn initial_attack_profile(&self, proto_object_name: &str) -> Option<&AttackProfile> {
         let object = self.object(proto_object_name)?;
@@ -661,12 +696,14 @@ impl ObjectGameplay {
         self.attack_profiles.values()
     }
 
-    /// Iterate over all valid ranged action/weapon pairs in authored order.
+    /// Iterate over actions mapped to retail's shared ranged-attack executor.
+    ///
+    /// This includes both authored `RangedAttack` and `HandAttack` actions.
     pub fn ranged_actions(&self) -> impl Iterator<Item = RangedAction<'_>> {
-        self.tactics
-            .actions
-            .iter()
-            .filter_map(|action| is_ranged_attack(action).then(|| self.resolve_action(action))?)
+        self.tactics.actions.iter().filter_map(|action| {
+            unit_attacks::uses_ranged_attack_executor(action)
+                .then(|| self.resolve_action(action))?
+        })
     }
 
     pub(super) fn resolve_action<'a>(&'a self, action: &'a Action) -> Option<RangedAction<'a>> {
@@ -707,7 +744,7 @@ impl GameplayTimingIssue {
         &self.proto_object_name
     }
 
-    /// Return the authored ranged action name.
+    /// Return the authored unit attack action name.
     #[must_use]
     pub fn action_name(&self) -> &str {
         &self.action_name
@@ -736,6 +773,9 @@ fn collect_weapon_damage_modifiers(
                         WeaponDamageModifier {
                             damage: modifier.modifier,
                             rating: modifier.rating.unwrap_or(1.0),
+                            reflect_damage_factor: modifier.reflect_damage_factor.unwrap_or(0.0),
+                            bowlable: modifier.bowlable.unwrap_or(false),
+                            rammable: modifier.rammable.unwrap_or(false),
                         },
                     )
                 })
@@ -759,6 +799,20 @@ fn collect_damage_types(profiles: &damage_types::DamageTypeProfiles) -> BTreeMap
     profiles
         .base_damage_types()
         .map(|(object, damage_type)| (object.to_owned(), damage_type.to_ascii_lowercase()))
+        .collect()
+}
+
+fn collect_neutral_objects(database: &Database) -> BTreeSet<String> {
+    database
+        .objects
+        .iter()
+        .filter(|object| {
+            object
+                .flags
+                .iter()
+                .any(|flag| flag.trim().eq_ignore_ascii_case("Neutral"))
+        })
+        .map(|object| object.name.to_ascii_lowercase())
         .collect()
 }
 
@@ -798,167 +852,5 @@ fn load_tactics(
         .map_err(|error| format!("failed to parse tactic data: {error}"))
 }
 
-fn is_ranged_attack(action: &Action) -> bool {
-    action
-        .action_type
-        .as_deref()
-        .is_some_and(|kind| kind.eq_ignore_ascii_case("RangedAttack"))
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use pipeline::database::hw1::tactics::{TacticRules, TargetRule};
-
-    fn database() -> Database {
-        let mut database = Database::new();
-        database.objects.push(ProtoObject {
-            name: "test_unit".to_owned(),
-            tactics: Some("test_unit.tactics".to_owned()),
-            damage_type: Some("Light".to_owned()),
-            ..ProtoObject::default()
-        });
-        database
-    }
-
-    fn action(name: &str, weapon: &str) -> Action {
-        Action {
-            name: name.to_owned(),
-            action_type: Some("RangedAttack".to_owned()),
-            weapon: Some(weapon.to_owned()),
-            ..Action::default()
-        }
-    }
-
-    fn weapon(name: &str, range: f32) -> Weapon {
-        Weapon {
-            name: name.to_owned(),
-            damage_per_second: Some(10.0),
-            max_range: Some(range),
-            ..Weapon::default()
-        }
-    }
-
-    #[test]
-    fn catalog_lookup_is_case_insensitive_and_preserves_raw_tactics() {
-        let tactics = TacticData {
-            weapons: vec![weapon("Rifle", 25.0)],
-            actions: vec![action("RifleAttack", "Rifle")],
-            ..TacticData::default()
-        };
-        let catalog =
-            GameplayCatalog::from_tactics(&database(), [("TEST_UNIT".to_owned(), tactics)]);
-
-        let object = catalog.object("Test_Unit").expect("loaded gameplay");
-        assert_eq!(object.proto_object_name(), "test_unit");
-        assert_eq!(object.damage_type(), Some("Light"));
-        assert_eq!(object.tactics().actions.len(), 1);
-        assert_eq!(
-            catalog
-                .initial_ranged_action("TEST_UNIT")
-                .and_then(|resolved| resolved.weapon.max_range),
-            Some(25.0)
-        );
-    }
-
-    #[test]
-    fn authored_enemy_rule_wins_in_retail_order() {
-        let tactics = TacticData {
-            weapons: vec![weapon("First", 10.0), weapon("Second", 20.0)],
-            actions: vec![
-                action("FirstAttack", "First"),
-                action("SecondAttack", "Second"),
-            ],
-            tactic: Some(TacticRules {
-                target_rules: vec![TargetRule {
-                    relation: Some("Enemy".to_owned()),
-                    action: Some("SecondAttack".to_owned()),
-                    ..TargetRule::default()
-                }],
-                ..TacticRules::default()
-            }),
-            ..TacticData::default()
-        };
-        let catalog =
-            GameplayCatalog::from_tactics(&database(), [("test_unit".to_owned(), tactics)]);
-
-        let selected = catalog
-            .initial_ranged_action("test_unit")
-            .expect("rule-selected action");
-        assert_eq!(selected.action.name, "SecondAttack");
-        assert_eq!(selected.weapon.max_range, Some(20.0));
-    }
-
-    #[test]
-    fn ambiguous_enabled_attacks_are_not_guessed() {
-        let tactics = TacticData {
-            weapons: vec![weapon("Rifle", 25.0), weapon("Rocket", 50.0)],
-            actions: vec![
-                action("RifleAttack", "Rifle"),
-                action("RocketAttack", "Rocket"),
-            ],
-            ..TacticData::default()
-        };
-        let catalog =
-            GameplayCatalog::from_tactics(&database(), [("test_unit".to_owned(), tactics)]);
-
-        assert!(catalog.initial_ranged_action("test_unit").is_none());
-        assert_eq!(
-            catalog
-                .object("test_unit")
-                .unwrap()
-                .ranged_actions()
-                .count(),
-            2
-        );
-    }
-
-    #[test]
-    fn baseline_selection_uses_normal_mode_and_ignores_cover_and_abilities() {
-        let tactics = TacticData {
-            weapons: vec![
-                weapon("CoverRifle", 60.0),
-                weapon("Grenade", 35.0),
-                weapon("Rifle", 25.0),
-            ],
-            actions: vec![
-                action("CoverAttack", "CoverRifle"),
-                action("GrenadeAttack", "Grenade"),
-                action("RifleAttack", "Rifle"),
-            ],
-            tactic: Some(TacticRules {
-                target_rules: vec![
-                    TargetRule {
-                        relation: Some("Enemy".to_owned()),
-                        squad_mode: Some("Cover".to_owned()),
-                        action: Some("CoverAttack".to_owned()),
-                        ..TargetRule::default()
-                    },
-                    TargetRule {
-                        squad_mode: Some("Normal".to_owned()),
-                        ability: Some("Command".to_owned()),
-                        action: Some("GrenadeAttack".to_owned()),
-                        ..TargetRule::default()
-                    },
-                    TargetRule {
-                        relation: Some("Enemy".to_owned()),
-                        squad_mode: Some("Normal".to_owned()),
-                        action: Some("RifleAttack".to_owned()),
-                        ..TargetRule::default()
-                    },
-                ],
-                ..TacticRules::default()
-            }),
-            ..TacticData::default()
-        };
-        let catalog =
-            GameplayCatalog::from_tactics(&database(), [("test_unit".to_owned(), tactics)]);
-
-        assert_eq!(
-            catalog
-                .initial_ranged_action("test_unit")
-                .map(|action| action.action.name.as_str()),
-            Some("RifleAttack")
-        );
-    }
-}
+mod tests;

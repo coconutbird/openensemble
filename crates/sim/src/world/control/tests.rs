@@ -66,3 +66,16 @@ fn selectable_and_auto_attackable_flags_are_authoritative_queries() {
     assert!(world.set_unit_auto_attackable(unit_id, false));
     assert_eq!(world.unit_is_auto_attackable(unit_id), Some(false));
 }
+
+#[test]
+fn runtime_render_override_applies_only_to_object_derived_entities() {
+    let mut world = World::new();
+    let unit_id = world.create_unit(1);
+    let squad_id = world.create_squad(1);
+
+    assert_eq!(world.entity_is_render_enabled(unit_id), Some(true));
+    assert!(world.set_entity_render_enabled(unit_id, false));
+    assert_eq!(world.entity_is_render_enabled(unit_id), Some(false));
+    assert!(!world.set_entity_render_enabled(squad_id, false));
+    assert_eq!(world.entity_is_render_enabled(squad_id), None);
+}

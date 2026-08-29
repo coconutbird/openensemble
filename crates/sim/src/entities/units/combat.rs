@@ -1,5 +1,6 @@
-//! Deterministic per-unit ranged-attack animation state.
+//! Deterministic state for retail's shared ranged/hand attack executor.
 
+use crate::entities::UnitAmmunition;
 use crate::entity_id::EntityId;
 use crate::gameplay::AttackProfile;
 use crate::random::Random;
@@ -59,6 +60,12 @@ impl UnitCombat {
         self.animation_index.is_some()
     }
 
+    /// Return whether the current action is waiting on its visual reload.
+    #[must_use]
+    pub fn is_reloading(&self) -> bool {
+        self.reload_remaining > 0.0
+    }
+
     /// Clear action, cooldown, reload, and visual-ammo state.
     pub fn reset(&mut self) {
         *self = Self::default();
@@ -78,6 +85,8 @@ impl UnitCombat {
         dt: f32,
         target: EntityId,
         profile: &AttackProfile,
+        ammunition: &mut UnitAmmunition,
+        ammunition_per_attack: f32,
         rng: &mut Random,
     ) -> AttackAdvance {
         if !dt.is_finite() || dt <= 0.0 || profile.animations.is_empty() {
@@ -102,6 +111,14 @@ impl UnitCombat {
                 continue;
             }
             if self.animation_index.is_none() {
+                if profile.ammunition.is_used()
+                    && !ammunition.has_full_attack(
+                        profile.maximum_attacks_per_animation(),
+                        ammunition_per_attack,
+                    )
+                {
+                    break;
+                }
                 self.begin_cycle(profile, rng);
             }
 
@@ -130,6 +147,9 @@ impl UnitCombat {
             {
                 self.next_attack_tag += 1;
                 hits += 1;
+                if profile.ammunition.is_used() {
+                    ammunition.spend_attack(ammunition_per_attack);
+                }
                 if profile.visual_ammo > 0 {
                     self.visual_ammo_remaining = self.visual_ammo_remaining.saturating_sub(1);
                 }
@@ -250,6 +270,7 @@ mod tests {
             max_velocity_lead: 0.0,
             accuracy: AttackAccuracyProfile::default(),
             damage_per_attack: 5.0,
+            ammunition: crate::gameplay::AttackAmmunition::None,
             animations: vec![AttackAnimation {
                 asset_path: "attack.uax".to_owned(),
                 weight: 1,
@@ -270,38 +291,91 @@ mod tests {
         let mut rng = Random::new();
         let target = EntityId::new(crate::entity_id::EntityClass::Unit, 2);
         let profile = profile();
+        let mut ammunition = UnitAmmunition::default();
 
         assert_eq!(
-            combat.advance(0.74, target, &profile, &mut rng).hit_count,
+            combat
+                .advance(0.74, target, &profile, &mut ammunition, 5.0, &mut rng)
+                .hit_count,
             0
         );
         assert_eq!(
-            combat.advance(0.02, target, &profile, &mut rng).hit_count,
+            combat
+                .advance(0.02, target, &profile, &mut ammunition, 5.0, &mut rng)
+                .hit_count,
             1
         );
         assert_eq!(
-            combat.advance(0.48, target, &profile, &mut rng).hit_count,
+            combat
+                .advance(0.48, target, &profile, &mut ammunition, 5.0, &mut rng)
+                .hit_count,
             0
         );
         assert_eq!(
-            combat.advance(0.02, target, &profile, &mut rng).hit_count,
+            combat
+                .advance(0.02, target, &profile, &mut ammunition, 5.0, &mut rng)
+                .hit_count,
             1
         );
         assert_eq!(
-            combat.advance(0.74, target, &profile, &mut rng).hit_count,
+            combat
+                .advance(0.74, target, &profile, &mut ammunition, 5.0, &mut rng)
+                .hit_count,
             0
         );
         assert_eq!(
-            combat.advance(0.99, target, &profile, &mut rng).hit_count,
+            combat
+                .advance(0.99, target, &profile, &mut ammunition, 5.0, &mut rng)
+                .hit_count,
             0
         );
         assert_eq!(
-            combat.advance(0.02, target, &profile, &mut rng).hit_count,
+            combat
+                .advance(0.02, target, &profile, &mut ammunition, 5.0, &mut rng)
+                .hit_count,
             0
         );
         assert_eq!(
-            combat.advance(0.74, target, &profile, &mut rng).hit_count,
+            combat
+                .advance(0.74, target, &profile, &mut ammunition, 5.0, &mut rng)
+                .hit_count,
             1
         );
+    }
+
+    #[test]
+    fn ammunition_requires_and_spends_a_complete_authored_volley() {
+        let mut profile = profile();
+        profile.ammunition = crate::gameplay::AttackAmmunition::FailWhenDepleted;
+        let target = EntityId::new(crate::entity_id::EntityClass::Unit, 2);
+        let mut rng = Random::new();
+        let mut combat = UnitCombat::default();
+        let mut ammunition = UnitAmmunition::default();
+        ammunition.configure(10.0, 0.0, true);
+
+        let advance = combat.advance(1.26, target, &profile, &mut ammunition, 5.0, &mut rng);
+        assert_eq!(advance.hit_count, 2);
+        assert_close(ammunition.current(), 0.0);
+        assert_eq!(
+            combat
+                .advance(10.0, target, &profile, &mut ammunition, 5.0, &mut rng)
+                .hit_count,
+            0
+        );
+
+        let mut insufficient = UnitAmmunition::default();
+        insufficient.configure(9.0, 0.0, true);
+        let mut combat = UnitCombat::default();
+        assert_eq!(
+            combat
+                .advance(10.0, target, &profile, &mut insufficient, 5.0, &mut rng)
+                .hit_count,
+            0
+        );
+        assert!(!combat.is_animating());
+    }
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!((actual - expected).abs() <= f32::EPSILON * expected.abs().max(1.0));
     }
 }

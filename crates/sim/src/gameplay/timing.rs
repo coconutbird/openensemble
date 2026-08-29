@@ -1,6 +1,6 @@
 //! Retail attack timing derived from visual animation tags and UAX durations.
 
-use super::{RangedAction, is_ranged_attack};
+use super::{RangedAction, unit_attacks::uses_ranged_attack_executor};
 use num_traits::ToPrimitive;
 use pipeline::database::hw1::tactics::{Action, TacticData, Weapon};
 use pipeline::database::hw1::visual::{Anim, Model, Visual};
@@ -8,7 +8,7 @@ use pipeline::database::hw1::{ProtoObject, visual};
 use pipeline::source::{AssetSource, StdFileProvider};
 use std::collections::BTreeMap;
 
-/// One weighted animation variant used by a ranged action.
+/// One weighted animation variant used by the shared unit attack executor.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttackAnimation {
     /// Canonical UAX path in the layered asset source.
@@ -70,6 +70,32 @@ impl Default for AttackAccuracyProfile {
     }
 }
 
+/// Retail ammunition use and depleted-action result for one unit attack.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AttackAmmunition {
+    /// The weapon does not consume unit ammunition.
+    #[default]
+    None,
+    /// The action reports failure when a complete next volley cannot be paid.
+    FailWhenDepleted,
+    /// The action reports completion when a complete next volley cannot be paid.
+    CompleteWhenDepleted,
+}
+
+impl AttackAmmunition {
+    /// Return whether each Attack tag consumes authoritative unit ammunition.
+    #[must_use]
+    pub const fn is_used(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    /// Return whether depletion completes rather than fails the attack action.
+    #[must_use]
+    pub const fn completes_when_depleted(self) -> bool {
+        matches!(self, Self::CompleteWhenDepleted)
+    }
+}
+
 /// Immutable attack values computed using retail's `computeAttackInfo` rules.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttackProfile {
@@ -98,6 +124,8 @@ pub struct AttackProfile {
     pub accuracy: AttackAccuracyProfile,
     /// Base damage applied for each Attack tag before live modifiers.
     pub damage_per_attack: f32,
+    /// Ammunition consumption and depleted-action completion behavior.
+    pub ammunition: AttackAmmunition,
     /// Weighted attack-animation variants in visual order.
     pub animations: Vec<AttackAnimation>,
     /// Inclusive pre-attack cooldown roll range in seconds.
@@ -110,6 +138,19 @@ pub struct AttackProfile {
     pub visual_ammo: u32,
     /// Whether height bonus damage participates in the hit calculation.
     pub uses_height_bonus_damage: bool,
+}
+
+impl AttackProfile {
+    /// Return retail's maximum Attack-tag count across animation variants.
+    #[must_use]
+    pub fn maximum_attacks_per_animation(&self) -> u32 {
+        self.animations
+            .iter()
+            .map(|animation| animation.attack_positions.len())
+            .max()
+            .and_then(|count| u32::try_from(count).ok())
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -136,7 +177,7 @@ pub(super) fn load_attack_profiles(
     let ranged_actions = tactics
         .actions
         .iter()
-        .filter(|action| is_ranged_attack(action))
+        .filter(|action| uses_ranged_attack_executor(action))
         .filter_map(|action| resolve_action(tactics, action))
         .collect::<Vec<_>>();
     if ranged_actions.is_empty() {
@@ -217,7 +258,7 @@ fn build_attack_profile(
         .as_ref()
         .map(|animation| animation.name.trim())
         .filter(|name| !name.is_empty())
-        .ok_or_else(|| "ranged action has no attack animation".to_owned())?;
+        .ok_or_else(|| "unit attack has no attack animation".to_owned())?;
     let model = select_attack_model(object, visual, ranged.action, ranged.weapon)
         .ok_or_else(|| "visual has no usable attack model".to_owned())?;
     let animation = find_animation(model, animation_name).ok_or_else(|| {
@@ -280,6 +321,15 @@ fn build_attack_profile(
         max_velocity_lead: finite_nonnegative(ranged.weapon.max_velocity_lead),
         accuracy: attack_accuracy_profile(ranged.weapon),
         damage_per_attack,
+        ammunition: if ranged.weapon.uses_ammo == Some(true) {
+            if ranged.action.stop_attacking_when_ammo_depleted == Some(true) {
+                AttackAmmunition::CompleteWhenDepleted
+            } else {
+                AttackAmmunition::FailWhenDepleted
+            }
+        } else {
+            AttackAmmunition::None
+        },
         animations: variants,
         pre_attack_cooldown: cooldown_range(
             ranged.weapon.pre_attack_cooldown_min,

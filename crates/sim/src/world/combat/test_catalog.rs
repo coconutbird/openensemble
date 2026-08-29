@@ -91,6 +91,43 @@ pub(super) fn ability_catalog() -> GameplayCatalog {
     )
 }
 
+pub(super) fn hand_attack_catalog() -> GameplayCatalog {
+    let mut database = Database::new();
+    database.objects.extend([
+        ProtoObject {
+            name: "test_attacker".to_owned(),
+            tactics: Some("test_attacker.tactics".to_owned()),
+            ..ProtoObject::default()
+        },
+        ProtoObject {
+            name: "test_target".to_owned(),
+            ..ProtoObject::default()
+        },
+    ]);
+    let tactics = TacticData {
+        weapons: vec![Weapon {
+            name: "Hammer".to_owned(),
+            max_range: Some(3.0),
+            ..Weapon::default()
+        }],
+        actions: vec![Action {
+            name: "HammerAttack".to_owned(),
+            action_type: Some("HandAttack".to_owned()),
+            weapon: Some("Hammer".to_owned()),
+            ..Action::default()
+        }],
+        ..TacticData::default()
+    };
+    GameplayCatalog::from_test_profiles(
+        &database,
+        [("test_attacker".to_owned(), tactics)],
+        [(
+            "test_attacker".to_owned(),
+            instant_profile("HammerAttack", 3.0),
+        )],
+    )
+}
+
 fn ranged_action(name: &str, weapon: &str) -> Action {
     Action {
         name: name.to_owned(),
@@ -113,6 +150,7 @@ fn instant_profile(action_name: &str, max_range: f32) -> AttackProfile {
         max_velocity_lead: 0.0,
         accuracy: AttackAccuracyProfile::default(),
         damage_per_attack: 5.0,
+        ammunition: crate::gameplay::AttackAmmunition::None,
         animations: vec![AttackAnimation {
             asset_path: "test_attack.uax".to_owned(),
             weight: 1,

@@ -13,7 +13,8 @@ pub(crate) use powers::{PowerGrant, PowerRules};
 pub use research::{PlayerResearchState, TechStatus};
 pub use technology::PlayerTechState;
 pub(crate) use technology::{
-    AppliedSquadTransform, ProtoDataModification, ProtoDataRelativity, ProtoDataType,
+    AppliedPrototypeTransform, AppliedSquadTransform, AppliedUnitTransform, ProtoDataModification,
+    ProtoDataRelativity, ProtoDataType,
 };
 
 /// Player ID type (0-based index).

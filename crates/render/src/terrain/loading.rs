@@ -760,7 +760,7 @@ pub struct RoadTextures {
 ///
 /// Data is stored as:
 /// - positions texture: [pos.x, pos.y, pos.z, uv.x]
-/// - normals texture: [norm.x, norm.y, norm.z, uv.y]
+/// - normals texture: [norm.x, norm.y, norm.z, runtime uv.y]
 fn parse_foliage_blade_xml(xml_data: &[u8], foliage_set: &mut FoliageSet) {
     use pipeline::xmb::{Document as XmbDocument, Reader as XmbReader};
 
@@ -844,7 +844,7 @@ fn parse_foliage_blade_xml(xml_data: &[u8], foliage_set: &mut FoliageSet) {
                 let uv = parse_vector2_attr(vert_node, "uv");
 
                 positions.push([pos[0], pos[1], pos[2], uv[0]]);
-                normals.push([nrm[0], nrm[1], nrm[2], uv[1]]);
+                normals.push([nrm[0], nrm[1], nrm[2], foliage_runtime_v(uv[1])]);
             }
         }
     }
@@ -861,6 +861,13 @@ fn parse_foliage_blade_xml(xml_data: &[u8], foliage_set: &mut FoliageSet) {
     foliage_set.num_verts_per_blade = num_verts_per_type;
     foliage_set.blade_positions = positions;
     foliage_set.blade_normals = normals;
+}
+
+/// Convert the source XML convention to the runtime texture convention used by
+/// the PC structured foliage buffer. This is the Xbox shader's `1 - norm0.w`
+/// conversion performed while packing rather than in the runtime shader.
+fn foliage_runtime_v(source_v: f32) -> f32 {
+    1.0 - source_v
 }
 
 /// Parse a "x,y,z" vector attribute from an XMB node.
@@ -889,7 +896,7 @@ fn parse_vector2_attr(node: &pipeline::xmb::Node, attr_name: &str) -> [f32; 2] {
 
 #[cfg(test)]
 mod tests {
-    use super::foliage_parent_grid;
+    use super::{foliage_parent_grid, foliage_runtime_v};
     use pipeline::xtd::XtdVisualChunk;
 
     #[test]
@@ -915,5 +922,12 @@ mod tests {
         assert_eq!(foliage_parent_grid(&chunks, 1), Some((1, 0)));
         assert_eq!(foliage_parent_grid(&chunks, 2), Some((0, 1)));
         assert_eq!(foliage_parent_grid(&chunks, 3), None);
+    }
+
+    #[test]
+    fn foliage_source_v_is_converted_to_runtime_texture_v() {
+        assert!((foliage_runtime_v(0.0) - 1.0).abs() < f32::EPSILON);
+        assert!((foliage_runtime_v(0.25) - 0.75).abs() < f32::EPSILON);
+        assert!(foliage_runtime_v(1.0).abs() < f32::EPSILON);
     }
 }

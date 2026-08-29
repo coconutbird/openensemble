@@ -25,7 +25,7 @@ impl World {
         })
     }
 
-    /// Add direct scripted HP and shield values to a live unit.
+    /// Add direct scripted HP and shield values to a live or healing replacement.
     ///
     /// This intentionally does not emit a combat-damage event or revive a
     /// killed unit. Retail's `teRepair` clamps only at each maximum.
@@ -33,11 +33,16 @@ impl World {
         if !hitpoints.is_finite() || !shields.is_finite() {
             return false;
         }
-        let Some(unit) = self.units.get_mut(unit_id).filter(|unit| unit.is_alive()) else {
+        let Some(unit) = self
+            .units
+            .get_mut(unit_id)
+            .filter(|unit| unit.is_alive() || unit.is_death_replacement_healing())
+        else {
             return false;
         };
         unit.hitpoints = (unit.hitpoints + hitpoints).min(unit.max_hitpoints);
         unit.shields.current = (unit.shields.current + shields).min(unit.shields.maximum);
+        let _finished = unit.finish_death_replacement_healing();
         true
     }
 

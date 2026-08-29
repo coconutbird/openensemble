@@ -202,7 +202,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let pos_sample = textureLoad(t_blade_positions, vec2<u32>(pixel_x, 0u), 0);
     let norm_sample = textureLoad(t_blade_normals, vec2<u32>(pixel_x, 0u), 0);
 
-    // Blade geometry and UV are passed through exactly as loaded by the oracle.
+    // PC terrainfoliage loads the already-converted runtime UV from its
+    // structured buffer and passes it through unchanged.
     var pos = pos_sample.xyz;
     let blade_uv = vec2<f32>(pos_sample.w, norm_sample.w);
     var normal = norm_sample.xyz;

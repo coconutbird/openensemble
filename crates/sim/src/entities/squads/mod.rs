@@ -3,23 +3,35 @@
 //! Based on `BSquad` from the original source.
 //! A squad is a group of units that move and act together.
 
+mod cryo;
+mod detonate;
 mod garrison;
 mod join;
 pub mod marine;
+mod mines;
 mod mode;
 mod orders;
+mod rage;
 mod recovery;
+mod repair;
 mod shields;
 mod transport;
 pub mod warthog;
 
+pub use cryo::SquadCryoState;
+pub(crate) use cryo::{SquadCryo, SquadCryoConfig, SquadCryoEffect};
+pub(crate) use detonate::DetonateOrder;
+pub use detonate::SquadDetonatePhase;
 pub use garrison::{SquadContainmentState, SquadGarrison};
 pub use join::{JoinKind, JoinMergeType, SquadBoardState, SquadMergeState};
+pub(crate) use mines::MineOrder;
 pub use mode::SquadMode;
 pub use recovery::{RecoveryType, SquadRecovery};
 pub use shields::SquadShields;
-pub(crate) use transport::SquadTransportPlan;
-pub use transport::{SquadTransportFlyIn, TransportFlyInPhase};
+pub(crate) use transport::{SquadPowerTransportPlan, SquadTransportPlan};
+pub use transport::{
+    PowerTransportPhase, SquadPowerTransport, SquadTransportFlyIn, TransportFlyInPhase,
+};
 
 use super::{BaseEntity, EntityIdle};
 use crate::entity::Entity;
@@ -39,6 +51,8 @@ pub enum SquadState {
     Attacking,
     /// Dead/destroyed.
     Dead,
+    /// Executing a non-movement work action.
+    Working,
 }
 
 /// Gameplay implementation selected for a proto squad.
@@ -94,6 +108,12 @@ pub struct Squad {
     pub recovery: SquadRecovery,
     /// Shared post-damage timer for member shield recharge.
     pub shields: SquadShields,
+    /// Persistent retail freezing, frozen, and thawing action state.
+    pub(crate) cryo: SquadCryo,
+    /// Shared regen reference count owned by active repair actions.
+    pub(crate) repair: repair::SquadRepair,
+    /// Persistent Rage controller references locking ordinary squad work.
+    pub(crate) rage: rage::SquadRage,
     /// Game time of the most recent accepted member-damage event.
     pub last_damaged_time: u32,
     /// Movement speed (units per second).
@@ -106,6 +126,8 @@ pub struct Squad {
     pub proto_squad_id: i32,
     /// Proto-squad name retained for diagnostics and deterministic checksums.
     pub proto_squad_name: String,
+    /// Live player-prototype squad ammunition maximum.
+    ammunition_maximum: f32,
     /// Current retail veterancy level earned by this squad.
     veterancy_level: i32,
     /// Total retail veterancy experience committed to this squad.
@@ -150,8 +172,14 @@ pub struct Squad {
     pub garrison: SquadGarrison,
     /// Trigger-created transport action owned by a synthetic transport squad.
     pub(crate) transport_fly_in: Option<SquadTransportFlyIn>,
+    /// Native-power pickup/drop-off action owned by a synthetic carrier squad.
+    pub(crate) power_transport: Option<SquadPowerTransport>,
     /// Members that completed the current command-ability attack cycle.
     ability_used_unit_ids: Vec<EntityId>,
+    /// Active Mines order and deterministic per-member progress.
+    pub(crate) mines: mines::SquadMines,
+    /// Targeted suicide action and its authored phase transitions.
+    pub(crate) detonate: detonate::SquadDetonate,
 }
 
 impl Default for Squad {
@@ -170,12 +198,16 @@ impl Default for Squad {
             attack_ability_id: None,
             recovery: SquadRecovery::default(),
             shields: SquadShields::default(),
+            cryo: SquadCryo::default(),
+            repair: repair::SquadRepair::default(),
+            rage: rage::SquadRage::default(),
             last_damaged_time: 0,
             speed: 10.0, // Default speed
             acceleration: 0.0,
             turn_rate_degrees: 0.0,
             proto_squad_id: -1,
             proto_squad_name: String::new(),
+            ammunition_maximum: 0.0,
             veterancy_level: 0,
             experience: 0.0,
             experience_bank: 0.0,
@@ -198,7 +230,10 @@ impl Default for Squad {
             trailer_partner: None,
             garrison: SquadGarrison::default(),
             transport_fly_in: None,
+            power_transport: None,
             ability_used_unit_ids: Vec::new(),
+            mines: mines::SquadMines::default(),
+            detonate: detonate::SquadDetonate::default(),
         }
     }
 }
@@ -246,6 +281,40 @@ impl Squad {
         self.veterancy_level = level.max(0);
     }
 
+    /// Number of overlapping repair actions currently affecting this squad.
+    #[must_use]
+    pub const fn repair_regen_source_count(&self) -> u32 {
+        self.repair.source_count()
+    }
+
+    /// Whether a native Rage execution currently owns this squad's controls.
+    #[must_use]
+    pub const fn is_raging(&self) -> bool {
+        self.rage.is_active()
+    }
+
+    /// Number of persistent Rage sources currently owning this squad.
+    #[must_use]
+    pub const fn rage_source_count(&self) -> u32 {
+        self.rage.source_count()
+    }
+
+    /// Retail exposes Rage locomotion as sprinting presentation state.
+    #[must_use]
+    pub const fn is_sprinting(&self) -> bool {
+        self.is_raging()
+    }
+
+    /// Return the player-prototype maximum used for squad ammunition ratios.
+    #[must_use]
+    pub const fn ammunition_maximum(&self) -> f32 {
+        self.ammunition_maximum
+    }
+
+    pub(crate) fn set_ammunition_maximum(&mut self, maximum: f32) {
+        self.ammunition_maximum = if maximum.is_finite() { maximum } else { 0.0 };
+    }
+
     pub(crate) fn bank_experience(&mut self, experience: f32) -> bool {
         if !experience.is_finite() {
             return false;
@@ -291,7 +360,7 @@ impl Squad {
 
     /// Issue a move order to the given position.
     pub fn move_to(&mut self, target: Vec3) {
-        if !self.base.is_mobile() || self.garrison.is_garrisoned() {
+        if !self.base.is_mobile() || self.garrison.is_garrisoned() || self.is_raging() {
             return;
         }
         self.garrison.cancel_pending();
@@ -319,6 +388,8 @@ impl Squad {
         self.attack_ability_id = None;
         self.ability_used_unit_ids.clear();
         self.join.cancel();
+        self.mines.cancel();
+        self.detonate.cancel();
         self.base.velocity = Vec3::ZERO;
         if self.is_alive() {
             self.state = SquadState::Idle;
@@ -334,12 +405,19 @@ impl Squad {
         mode: Option<SquadMode>,
         ability_id: Option<u8>,
     ) -> bool {
-        if !self.is_alive() || self.garrison.is_garrisoned() || target.is_invalid() {
+        if !self.is_alive()
+            || self.garrison.is_garrisoned()
+            || self.is_cryo_frozen()
+            || self.is_raging()
+            || target.is_invalid()
+        {
             return false;
         }
         self.garrison.cancel_pending();
         self.cancel_scripted_move_orders();
         self.join.cancel();
+        self.mines.cancel();
+        self.detonate.cancel();
         if self.attack_target != Some(target) {
             self.clear_experience_bank();
         }
@@ -405,6 +483,8 @@ impl Squad {
         self.attack_ability_id = None;
         self.ability_used_unit_ids.clear();
         self.join.cancel();
+        self.mines.cancel();
+        self.detonate.cancel();
         self.base.velocity = Vec3::ZERO;
         self.cancel_idle_action();
     }
@@ -469,6 +549,12 @@ impl Squad {
     #[must_use]
     pub const fn transport_fly_in(&self) -> Option<&SquadTransportFlyIn> {
         self.transport_fly_in.as_ref()
+    }
+
+    /// Active native-power transport action when this is the carrier squad.
+    #[must_use]
+    pub const fn power_transport(&self) -> Option<&SquadPowerTransport> {
+        self.power_transport.as_ref()
     }
 
     pub(crate) fn add_associated_wall_tower(&mut self, target: EntityId) {
@@ -608,7 +694,11 @@ impl Squad {
             self.base.forward
         };
         let current_speed = self.base.velocity.length();
-        let desired_speed = desired_speed(self.speed, self.acceleration, distance);
+        let desired_speed = desired_speed(
+            self.speed * self.cryo_movement_modifier(),
+            self.acceleration,
+            distance,
+        );
         let next_speed = approach_speed(current_speed, desired_speed, self.acceleration, dt);
         let move_distance = next_speed * dt;
 
@@ -698,6 +788,10 @@ impl Entity for Squad {
     }
 
     fn update(&mut self, dt: f32) {
+        if self.is_cryo_frozen() {
+            self.base.velocity = Vec3::ZERO;
+            return;
+        }
         if self.base.is_mobile()
             && !self.garrison.is_garrisoned()
             && (self.state == SquadState::Moving
