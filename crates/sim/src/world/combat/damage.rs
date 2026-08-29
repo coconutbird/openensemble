@@ -7,7 +7,31 @@ use crate::gameplay::GameplayCatalog;
 use crate::player::PlayerId;
 use glam::Vec3;
 
+#[derive(Debug, Clone, Copy)]
+pub(super) struct DamageAttribution {
+    unit_id: Option<EntityId>,
+    player_id: PlayerId,
+}
+
+impl DamageAttribution {
+    pub(super) const fn combat(unit_id: EntityId, player_id: PlayerId) -> Self {
+        Self {
+            unit_id: Some(unit_id),
+            player_id,
+        }
+    }
+
+    #[cfg(test)]
+    const fn scripted(player_id: PlayerId) -> Self {
+        Self {
+            unit_id: None,
+            player_id,
+        }
+    }
+}
+
 impl World {
+    #[cfg(test)]
     pub(in crate::world) fn apply_weapon_damage(
         &mut self,
         attacker_player_id: PlayerId,
@@ -17,7 +41,7 @@ impl World {
         gameplay: Option<&GameplayCatalog>,
     ) -> f32 {
         self.apply_weapon_damage_oriented(
-            attacker_player_id,
+            DamageAttribution::scripted(attacker_player_id),
             target_id,
             damage,
             weapon_type,
@@ -26,6 +50,7 @@ impl World {
         )
     }
 
+    #[cfg(test)]
     pub(in crate::world) fn apply_directional_weapon_damage(
         &mut self,
         attacker_player_id: PlayerId,
@@ -36,7 +61,44 @@ impl World {
         gameplay: Option<&GameplayCatalog>,
     ) -> f32 {
         self.apply_weapon_damage_oriented(
-            attacker_player_id,
+            DamageAttribution::scripted(attacker_player_id),
+            target_id,
+            damage,
+            weapon_type,
+            Some(direction),
+            gameplay,
+        )
+    }
+
+    pub(super) fn apply_attributed_weapon_damage(
+        &mut self,
+        attribution: DamageAttribution,
+        target_id: EntityId,
+        damage: f32,
+        weapon_type: Option<&str>,
+        gameplay: Option<&GameplayCatalog>,
+    ) -> f32 {
+        self.apply_weapon_damage_oriented(
+            attribution,
+            target_id,
+            damage,
+            weapon_type,
+            None,
+            gameplay,
+        )
+    }
+
+    pub(super) fn apply_attributed_directional_weapon_damage(
+        &mut self,
+        attribution: DamageAttribution,
+        target_id: EntityId,
+        damage: f32,
+        weapon_type: Option<&str>,
+        direction: Vec3,
+        gameplay: Option<&GameplayCatalog>,
+    ) -> f32 {
+        self.apply_weapon_damage_oriented(
+            attribution,
             target_id,
             damage,
             weapon_type,
@@ -47,7 +109,7 @@ impl World {
 
     fn apply_weapon_damage_oriented(
         &mut self,
-        attacker_player_id: PlayerId,
+        attribution: DamageAttribution,
         requested_target_id: EntityId,
         damage: f32,
         weapon_type: Option<&str>,
@@ -81,7 +143,7 @@ impl World {
                 damage_direction,
                 modifier_target.base.forward,
                 target_mode,
-                self.get_player(attacker_player_id)
+                self.get_player(attribution.player_id)
                     .map(|player| &player.technologies),
             )
         });
@@ -94,6 +156,8 @@ impl World {
             * construction_modifier
             * receiving_target.effective_damage_taken_multiplier();
         let health_before = receiving_target.hitpoints + receiving_target.shields.current;
+        let hitpoints_before = receiving_target.hitpoints;
+        let target_proto_object = receiving_target.proto_object_name.clone();
         let final_damage = damage * final_multiplier;
         if !final_damage.is_finite() || final_damage <= 0.0 {
             return 0.0;
@@ -116,12 +180,20 @@ impl World {
         if !damaged {
             return 0.0;
         }
-        let health_after = self
+        let (health_after, hitpoints_after) = self
             .units
             .get(receiving_target_id)
-            .map_or(health_before, |target| {
-                target.hitpoints + target.shields.current
+            .map_or((health_before, hitpoints_before), |target| {
+                (target.hitpoints + target.shields.current, target.hitpoints)
             });
+        if let (Some(attacker_id), Some(gameplay)) = (attribution.unit_id, gameplay) {
+            self.bank_combat_experience(
+                attacker_id,
+                &target_proto_object,
+                (hitpoints_before - hitpoints_after).max(0.0),
+                gameplay,
+            );
+        }
         ((health_before - health_after).max(0.0) / final_multiplier)
             .min(damage)
             .max(0.0)

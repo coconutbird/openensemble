@@ -7,6 +7,7 @@ use super::{
     game_state, health, icons, is_copy_effect, iterators, list_processing, lists, math, objectives,
     orders, ownership, powers, presentation, proto_data, rally_points, relationships, resources,
     revealers, set_teleporter, spatial, support, timers, tower_walls, unit_data, value_lists,
+    veterancy,
 };
 
 pub(crate) fn execute_effect(
@@ -142,6 +143,7 @@ fn execute_world_effect(
         EffectType::SetSelectable => entity_flags::set_selectable(effect, script, world),
         EffectType::SetAutoAttackable => entity_flags::set_auto_attackable(effect, script, world),
         EffectType::ModifyDataScalar => unit_data::modify_data_scalar(effect, script, world),
+        EffectType::AddXP => veterancy::add_experience(effect, script, world, gameplay),
         EffectType::ModifyProtoData => {
             proto_data::modify_proto_data(effect, script, world, database)
         }

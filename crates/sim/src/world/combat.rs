@@ -11,7 +11,7 @@ use super::World;
 use crate::entities::projectiles::{ProjectileLaunch, launch_target_position};
 use crate::entities::{Projectile, Squad, SquadMode, SquadState, Unit, UnitState};
 use crate::entity::Entity;
-use crate::entity_id::EntityId;
+use crate::entity_id::{EntityClass, EntityId};
 use crate::gameplay::{
     AreaDamageProfile, AttackAccuracyProfile, AttackProfile, AttackQuery, AttackQueryFlags,
     GameplayCatalog, RangedAction, TacticRelation,
@@ -288,6 +288,12 @@ impl World {
             .collect::<Vec<_>>();
         for squad_id in squad_ids {
             let motion = self.squad_combat_motion(squad_id, gameplay);
+            let completed_attack = matches!(motion, CombatMotion::Clear)
+                && self
+                    .squads
+                    .get(squad_id)
+                    .and_then(|squad| squad.attack_target)
+                    .is_some_and(|target_id| self.attack_target_is_defeated(target_id));
             let Some((member_ids, range_override)) = self
                 .squads
                 .get(squad_id)
@@ -295,6 +301,9 @@ impl World {
             else {
                 continue;
             };
+            if completed_attack {
+                self.apply_squad_experience_bank(squad_id, gameplay);
+            }
             let Some(squad) = self.squads.get_mut(squad_id) else {
                 continue;
             };
@@ -317,6 +326,23 @@ impl World {
             }
         }
         engagements
+    }
+
+    fn attack_target_is_defeated(&self, target_id: EntityId) -> bool {
+        match target_id.class() {
+            Some(EntityClass::Unit) => self
+                .units
+                .get(target_id)
+                .is_none_or(|unit| !unit.is_alive()),
+            Some(EntityClass::Squad) => self.squads.get(target_id).is_none_or(|squad| {
+                !squad.is_alive()
+                    || !squad
+                        .unit_ids
+                        .iter()
+                        .any(|unit_id| self.units.get(*unit_id).is_some_and(Entity::is_alive))
+            }),
+            _ => false,
+        }
     }
 
     fn update_standalone_combat_orders(

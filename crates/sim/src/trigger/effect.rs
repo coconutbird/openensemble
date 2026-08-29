@@ -394,6 +394,9 @@ pub enum EffectType {
     CreateObstructionUnit = 833,
     ObjectListRemove = 836,
 
+    // Squad veterancy
+    AddXP = 852,
+
     // Whole-map exploration
     ClearBlackMap = 863,
 
@@ -621,6 +624,7 @@ impl EffectType {
             | 836
             | 837..=840
             | 841
+            | 852
             | 863
             | 867..=870
             | 872

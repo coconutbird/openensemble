@@ -1,6 +1,6 @@
 //! Retail-compatible primary-target and splash-pool damage distribution.
 
-use super::World;
+use super::{World, damage::DamageAttribution};
 use crate::entities::Unit;
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
@@ -65,8 +65,8 @@ impl World {
     ) -> f32 {
         let Some(profile) = attack.area_damage else {
             return attack.primary_target_id.map_or(0.0, |target_id| {
-                self.apply_directional_weapon_damage(
-                    attack.attacker_player_id,
+                self.apply_attributed_directional_weapon_damage(
+                    DamageAttribution::combat(attack.attacker_id, attack.attacker_player_id),
                     target_id,
                     attack.damage,
                     attack.weapon_type.as_deref(),
@@ -85,6 +85,7 @@ impl World {
         gameplay: Option<&GameplayCatalog>,
     ) -> f32 {
         let primary = self.apply_primary_area_damage(attack, profile, gameplay);
+        let attribution = DamageAttribution::combat(attack.attacker_id, attack.attacker_player_id);
         let splash_pool = attack.primary_target_id.map_or(attack.damage, |_| {
             (1.0 - profile.primary_target_factor) * attack.damage
         });
@@ -93,7 +94,7 @@ impl World {
         let mut total = primary.dealt;
         total += self.apply_uncapped_gaia_damage(
             &candidates.uncapped_gaia,
-            attack.attacker_player_id,
+            attribution,
             attack.weapon_type.as_deref(),
             gameplay,
         );
@@ -104,7 +105,7 @@ impl World {
             total += self.apply_linear_area_damage(
                 &candidates.capped,
                 splash_pool,
-                attack.attacker_player_id,
+                attribution,
                 attack.weapon_type.as_deref(),
                 gameplay,
             );
@@ -112,7 +113,7 @@ impl World {
             total += self.apply_capped_area_damage(
                 &candidates.capped,
                 splash_pool,
-                attack.attacker_player_id,
+                attribution,
                 attack.weapon_type.as_deref(),
                 gameplay,
             );
@@ -134,8 +135,8 @@ impl World {
             .units
             .get(receiving_target_id)
             .is_some_and(Entity::is_alive);
-        let dealt = self.apply_weapon_damage(
-            attack.attacker_player_id,
+        let dealt = self.apply_attributed_weapon_damage(
+            DamageAttribution::combat(attack.attacker_id, attack.attacker_player_id),
             target_id,
             attack.damage * profile.primary_target_factor,
             attack.weapon_type.as_deref(),
@@ -251,15 +252,15 @@ impl World {
     fn apply_uncapped_gaia_damage(
         &mut self,
         candidates: &[AreaCandidate],
-        attacker_player_id: PlayerId,
+        attribution: DamageAttribution,
         weapon_type: Option<&str>,
         gameplay: Option<&GameplayCatalog>,
     ) -> f32 {
         candidates
             .iter()
             .map(|candidate| {
-                self.apply_weapon_damage(
-                    attacker_player_id,
+                self.apply_attributed_weapon_damage(
+                    attribution,
                     candidate.id,
                     candidate.damage,
                     weapon_type,
@@ -273,14 +274,14 @@ impl World {
         &mut self,
         candidates: &[AreaCandidate],
         mut splash_pool: f32,
-        attacker_player_id: PlayerId,
+        attribution: DamageAttribution,
         weapon_type: Option<&str>,
         gameplay: Option<&GameplayCatalog>,
     ) -> f32 {
         let mut total = 0.0;
         for candidate in candidates {
-            let dealt = self.apply_weapon_damage(
-                attacker_player_id,
+            let dealt = self.apply_attributed_weapon_damage(
+                attribution,
                 candidate.id,
                 splash_pool,
                 weapon_type,
@@ -299,7 +300,7 @@ impl World {
         &mut self,
         candidates: &[AreaCandidate],
         splash_pool: f32,
-        attacker_player_id: PlayerId,
+        attribution: DamageAttribution,
         weapon_type: Option<&str>,
         gameplay: Option<&GameplayCatalog>,
     ) -> f32 {
@@ -315,8 +316,8 @@ impl World {
         candidates
             .iter()
             .map(|candidate| {
-                self.apply_weapon_damage(
-                    attacker_player_id,
+                self.apply_attributed_weapon_damage(
+                    attribution,
                     candidate.id,
                     candidate.damage * reduction,
                     weapon_type,

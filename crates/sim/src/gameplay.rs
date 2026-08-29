@@ -23,6 +23,7 @@ mod revival;
 mod scripted_animations;
 mod selection;
 mod timing;
+mod veterancy;
 
 pub(crate) use abilities::resolve_database_ability;
 pub use abilities::{AbilityGameplay, AbilityRecoveryStart};
@@ -69,6 +70,7 @@ pub struct GameplayCatalog {
     shield_bubble_types: protection::ShieldBubbleTypes,
     merged_squads: join::MergedSquadProfiles,
     join_database: join::JoinDatabaseProfiles,
+    veterancy: veterancy::VeterancyCatalog,
     referenced_tactic_count: usize,
 }
 
@@ -169,6 +171,7 @@ impl GameplayCatalog {
             shield_bubble_types,
             merged_squads,
             join_database: join::JoinDatabaseProfiles::from_database(database),
+            veterancy: veterancy::VeterancyCatalog::from_database(database),
             ..Self::default()
         };
         let mut cache = BTreeMap::<String, Result<TacticData, String>>::new();
@@ -273,6 +276,7 @@ impl GameplayCatalog {
             hero_revival: revival::hero_profile(database),
             plasma_subshields: protection::collect_plasma_subshields(database),
             join_database: join::JoinDatabaseProfiles::from_database(database),
+            veterancy: veterancy::VeterancyCatalog::from_database(database),
             ..Self::default()
         };
         for object in &database.objects {

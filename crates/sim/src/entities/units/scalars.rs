@@ -58,6 +58,17 @@ impl UnitScalarModifiers {
         ]
     }
 
+    pub(crate) fn combine(self, other: Self) -> Self {
+        Self {
+            damage: self.damage * other.damage,
+            damage_taken: self.damage_taken * other.damage_taken,
+            velocity: self.velocity * other.velocity,
+            accuracy: self.accuracy * other.accuracy,
+            work_rate: self.work_rate * other.work_rate,
+            weapon_range: self.weapon_range * other.weapon_range,
+        }
+    }
+
     pub(crate) fn apply(self, unit: &mut Unit) {
         unit.adjust_data_scalar(UnitDataScalar::Damage, self.damage);
         unit.adjust_data_scalar(UnitDataScalar::DamageTaken, self.damage_taken);

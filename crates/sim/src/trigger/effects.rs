@@ -37,6 +37,7 @@ mod timers;
 mod tower_walls;
 mod unit_data;
 mod value_lists;
+mod veterancy;
 
 pub(super) use dispatch::execute_effect;
 

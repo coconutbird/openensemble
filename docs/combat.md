@@ -53,7 +53,10 @@ Recovered source corroboration comes from `unitactionrangedattack.cpp`,
 `unitactionplasmashieldgen.cpp`, `unitactionjoin.cpp`, `tactic.cpp`,
 `protosquad.cpp`, and `squad.cpp` in the recovered Halo Wars source tree. The
 Join work used those recovered named sources; it did not inspect additional IDA
-functions beyond the renamed functions listed above.
+functions beyond the renamed functions listed above. Veterancy and XP recovery
+likewise used the named `squad.cpp`, `unit.cpp`, `protosquad.cpp`,
+`squadactionattack.cpp`, and `triggereffect.cpp` sources, so this work introduced
+no additional inspected IDA functions requiring a rename.
 
 ## Implemented retail contracts
 
@@ -222,14 +225,54 @@ functions beyond the renamed functions listed above.
   squad table. A compatible Merge transfers the joining unit into the target,
   preserves population accounting, applies Join modifiers only to the original
   target members, and deterministically restores the source or target prototype
-  when one side of the merged composition is eliminated.
+  when one side of the merged composition is eliminated. In
+  `byCombatValue` mode the sim uses retail's prototype values: the joining
+  object's combat value divided by the target proto-squad's summed member
+  combat value. Damage becomes `1 + ratio * DamageBuffFactor`; positive
+  `DamageTakenBuffFactor` becomes `1 / (1 + ratio / factor)`. A missing or
+  nonpositive value leaves both layers at identity. Player-specific transformed
+  target prototypes are resolved before this calculation for both Merge and
+  Board.
 - Board joins reserve their channel while approaching and during the authored
   timer, mark the target as being boarded and nonattackable, then transfer enemy
   ownership and force-contain the joining Spartan in the captured target. The
   contained source is invulnerable and unselectable; target loss releases it,
   clears Join modifiers, and applies the authored revert-health fraction only
   after a completed takeover. Ownership, containment, timers, modifier layers,
-  and cleanup all live in checksummed sim state.
+  and cleanup all live in checksummed sim state. `veterancyOverride` applies
+  the Spartan prototype's earned-level damage, damage-taken, velocity, accuracy,
+  work-rate, and weapon-range multipliers to the captured unit and retains the
+  action's extra `levels` as an effective-level contribution. The authored
+  `ProtoObject` is created as an attached class-zero sim entity and removed by
+  normal target/Join cleanup. Omitted `ObjectClass` uses retail's class-zero
+  `Object` default, which is required by the shipped `fx_hijacked` prototype.
+- Scenario-layered object veterancy entries now build each proto squad's retail
+  level thresholds by summing member XP times authored count. Squads retain
+  checksummed committed XP, attack-action XP bank, and earned level. Thresholds
+  use retail's strict `XP > required` comparison, and each earned level applies
+  damage, damage-taken, velocity, accuracy, work-rate, and weapon-range factors
+  to every live member one level at a time.
+- Weapon damage awards the attacking unit's parent squad only the fraction of
+  the target prototype's bounty represented by actual HP loss divided by base
+  prototype hit points. Shield absorption earns no XP. Bounty remains banked
+  during the attack action, is discarded when a different order replaces it,
+  and is committed when the ordered unit or full squad is defeated.
+- A vehicle containing a veterancy-override Spartan splits incoming XP between
+  vehicle and Spartan in proportion to their scenario-layered proto-squad
+  combat values. Both banks are then applied in retail order. Later Spartan
+  levels update its own live member and apply that Spartan level's object
+  modifiers to the captured vehicle; effective vehicle veterancy includes its
+  own level, the Spartan's current level, and the Board action's authored extra
+  levels. Trigger effect DBID 852 (`AddXP`) uses the retail scalar-before-list
+  signature and preserves duplicate squad-list applications.
+- The authoritative world retains a checksummed effective veterancy gate. The
+  installed-scenario loader reads the raw root-level `AllowVeterancy` value
+  before creating any entities, including retail's missing-element `false` and
+  present-empty-element `true` defaults. A disabled scenario suppresses
+  prototype starting levels and their unit scalars, combat and trigger XP,
+  Board level inheritance, and later Spartan-to-vehicle propagation. The
+  `ScenarioData`-only helper defaults the gate on because that lossy pipeline
+  representation does not currently retain the raw flag.
 - When an AOE primary target resolves through a proxy to an external shield,
   other candidate centers within the shield's authored X/Y volume are removed
   before damage-pool normalization. The original primary remains eligible for
@@ -265,9 +308,11 @@ functions beyond the renamed functions listed above.
   combat targets, or start shield recharge. The flags remain independent of
   `UnitState`, participate in deterministic checksums, and drive the same
   unit/squad liveness predicates used by triggers.
-- The UGX scene roster is derived from live sim unit and projectile pools. GPU
-  presentation refreshes transforms by entity ID and contains no duplicate
-  movement, targeting, firing, or damage logic.
+- The UGX scene roster is derived from live sim visual-object, unit, and
+  projectile pools. This includes Board's attached `fx_hijacked` object; its
+  root transform follows the target in the sim, while GPU presentation merely
+  refreshes that transform by entity ID. The renderer contains no duplicate
+  movement, targeting, firing, damage, Join, or attachment lifecycle logic.
 
 ## Deliberate next boundaries
 
@@ -282,9 +327,10 @@ invulnerability controls, and destructible
 non-unit AOE recipients, dodge/deflect, sticky visual-mesh/bone intersections,
 timer damage reapplication, beam/needler behaviors, hero death/revival
 presentation, death effects, and ranged-action savegame compatibility. Join
-boundaries still include hijack attachment presentation, full veterancy/XP
-transfer, combat-value-derived Join modifiers, manual Board disconnect, and
-fatality animation/controller presentation.
+boundaries still include manual Board disconnect and fatality
+animation/controller presentation. Automatic discovery of retail's separate
+`cConfigVeterancy` runtime definition and veterancy presentation effects remain
+to be reconstructed; scenario `AllowVeterancy` is authoritative today.
 
 ## Installed-data validation
 
@@ -329,8 +375,14 @@ creation, proxy ownership, and target-loss teardown in the sim.
 It also resolves the shipped Spartan `InfantryJoin` through the raw
 `MergedSquads` compatibility table and verifies a real Spartan/Marine Merge,
 then resolves `VehicleTakeOver` against a Scorpion and verifies the authored
-8-second Board timer, ownership transfer, containment, and release on target
-death.
+8-unit work range, 8-second Board timer, 0.5 revert fraction, `HijackIdle`
+animation, one effective level, static `1.15/0.87` modifier factors, and
+`fx_hijacked` attachment. The completed real takeover verifies ownership
+transfer, containment, the live attached class-zero sim object, and release on
+target death. It additionally verifies the shipped Spartan and Scorpion combat
+values plus Spartan XP thresholds from the mounted database, then grants one XP
+to the captured Scorpion and confirms the proportional Board split commits to
+both authoritative squads without duplication.
 
 The non-ignored `scenario-database-layering` test builds encrypted synthetic
 `root.era` and scenario archives. It proves that scenario-local `gamedata.xml`

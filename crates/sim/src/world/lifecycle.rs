@@ -17,6 +17,7 @@ impl World {
         self.terrain_bounds = None;
         self.playable_bounds = None;
         self.config_symbols.clear();
+        self.veterancy_enabled = true;
         self.general_events = events::GeneralEventState::default();
         self.presentation = events::PresentationState::default();
         self.presentation_control = presentation::PresentationControlState::default();

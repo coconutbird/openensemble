@@ -45,6 +45,7 @@ pub(crate) mod placed;
 pub(crate) mod population;
 mod prototypes;
 mod resources;
+mod settings;
 mod sockets;
 mod starts;
 mod triggers;
@@ -202,11 +203,13 @@ pub fn load_scenario_from_game_dir(
             path: scenario_path.clone(),
         }
     })?;
+    let veterancy_enabled = settings::allows_veterancy(&trigger_document);
     let mut simulation = load_scenario_into_world_with_max_players(
         scenario_data,
         &content.database,
         max_players,
         gameplay,
+        veterancy_enabled,
     );
     if let Some(terrain) = &content.terrain_data {
         let minimum = Vec3::from_array(terrain.header.world_min);
@@ -259,7 +262,7 @@ pub fn load_scenario_from_game_dir(
 /// ```
 #[must_use]
 pub fn load_scenario_into_world(scenario: &ScenarioData, db: &Database) -> LoadedScenario {
-    load_scenario_into_world_with_max_players(scenario, db, None, GameplayCatalog::default())
+    load_scenario_into_world_with_max_players(scenario, db, None, GameplayCatalog::default(), true)
 }
 
 fn load_scenario_into_world_with_max_players(
@@ -267,8 +270,10 @@ fn load_scenario_into_world_with_max_players(
     db: &Database,
     max_players: Option<u32>,
     gameplay: GameplayCatalog,
+    veterancy_enabled: bool,
 ) -> LoadedScenario {
     let mut world = World::new();
+    world.set_veterancy_enabled(veterancy_enabled);
     world.configure_prototype_catalogs(db);
     world.configure_prototype_damage_profiles(&gameplay);
     world.set_construction_damage_multiplier(
@@ -485,16 +490,17 @@ pub(crate) fn create_squad_from_prototype(
         })
         .to_owned();
     let proto = find_proto_squad(db, &effective_proto_name).or(logical_proto);
+    let veterancy_level = world.veterancy_enabled().then(|| {
+        proto
+            .and_then(|(_, prototype)| prototype.level)
+            .unwrap_or_default()
+    });
     if let Some(squad) = world.get_squad_mut(squad_id) {
         squad.base.set_forward(forward);
         squad.proto_squad_id =
             logical_proto.map_or(-1, |(index, squad)| database_id(squad.dbid, index));
         proto_name.clone_into(&mut squad.proto_squad_name);
-        squad.set_veterancy_level(
-            proto
-                .and_then(|(_, prototype)| prototype.level)
-                .unwrap_or_default(),
-        );
+        squad.set_veterancy_level(veterancy_level.unwrap_or_default());
         squad.archetype = if is_warthog_squad(proto_name) {
             SquadArchetype::Warthog
         } else if is_marine_squad(proto_name) {

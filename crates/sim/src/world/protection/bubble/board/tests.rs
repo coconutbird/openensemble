@@ -135,6 +135,85 @@ fn destroyed_boarded_target_releases_and_damages_the_spartan() {
 }
 
 #[test]
+fn boarded_vehicle_splits_xp_and_inherits_later_spartan_levels() {
+    let (database, gameplay) = board_gameplay(0.0);
+    let (mut world, source_id, target_id, source_unit_id, target_unit_id) = board_world(&database);
+    assert!(world.issue_join_order(1, source_id, target_id, None));
+    world.update_entities_with_gameplay(0.05, &gameplay);
+
+    assert!(world.add_squad_experience(target_id, 91.0, &gameplay));
+
+    let source = world.get_squad(source_id).unwrap();
+    let target = world.get_squad(target_id).unwrap();
+    assert!(nearly_equal(source.experience(), 91.0 / 3.0));
+    assert!(nearly_equal(target.experience(), 91.0 * 2.0 / 3.0));
+    assert!(nearly_equal(source.banked_experience(), 0.0));
+    assert!(nearly_equal(target.banked_experience(), 0.0));
+    assert_eq!(source.veterancy_level(), 3);
+    assert_eq!(target.veterancy_level(), 1);
+    let board = source.board_state().unwrap();
+    assert_eq!(board.source_veterancy_level(), 3);
+    assert_eq!(board.effective_veterancy_bonus(), 4);
+    assert_eq!(world.effective_squad_veterancy_level(target_id), Some(5));
+    assert!(nearly_equal(
+        world
+            .get_unit(source_unit_id)
+            .unwrap()
+            .data_scalar(UnitDataScalar::Damage),
+        1.65
+    ));
+    let boarded_target = world.get_unit(target_unit_id).unwrap();
+    assert!(nearly_equal(
+        boarded_target.data_scalar(UnitDataScalar::Damage),
+        1.7325
+    ));
+    assert!(nearly_equal(
+        boarded_target.data_scalar(UnitDataScalar::DamageTaken),
+        0.6156
+    ));
+}
+
+#[test]
+fn disabled_veterancy_omits_board_levels_modifiers_and_xp_split() {
+    let (database, gameplay) = board_gameplay(0.0);
+    let (mut world, source_id, target_id, source_unit_id, target_unit_id) =
+        board_world_with_veterancy(&database, false);
+    assert!(world.issue_join_order(1, source_id, target_id, None));
+    world.update_entities_with_gameplay(0.05, &gameplay);
+
+    let board = world.get_squad(source_id).unwrap().board_state().unwrap();
+    assert!(board.is_complete());
+    assert!(!board.veterancy_override());
+    assert_eq!(board.source_veterancy_level(), 0);
+    assert_eq!(board.levels(), 0);
+    assert_eq!(board.effective_veterancy_bonus(), 0);
+    assert_eq!(world.effective_squad_veterancy_level(target_id), Some(0));
+    assert!(nearly_equal(
+        world
+            .get_unit(source_unit_id)
+            .unwrap()
+            .data_scalar(UnitDataScalar::Damage),
+        1.0
+    ));
+    assert!(nearly_equal(
+        world
+            .get_unit(target_unit_id)
+            .unwrap()
+            .data_scalar(UnitDataScalar::Damage),
+        1.0
+    ));
+    assert!(!world.add_squad_experience(target_id, 91.0, &gameplay));
+    assert!(nearly_equal(
+        world.get_squad(target_id).unwrap().experience(),
+        0.0
+    ));
+    assert!(nearly_equal(
+        world.get_squad(source_id).unwrap().experience(),
+        0.0
+    ));
+}
+
+#[test]
 fn target_destroyed_during_boarding_cancels_without_revert_damage() {
     let (database, gameplay) = board_gameplay(1.0);
     let (mut world, source_id, target_id, source_unit_id, target_unit_id) = board_world(&database);
@@ -151,7 +230,15 @@ fn target_destroyed_during_boarding_cancels_without_revert_damage() {
 }
 
 fn board_world(database: &Database) -> (World, EntityId, EntityId, EntityId, EntityId) {
+    board_world_with_veterancy(database, true)
+}
+
+fn board_world_with_veterancy(
+    database: &Database,
+    veterancy_enabled: bool,
+) -> (World, EntityId, EntityId, EntityId, EntityId) {
     let mut world = World::new();
+    world.set_veterancy_enabled(veterancy_enabled);
     world.init_players(2);
     world.get_player_mut(1).unwrap().team_id = 1;
     world.get_player_mut(2).unwrap().team_id = 2;
@@ -184,17 +271,27 @@ fn board_gameplay(board_time: f32) -> (Database, crate::gameplay::GameplayCatalo
                 name: "spartan".to_owned(),
                 tactics: Some("spartan.tactics".to_owned()),
                 hitpoints: Some(100.0),
+                combat_value: Some(30.0),
                 veterancy: vec![
                     VeterancyLevel {
                         level: 1,
+                        xp: Some(10.0),
                         damage: Some(1.2),
                         damage_taken: Some(0.9),
                         ..VeterancyLevel::default()
                     },
                     VeterancyLevel {
                         level: 2,
+                        xp: Some(20.0),
                         damage: Some(1.25),
                         damage_taken: Some(0.8),
+                        ..VeterancyLevel::default()
+                    },
+                    VeterancyLevel {
+                        level: 3,
+                        xp: Some(30.0),
+                        damage: Some(1.1),
+                        damage_taken: Some(0.95),
                         ..VeterancyLevel::default()
                     },
                 ],
@@ -203,6 +300,14 @@ fn board_gameplay(board_time: f32) -> (Database, crate::gameplay::GameplayCatalo
             ProtoObject {
                 name: "vehicle".to_owned(),
                 hitpoints: Some(200.0),
+                combat_value: Some(60.0),
+                veterancy: vec![VeterancyLevel {
+                    level: 1,
+                    xp: Some(50.0),
+                    damage: Some(1.05),
+                    damage_taken: Some(0.9),
+                    ..VeterancyLevel::default()
+                }],
                 ..ProtoObject::default()
             },
             ProtoObject {

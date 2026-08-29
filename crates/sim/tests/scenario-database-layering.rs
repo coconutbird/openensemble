@@ -34,6 +34,7 @@ const SCENARIO_DESCRIPTIONS: &str = r#"<ScenarioDescriptions>
 </ScenarioDescriptions>"#;
 
 const SCENARIO: &str = r#"<Scenario>
+    <AllowVeterancy>false</AllowVeterancy>
     <Players>
         <Player Name="Scenario Player" Team="1" Controllable="true" />
     </Players>
@@ -65,6 +66,8 @@ fn scenario_database_tables_win_before_authoritative_simulation_is_built() {
     let game_dir_text = game_dir.path().to_string_lossy();
     let loaded = sim::load_scenario_from_game_dir(&game_dir_text, "layered_test")
         .expect("synthetic scenario and database should load together");
+
+    assert!(!loaded.simulation.world.veterancy_enabled());
 
     let game_data = loaded
         .content

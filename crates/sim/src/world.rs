@@ -1,6 +1,4 @@
-//! World state container for the simulation.
-//!
-//! Based on `BWorld` from the original source.
+//! World state container for the simulation, based on retail `BWorld`.
 
 use crate::entities::squads::{formation_offset_to_local, formation_offset_to_world};
 use crate::entities::{Base, BaseId, Object, Projectile, ShieldCoverage, Squad, Unit};
@@ -63,6 +61,7 @@ mod tower_walls;
 mod training;
 mod transports;
 mod triggers;
+mod veterancy;
 mod visibility;
 
 pub use bounds::WorldBounds;
@@ -128,6 +127,7 @@ pub struct World {
     terrain_simulation: Option<terrain::TerrainSimulation>,
     /// Deterministic configuration symbols visible to retail trigger scripts.
     config_symbols: BTreeSet<String>,
+    veterancy_enabled: bool,
     /// Retail general-event subscriptions and completion state.
     general_events: events::GeneralEventState,
     /// Renderer-facing requests authored by the authoritative simulation.
@@ -197,6 +197,7 @@ impl World {
             playable_bounds: None,
             terrain_simulation: None,
             config_symbols: BTreeSet::new(),
+            veterancy_enabled: true,
             general_events: events::GeneralEventState::default(),
             presentation: events::PresentationState::default(),
             presentation_control: presentation::PresentationControlState::default(),

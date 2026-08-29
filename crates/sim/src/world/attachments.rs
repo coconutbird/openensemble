@@ -29,7 +29,7 @@ impl World {
         if !prototype
             .object_class
             .as_deref()
-            .is_some_and(|class| class.trim().eq_ignore_ascii_case("Object"))
+            .is_none_or(|class| class.trim().eq_ignore_ascii_case("Object"))
         {
             return None;
         }
@@ -208,7 +208,6 @@ mod tests {
             objects: vec![ProtoObject {
                 name: "sys_icon_27_01".to_owned(),
                 dbid: Some(27),
-                object_class: Some("Object".to_owned()),
                 object_types: vec!["Icon".to_owned()],
                 ..ProtoObject::default()
             }],

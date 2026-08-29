@@ -108,6 +108,10 @@ pub struct Squad {
     pub proto_squad_name: String,
     /// Current retail veterancy level earned by this squad.
     veterancy_level: i32,
+    /// Total retail veterancy experience committed to this squad.
+    experience: f32,
+    /// Damage bounty waiting for the current attack action to resolve.
+    experience_bank: f32,
     /// Nominal pathing turn radius from the proto squad.
     pub turn_radius: f32,
     /// Minimum pathing turn radius from the proto squad.
@@ -173,6 +177,8 @@ impl Default for Squad {
             proto_squad_id: -1,
             proto_squad_name: String::new(),
             veterancy_level: 0,
+            experience: 0.0,
+            experience_bank: 0.0,
             turn_radius: 0.0,
             min_turn_radius: 0.0,
             max_turn_radius: 0.0,
@@ -224,8 +230,42 @@ impl Squad {
         self.veterancy_level
     }
 
+    /// Return the squad's committed retail veterancy experience.
+    #[must_use]
+    pub const fn experience(&self) -> f32 {
+        self.experience
+    }
+
+    /// Return damage bounty waiting on completion of the active attack.
+    #[must_use]
+    pub const fn banked_experience(&self) -> f32 {
+        self.experience_bank
+    }
+
     pub(crate) fn set_veterancy_level(&mut self, level: i32) {
         self.veterancy_level = level.max(0);
+    }
+
+    pub(crate) fn bank_experience(&mut self, experience: f32) -> bool {
+        if !experience.is_finite() {
+            return false;
+        }
+        let next = self.experience_bank + experience;
+        if !next.is_finite() {
+            return false;
+        }
+        self.experience_bank = next;
+        true
+    }
+
+    pub(crate) fn apply_experience_bank(&mut self) -> f32 {
+        self.experience = (self.experience + self.experience_bank).min(f32::MAX);
+        self.experience_bank = 0.0;
+        self.experience
+    }
+
+    pub(crate) fn clear_experience_bank(&mut self) {
+        self.experience_bank = 0.0;
     }
 
     /// Return whether this squad currently owns a retail idle action.
@@ -274,6 +314,7 @@ impl Squad {
         self.cancel_scripted_move_orders();
         self.move_target = None;
         self.attack_target = None;
+        self.clear_experience_bank();
         self.attack_range = 0.0;
         self.attack_ability_id = None;
         self.ability_used_unit_ids.clear();
@@ -299,6 +340,9 @@ impl Squad {
         self.garrison.cancel_pending();
         self.cancel_scripted_move_orders();
         self.join.cancel();
+        if self.attack_target != Some(target) {
+            self.clear_experience_bank();
+        }
         self.attack_target = Some(target);
         self.attack_range = valid_attack_range(range);
         if let Some(mode) = mode {
@@ -356,6 +400,7 @@ impl Squad {
         self.cancel_scripted_move_orders();
         self.move_target = None;
         self.attack_target = None;
+        self.clear_experience_bank();
         self.attack_range = 0.0;
         self.attack_ability_id = None;
         self.ability_used_unit_ids.clear();

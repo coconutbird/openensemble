@@ -207,6 +207,7 @@ impl Squad {
 
     fn clear_attack_state(&mut self) {
         self.attack_target = None;
+        self.clear_experience_bank();
         self.attack_range = 0.0;
         self.attack_ability_id = None;
         self.ability_used_unit_ids.clear();

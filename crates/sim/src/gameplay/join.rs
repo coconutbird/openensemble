@@ -193,10 +193,14 @@ impl GameplayCatalog {
         joining_proto_object: &str,
         target_proto_squad: &str,
     ) -> (f32, f32) {
-        self.join_database.resolve_damage_modifiers(
-            action,
+        if !action.damage_by_combat_value() {
+            return (action.damage_modifier(), action.damage_taken_modifier());
+        }
+        self.veterancy.join_modifiers(
             joining_proto_object,
             target_proto_squad,
+            action.damage_modifier(),
+            action.damage_taken_modifier(),
         )
     }
 
@@ -213,8 +217,8 @@ impl GameplayCatalog {
         start_level: i32,
         target_level: i32,
     ) -> crate::entities::UnitScalarModifiers {
-        self.join_database
-            .veterancy_modifiers(proto_object, start_level, target_level)
+        self.veterancy
+            .object_modifiers(proto_object, start_level, target_level)
     }
 
     /// Select a context-valid Join through authored tactic target-rule order.

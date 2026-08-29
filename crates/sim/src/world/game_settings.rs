@@ -14,6 +14,20 @@ impl World {
         self.coop = coop;
     }
 
+    /// Return whether the current session permits squad veterancy.
+    #[must_use]
+    pub const fn veterancy_enabled(&self) -> bool {
+        self.veterancy_enabled
+    }
+
+    /// Configure the effective retail config-and-scenario veterancy gate.
+    ///
+    /// Scenario loaders set this before creating entities. Directly constructed
+    /// worlds default to enabled so gameplay fixtures can opt out explicitly.
+    pub fn set_veterancy_enabled(&mut self, enabled: bool) {
+        self.veterancy_enabled = enabled;
+    }
+
     /// Define a synchronized configuration symbol for trigger queries.
     pub fn define_config(&mut self, name: impl Into<String>) -> bool {
         self.config_symbols.insert(name.into())

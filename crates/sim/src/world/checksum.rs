@@ -35,6 +35,7 @@ impl World {
             checksum.hash_u32(0);
         }
         hash_config_symbols(&mut checksum, self.config_symbols());
+        checksum.hash_u32(u32::from(self.veterancy_enabled));
         self.general_events.hash_state(&mut checksum);
         self.presentation.hash_state(&mut checksum);
         self.presentation_control.hash_state(&mut checksum);
@@ -289,6 +290,8 @@ fn hash_squads(checksum: &mut SyncChecksum, squads: &EntityManager<Squad>) {
         checksum.hash_i32(squad.proto_squad_id);
         checksum.hash_u32(u32::try_from(squad.proto_squad_name.len()).unwrap_or(u32::MAX));
         checksum.hash_bytes(squad.proto_squad_name.as_bytes());
+        checksum.hash_f32(squad.experience());
+        checksum.hash_f32(squad.banked_experience());
         checksum.hash_i32(squad.veterancy_level());
         checksum.hash_f32(squad.turn_radius);
         checksum.hash_f32(squad.min_turn_radius);

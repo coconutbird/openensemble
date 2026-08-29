@@ -269,6 +269,14 @@ impl SquadBoardState {
         self.veterancy_applied = true;
     }
 
+    pub(crate) fn advance_source_veterancy(&mut self, level: i32, modifiers: UnitScalarModifiers) {
+        if level <= self.source_veterancy_level {
+            return;
+        }
+        self.source_veterancy_level = level;
+        self.veterancy_modifiers = self.veterancy_modifiers.combine(modifiers);
+    }
+
     pub(crate) const fn damage_modifier(&self) -> f32 {
         self.damage_modifier
     }
@@ -613,6 +621,9 @@ impl Squad {
     }
 
     pub(crate) fn set_join_attack_target(&mut self, target: Option<EntityId>) {
+        if self.attack_target != target {
+            self.clear_experience_bank();
+        }
         self.attack_target = target;
         self.attack_range = 0.0;
         self.attack_ability_id = None;

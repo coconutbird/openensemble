@@ -581,6 +581,7 @@ fn assert_archive_and_database_layers(loaded: &LoadedGameScenario) {
     );
     assert!(loaded.content.scenario_data.is_some());
     assert!(loaded.simulation.world.player_count() > 1);
+    assert!(loaded.simulation.world.veterancy_enabled());
 }
 
 fn assert_loaded_terrain_bounds(loaded: &LoadedGameScenario) {

@@ -94,12 +94,19 @@ impl World {
             joining_proto_object,
             target_proto_squad,
         );
-        let source_veterancy_level = self
-            .squads
-            .get(source_squad_id)
-            .map_or(0, Squad::veterancy_level);
-        let veterancy_modifiers =
-            gameplay.join_veterancy_modifiers(joining_proto_object, 0, source_veterancy_level);
+        let veterancy_enabled = self.veterancy_enabled();
+        let source_veterancy_level = if veterancy_enabled {
+            self.squads
+                .get(source_squad_id)
+                .map_or(0, Squad::veterancy_level)
+        } else {
+            0
+        };
+        let veterancy_modifiers = if veterancy_enabled {
+            gameplay.join_veterancy_modifiers(joining_proto_object, 0, source_veterancy_level)
+        } else {
+            Default::default()
+        };
         let attachment = gameplay.resolve_join_attachment(action).map(|profile| {
             (
                 profile.proto_object_id(),
@@ -115,9 +122,13 @@ impl World {
                 action.unjoin_max_distance(),
             ),
             (
-                action.veterancy_override(),
+                veterancy_enabled && action.veterancy_override(),
                 source_veterancy_level,
-                action.levels(),
+                if veterancy_enabled {
+                    action.levels()
+                } else {
+                    0
+                },
             ),
             veterancy_modifiers,
             modifiers,
@@ -231,6 +242,9 @@ impl World {
     }
 
     fn apply_board_veterancy(&mut self, source_squad_id: EntityId, target_unit_id: EntityId) {
+        if !self.veterancy_enabled() {
+            return;
+        }
         let modifiers = self
             .squads
             .get(source_squad_id)

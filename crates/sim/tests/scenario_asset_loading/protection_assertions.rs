@@ -47,6 +47,11 @@ fn assert_real_protection_catalog(loaded: &LoadedGameScenario) {
     assert_eq!(bubble_action.join_action_name(), "Join");
     assert!(nearly_equal(bubble_action.work_range(), 5.0));
     assert_eq!(bubble_action.merge_type(), Some("Air"));
+    assert_real_join_catalog(loaded);
+}
+
+fn assert_real_join_catalog(loaded: &LoadedGameScenario) {
+    let gameplay = &loaded.simulation.gameplay;
     let follow_attack = gameplay
         .select_join_action(
             "for_air_monitor_01",
@@ -102,6 +107,13 @@ fn assert_real_protection_catalog(loaded: &LoadedGameScenario) {
     assert!(nearly_equal(vehicle_takeover.damage_modifier(), 1.15));
     assert!(nearly_equal(vehicle_takeover.damage_taken_modifier(), 0.87));
     assert!(!vehicle_takeover.damage_by_combat_value());
+    assert!(gameplay.squad_combat_value("unsc_inf_spartan_01") > 0.0);
+    assert!(gameplay.squad_combat_value("unsc_veh_scorpion_01") > 0.0);
+    assert!(
+        gameplay
+            .squad_veterancy_thresholds("unsc_inf_spartan_01")
+            .is_some_and(|thresholds| !thresholds.is_empty())
+    );
     assert_eq!(
         vehicle_takeover
             .attachment()
@@ -417,6 +429,12 @@ fn assert_real_board_lifecycle(loaded: &mut LoadedGameScenario, player_id: sim::
             .container_id(),
         Some(target_unit_id)
     );
+    assert!(world.add_squad_experience(target_squad_id, 1.0, &loaded.simulation.gameplay,));
+    let source_experience = world.get_squad(spartan_squad_id).unwrap().experience();
+    let target_experience = world.get_squad(target_squad_id).unwrap().experience();
+    assert!(source_experience > 0.0);
+    assert!(target_experience > 0.0);
+    assert!(nearly_equal(source_experience + target_experience, 1.0));
     assert!(world.kill_squad(target_squad_id, true));
     assert!(world.get_squad(spartan_squad_id).is_some());
     assert!(

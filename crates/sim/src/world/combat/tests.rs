@@ -37,6 +37,8 @@ fn combat_catalog_with_tuning(
         ProtoObject {
             name: "test_target".to_owned(),
             damage_type: Some("Light".to_owned()),
+            hitpoints: Some(100.0),
+            bounty: Some(50.0),
             ..ProtoObject::default()
         },
         ProtoObject {
@@ -237,6 +239,59 @@ fn authored_tag_launches_projectile_and_impact_mutates_sim_hitpoints() {
             .abs()
             < f32::EPSILON
     );
+}
+
+#[test]
+fn projectile_hp_bounty_banks_then_commits_when_the_ordered_target_dies() {
+    let gameplay = combat_catalog(None);
+    let mut world = World::with_seed(43);
+    world.init_players(2);
+    world.get_player_mut(1).unwrap().team_id = 1;
+    world.get_player_mut(2).unwrap().team_id = 2;
+    world.configure_standard_team_relations();
+    let squad_id = world.create_squad_at(1, Vec3::ZERO);
+    let attacker_id = world.create_unit_at(1, Vec3::ZERO);
+    world.get_unit_mut(attacker_id).unwrap().proto_object_name = "test_attacker".to_owned();
+    assert!(world.attach_unit_to_squad(attacker_id, squad_id));
+    let target_id = world.create_unit_at(2, Vec3::X);
+    let target = world.get_unit_mut(target_id).unwrap();
+    target.proto_object_name = "test_target".to_owned();
+    target.hitpoints = 5.0;
+    target.max_hitpoints = 100.0;
+    target
+        .shields
+        .configure(crate::entities::ShieldCoverage::Full, 5.0);
+    target.shields.set_current(5.0);
+    target.damage_taken_multiplier = 0.5;
+    assert!(world.issue_attack_order(1, squad_id, target_id, 0.0));
+
+    world.update_entities_with_gameplay(0.05, &gameplay);
+    world.update_entities_with_gameplay(0.05, &gameplay);
+    let attacker = world.get_squad(squad_id).unwrap();
+    assert!(nearly_equal(attacker.experience(), 0.0));
+    assert!(nearly_equal(attacker.banked_experience(), 0.0));
+
+    for _ in 0..8 {
+        world.update_entities_with_gameplay(0.05, &gameplay);
+        if world.get_unit(target_id).is_none() {
+            break;
+        }
+    }
+    assert!(world.get_unit(target_id).is_none());
+    assert!(nearly_equal(
+        world.get_squad(squad_id).unwrap().banked_experience(),
+        2.5
+    ));
+
+    world.update_entities_with_gameplay(0.05, &gameplay);
+    let attacker = world.get_squad(squad_id).unwrap();
+    assert!(nearly_equal(attacker.experience(), 2.5));
+    assert!(nearly_equal(attacker.banked_experience(), 0.0));
+    assert_eq!(attacker.attack_target, None);
+}
+
+fn nearly_equal(left: f32, right: f32) -> bool {
+    (left - right).abs() <= f32::EPSILON * left.abs().max(right.abs()).max(1.0)
 }
 
 #[test]
