@@ -107,7 +107,9 @@ impl EntityFilterSet {
         };
         self.filters.iter().all(|predicate| {
             let (matches, invert) = match predicate {
-                EntityFilterPredicate::IsAlive { invert } => (unit.is_alive(), *invert),
+                EntityFilterPredicate::IsAlive { invert } => {
+                    (world.is_entity_trigger_alive(entity_id), *invert)
+                }
                 EntityFilterPredicate::IsIdle { invert } => (unit.has_idle_action(), *invert),
                 EntityFilterPredicate::InList { invert, entities } => {
                     (entities.contains(&entity_id), *invert)
@@ -158,7 +160,9 @@ impl EntityFilterSet {
         };
         self.filters.iter().all(|predicate| {
             let (matches, invert) = match predicate {
-                EntityFilterPredicate::IsAlive { invert } => (squad.is_alive(), *invert),
+                EntityFilterPredicate::IsAlive { invert } => {
+                    (world.is_entity_trigger_alive(entity_id), *invert)
+                }
                 EntityFilterPredicate::IsIdle { invert } => (
                     squad.unit_ids.iter().all(|unit_id| {
                         world
@@ -795,5 +799,39 @@ impl TriggerValue {
             Self::Location(v) | Self::Vector(v) => Some(*v),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gameplay::{ReviveActionProfile, UnitRevivalProfile};
+
+    #[test]
+    fn alive_filter_excludes_hibernating_units_and_their_squads() {
+        let mut world = World::new();
+        world.init_players(1);
+        let squad_id = world.create_squad(1);
+        let unit_id = world.create_unit(1);
+        assert!(world.attach_unit_to_squad(unit_id, squad_id));
+        world
+            .get_unit_mut(unit_id)
+            .unwrap()
+            .configure_revival(UnitRevivalProfile::Revive(ReviveActionProfile {
+                revive_delay: 1.0,
+                hibernate_delay: 1.0,
+                revive_rate: 1.0,
+            }));
+        assert!(world.damage_unit(unit_id, 100.0));
+
+        let mut alive = EntityFilterSet::default();
+        alive.push(EntityFilterPredicate::IsAlive { invert: false });
+        assert!(!alive.matches_entity(unit_id, &world));
+        assert!(!alive.matches_entity(squad_id, &world));
+
+        let mut not_alive = EntityFilterSet::default();
+        not_alive.push(EntityFilterPredicate::IsAlive { invert: true });
+        assert!(not_alive.matches_entity(unit_id, &world));
+        assert!(not_alive.matches_entity(squad_id, &world));
     }
 }

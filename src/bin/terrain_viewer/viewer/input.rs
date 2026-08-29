@@ -144,19 +144,8 @@ impl TerrainViewer {
         if scene.roster_matches(&simulation.world) {
             return;
         }
-        let active_proto_names = simulation
-            .world
-            .units
-            .iter()
-            .map(|(_, unit)| unit.proto_object_name.as_str())
-            .chain(
-                simulation
-                    .world
-                    .projectiles
-                    .iter()
-                    .map(|(_, projectile)| projectile.proto_object_name.as_str()),
-            )
-            .collect::<Vec<_>>();
+        let active_proto_names =
+            render::ugx::simulation_proto_names(&simulation.world).collect::<Vec<_>>();
         let loaded_visuals = content.load_visuals_for(source, active_proto_names.iter().copied());
         if loaded_visuals > 0 {
             log::info!("Loaded {loaded_visuals} visuals for the updated sim roster");
@@ -351,6 +340,82 @@ impl TerrainViewer {
             });
     }
 
+    fn draw_objective_pointers(&self, ctx: &egui::Context) {
+        let Some(simulation) = &self.simulation else {
+            return;
+        };
+        let screen = ctx.screen_rect();
+        if screen.width() <= 0.0 || screen.height() <= 0.0 {
+            return;
+        }
+        let view_projection = self
+            .camera
+            .view_projection_matrix(screen.width() / screen.height());
+        for pointer in render::terrain::project_objective_pointers(
+            &simulation.world,
+            1,
+            view_projection,
+            [screen.width(), screen.height()],
+        ) {
+            egui::Area::new(egui::Id::new((
+                "simulation_objective_pointer",
+                pointer.widget_id,
+            )))
+            .fixed_pos(egui::pos2(
+                pointer.screen_position[0],
+                pointer.screen_position[1],
+            ))
+            .pivot(egui::Align2::CENTER_CENTER)
+            .interactable(false)
+            .show(ctx, |ui| {
+                let color = if pointer.force_target_visible {
+                    egui::Color32::WHITE
+                } else {
+                    egui::Color32::YELLOW
+                };
+                let glyph = if pointer.target_on_screen {
+                    "◆"
+                } else {
+                    "➤"
+                };
+                ui.label(egui::RichText::new(glyph).color(color).size(24.0));
+            });
+        }
+    }
+
+    fn draw_icon_objects(&self, ctx: &egui::Context) {
+        let Some(simulation) = &self.simulation else {
+            return;
+        };
+        let screen = ctx.screen_rect();
+        if screen.width() <= 0.0 || screen.height() <= 0.0 {
+            return;
+        }
+        let view_projection = self
+            .camera
+            .view_projection_matrix(screen.width() / screen.height());
+        for icon in render::terrain::project_icon_objects(
+            &simulation.world,
+            1,
+            view_projection,
+            [screen.width(), screen.height()],
+        ) {
+            let [red, green, blue] = icon.color_override.unwrap_or([255; 3]);
+            let color = egui::Color32::from_rgb(red, green, blue);
+            let glyph = if icon.target_on_screen { "●" } else { "◆" };
+            egui::Area::new(egui::Id::new((
+                "simulation_icon_object",
+                icon.entity_id.as_u32(),
+            )))
+            .fixed_pos(egui::pos2(icon.screen_position[0], icon.screen_position[1]))
+            .pivot(egui::Align2::CENTER_CENTER)
+            .interactable(false)
+            .show(ctx, |ui| {
+                ui.label(egui::RichText::new(glyph).color(color).size(20.0));
+            });
+        }
+    }
+
     fn draw_screen_fade(&self, ctx: &egui::Context) {
         let Some(simulation) = &self.simulation else {
             return;
@@ -521,6 +586,8 @@ impl Application for TerrainViewer {
         self.draw_hud(ctx);
         self.draw_game_timer(ctx);
         self.draw_hint_callouts(ctx);
+        self.draw_icon_objects(ctx);
+        self.draw_objective_pointers(ctx);
         if self.show_info {
             self.draw_information_window(ctx);
         }

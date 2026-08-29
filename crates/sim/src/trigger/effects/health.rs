@@ -4,6 +4,7 @@ use super::support::{
     EntityListKind, bool_at, entities_at, float_at, unique_add, used_variable_id, variable_is_used,
 };
 use super::{EffectOutcome, write_value};
+use crate::gameplay::GameplayCatalog;
 use crate::trigger::{Effect, TriggerScript, TriggerValue};
 use crate::world::UnitHealth;
 use crate::{EntityId, World};
@@ -124,13 +125,12 @@ pub(super) fn combat_damage(
     effect: &Effect,
     script: &TriggerScript,
     world: &mut World,
+    gameplay: Option<&GameplayCatalog>,
 ) -> EffectOutcome {
     if !matches!(effect.version, 1 | 2) {
         return EffectOutcome::Unsupported(effect.raw_type);
     }
-    if effect.version == 2 && bool_at(effect, script, 7).unwrap_or(false) {
-        return EffectOutcome::Unsupported(effect.raw_type);
-    }
+    let override_revive = effect.version == 2 && bool_at(effect, script, 7).unwrap_or(false);
     let Some(unit_ids) = target_units(effect, script, world) else {
         return EffectOutcome::Skipped;
     };
@@ -144,7 +144,16 @@ pub(super) fn combat_damage(
         damage /= count_as_f32(unit_ids.len());
     }
     for unit_id in unit_ids {
-        let _damaged = world.damage_unit(unit_id, damage);
+        if let Some(gameplay) = gameplay {
+            let _damaged = world.damage_unit_with_gameplay_override(
+                unit_id,
+                damage,
+                gameplay,
+                override_revive,
+            );
+        } else {
+            let _damaged = world.damage_unit_with_override(unit_id, damage, override_revive);
+        }
     }
     EffectOutcome::Applied
 }

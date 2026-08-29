@@ -94,8 +94,24 @@ fn hash_objects(checksum: &mut SyncChecksum, objects: &EntityManager<Object>) {
         checksum.hash_u32(u32::try_from(object.proto_object_name.len()).unwrap_or(u32::MAX));
         checksum.hash_bytes(object.proto_object_name.as_bytes());
         match &object.kind {
+            ObjectKind::Visual => checksum.hash_u32(0),
+            ObjectKind::Icon(icon) => {
+                checksum.hash_u32(2);
+                if let Some(color) = icon.color_override() {
+                    checksum.hash_u32(1);
+                    for channel in color {
+                        checksum.hash_u32(u32::from(channel));
+                    }
+                } else {
+                    checksum.hash_u32(0);
+                }
+                checksum.hash_u32(u32::from(icon.visible_for_owner_only()));
+                checksum.hash_u32(u32::from(icon.visible_for_team_only()));
+                checksum.hash_u32(u32::from(icon.visible_to_all()));
+                checksum.hash_u32(u32::from(icon.always_visible_on_minimap()));
+            }
             ObjectKind::Revealer(revealer) => {
-                checksum.hash_u32(0);
+                checksum.hash_u32(1);
                 checksum.hash_u32(u32::from(revealer.team_id()));
                 checksum.hash_f32(revealer.line_of_sight_scalar());
                 checksum.hash_f32(revealer.line_of_sight());
@@ -172,14 +188,16 @@ fn hash_units(checksum: &mut SyncChecksum, units: &EntityManager<Unit>) {
             checksum.hash_bytes(object_type.as_bytes());
         }
         checksum.hash_u32(u32::from(unit.flying));
-        checksum.hash_u32(u32::from(unit.is_auto_attackable()));
+        checksum.hash_u32(u32::from(unit.auto_attackable_setting()));
         checksum.hash_u32(u32::from(unit.is_reverse_moving()));
         checksum.hash_f32(unit.hitpoints);
         checksum.hash_f32(unit.max_hitpoints);
         unit.shields.hash_state(checksum);
+        unit.hash_revival_state(checksum);
         checksum.hash_f32(unit.damage_multiplier);
         checksum.hash_f32(unit.damage_taken_multiplier);
         checksum.hash_f32(unit.accuracy_scalar);
+        checksum.hash_f32(unit.dodge_scalar);
         checksum.hash_f32(unit.work_rate_scalar);
         checksum.hash_f32(unit.line_of_sight_scalar);
         checksum.hash_f32(unit.velocity_scalar);

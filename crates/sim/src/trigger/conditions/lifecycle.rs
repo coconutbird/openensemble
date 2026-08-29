@@ -2,8 +2,7 @@
 
 use super::{entity_at, entity_inputs, write_time};
 use crate::entities::UnitState;
-use crate::entity::Entity;
-use crate::entity_id::{EntityClass, EntityId};
+use crate::entity_id::EntityId;
 use crate::trigger::{Condition, TriggerScript};
 use crate::world::World;
 
@@ -98,13 +97,5 @@ fn used_variable_id(
 }
 
 fn is_alive(world: &World, entity_id: EntityId) -> bool {
-    match entity_id.class() {
-        Some(EntityClass::Object) => world.get_object(entity_id).is_some_and(Entity::is_alive),
-        Some(EntityClass::Unit) => world.get_unit(entity_id).is_some_and(Entity::is_alive),
-        Some(EntityClass::Squad) => world.get_squad(entity_id).is_some_and(Entity::is_alive),
-        Some(EntityClass::Projectile) => world
-            .get_projectile(entity_id)
-            .is_some_and(Entity::is_alive),
-        _ => false,
-    }
+    world.is_entity_trigger_alive(entity_id)
 }

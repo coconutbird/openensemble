@@ -10,6 +10,7 @@ mod combat;
 mod garrison;
 pub mod marine;
 pub(crate) mod rally_points;
+mod revival;
 mod scalars;
 mod shields;
 mod tower_wall;
@@ -31,9 +32,11 @@ pub use tower_wall::TowerWallAction;
 use super::{BaseEntity, BaseId, EntityIdle, ObjectState};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
+use crate::gameplay::UnitRevivalProfile;
 use crate::physics::PhysicsBody;
 use crate::player::{PlayerId, PopulationCost};
 use glam::Vec3;
+use revival::{DamageDisposition, UnitRevival};
 
 const ARRIVAL_THRESHOLD: f32 = 0.5;
 
@@ -109,12 +112,16 @@ pub struct Unit {
     pub max_hitpoints: f32,
     /// Integral energy-shield state.
     pub shields: UnitShields,
+    /// Independent retail hero-down or tactic hibernation state.
+    revival: UnitRevival,
     /// Live outgoing damage multiplier (veterancy and tech effects layer here).
     pub damage_multiplier: f32,
     /// Live incoming damage multiplier.
     pub damage_taken_multiplier: f32,
     /// Live ranged-attack accuracy multiplier.
     pub accuracy_scalar: f32,
+    /// Live ranged-attack dodge modifier applied alongside accuracy.
+    pub dodge_scalar: f32,
     /// Live research, training, and construction work-rate multiplier.
     pub work_rate_scalar: f32,
     /// Live line-of-sight radius multiplier.
@@ -207,9 +214,11 @@ impl Default for Unit {
             hitpoints: 100.0,
             max_hitpoints: 100.0,
             shields: UnitShields::default(),
+            revival: UnitRevival::default(),
             damage_multiplier: 1.0,
             damage_taken_multiplier: 1.0,
             accuracy_scalar: 1.0,
+            dodge_scalar: 1.0,
             work_rate_scalar: 1.0,
             line_of_sight_scalar: 1.0,
             velocity_scalar: 1.0,
@@ -283,12 +292,39 @@ impl Unit {
     /// Check whether this unit can perform completed-unit gameplay actions.
     #[must_use]
     pub fn is_operational(&self) -> bool {
-        self.is_alive() && !self.is_garrisoned() && (!self.is_building() || self.built)
+        self.is_alive()
+            && !self.is_incapacitated()
+            && !self.is_garrisoned()
+            && (!self.is_building() || self.built)
+    }
+
+    /// Return whether combat may currently target and damage this unit.
+    #[must_use]
+    pub fn is_attackable(&self) -> bool {
+        self.is_alive() && !self.is_incapacitated() && !self.is_garrisoned()
     }
 
     /// Return whether automatic combat acquisition may target this object.
     #[must_use]
-    pub const fn is_auto_attackable(&self) -> bool {
+    pub fn is_auto_attackable(&self) -> bool {
+        self.auto_attackable && self.is_attackable()
+    }
+
+    /// Return the authoritative axis-aligned bounds used by sim-space queries.
+    pub(crate) fn simulation_bounds(&self) -> (Vec3, Vec3) {
+        self.physics.as_ref().map_or_else(
+            || (self.base.position, self.obstruction_half_extents.abs()),
+            |body| {
+                let collider = body.collider();
+                (
+                    self.base.position + collider.center_offset,
+                    collider.half_extents,
+                )
+            },
+        )
+    }
+
+    pub(crate) const fn auto_attackable_setting(&self) -> bool {
         self.auto_attackable
     }
 
@@ -323,7 +359,10 @@ impl Unit {
     }
 
     pub(crate) fn reconcile_idle_action(&mut self, elapsed_ms: u32, parent_is_idle: bool) {
-        let should_be_idle = self.is_alive() && self.state == UnitState::Idle && parent_is_idle;
+        let should_be_idle = self.is_alive()
+            && !self.is_incapacitated()
+            && self.state == UnitState::Idle
+            && parent_is_idle;
         self.idle.reconcile(should_be_idle, elapsed_ms);
     }
 
@@ -404,15 +443,102 @@ impl Unit {
     ///
     /// Returns whether the live unit accepted the damage event.
     pub fn damage(&mut self, amount: f32) -> bool {
-        if !amount.is_finite() || amount <= 0.0 || !self.is_alive() {
+        if !amount.is_finite() || amount <= 0.0 || !self.is_alive() || self.is_incapacitated() {
             return false;
         }
         let hitpoint_damage = self.shields.absorb_damage(amount);
         self.hitpoints = (self.hitpoints - hitpoint_damage).max(0.0);
-        if self.hitpoints == 0.0 {
-            self.kill();
+        match self.revival.on_damage(self.hitpoints, self.max_hitpoints) {
+            DamageDisposition::Mortal => self.kill(),
+            DamageDisposition::Incapacitated => {
+                if self.is_down() {
+                    self.hitpoints = 1.0_f32.min(self.max_hitpoints);
+                    self.shields.set_current(0.0);
+                }
+                self.cancel_for_incapacitation();
+            }
+            DamageDisposition::Active => {}
         }
         true
+    }
+
+    /// Return whether this live unit has retail's independent `Down` flag.
+    #[must_use]
+    pub fn is_down(&self) -> bool {
+        self.revival.is_down()
+    }
+
+    /// Return whether this live unit has retail's `IsHibernating` flag.
+    #[must_use]
+    pub fn is_hibernating(&self) -> bool {
+        self.revival.is_hibernating()
+    }
+
+    /// Return whether down/hibernating state prevents normal gameplay actions.
+    #[must_use]
+    pub fn is_incapacitated(&self) -> bool {
+        self.is_down() || self.is_hibernating()
+    }
+
+    /// Return the immutable revival definition configured for this unit.
+    #[must_use]
+    pub fn revival_profile(&self) -> Option<UnitRevivalProfile> {
+        self.revival.profile()
+    }
+
+    pub(crate) fn configure_revival(&mut self, profile: UnitRevivalProfile) {
+        self.revival.configure(profile);
+    }
+
+    pub(crate) fn has_hero_revival(&self) -> bool {
+        self.revival.is_hero()
+    }
+
+    pub(crate) fn down_hero(&mut self) -> bool {
+        if !self.revival.down_hero() {
+            return false;
+        }
+        self.hitpoints = 1.0_f32.min(self.max_hitpoints);
+        self.shields.set_current(0.0);
+        self.cancel_for_incapacitation();
+        true
+    }
+
+    pub(crate) fn override_revival_at_zero(&mut self) -> bool {
+        self.revival.override_at_zero(self.hitpoints)
+    }
+
+    pub(crate) fn advance_revival(&mut self, dt: f32) -> bool {
+        if self.revival.should_die_at_zero(self.hitpoints) {
+            self.kill();
+            return false;
+        }
+        let advance = self.revival.advance(dt, self.hitpoints, self.max_hitpoints);
+        self.hitpoints = advance.hitpoints;
+        advance.hero_ready
+    }
+
+    pub(crate) fn finish_hero_revival(&mut self) -> bool {
+        if !self.revival.finish_hero_revival() {
+            return false;
+        }
+        self.line_of_sight_scalar = 1.0;
+        true
+    }
+
+    pub(crate) fn hash_revival_state(&self, checksum: &mut crate::sync::SyncChecksum) {
+        self.revival.hash_state(checksum);
+    }
+
+    fn cancel_for_incapacitation(&mut self) {
+        self.attack_target = None;
+        self.attack_range = 0.0;
+        self.attack_ability_id = None;
+        self.combat.reset();
+        self.move_target = None;
+        self.base.velocity = Vec3::ZERO;
+        self.state = UnitState::Idle;
+        self.cancel_idle_action();
     }
 
     /// Kill this unit or building.
@@ -420,6 +546,7 @@ impl Unit {
         self.hitpoints = 0.0;
         self.state = UnitState::Dead;
         self.base.kill();
+        self.revival.clear_incapacitation();
         self.attack_target = None;
         self.attack_range = 0.0;
         self.attack_ability_id = None;
@@ -436,6 +563,7 @@ impl Unit {
             || !self.base.is_mobile()
             || self.squad_id.is_some()
             || !self.is_alive()
+            || self.is_incapacitated()
             || self.is_garrisoned()
         {
             return false;
@@ -575,8 +703,7 @@ impl Unit {
     }
 
     pub(crate) fn move_as_squad_member(&mut self, target: Vec3) {
-        if !self.is_building() && self.base.is_mobile() && self.is_alive() && !self.is_garrisoned()
-        {
+        if !self.is_building() && self.base.is_mobile() && self.is_operational() {
             self.cancel_idle_action();
             self.move_target = Some(target);
             self.state = UnitState::Moving;
@@ -591,6 +718,7 @@ impl Entity for Unit {
 
     fn update(&mut self, dt: f32) {
         if self.base.is_mobile()
+            && !self.is_incapacitated()
             && !self.is_garrisoned()
             && (self.state == UnitState::Moving
                 || (self.state == UnitState::Attacking && self.move_target.is_some()))

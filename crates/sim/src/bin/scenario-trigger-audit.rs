@@ -32,6 +32,10 @@ fn main() -> ExitCode {
                     loaded.simulation.world.trigger_engine(),
                     &selected_dbids,
                 );
+                if env::var_os("OPENENSEMBLE_AUDIT_RAW_VARIABLES").is_some() {
+                    print_raw_selected_variables(&scenario, &mut loaded, &selected_dbids);
+                }
+                print_selected_scenario_objects(&scenario, &loaded);
                 if env::var_os("OPENENSEMBLE_AUDIT_ENTITIES").is_some() {
                     print_selected_entities(
                         &scenario,
@@ -67,6 +71,108 @@ fn main() -> ExitCode {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+fn print_selected_scenario_objects(scenario: &str, loaded: &sim::LoadedGameScenario) {
+    let selected = env::var("OPENENSEMBLE_AUDIT_SCENARIO_IDS")
+        .ok()
+        .into_iter()
+        .flat_map(|value| {
+            value
+                .split(',')
+                .filter_map(|token| token.trim().parse::<i32>().ok())
+                .collect::<Vec<_>>()
+        })
+        .collect::<BTreeSet<_>>();
+    if selected.is_empty() {
+        return;
+    }
+    let objects = loaded
+        .content
+        .scenario_data
+        .as_ref()
+        .and_then(|data| data.objects.as_ref())
+        .map_or(&[][..], |objects| objects.entries.as_slice());
+    for id in selected {
+        let object = objects.iter().find(|object| object.id == id);
+        let prototype = object.and_then(|object| {
+            loaded
+                .content
+                .database
+                .objects
+                .iter()
+                .find(|prototype| prototype.name.eq_ignore_ascii_case(&object.proto_name))
+        });
+        println!(
+            "{scenario}: scenario-object id={id} source={object:?} prototype={prototype:?} sim={:?}",
+            loaded.simulation.get_entity_id(id)
+        );
+    }
+}
+
+fn print_raw_selected_variables(
+    scenario: &str,
+    loaded: &mut sim::LoadedGameScenario,
+    dbids: &BTreeSet<u16>,
+) {
+    let variable_ids = loaded
+        .simulation
+        .world
+        .trigger_engine()
+        .scripts()
+        .flat_map(|(_, script)| {
+            script.triggers.iter().flat_map(|trigger| {
+                trigger
+                    .effects_on_true
+                    .iter()
+                    .chain(&trigger.effects_on_false)
+                    .filter(|effect| dbids.contains(&effect.raw_type))
+                    .flat_map(|effect| effect.inputs.iter().chain(&effect.outputs))
+                    .map(|binding| binding.variable_id)
+            })
+        })
+        .collect::<BTreeSet<_>>();
+    let Some(path) = loaded
+        .content
+        .scenario
+        .as_ref()
+        .map(pipeline::hw1::scenario::ScenarioDescriptor::scn_path)
+    else {
+        return;
+    };
+    let Some(document) = loaded.source.read_xmb(&path) else {
+        return;
+    };
+    let Some(root) = document.root() else {
+        return;
+    };
+    print_raw_variable_nodes(scenario, root, &variable_ids);
+}
+
+fn print_raw_variable_nodes(
+    scenario: &str,
+    node: &pipeline::xmb::Node,
+    variable_ids: &BTreeSet<u32>,
+) {
+    if node.name == "TriggerVar"
+        && let Some(id) = node
+            .get_attribute("ID")
+            .and_then(|attribute| attribute.value_string().parse::<u32>().ok())
+        && variable_ids.contains(&id)
+    {
+        let attributes = node
+            .attributes
+            .iter()
+            .map(|attribute| (attribute.name.as_str(), attribute.value_string()))
+            .collect::<Vec<_>>();
+        println!(
+            "{scenario}: raw-variable id={id} attributes={attributes:?} text={:?}",
+            node.text_string()
+        );
+    }
+    for child in &node.children {
+        print_raw_variable_nodes(scenario, child, variable_ids);
     }
 }
 
@@ -551,7 +657,12 @@ fn describe_binding(signature_id: u16, variable_id: u32, script: &sim::TriggerSc
     let variable = script.get_variable(variable_id);
     format!(
         "{signature_id}:{variable_id}=>{:?}",
-        variable.map(|variable| (variable.var_type, variable.is_null, variable.value.clone()))
+        variable.map(|variable| (
+            variable.name.clone(),
+            variable.var_type,
+            variable.is_null,
+            variable.value.clone()
+        ))
     )
 }
 

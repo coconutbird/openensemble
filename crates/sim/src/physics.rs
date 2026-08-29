@@ -455,9 +455,9 @@ pub(crate) fn prepare_squad_movement(
             continue;
         }
         let anchor_id = squad.unit_ids.iter().copied().find(|&unit_id| {
-            units
-                .get(unit_id)
-                .is_some_and(|unit| unit.is_physics_driven() && !unit.is_garrisoned())
+            units.get(unit_id).is_some_and(|unit| {
+                unit.is_physics_driven() && !unit.is_incapacitated() && !unit.is_garrisoned()
+            })
         });
         let Some(anchor_id) = anchor_id else {
             continue;

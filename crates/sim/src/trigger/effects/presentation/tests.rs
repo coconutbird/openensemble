@@ -6,8 +6,13 @@ fn retail_presentation_ids_are_typed() {
     let expected = [
         (526, EffectType::HudToggle),
         (532, EffectType::SetRenderTerrainSkirt),
+        (632, EffectType::CameraShake),
         (809, EffectType::HintCalloutCreate),
         (810, EffectType::HintCalloutDestroy),
+        (841, EffectType::EnableChats),
+        (687, EffectType::ShowObjectivePointer),
+        (773, EffectType::RumbleStart),
+        (774, EffectType::RumbleStop),
         (884, EffectType::SetCamera),
         (912, EffectType::FadeToColor),
         (922, EffectType::FadeTransition),
@@ -86,6 +91,14 @@ fn durable_ui_controls_mutate_only_authoritative_world_state() {
     );
     assert!(!world.render_terrain_skirt_enabled());
 
+    add_value(&mut script, 20, VarType::Bool, TriggerValue::Bool(false));
+    let chats = Effect::new(20, EffectType::EnableChats).with_input_at(1, 20);
+    assert_eq!(
+        execute(&chats, &mut script, &mut world),
+        Some(EffectOutcome::Presentation)
+    );
+    assert!(!world.chats_enabled());
+
     add_value(&mut script, 3, VarType::Float, TriggerValue::Float(180.0));
     let rotation = Effect::new(3, EffectType::SetMinimapNorthPointerRotation).with_input_at(1, 3);
     assert_eq!(
@@ -104,6 +117,87 @@ fn durable_ui_controls_mutate_only_authoritative_world_state() {
         Some(EffectOutcome::Presentation)
     );
     assert!(world.circle_menu_reset_revision() > before);
+}
+
+#[test]
+fn objective_pointer_v5_resolves_targets_and_empty_audiences_to_all_users() {
+    let mut world = World::new();
+    world.init_players(2);
+    let mut script = TriggerScript::new(3);
+    add_value(&mut script, 1, VarType::Integer, TriggerValue::Int(2));
+    add_value(&mut script, 2, VarType::Bool, TriggerValue::Bool(true));
+    add_value(
+        &mut script,
+        5,
+        VarType::Vector,
+        TriggerValue::Vector(crate::trigger::value::Vec3::new(4.0, 5.0, 6.0)),
+    );
+    add_value(
+        &mut script,
+        7,
+        VarType::PlayerList,
+        TriggerValue::PlayerList(Vec::new()),
+    );
+    add_value(&mut script, 8, VarType::Bool, TriggerValue::Bool(false));
+    add_value(&mut script, 9, VarType::Bool, TriggerValue::Bool(true));
+    let mut show = Effect::new(1, EffectType::ShowObjectivePointer);
+    show.version = 5;
+    for slot in [1_u16, 2, 5, 7, 8, 9] {
+        show = show.with_input_at(slot, u32::from(slot));
+    }
+
+    assert_eq!(
+        execute(&show, &mut script, &mut world),
+        Some(EffectOutcome::Presentation)
+    );
+    for player_id in [1, 2] {
+        let pointer = world.objective_pointer(player_id, 2).copied().unwrap();
+        assert_eq!(pointer.target_position(), Vec3::new(4.0, 5.0, 6.0));
+        assert!(!pointer.use_target());
+        assert!(pointer.force_target_visible());
+    }
+
+    script.get_variable_mut(2).unwrap().value = TriggerValue::Bool(false);
+    let hide = Effect {
+        inputs: vec![show.inputs[0], show.inputs[1], show.inputs[3]],
+        ..show
+    };
+    assert_eq!(
+        execute(&hide, &mut script, &mut world),
+        Some(EffectOutcome::Presentation)
+    );
+    assert!(world.objective_pointers(1).next().is_none());
+    assert!(world.objective_pointers(2).next().is_none());
+}
+
+#[test]
+fn camera_shake_v2_uses_retail_defaults_for_all_users() {
+    let mut world = World::new();
+    world.init_players(2);
+    let mut script = TriggerScript::new(4);
+    add_value(&mut script, 1, VarType::Time, TriggerValue::Time(500));
+    add_value(&mut script, 2, VarType::Float, TriggerValue::Float(2.0));
+    add_value(
+        &mut script,
+        6,
+        VarType::PlayerList,
+        TriggerValue::PlayerList(Vec::new()),
+    );
+    let mut effect = Effect::new(1, EffectType::CameraShake);
+    effect.version = 2;
+    for slot in [1_u16, 2, 6] {
+        effect = effect.with_input_at(slot, u32::from(slot));
+    }
+
+    assert_eq!(
+        execute(&effect, &mut script, &mut world),
+        Some(EffectOutcome::Presentation)
+    );
+    for player_id in [1, 2] {
+        let shake = world.camera_shake(player_id).unwrap();
+        assert_eq!(shake.strength().to_bits(), 2.0_f32.to_bits());
+        assert_eq!(shake.conservation_factor().to_bits(), 0.5_f32.to_bits());
+    }
 }
 
 #[test]

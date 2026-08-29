@@ -7,6 +7,7 @@ use crate::world::{HudItem, ScreenFadeSequence, World};
 use glam::Vec3;
 
 mod callouts;
+mod rumbles;
 
 pub(super) fn execute(
     effect: &Effect,
@@ -16,6 +17,11 @@ pub(super) fn execute(
     let outcome = match effect.effect_type {
         EffectType::HintCalloutCreate => callouts::create(effect, script, world),
         EffectType::HintCalloutDestroy => callouts::destroy(effect, script, world),
+        EffectType::EnableChats => enable_chats(effect, script, world),
+        EffectType::CameraShake => camera_shake(effect, script, world),
+        EffectType::ShowObjectivePointer => show_objective_pointer(effect, script, world),
+        EffectType::RumbleStart => rumbles::start(effect, script, world),
+        EffectType::RumbleStop => rumbles::stop(effect, script, world),
         EffectType::HudToggle => hud_toggle(effect, script, world),
         EffectType::SetRenderTerrainSkirt => set_terrain_skirt(effect, script, world),
         EffectType::SetCamera => set_camera(effect, script, world),
@@ -34,6 +40,113 @@ pub(super) fn execute(
         _ => return None,
     };
     Some(outcome)
+}
+
+fn enable_chats(effect: &Effect, script: &TriggerScript, world: &mut World) -> EffectOutcome {
+    let Some(enabled) = bool_value(effect, script, 1) else {
+        return EffectOutcome::Skipped;
+    };
+    world.set_chats_enabled(enabled);
+    EffectOutcome::Presentation
+}
+
+fn camera_shake(effect: &Effect, script: &TriggerScript, world: &mut World) -> EffectOutcome {
+    if !matches!(effect.version, 1 | 2) {
+        return EffectOutcome::Unsupported(effect.raw_type);
+    }
+    let (Some(duration_ms), Some(intensity)) = (
+        time_value(effect, script, 1),
+        float_value(effect, script, 2).filter(|value| value.is_finite()),
+    ) else {
+        return EffectOutcome::Skipped;
+    };
+    let Ok(trail_off_ms) = optional_time(effect, script, 3) else {
+        return EffectOutcome::Skipped;
+    };
+    let Ok(conservation_factor) = optional_float(effect, script, 4) else {
+        return EffectOutcome::Skipped;
+    };
+    let players = if effect.version == 1 {
+        Vec::new()
+    } else {
+        let Ok(players) = player_targets(effect, script, 5, 6) else {
+            return EffectOutcome::Skipped;
+        };
+        players
+    };
+    for player_id in user_targets_or_all(world, players) {
+        world.start_camera_shake(
+            player_id,
+            duration_ms,
+            intensity.max(0.0),
+            trail_off_ms.unwrap_or(400),
+            conservation_factor.unwrap_or(0.5).clamp(0.0, 1.0),
+        );
+    }
+    EffectOutcome::Presentation
+}
+
+fn show_objective_pointer(
+    effect: &Effect,
+    script: &TriggerScript,
+    world: &mut World,
+) -> EffectOutcome {
+    if !matches!(effect.version, 4 | 5) {
+        return EffectOutcome::Unsupported(effect.raw_type);
+    }
+    let (Some(widget_id), Some(visible)) =
+        (int_value(effect, script, 1), bool_value(effect, script, 2))
+    else {
+        return EffectOutcome::Skipped;
+    };
+    let Ok(players) = player_targets(effect, script, 6, 7) else {
+        return EffectOutcome::Skipped;
+    };
+    let players = user_targets_or_all(world, players);
+    if !visible {
+        for player_id in players {
+            world.hide_objective_pointer(player_id, widget_id);
+        }
+        return EffectOutcome::Presentation;
+    }
+
+    let Ok(unit) = optional_entity(effect, script, 3) else {
+        return EffectOutcome::Skipped;
+    };
+    let Ok(squad) = optional_entity(effect, script, 4) else {
+        return EffectOutcome::Skipped;
+    };
+    let Ok(location) = optional_vector(effect, script, 5) else {
+        return EffectOutcome::Skipped;
+    };
+    let Some(target_position) = unit
+        .and_then(|entity_id| world.entity_position(entity_id))
+        .or_else(|| squad.and_then(|entity_id| world.entity_position(entity_id)))
+        .or(location)
+    else {
+        return EffectOutcome::Skipped;
+    };
+    let Ok(use_target) = optional_bool(effect, script, 8) else {
+        return EffectOutcome::Skipped;
+    };
+    let force_target_visible = if effect.version >= 5 {
+        let Ok(value) = optional_bool(effect, script, 9) else {
+            return EffectOutcome::Skipped;
+        };
+        value.unwrap_or(false)
+    } else {
+        false
+    };
+    for player_id in players {
+        world.show_objective_pointer(
+            player_id,
+            widget_id,
+            target_position,
+            use_target.unwrap_or(true),
+            force_target_visible,
+        );
+    }
+    EffectOutcome::Presentation
 }
 
 fn fade_to_color(effect: &Effect, script: &TriggerScript, world: &mut World) -> EffectOutcome {
@@ -259,6 +372,15 @@ fn optional_vector(effect: &Effect, script: &TriggerScript, slot: u16) -> Result
     vector.is_finite().then_some(Some(vector)).ok_or(())
 }
 
+fn optional_entity(
+    effect: &Effect,
+    script: &TriggerScript,
+    slot: u16,
+) -> Result<Option<crate::EntityId>, ()> {
+    optional_value(effect, script, slot)
+        .map_or(Ok(None), |value| value.as_entity().ok_or(()).map(Some))
+}
+
 fn optional_bool(effect: &Effect, script: &TriggerScript, slot: u16) -> Result<Option<bool>, ()> {
     optional_value(effect, script, slot)
         .map_or(Ok(None), |value| value.as_bool().ok_or(()).map(Some))
@@ -275,6 +397,17 @@ fn optional_float(effect: &Effect, script: &TriggerScript, slot: u16) -> Result<
         .ok_or(())
 }
 
+fn optional_time(effect: &Effect, script: &TriggerScript, slot: u16) -> Result<Option<u32>, ()> {
+    let Some(value) = optional_value(effect, script, slot) else {
+        return Ok(None);
+    };
+    match value {
+        TriggerValue::Time(value) => Ok(Some(*value)),
+        TriggerValue::Int(value) => u32::try_from(*value).map(Some).map_err(|_| ()),
+        _ => Err(()),
+    }
+}
+
 fn optional_value<'a>(
     effect: &Effect,
     script: &'a TriggerScript,
@@ -289,6 +422,10 @@ fn bool_value(effect: &Effect, script: &TriggerScript, slot: u16) -> Option<bool
 
 fn float_value(effect: &Effect, script: &TriggerScript, slot: u16) -> Option<f32> {
     value_at(effect, script, slot).and_then(TriggerValue::as_float)
+}
+
+fn int_value(effect: &Effect, script: &TriggerScript, slot: u16) -> Option<i32> {
+    value_at(effect, script, slot).and_then(TriggerValue::as_int)
 }
 
 fn time_value(effect: &Effect, script: &TriggerScript, slot: u16) -> Option<u32> {
@@ -316,6 +453,14 @@ fn player_value(effect: &Effect, script: &TriggerScript, slot: u16) -> Option<Pl
 fn unique_add<T: PartialEq>(values: &mut Vec<T>, value: T) {
     if !values.contains(&value) {
         values.push(value);
+    }
+}
+
+fn user_targets_or_all(world: &World, players: Vec<PlayerId>) -> Vec<PlayerId> {
+    if players.is_empty() {
+        world.active_players().map(|player| player.id).collect()
+    } else {
+        players
     }
 }
 

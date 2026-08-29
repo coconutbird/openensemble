@@ -13,6 +13,8 @@ impl World {
     pub fn advance_time(&mut self, milliseconds: u32) {
         self.game_time_ms = self.game_time_ms.wrapping_add(milliseconds);
         self.update_game_timers();
+        self.update_camera_shakes();
+        self.update_rumbles();
         self.update_screen_fade();
     }
 }

@@ -5,7 +5,7 @@ use glam::{Mat4, Vec3};
 use pipeline::database::hw1::Visual;
 use pipeline::database::hw1::visual::{Attachment, Model as VisualModel};
 use pipeline::source::{AssetSource, StdFileProvider};
-use pipeline::uax::Reader as UaxReader;
+use pipeline::uax::types::Animation;
 
 use super::animation::AnimationPose;
 use super::model::ModelPose;
@@ -15,8 +15,13 @@ use crate::environment::EnvironmentMap;
 use crate::terrain::LightingParams;
 use crate::{RenderPhase, WorldRenderer};
 
+mod animations;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+use animations::canonical_animation_path;
+use animations::{AnimationAssetCache, load_animation, load_start_animation};
 const MAX_ATTACHMENT_DEPTH: usize = 32;
 
 /// Errors produced while resolving a visual's recursive model graph.
@@ -55,13 +60,14 @@ struct UnitInstance {
     name: String,
     model: Arc<Model>,
     pose: ModelPose,
+    scripted_animation: Option<Arc<Animation>>,
     local_transform: Mat4,
 }
 
 #[derive(Default)]
 pub(super) struct UnitAssetCache {
     models: HashMap<String, Arc<Model>>,
-    animations: HashMap<String, Option<AnimationPose>>,
+    animations: AnimationAssetCache,
 }
 
 /// Renderer destination for one authored visual attachment.
@@ -242,6 +248,16 @@ impl Unit {
         variation_index: Option<usize>,
         cache: &mut UnitAssetCache,
     ) -> Result<Self, UnitLoadError> {
+        Self::load_variant_with_animation_cache(source, visual, variation_index, None, cache)
+    }
+
+    pub(super) fn load_variant_with_animation_cache(
+        source: &mut AssetSource<StdFileProvider>,
+        visual: &Visual,
+        variation_index: Option<usize>,
+        animation_asset: Option<&str>,
+        cache: &mut UnitAssetCache,
+    ) -> Result<Self, UnitLoadError> {
         let default_model = visual
             .default_model
             .as_deref()
@@ -250,7 +266,11 @@ impl Unit {
             visual,
             variation_index,
         };
-        let mut context = UnitLoadContext { selection, cache };
+        let mut context = UnitLoadContext {
+            selection,
+            animation_asset,
+            cache,
+        };
         let loaded =
             load_named_model(source, &mut context, default_model, None, Mat4::IDENTITY, 0)?;
         let (bounds_min, bounds_max) = unit_bounds(&loaded.instances);
@@ -301,6 +321,14 @@ impl Unit {
         &self.attachments
     }
 
+    /// Whether this decoded placement carries the UAX selected by the sim.
+    #[must_use]
+    pub fn has_scripted_animation(&self) -> bool {
+        self.instances
+            .iter()
+            .any(|instance| instance.scripted_animation.is_some())
+    }
+
     /// Returns attachments active for a named animation while always retaining
     /// persistent component attachments.
     pub fn attachments_for_animation<'unit>(
@@ -332,6 +360,7 @@ struct VisualSelection<'visual> {
 
 struct UnitLoadContext<'visual, 'cache> {
     selection: VisualSelection<'visual>,
+    animation_asset: Option<&'visual str>,
     cache: &'cache mut UnitAssetCache,
 }
 
@@ -381,8 +410,22 @@ fn load_model_definition(
 ) -> Result<LoadedUnit, UnitLoadError> {
     let canonical_path = canonical_model_path(path);
     let model = load_cached_model(source, context.cache, &definition.name, &canonical_path)?;
-    let animation = load_start_animation(source, definition, context.cache);
-    let pose = model.pose(animation.as_ref());
+    let scripted_animation = (depth == 0)
+        .then_some(context.animation_asset)
+        .flatten()
+        .and_then(|path| {
+            load_animation(
+                source,
+                path,
+                &definition.name,
+                &mut context.cache.animations,
+            )
+        });
+    let start_animation = scripted_animation
+        .clone()
+        .or_else(|| load_start_animation(source, definition, &mut context.cache.animations));
+    let animation_pose = start_animation.as_deref().map(AnimationPose::at_start);
+    let pose = model.pose(animation_pose.as_ref());
     let local_transform = parent.map_or(
         parent_transform,
         |(parent_model, parent_pose, attachment)| {
@@ -449,6 +492,7 @@ fn load_model_definition(
             name: definition.name.clone(),
             model,
             pose,
+            scripted_animation,
             local_transform,
         }],
         attachments,
@@ -479,6 +523,7 @@ fn load_model_file(
             name: attachment.name.clone(),
             model,
             pose,
+            scripted_animation: None,
             local_transform,
         }],
         attachments: Vec::new(),
@@ -596,55 +641,6 @@ fn model_asset_path<'visual>(
     direct_model_asset_path(model)
 }
 
-fn load_start_animation(
-    source: &mut AssetSource<StdFileProvider>,
-    model: &VisualModel,
-    cache: &mut UnitAssetCache,
-) -> Option<AnimationPose> {
-    let path = model
-        .anims
-        .iter()
-        .find(|animation| animation.anim_type.eq_ignore_ascii_case("Idle"))
-        .and_then(|animation| {
-            animation.assets.iter().find_map(|asset| {
-                asset
-                    .asset_type
-                    .eq_ignore_ascii_case("Anim")
-                    .then_some(asset.file.as_deref())
-                    .flatten()
-            })
-        })?;
-    let canonical_path = canonical_animation_path(path);
-    let key = canonical_path.to_ascii_lowercase();
-    if let Some(animation) = cache.animations.get(&key) {
-        return animation.clone();
-    }
-    let Some(bytes) = source.resolve_with_fallback(&canonical_path, &[".uax"]) else {
-        log::warn!(
-            "UGX visual model '{}' is missing optional idle animation '{}'; using bind pose",
-            model.name,
-            canonical_path,
-        );
-        cache.animations.insert(key, None);
-        return None;
-    };
-    let animation = match UaxReader::read(&bytes) {
-        Ok(animation) => animation,
-        Err(error) => {
-            log::warn!(
-                "UGX visual model '{}' could not decode optional idle animation '{}'; using bind pose: {error}",
-                model.name,
-                canonical_path,
-            );
-            cache.animations.insert(key, None);
-            return None;
-        }
-    };
-    let pose = AnimationPose::at_start(&animation);
-    cache.animations.insert(key, Some(pose.clone()));
-    Some(pose)
-}
-
 fn visual_attachment_transform(
     parent: &Model,
     parent_pose: &ModelPose,
@@ -692,10 +688,6 @@ fn canonical_model_path(path: &str) -> String {
     canonical_art_path(path)
 }
 
-fn canonical_animation_path(path: &str) -> String {
-    canonical_art_path(path)
-}
-
 fn canonical_art_path(path: &str) -> String {
     let normalized = path
         .trim()
@@ -738,6 +730,8 @@ fn unit_bounds(instances: &[UnitInstance]) -> (Vec3, Vec3) {
 
 struct RenderedUnitInstance {
     local_transform: Mat4,
+    model: Arc<Model>,
+    scripted_animation: Option<Arc<Animation>>,
     renderer: Renderer,
 }
 
@@ -855,6 +849,8 @@ impl UnitRenderer {
                 let model_transform = unit_transform * instance.local_transform;
                 RenderedUnitInstance {
                     local_transform: instance.local_transform,
+                    model: Arc::clone(&instance.model),
+                    scripted_animation: instance.scripted_animation.clone(),
                     renderer: {
                         let renderer = Renderer::new_with_shared(
                             device,
@@ -924,6 +920,26 @@ impl UnitRenderer {
                 time_seconds,
                 selection,
             );
+        }
+    }
+
+    pub(super) fn update_scripted_animation(
+        &mut self,
+        queue: &wgpu::Queue,
+        normalized_position: Option<f32>,
+    ) {
+        let Some(normalized_position) = normalized_position else {
+            return;
+        };
+        for instance in &mut self.instances {
+            let Some(animation) = &instance.scripted_animation else {
+                continue;
+            };
+            let animation_pose = AnimationPose::at_position(animation, normalized_position);
+            let pose = instance.model.pose(Some(&animation_pose));
+            instance
+                .renderer
+                .update_joints(queue, pose.joint_matrices());
         }
     }
 

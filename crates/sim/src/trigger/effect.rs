@@ -129,6 +129,7 @@ pub enum EffectType {
     // Minimap
     FlareMinimapSpoof = 132,
     FlareMinimapNormal = 135,
+    CreateIconObject = 520,
 
     // Objectives
     ObjectiveComplete = 133,
@@ -155,6 +156,7 @@ pub enum EffectType {
     // Animation
     PlayAnimationUnit = 159,
     PlayAnimationSquad = 160,
+    PlayAnimationObject = 588,
 
     // Messages
     UserMessage = 164,
@@ -396,8 +398,13 @@ pub enum EffectType {
     ClearBlackMap = 863,
 
     // Renderer/UI presentation controls
+    CameraShake = 632,
+    ShowObjectivePointer = 687,
+    RumbleStart = 773,
+    RumbleStop = 774,
     HintCalloutCreate = 809,
     HintCalloutDestroy = 810,
+    EnableChats = 841,
     SetCamera = 884,
     FadeToColor = 912,
     FadeTransition = 922,
@@ -578,14 +585,17 @@ impl EffectType {
             | 510
             | 516
             | 519
+            | 520
             | 526
             | 532
             | 559
             | 562
             | 569..=574
             | 580..=582
+            | 588
             | 609
             | 630
+            | 632
             | 633
             | 634
             | 646 | 647
@@ -593,6 +603,7 @@ impl EffectType {
             | 668 | 669 | 672 | 674
             | 670
             | 678 | 679
+            | 687
              | 712
              | 713
             | 717..=719
@@ -600,6 +611,7 @@ impl EffectType {
             | 736
             | 741
             | 748
+            | 773 | 774
             | 809
             | 810
             | 811
@@ -607,7 +619,8 @@ impl EffectType {
             | 818
             | 833
             | 836
-             | 837..=840
+            | 837..=840
+            | 841
             | 863
             | 867..=870
             | 872

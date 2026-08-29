@@ -91,7 +91,7 @@ mod tests {
     use crate::commands::WorkCommand;
     use crate::entities::RecoveryType;
     use crate::executor::CommandExecutor;
-    use crate::gameplay::{AttackAnimation, AttackProfile};
+    use crate::gameplay::{AttackAccuracyProfile, AttackAnimation, AttackProfile};
     use crate::order::OrderType;
     use glam::Vec3;
     use pipeline::database::hw1::tactics::{Action, TacticData, TacticRules, TargetRule, Weapon};
@@ -277,7 +277,12 @@ mod tests {
             weapon_name: action_name.to_owned(),
             weapon_type: None,
             projectile: None,
+            area_damage: None,
+            friendly_fire: false,
+            targets_foot_of_unit: false,
             max_range,
+            max_velocity_lead: 0.0,
+            accuracy: AttackAccuracyProfile::default(),
             damage_per_attack: 5.0,
             animations: vec![AttackAnimation {
                 asset_path: "attack.uax".to_owned(),

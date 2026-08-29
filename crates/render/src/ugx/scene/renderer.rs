@@ -7,7 +7,10 @@ use glam::{Mat4, Vec3};
 use num_traits::ToPrimitive;
 use sim::{EntityId, TargetingSelection, TeamId, World as SimWorld};
 
-use super::{UnitScene, simulation_entity_transform, simulation_entity_visible_to_team};
+use super::{
+    UnitScene, simulation_entity_animation, simulation_entity_transform,
+    simulation_entity_visible_to_team,
+};
 use crate::environment::EnvironmentMap;
 use crate::terrain::LightingParams;
 use crate::ugx::renderer::{SelectionOverlay, SharedResources};
@@ -17,6 +20,7 @@ use crate::{RenderPhase, WorldRenderer};
 struct RenderedPlacement {
     entity_id: EntityId,
     proto_name: String,
+    animation_revision: u32,
     transform: Mat4,
     visible: bool,
     visual_bounds_min: Vec3,
@@ -123,6 +127,7 @@ impl UnitSceneRenderer {
             .map(|placement| RenderedPlacement {
                 entity_id: placement.entity_id(),
                 proto_name: placement.proto_name().to_owned(),
+                animation_revision: placement.animation_revision(),
                 transform: placement.transform,
                 visible: true,
                 visual_bounds_min: Vec3::from_array(placement.unit.bounds_min()),
@@ -161,6 +166,7 @@ impl UnitSceneRenderer {
                     && rendered
                         .proto_name
                         .eq_ignore_ascii_case(placement.proto_name())
+                    && rendered.animation_revision == placement.animation_revision()
                 {
                     rendered.transform = placement.transform;
                     rendered.visible = true;
@@ -169,6 +175,7 @@ impl UnitSceneRenderer {
                 RenderedPlacement {
                     entity_id: placement.entity_id(),
                     proto_name: placement.proto_name().to_owned(),
+                    animation_revision: placement.animation_revision(),
                     transform: placement.transform,
                     visible: true,
                     visual_bounds_min: Vec3::from_array(placement.unit.bounds_min()),
@@ -284,6 +291,11 @@ impl UnitSceneRenderer {
             placement.visible = viewer_team.is_none_or(|team_id| {
                 simulation_entity_visible_to_team(world, team_id, placement.entity_id)
             });
+            let animation_position = simulation_entity_animation(world, placement.entity_id)
+                .map(|animation| animation.normalized_position(world.game_time()));
+            placement
+                .renderer
+                .update_scripted_animation(queue, animation_position);
         }
         update_renderers(
             &mut self.placements,

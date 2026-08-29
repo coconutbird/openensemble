@@ -24,8 +24,8 @@ pub mod units;
 pub use base::BaseEntity;
 pub use base_site::{Base, BaseId};
 pub(crate) use idle::EntityIdle;
-pub use object_state::{DopplePolicy, ObjectState, TargetingSelection};
-pub use objects::{Object, ObjectKind, Revealer};
+pub use object_state::{DopplePolicy, ObjectState, ScriptedAnimation, TargetingSelection};
+pub use objects::{IconObject, Object, ObjectKind, Revealer};
 pub use projectiles::Projectile;
 pub use squads::{
     RecoveryType, Squad, SquadArchetype, SquadContainmentState, SquadFormation, SquadGarrison,

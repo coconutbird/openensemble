@@ -23,6 +23,7 @@ pub use sim::{
 pub struct UnitPlacement {
     entity_id: EntityId,
     proto_name: String,
+    animation_revision: u32,
     transform: Mat4,
     unit: Arc<Unit>,
 }
@@ -38,6 +39,12 @@ impl UnitPlacement {
     #[must_use]
     pub fn proto_name(&self) -> &str {
         &self.proto_name
+    }
+
+    /// Return the sim animation revision captured by this decoded visual.
+    #[must_use]
+    pub const fn animation_revision(&self) -> u32 {
+        self.animation_revision
     }
 
     /// Return the simulation transform captured while building the scene.
@@ -82,7 +89,7 @@ pub struct UnitScene {
     placements: Vec<UnitPlacement>,
     issues: Vec<UnitSceneIssue>,
     decoded_visuals: HashMap<String, Option<Arc<Unit>>>,
-    simulation_entity_ids: Vec<EntityId>,
+    simulation_entity_states: Vec<(EntityId, u32)>,
     simulation_entity_count: usize,
     unique_visual_count: usize,
     skipped_no_render_count: usize,
@@ -131,10 +138,10 @@ impl UnitScene {
     /// Return whether this presentation roster matches all live sim visuals.
     #[must_use]
     pub fn roster_matches(&self, world: &SimWorld) -> bool {
-        self.simulation_entity_ids
+        self.simulation_entity_states
             .iter()
             .copied()
-            .eq(simulation_entity_ids(world))
+            .eq(simulation_entity_states(world))
     }
 
     fn load_world_reusing(
@@ -145,10 +152,10 @@ impl UnitScene {
         mut units: HashMap<String, Option<Arc<Unit>>>,
     ) -> Self {
         let mut asset_cache = UnitAssetCache::default();
-        let simulation_entity_ids = simulation_entity_ids(world).collect::<Vec<_>>();
+        let simulation_entity_states = simulation_entity_states(world).collect::<Vec<_>>();
         let mut scene = Self {
-            simulation_entity_count: simulation_entity_ids.len(),
-            simulation_entity_ids,
+            simulation_entity_count: simulation_entity_states.len(),
+            simulation_entity_states,
             ..Self::default()
         };
         let visual_names = visual_name_lookup(visuals);
@@ -179,6 +186,7 @@ impl UnitScene {
                 source,
                 &visuals[visual_name],
                 &lookup_name,
+                entity.animation_asset,
                 &mut asset_cache,
                 &mut units,
             ) {
@@ -197,6 +205,7 @@ impl UnitScene {
             scene.placements.push(UnitPlacement {
                 entity_id,
                 proto_name: proto_name.to_owned(),
+                animation_revision: entity.animation_revision,
                 transform,
                 unit,
             });
@@ -290,20 +299,31 @@ fn load_cached_unit(
     source: &mut AssetSource<StdFileProvider>,
     visual: &Visual,
     lookup_name: &str,
+    animation_asset: Option<&str>,
     asset_cache: &mut UnitAssetCache,
     units: &mut HashMap<String, Option<Arc<Unit>>>,
 ) -> Result<Arc<Unit>, Option<String>> {
-    if let Some(cached) = units.get(lookup_name) {
+    let cache_key = animation_asset.map_or_else(
+        || lookup_name.to_owned(),
+        |asset| format!("{lookup_name}\0{}", asset.to_ascii_lowercase()),
+    );
+    if let Some(cached) = units.get(&cache_key) {
         return cached.clone().ok_or(None);
     }
-    match Unit::load_variant_with_cache(source, visual, None, asset_cache) {
+    match Unit::load_variant_with_animation_cache(
+        source,
+        visual,
+        None,
+        animation_asset,
+        asset_cache,
+    ) {
         Ok(unit) => {
             let unit = Arc::new(unit);
-            units.insert(lookup_name.to_owned(), Some(Arc::clone(&unit)));
+            units.insert(cache_key, Some(Arc::clone(&unit)));
             Ok(unit)
         }
         Err(error) => {
-            units.insert(lookup_name.to_owned(), None);
+            units.insert(cache_key, None);
             Err(Some(error.to_string()))
         }
     }
@@ -319,45 +339,110 @@ fn prototype_is_hidden(proto: &ProtoObject) -> bool {
 struct SimulationVisual<'a> {
     id: EntityId,
     proto_name: &'a str,
+    animation_asset: Option<&'a str>,
+    animation_revision: u32,
     transform: Option<Mat4>,
 }
 
-fn simulation_entity_ids(world: &SimWorld) -> impl Iterator<Item = EntityId> + '_ {
-    world.units.ids().chain(world.projectiles.ids())
+fn simulation_entity_states(world: &SimWorld) -> impl Iterator<Item = (EntityId, u32)> + '_ {
+    simulation_visuals(world).map(|visual| (visual.id, visual.animation_revision))
 }
 
-fn simulation_visuals(world: &SimWorld) -> impl Iterator<Item = SimulationVisual<'_>> {
+/// Iterate prototype names for every renderer-facing entity in the sim roster.
+///
+/// Presentation asset loaders use this same projection as [`UnitScene`], so
+/// class-0 scenario visuals cannot be omitted by a separate roster policy.
+pub fn simulation_proto_names(world: &SimWorld) -> impl Iterator<Item = &str> {
     world
-        .units
+        .objects
         .iter()
-        .map(|(id, unit)| SimulationVisual {
-            id,
-            proto_name: &unit.proto_object_name,
-            transform: simulation_unit_model_transform(unit),
-        })
+        .filter(|(_, object)| object.is_visual())
+        .map(|(_, object)| object.proto_object_name.as_str())
+        .chain(
+            world
+                .units
+                .iter()
+                .map(|(_, unit)| unit.proto_object_name.as_str()),
+        )
         .chain(
             world
                 .projectiles
                 .iter()
-                .map(|(id, projectile)| SimulationVisual {
-                    id,
-                    proto_name: &projectile.proto_object_name,
-                    transform: simulation_projectile_transform(projectile),
-                }),
+                .map(|(_, projectile)| projectile.proto_object_name.as_str()),
         )
+}
+
+fn simulation_visuals(world: &SimWorld) -> impl Iterator<Item = SimulationVisual<'_>> {
+    world
+        .objects
+        .iter()
+        .filter(|(_, object)| object.is_visual())
+        .map(|(id, object)| SimulationVisual {
+            id,
+            proto_name: &object.proto_object_name,
+            animation_asset: object
+                .object_state
+                .scripted_animation()
+                .and_then(sim::ScriptedAnimation::asset_path),
+            animation_revision: object
+                .object_state
+                .scripted_animation()
+                .map_or(0, sim::ScriptedAnimation::revision),
+            transform: simulation_object_transform(object),
+        })
+        .chain(world.units.iter().map(|(id, unit)| {
+            SimulationVisual {
+                id,
+                proto_name: &unit.proto_object_name,
+                animation_asset: unit
+                    .object_state
+                    .scripted_animation()
+                    .and_then(sim::ScriptedAnimation::asset_path),
+                animation_revision: unit
+                    .object_state
+                    .scripted_animation()
+                    .map_or(0, sim::ScriptedAnimation::revision),
+                transform: simulation_unit_model_transform(unit),
+            }
+        }))
+        .chain(world.projectiles.iter().map(|(id, projectile)| {
+            SimulationVisual {
+                id,
+                proto_name: &projectile.proto_object_name,
+                animation_asset: projectile
+                    .object_state
+                    .scripted_animation()
+                    .and_then(sim::ScriptedAnimation::asset_path),
+                animation_revision: projectile
+                    .object_state
+                    .scripted_animation()
+                    .map_or(0, sim::ScriptedAnimation::revision),
+                transform: simulation_projectile_transform(projectile),
+            }
+        }))
 }
 
 /// Resolve a render transform for any sim entity represented by this scene.
 #[must_use]
 pub fn simulation_entity_transform(world: &SimWorld, entity_id: EntityId) -> Option<Mat4> {
     world
-        .get_unit(entity_id)
-        .and_then(simulation_unit_transform)
+        .get_object(entity_id)
+        .filter(|object| object.is_visual())
+        .and_then(simulation_object_transform)
+        .or_else(|| {
+            world
+                .get_unit(entity_id)
+                .and_then(simulation_unit_transform)
+        })
         .or_else(|| {
             world
                 .get_projectile(entity_id)
                 .and_then(simulation_projectile_transform)
         })
+}
+
+fn simulation_object_transform(object: &sim::Object) -> Option<Mat4> {
+    simulation_model_transform(object.base.position, object.base.forward)
 }
 
 /// Project the simulation's authoritative team visibility into presentation.
@@ -379,6 +464,15 @@ pub fn simulation_entity_flash(
     world.entity_targeting_selection(entity_id)
 }
 
+/// Project one authoritative scripted-animation request into presentation.
+#[must_use]
+pub fn simulation_entity_animation(
+    world: &SimWorld,
+    entity_id: EntityId,
+) -> Option<&sim::ScriptedAnimation> {
+    world.entity_scripted_animation(entity_id)
+}
+
 /// Build a model-to-world matrix solely from authoritative simulation state.
 #[must_use]
 pub fn simulation_unit_transform(unit: &sim::Unit) -> Option<Mat4> {
@@ -389,8 +483,10 @@ pub fn simulation_unit_transform(unit: &sim::Unit) -> Option<Mat4> {
 }
 
 fn simulation_unit_model_transform(unit: &sim::Unit) -> Option<Mat4> {
-    let position = unit.base.position;
-    let world_forward = unit.base.forward;
+    simulation_model_transform(unit.base.position, unit.base.forward)
+}
+
+fn simulation_model_transform(position: Vec3, world_forward: Vec3) -> Option<Mat4> {
     if !position.is_finite() || !world_forward.is_finite() {
         return None;
     }
@@ -517,7 +613,7 @@ mod tests {
         let mut world = sim::World::new();
         let first = world.create_unit(0);
         let mut scene = super::UnitScene {
-            simulation_entity_ids: vec![first],
+            simulation_entity_states: vec![(first, 0)],
             simulation_entity_count: 1,
             ..super::UnitScene::default()
         };
@@ -528,7 +624,12 @@ mod tests {
         assert_ne!(first, replacement);
         assert!(!scene.roster_matches(&world));
 
-        scene.simulation_entity_ids = vec![replacement];
+        scene.simulation_entity_states = vec![(replacement, 0)];
+        assert!(scene.roster_matches(&world));
+
+        assert!(world.play_entity_animation(replacement, "Death".to_owned(), None, 1_000));
+        assert!(!scene.roster_matches(&world));
+        scene.simulation_entity_states = vec![(replacement, 1)];
         assert!(scene.roster_matches(&world));
     }
 

@@ -37,19 +37,22 @@ pub use commands::{
 pub use dispatcher::{CommandDispatcher, DispatchError, DispatchedCommand};
 pub use entities::{
     Base, BaseEntity, BaseId, BuildingProduction, ConstructionKind, ConstructionProgress,
-    ConstructionTask, DopplePolicy, Object, ObjectKind, ObjectState, Projectile, RallyPoint,
-    RecoveryType, ResearchProgress, ResearchTask, Revealer, ShieldCoverage, Squad, SquadArchetype,
-    SquadContainmentState, SquadFormation, SquadGarrison, SquadMode, SquadRecovery, SquadShields,
-    SquadState, SquadTransportFlyIn, TargetingSelection, TowerWallAction, TrainingKind,
-    TrainingProgress, TrainingTask, TransportFlyInPhase, Unit, UnitActions, UnitArchetype,
-    UnitDataScalar, UnitGarrison, UnitKind, UnitShields, UnitState,
+    ConstructionTask, DopplePolicy, IconObject, Object, ObjectKind, ObjectState, Projectile,
+    RallyPoint, RecoveryType, ResearchProgress, ResearchTask, Revealer, ScriptedAnimation,
+    ShieldCoverage, Squad, SquadArchetype, SquadContainmentState, SquadFormation, SquadGarrison,
+    SquadMode, SquadRecovery, SquadShields, SquadState, SquadTransportFlyIn, TargetingSelection,
+    TowerWallAction, TrainingKind, TrainingProgress, TrainingTask, TransportFlyInPhase, Unit,
+    UnitActions, UnitArchetype, UnitDataScalar, UnitGarrison, UnitKind, UnitShields, UnitState,
 };
 pub use entity::{Entity, EntityManager, MAX_ENTITY_SLOTS};
 pub use entity_id::{EntityClass, EntityId};
 pub use executor::CommandExecutor;
 pub use gameplay::{
-    AbilityGameplay, AbilityRecoveryStart, AttackQuery, AttackQueryFlags, GameplayCatalog,
-    GameplayLoadIssue, ObjectGameplay, RangedAction, TacticRelation,
+    AbilityGameplay, AbilityRecoveryStart, AreaDamageProfile, AttackAccuracyProfile,
+    AttackAnimation, AttackProfile, AttackQuery, AttackQueryFlags, GameplayCatalog,
+    GameplayLoadIssue, HeroRevivalProfile, ObjectGameplay, ProjectileInitialPerturbance,
+    ProjectilePerturbanceProfile, ProjectileProfile, RangedAction, ReviveActionProfile,
+    TacticRelation, UnitRevivalProfile,
 };
 pub use order::OrderType;
 pub use packet::{ChannelPacketHeader, PacketError};
@@ -85,12 +88,12 @@ pub use trigger::{
     TriggerValue, TriggerVec3, VarId, VarType,
 };
 pub use world::{
-    CameraControlPermissions, CameraDirective, ChatRequest, CinematicRequest, ConstructionError,
-    ConstructionQueueResult, CustomCommand, CustomCommandFlags, DesignLineId, GameTimer,
-    GameTimerAudience, GarrisonError, GeneralEvent, GeneralEventType, HintCallout,
-    HintCalloutAnchor, HudItem, MAX_PLAYERS, MAX_TRAIN_BATCH, ObjectiveState,
+    CameraControlPermissions, CameraDirective, CameraShake, ChatRequest, CinematicRequest,
+    ConstructionError, ConstructionQueueResult, CustomCommand, CustomCommandFlags, DesignLineId,
+    GameTimer, GameTimerAudience, GarrisonError, GeneralEvent, GeneralEventType, HintCallout,
+    HintCalloutAnchor, HudItem, MAX_PLAYERS, MAX_TRAIN_BATCH, ObjectivePointer, ObjectiveState,
     PlayerPresentationState, PresentationRequest, ProductionUpdate, ResearchError,
-    ResearchQueueResult, ScenarioScoreInfo, ScreenFadeOverlay, ScreenFadeSequence, TechnologyError,
-    TrainingError, TrainingQueueResult, World, object_runtime_id, power_prototype_id,
-    squad_runtime_id, technology_prototype_id,
+    ResearchQueueResult, RumbleMotor, RumbleRequest, ScenarioScoreInfo, ScreenFadeOverlay,
+    ScreenFadeSequence, TechnologyError, TrainingError, TrainingQueueResult, World,
+    object_runtime_id, power_prototype_id, squad_runtime_id, technology_prototype_id,
 };

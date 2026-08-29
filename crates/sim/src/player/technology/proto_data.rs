@@ -14,7 +14,12 @@ pub(crate) enum ProtoDataType {
     Damage = 14,
     AoePrimaryTargetFactor = 17,
     Accuracy = 20,
+    MovingAccuracy = 21,
     MaxDeviation = 22,
+    MovingMaxDeviation = 23,
+    AccuracyDistanceFactor = 24,
+    AccuracyDeviationFactor = 25,
+    MaxVelocityLead = 26,
     BuildPoints = 28,
     CommandEnable = 34,
     ShieldRegenDelay = 38,
@@ -36,7 +41,12 @@ impl ProtoDataType {
             ("Damage", Self::Damage),
             ("AOEPrimaryTargetFactor", Self::AoePrimaryTargetFactor),
             ("Accuracy", Self::Accuracy),
+            ("MovingAccuracy", Self::MovingAccuracy),
             ("MaxDeviation", Self::MaxDeviation),
+            ("MovingMaxDeviation", Self::MovingMaxDeviation),
+            ("AccuracyDistanceFactor", Self::AccuracyDistanceFactor),
+            ("AccuracyDeviationFactor", Self::AccuracyDeviationFactor),
+            ("MaxVelocityLead", Self::MaxVelocityLead),
             ("BuildPoints", Self::BuildPoints),
             ("CommandEnable", Self::CommandEnable),
             ("ShieldRegenDelay", Self::ShieldRegenDelay),
@@ -57,7 +67,12 @@ impl ProtoDataType {
             14 => Self::Damage,
             17 => Self::AoePrimaryTargetFactor,
             20 => Self::Accuracy,
+            21 => Self::MovingAccuracy,
             22 => Self::MaxDeviation,
+            23 => Self::MovingMaxDeviation,
+            24 => Self::AccuracyDistanceFactor,
+            25 => Self::AccuracyDeviationFactor,
+            26 => Self::MaxVelocityLead,
             28 => Self::BuildPoints,
             34 => Self::CommandEnable,
             38 => Self::ShieldRegenDelay,
@@ -74,7 +89,12 @@ impl ProtoDataType {
                 | Self::Damage
                 | Self::AoePrimaryTargetFactor
                 | Self::Accuracy
+                | Self::MovingAccuracy
                 | Self::MaxDeviation
+                | Self::MovingMaxDeviation
+                | Self::AccuracyDistanceFactor
+                | Self::AccuracyDeviationFactor
+                | Self::MaxVelocityLead
         )
     }
 }
@@ -312,6 +332,30 @@ fn hash_string(checksum: &mut SyncChecksum, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn projectile_accuracy_types_keep_retail_ordinals_and_names() {
+        for (ordinal, name, expected) in [
+            (20, "Accuracy", ProtoDataType::Accuracy),
+            (21, "MovingAccuracy", ProtoDataType::MovingAccuracy),
+            (22, "MaxDeviation", ProtoDataType::MaxDeviation),
+            (23, "MovingMaxDeviation", ProtoDataType::MovingMaxDeviation),
+            (
+                24,
+                "AccuracyDistanceFactor",
+                ProtoDataType::AccuracyDistanceFactor,
+            ),
+            (
+                25,
+                "AccuracyDeviationFactor",
+                ProtoDataType::AccuracyDeviationFactor,
+            ),
+            (26, "MaxVelocityLead", ProtoDataType::MaxVelocityLead),
+        ] {
+            assert_eq!(ProtoDataType::from_ordinal(ordinal), Some(expected));
+            assert_eq!(ProtoDataType::from_trigger_value(name), Some(expected));
+        }
+    }
 
     #[test]
     fn inverse_operations_match_retail_calc_amount() {

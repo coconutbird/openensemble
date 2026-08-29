@@ -21,6 +21,55 @@ pub struct AttackAnimation {
     pub attack_positions: Vec<f32>,
 }
 
+/// Immutable area-damage values authored on one weapon.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AreaDamageProfile {
+    /// Maximum distance from ground zero to a target's simulation bounds.
+    pub radius: f32,
+    /// Fraction of base damage dealt directly to the primary target.
+    pub primary_target_factor: f32,
+    /// Fraction of the radius occupied by the inner falloff interval.
+    pub distance_factor: f32,
+    /// Damage fraction at the inner falloff interval's outer edge.
+    pub damage_factor: f32,
+    /// Whether the shared damage pool is consumed nearest-target-first.
+    pub linear_damage: bool,
+    /// Whether the area query ignores vertical separation.
+    pub ignores_y_axis: bool,
+    /// Whether splash may damage the attacker's player and allies.
+    pub friendly_fire: bool,
+}
+
+/// Authored projectile hit chance and miss-distribution values for one weapon.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AttackAccuracyProfile {
+    /// Chance to fire without deviation while stationary.
+    pub accuracy: f32,
+    /// Chance to fire without deviation while moving at full speed.
+    pub moving_accuracy: f32,
+    /// Maximum stationary deviation at maximum range.
+    pub max_deviation: f32,
+    /// Maximum full-speed moving deviation at maximum range.
+    pub moving_max_deviation: f32,
+    /// Roll position separating the two miss-distribution intervals.
+    pub distance_factor: f32,
+    /// Deviation fraction at the interval boundary.
+    pub deviation_factor: f32,
+}
+
+impl Default for AttackAccuracyProfile {
+    fn default() -> Self {
+        Self {
+            accuracy: 1.0,
+            moving_accuracy: 1.0,
+            max_deviation: 0.0,
+            moving_max_deviation: 0.0,
+            distance_factor: 0.5,
+            deviation_factor: 0.5,
+        }
+    }
+}
+
 /// Immutable attack values computed using retail's `computeAttackInfo` rules.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttackProfile {
@@ -32,8 +81,21 @@ pub struct AttackProfile {
     pub weapon_type: Option<String>,
     /// Projectile proto-object name, or `None` for an instant/melee hit.
     pub projectile: Option<String>,
+    /// Authored area-damage contract, present only for a positive radius.
+    pub area_damage: Option<AreaDamageProfile>,
+    /// Whether direct projectile collision may hit the attacker or allied units.
+    pub friendly_fire: bool,
+    /// Whether the projectile aims at the target's ground point instead of its body.
+    ///
+    /// Retail also uses this to disable collisions with prototypes carrying the
+    /// `TargetsFootOfUnit` flag for this particular launch.
+    pub targets_foot_of_unit: bool,
     /// Maximum authored weapon range.
     pub max_range: f32,
+    /// Maximum target velocity considered by launch-time projectile leading.
+    pub max_velocity_lead: f32,
+    /// Stationary and moving projectile accuracy/deviation contract.
+    pub accuracy: AttackAccuracyProfile,
     /// Base damage applied for each Attack tag before live modifiers.
     pub damage_per_attack: f32,
     /// Weighted attack-animation variants in visual order.
@@ -115,7 +177,7 @@ fn resolve_action<'a>(tactics: &'a TacticData, action: &'a Action) -> Option<Ran
     Some(RangedAction { action, weapon })
 }
 
-fn load_visual(
+pub(super) fn load_visual(
     object: &ProtoObject,
     source: &mut AssetSource<StdFileProvider>,
     cache: &mut TimingAssetCache,
@@ -211,7 +273,12 @@ fn build_attack_profile(
         weapon_name: ranged.weapon.name.clone(),
         weapon_type: ranged.weapon.weapon_type.clone(),
         projectile: ranged.weapon.projectile.clone(),
+        area_damage: area_damage_profile(ranged.weapon),
+        friendly_fire: ranged.weapon.allow_friendly_fire == Some(true),
+        targets_foot_of_unit: ranged.weapon.targets_foot_of_unit == Some(true),
         max_range: finite_nonnegative(ranged.weapon.max_range),
+        max_velocity_lead: finite_nonnegative(ranged.weapon.max_velocity_lead),
+        accuracy: attack_accuracy_profile(ranged.weapon),
         damage_per_attack,
         animations: variants,
         pre_attack_cooldown: cooldown_range(
@@ -225,6 +292,31 @@ fn build_attack_profile(
         reload_duration,
         visual_ammo,
         uses_height_bonus_damage: ranged.weapon.enable_height_bonus_damage == Some(true),
+    })
+}
+
+fn attack_accuracy_profile(weapon: &Weapon) -> AttackAccuracyProfile {
+    let defaults = AttackAccuracyProfile::default();
+    AttackAccuracyProfile {
+        accuracy: finite_or(weapon.accuracy, defaults.accuracy),
+        moving_accuracy: finite_or(weapon.moving_accuracy, defaults.moving_accuracy),
+        max_deviation: finite_or(weapon.max_deviation, defaults.max_deviation),
+        moving_max_deviation: finite_or(weapon.moving_max_deviation, defaults.moving_max_deviation),
+        distance_factor: finite_or(weapon.accuracy_distance_factor, defaults.distance_factor),
+        deviation_factor: finite_or(weapon.accuracy_deviation_factor, defaults.deviation_factor),
+    }
+}
+
+fn area_damage_profile(weapon: &Weapon) -> Option<AreaDamageProfile> {
+    let radius = finite_nonnegative(weapon.aoe_radius);
+    (radius > 0.0).then(|| AreaDamageProfile {
+        radius,
+        primary_target_factor: finite_or_default(weapon.aoe_primary_target_factor),
+        distance_factor: finite_or_default(weapon.aoe_distance_factor),
+        damage_factor: finite_or_default(weapon.aoe_damage_factor),
+        linear_damage: weapon.aoe_linear_damage == Some(true),
+        ignores_y_axis: weapon.aoe_ignores_y_axis == Some(true),
+        friendly_fire: weapon.allow_friendly_fire == Some(true),
     })
 }
 
@@ -290,7 +382,7 @@ fn find_model<'a>(visual: &'a Visual, name: &str) -> Option<&'a Model> {
         .find(|model| model.name.eq_ignore_ascii_case(name))
 }
 
-fn find_animation<'a>(model: &'a Model, name: &str) -> Option<&'a Anim> {
+pub(super) fn find_animation<'a>(model: &'a Model, name: &str) -> Option<&'a Anim> {
     model
         .anims
         .iter()
@@ -342,7 +434,7 @@ fn load_attack_animations(
     Ok(variants)
 }
 
-fn load_animation_duration(
+pub(super) fn load_animation_duration(
     path: &str,
     source: &mut AssetSource<StdFileProvider>,
     cache: &mut TimingAssetCache,
@@ -451,6 +543,14 @@ fn finite_nonnegative(value: Option<f32>) -> f32 {
         .unwrap_or_default()
 }
 
+fn finite_or_default(value: Option<f32>) -> f32 {
+    value.filter(|value| value.is_finite()).unwrap_or_default()
+}
+
+fn finite_or(value: Option<f32>, fallback: f32) -> f32 {
+    value.filter(|value| value.is_finite()).unwrap_or(fallback)
+}
+
 fn canonical_visual_path(visual_ref: &str) -> String {
     let visual_ref = visual_ref.trim().replace('/', "\\");
     let visual_ref = visual_ref.trim_start_matches('\\');
@@ -461,7 +561,7 @@ fn canonical_visual_path(visual_ref: &str) -> String {
     }
 }
 
-fn canonical_animation_path(animation_ref: &str) -> String {
+pub(super) fn canonical_animation_path(animation_ref: &str) -> String {
     let animation_ref = animation_ref.trim().replace('/', "\\");
     let animation_ref = animation_ref.trim_start_matches('\\');
     let base = if animation_ref.to_ascii_lowercase().starts_with("art\\") {
@@ -524,5 +624,32 @@ mod tests {
             canonical_animation_path("art\\unsc\\marine_attack.uax"),
             "art\\unsc\\marine_attack.uax"
         );
+    }
+
+    #[test]
+    fn area_damage_profile_preserves_authored_weapon_contract() {
+        let weapon = Weapon {
+            aoe_radius: Some(4.0),
+            aoe_primary_target_factor: Some(0.25),
+            aoe_distance_factor: Some(0.5),
+            aoe_damage_factor: Some(0.2),
+            aoe_linear_damage: Some(true),
+            aoe_ignores_y_axis: Some(true),
+            allow_friendly_fire: Some(true),
+            ..Weapon::default()
+        };
+        assert_eq!(
+            area_damage_profile(&weapon),
+            Some(AreaDamageProfile {
+                radius: 4.0,
+                primary_target_factor: 0.25,
+                distance_factor: 0.5,
+                damage_factor: 0.2,
+                linear_damage: true,
+                ignores_y_axis: true,
+                friendly_fire: true,
+            })
+        );
+        assert_eq!(area_damage_profile(&Weapon::default()), None);
     }
 }

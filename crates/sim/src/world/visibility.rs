@@ -109,6 +109,9 @@ impl World {
 
     /// Remove a class-0 object and invalidate its ID.
     pub fn remove_object(&mut self, id: EntityId) -> Option<Object> {
+        self.objects.get(id)?;
+        self.remove_owned_attachments(id);
+        self.detach_attachment_from_parent(id);
         self.objects.remove(id)
     }
 

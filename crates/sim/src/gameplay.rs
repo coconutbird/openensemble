@@ -12,15 +12,21 @@ use std::collections::BTreeMap;
 
 mod abilities;
 mod analysis;
-mod projectiles;
+pub(crate) mod projectiles;
+mod revival;
+mod scripted_animations;
 mod selection;
 mod timing;
 
 pub(crate) use abilities::resolve_database_ability;
 pub use abilities::{AbilityGameplay, AbilityRecoveryStart};
-pub use projectiles::ProjectileProfile;
+pub use projectiles::{
+    ProjectileInitialPerturbance, ProjectilePerturbanceProfile, ProjectileProfile,
+};
+pub use revival::{HeroRevivalProfile, ReviveActionProfile, UnitRevivalProfile};
+pub(crate) use selection::ProjectileCollisionTraits;
 pub use selection::{AttackQuery, AttackQueryFlags, TacticRelation};
-pub use timing::{AttackAnimation, AttackProfile};
+pub use timing::{AreaDamageProfile, AttackAccuracyProfile, AttackAnimation, AttackProfile};
 
 /// Gameplay definitions for every proto object with a resolvable tactic file.
 #[derive(Debug, Clone, Default)]
@@ -37,10 +43,14 @@ pub struct GameplayCatalog {
     object_ability_commands: BTreeMap<String, u8>,
     target_traits: BTreeMap<String, selection::ObjectTargetTraits>,
     projectile_profiles: BTreeMap<String, ProjectileProfile>,
+    scripted_animation_clips:
+        BTreeMap<(String, String), scripted_animations::ScriptedAnimationClip>,
     projectile_gravity: f32,
+    track_intercept_distance: f32,
     height_bonus_damage: f32,
     shield_regen_delay: f32,
     shield_regen_time: f32,
+    hero_revival: HeroRevivalProfile,
     referenced_tactic_count: usize,
 }
 
@@ -52,6 +62,7 @@ pub struct ObjectGameplay {
     tactics_path: String,
     tactics: TacticData,
     attack_profiles: BTreeMap<String, AttackProfile>,
+    hero_death: bool,
 }
 
 /// A tactic action joined to the weapon it references.
@@ -117,6 +128,9 @@ impl GameplayCatalog {
                 .and_then(|data| data.projectile_gravity)
                 .filter(|value| value.is_finite() && *value >= 0.0)
                 .unwrap_or_default(),
+            track_intercept_distance: game_data_nonnegative(database, |data| {
+                data.track_intercept_distance
+            }),
             height_bonus_damage: database
                 .game_data
                 .as_ref()
@@ -125,6 +139,7 @@ impl GameplayCatalog {
                 .unwrap_or_default(),
             shield_regen_delay: game_data_nonnegative(database, |data| data.shield_regen_delay),
             shield_regen_time: game_data_nonnegative(database, |data| data.shield_regen_time),
+            hero_revival: revival::hero_profile(database),
             ..Self::default()
         };
         let mut cache = BTreeMap::<String, Result<TacticData, String>>::new();
@@ -153,7 +168,13 @@ impl GameplayCatalog {
                             reason,
                         },
                     ));
-                    catalog.insert_object(object, tactics_path, tactics, timing.profiles);
+                    catalog.insert_object(
+                        object,
+                        tactics_path,
+                        tactics,
+                        timing.profiles,
+                        revival::is_hero_death_object(database, object),
+                    );
                 }
                 Err(reason) => catalog.issues.push(GameplayLoadIssue {
                     proto_object_name: object.name.clone(),
@@ -201,6 +222,9 @@ impl GameplayCatalog {
                 .and_then(|data| data.projectile_gravity)
                 .filter(|value| value.is_finite() && *value >= 0.0)
                 .unwrap_or_default(),
+            track_intercept_distance: game_data_nonnegative(database, |data| {
+                data.track_intercept_distance
+            }),
             height_bonus_damage: database
                 .game_data
                 .as_ref()
@@ -209,6 +233,7 @@ impl GameplayCatalog {
                 .unwrap_or_default(),
             shield_regen_delay: game_data_nonnegative(database, |data| data.shield_regen_delay),
             shield_regen_time: game_data_nonnegative(database, |data| data.shield_regen_time),
+            hero_revival: revival::hero_profile(database),
             ..Self::default()
         };
         for object in &database.objects {
@@ -219,7 +244,13 @@ impl GameplayCatalog {
                 .tactics
                 .as_deref()
                 .map_or_else(String::new, canonical_tactics_path);
-            catalog.insert_object(object, tactics_path, tactic.clone(), BTreeMap::new());
+            catalog.insert_object(
+                object,
+                tactics_path,
+                tactic.clone(),
+                BTreeMap::new(),
+                revival::is_hero_death_object(database, object),
+            );
         }
         catalog
     }
@@ -250,6 +281,7 @@ impl GameplayCatalog {
         tactics_path: String,
         tactics: TacticData,
         attack_profiles: BTreeMap<String, AttackProfile>,
+        hero_death: bool,
     ) {
         self.objects.insert(
             object.name.to_ascii_lowercase(),
@@ -259,6 +291,7 @@ impl GameplayCatalog {
                 tactics_path,
                 tactics,
                 attack_profiles,
+                hero_death,
             },
         );
     }
@@ -404,6 +437,12 @@ impl GameplayCatalog {
         self.projectile_gravity
     }
 
+    /// Distance inside which tracking projectiles lead moving targets.
+    #[must_use]
+    pub const fn track_intercept_distance(&self) -> f32 {
+        self.track_intercept_distance
+    }
+
     /// Return the global height-bonus damage factor from layered game data.
     #[must_use]
     pub const fn height_bonus_damage(&self) -> f32 {
@@ -430,6 +469,16 @@ impl GameplayCatalog {
         } else {
             0.0
         }
+    }
+
+    /// Resolve the persistent revival behavior for one unit prototype.
+    #[must_use]
+    pub fn unit_revival_profile(&self, proto_object_name: &str) -> Option<UnitRevivalProfile> {
+        let object = self.object(proto_object_name)?;
+        if object.hero_death {
+            return Some(UnitRevivalProfile::Hero(self.hero_revival));
+        }
+        revival::revive_action_profile(&object.tactics.actions).map(UnitRevivalProfile::Revive)
     }
 }
 

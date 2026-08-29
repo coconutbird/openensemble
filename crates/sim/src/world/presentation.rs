@@ -9,12 +9,29 @@ use crate::player::PlayerId;
 use crate::sync::SyncChecksum;
 
 mod callouts;
+mod camera_shakes;
 mod fades;
+mod objective_pointers;
+mod rumbles;
 
 pub use callouts::{HintCallout, HintCalloutAnchor};
+pub use camera_shakes::CameraShake;
 pub use fades::{ScreenFadeOverlay, ScreenFadeSequence};
+pub use objective_pointers::ObjectivePointer;
+pub use rumbles::{RumbleMotor, RumbleRequest};
 
 const HUD_ITEM_COUNT: usize = 11;
+const GLOBAL_TOGGLE_COUNT: usize = 4;
+
+#[derive(Debug, Clone, Copy)]
+enum GlobalPresentationToggle {
+    Chats,
+    RenderTerrainSkirt,
+    ScreenBlur,
+    MinimapSkirtMirroring,
+}
+
+const DEFAULT_GLOBAL_TOGGLES: [bool; GLOBAL_TOGGLE_COUNT] = [true, true, false, true];
 
 /// One retail `BUser::cHUDItem*` slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,12 +166,13 @@ impl Default for PlayerPresentationState {
 #[derive(Debug, PartialEq)]
 pub(super) struct PresentationControlState {
     callouts: callouts::HintCalloutState,
+    camera_shakes: camera_shakes::CameraShakeState,
+    objective_pointers: objective_pointers::ObjectivePointerState,
+    rumbles: rumbles::RumbleState,
     screen_fade: fades::ScreenFadeState,
+    global_toggles: [bool; GLOBAL_TOGGLE_COUNT],
     hud_items: [bool; HUD_ITEM_COUNT],
-    render_terrain_skirt: bool,
-    screen_blur_enabled: bool,
     minimap_rotation_degrees: f32,
-    minimap_skirt_mirroring: bool,
     circle_menu_reset_revision: u32,
     next_camera_revision: u32,
     players: BTreeMap<PlayerId, PlayerPresentationState>,
@@ -164,12 +182,13 @@ impl Default for PresentationControlState {
     fn default() -> Self {
         Self {
             callouts: callouts::HintCalloutState::default(),
+            camera_shakes: camera_shakes::CameraShakeState::default(),
+            objective_pointers: objective_pointers::ObjectivePointerState::default(),
+            rumbles: rumbles::RumbleState::default(),
             screen_fade: fades::ScreenFadeState::default(),
+            global_toggles: DEFAULT_GLOBAL_TOGGLES,
             hud_items: DEFAULT_HUD_ITEMS,
-            render_terrain_skirt: true,
-            screen_blur_enabled: false,
             minimap_rotation_degrees: 0.0,
-            minimap_skirt_mirroring: true,
             circle_menu_reset_revision: 0,
             next_camera_revision: 0,
             players: BTreeMap::new(),
@@ -184,16 +203,25 @@ impl World {
         self.presentation_control.hud_items[item as usize]
     }
 
+    /// Whether renderer/UI clients should present authored chat messages.
+    #[must_use]
+    pub const fn chats_enabled(&self) -> bool {
+        self.presentation_control
+            .toggle(GlobalPresentationToggle::Chats)
+    }
+
     /// Whether the renderer should draw the authored terrain skirt.
     #[must_use]
     pub const fn render_terrain_skirt_enabled(&self) -> bool {
-        self.presentation_control.render_terrain_skirt
+        self.presentation_control
+            .toggle(GlobalPresentationToggle::RenderTerrainSkirt)
     }
 
     /// Whether the primary view requests the retail screen-blur presentation.
     #[must_use]
     pub const fn screen_blur_enabled(&self) -> bool {
-        self.presentation_control.screen_blur_enabled
+        self.presentation_control
+            .toggle(GlobalPresentationToggle::ScreenBlur)
     }
 
     /// Rotation offset in degrees for the renderer-owned minimap.
@@ -205,7 +233,8 @@ impl World {
     /// Whether the renderer-owned minimap mirrors the terrain skirt.
     #[must_use]
     pub const fn minimap_skirt_mirroring(&self) -> bool {
-        self.presentation_control.minimap_skirt_mirroring
+        self.presentation_control
+            .toggle(GlobalPresentationToggle::MinimapSkirtMirroring)
     }
 
     /// Monotonic signal instructing UI adapters to close their circle menu.
@@ -228,12 +257,19 @@ impl World {
         self.presentation_control.hud_items[item as usize] = enabled;
     }
 
+    pub(crate) fn set_chats_enabled(&mut self, enabled: bool) {
+        self.presentation_control
+            .set_toggle(GlobalPresentationToggle::Chats, enabled);
+    }
+
     pub(crate) fn set_render_terrain_skirt_enabled(&mut self, enabled: bool) {
-        self.presentation_control.render_terrain_skirt = enabled;
+        self.presentation_control
+            .set_toggle(GlobalPresentationToggle::RenderTerrainSkirt, enabled);
     }
 
     pub(crate) fn set_screen_blur_enabled(&mut self, enabled: bool) {
-        self.presentation_control.screen_blur_enabled = enabled;
+        self.presentation_control
+            .set_toggle(GlobalPresentationToggle::ScreenBlur, enabled);
     }
 
     pub(crate) fn set_minimap_rotation_degrees(&mut self, degrees: f32) {
@@ -241,7 +277,8 @@ impl World {
     }
 
     pub(crate) fn set_minimap_skirt_mirroring(&mut self, enabled: bool) {
-        self.presentation_control.minimap_skirt_mirroring = enabled;
+        self.presentation_control
+            .set_toggle(GlobalPresentationToggle::MinimapSkirtMirroring, enabled);
     }
 
     pub(crate) fn reset_circle_menu(&mut self) {
@@ -327,6 +364,14 @@ impl World {
 }
 
 impl PresentationControlState {
+    const fn toggle(&self, toggle: GlobalPresentationToggle) -> bool {
+        self.global_toggles[toggle as usize]
+    }
+
+    fn set_toggle(&mut self, toggle: GlobalPresentationToggle, enabled: bool) {
+        self.global_toggles[toggle as usize] = enabled;
+    }
+
     fn allocate_camera_revision(&mut self) -> u32 {
         self.next_camera_revision = self.next_camera_revision.wrapping_add(1).max(1);
         self.next_camera_revision
@@ -334,14 +379,17 @@ impl PresentationControlState {
 
     pub(super) fn hash_state(&self, checksum: &mut SyncChecksum) {
         self.callouts.hash_state(checksum);
+        self.camera_shakes.hash_state(checksum);
+        self.objective_pointers.hash_state(checksum);
+        self.rumbles.hash_state(checksum);
         self.hash_screen_fade(checksum);
+        for enabled in self.global_toggles {
+            checksum.hash_u32(u32::from(enabled));
+        }
         for enabled in self.hud_items {
             checksum.hash_u32(u32::from(enabled));
         }
-        checksum.hash_u32(u32::from(self.render_terrain_skirt));
-        checksum.hash_u32(u32::from(self.screen_blur_enabled));
         checksum.hash_f32(self.minimap_rotation_degrees);
-        checksum.hash_u32(u32::from(self.minimap_skirt_mirroring));
         checksum.hash_u32(self.circle_menu_reset_revision);
         checksum.hash_u32(self.next_camera_revision);
         checksum.hash_u32(u32::try_from(self.players.len()).unwrap_or(u32::MAX));

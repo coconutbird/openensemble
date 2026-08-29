@@ -58,6 +58,22 @@ impl World {
         if immediate {
             return self.remove_unit(unit_id).is_some();
         }
+        if self
+            .get_unit(unit_id)
+            .is_some_and(crate::entities::Unit::has_hero_revival)
+        {
+            let downed = self
+                .get_unit_mut(unit_id)
+                .is_some_and(crate::entities::Unit::down_hero);
+            if downed {
+                self.cancel_incapacitated_squad_orders(unit_id);
+            }
+            return downed;
+        }
+        if self.get_unit(unit_id).is_none() {
+            return false;
+        }
+        self.remove_owned_attachments(unit_id);
         let Some(unit) = self.get_unit_mut(unit_id) else {
             return false;
         };
@@ -77,13 +93,25 @@ impl World {
             let _removed = self.remove_squad(squad_id);
             return true;
         }
+        if member_ids.iter().any(|unit_id| {
+            self.get_unit(*unit_id)
+                .is_some_and(crate::entities::Unit::has_hero_revival)
+        }) {
+            if let Some(squad) = self.get_squad_mut(squad_id) {
+                squad.remove_all_orders();
+            }
+            for unit_id in member_ids {
+                if let Some(unit) = self.get_unit_mut(unit_id) {
+                    let _downed = unit.down_hero();
+                }
+            }
+            return true;
+        }
         if let Some(squad) = self.get_squad_mut(squad_id) {
             squad.kill();
         }
         for unit_id in member_ids {
-            if let Some(unit) = self.get_unit_mut(unit_id) {
-                unit.kill();
-            }
+            let _killed = self.kill_unit(unit_id, false);
         }
         true
     }

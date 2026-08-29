@@ -235,7 +235,7 @@ fn roll_cooldown(range: [f32; 2], rng: &mut Random) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gameplay::AttackAnimation;
+    use crate::gameplay::{AttackAccuracyProfile, AttackAnimation};
 
     fn profile() -> AttackProfile {
         AttackProfile {
@@ -243,7 +243,12 @@ mod tests {
             weapon_name: "Rifle".to_owned(),
             weapon_type: None,
             projectile: None,
+            area_damage: None,
+            friendly_fire: false,
+            targets_foot_of_unit: false,
             max_range: 25.0,
+            max_velocity_lead: 0.0,
+            accuracy: AttackAccuracyProfile::default(),
             damage_per_attack: 5.0,
             animations: vec![AttackAnimation {
                 asset_path: "attack.uax".to_owned(),

@@ -15,6 +15,7 @@ use glam::Vec3;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod ability;
+mod attachments;
 mod bounds;
 mod checksum;
 mod combat;
@@ -27,6 +28,7 @@ mod game_settings;
 mod garrison;
 mod health;
 mod hitch;
+mod icons;
 mod idle;
 mod lifecycle;
 #[cfg(test)]
@@ -39,11 +41,13 @@ mod ownership;
 mod powers;
 mod presentation;
 mod production;
+mod projectiles;
 mod proto_data;
 mod query;
 mod rally_points;
 mod research;
 mod resources;
+mod revival;
 mod roster;
 mod scoring;
 mod shields;
@@ -74,8 +78,9 @@ pub use hitch::HitchError;
 pub use objectives::ObjectiveState;
 pub use powers::power_prototype_id;
 pub use presentation::{
-    CameraControlPermissions, CameraDirective, HintCallout, HintCalloutAnchor, HudItem,
-    PlayerPresentationState, ScreenFadeOverlay, ScreenFadeSequence,
+    CameraControlPermissions, CameraDirective, CameraShake, HintCallout, HintCalloutAnchor,
+    HudItem, ObjectivePointer, PlayerPresentationState, RumbleMotor, RumbleRequest,
+    ScreenFadeOverlay, ScreenFadeSequence,
 };
 pub use production::ProductionUpdate;
 pub use research::{ResearchError, ResearchQueueResult, technology_prototype_id};
@@ -387,22 +392,6 @@ impl World {
         self.units.get_mut(id)
     }
 
-    /// Get a live projectile by its current generational ID.
-    #[must_use]
-    pub fn get_projectile(&self, id: EntityId) -> Option<&Projectile> {
-        self.projectiles.get(id)
-    }
-
-    /// Mutably get a live projectile.
-    pub fn get_projectile_mut(&mut self, id: EntityId) -> Option<&mut Projectile> {
-        self.projectiles.get_mut(id)
-    }
-
-    /// Remove a projectile and invalidate its entity ID.
-    pub fn remove_projectile(&mut self, id: EntityId) -> Option<Projectile> {
-        self.projectiles.remove(id)
-    }
-
     /// Get a unit only when it is a building.
     #[must_use]
     pub fn get_building(&self, id: EntityId) -> Option<&Unit> {
@@ -428,6 +417,8 @@ impl World {
                     .is_some_and(|socket| socket.socket_parent_id == Some(id))
             })
             .collect::<Vec<_>>();
+        self.remove_owned_attachments(id);
+        self.detach_attachment_from_parent(id);
         for socket_id in socket_children {
             let _removed = self.remove_unit(socket_id);
         }
@@ -644,6 +635,8 @@ impl World {
         gameplay: Option<&crate::gameplay::GameplayCatalog>,
     ) {
         self.update_game_timers();
+        self.update_camera_shakes();
+        self.update_rumbles();
         self.update_screen_fade();
         let Some((step_count, step_duration)) = substeps(dt) else {
             return;
@@ -662,6 +655,7 @@ impl World {
         gameplay: Option<&crate::gameplay::GameplayCatalog>,
     ) {
         if let Some(gameplay) = gameplay {
+            self.update_revivals(dt, gameplay);
             self.update_attack_move_orders(gameplay);
             self.update_combat_orders(dt, gameplay);
             self.update_shields(dt, gameplay);
@@ -689,6 +683,7 @@ impl World {
         resolve_unit_collisions(&mut self.units);
         sync_squad_members(&mut self.squads, &mut self.units, &physics_anchors);
         self.sync_associated_socket_transforms();
+        self.synchronize_attachments();
         self.update_garrisons(gameplay);
         self.update_projectiles(dt, gameplay);
         let dead_units: Vec<_> = self

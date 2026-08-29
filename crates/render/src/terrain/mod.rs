@@ -13,9 +13,12 @@
 mod callouts;
 mod camera;
 mod compositing;
+mod icons;
 pub mod loading;
 mod mesh;
+mod objective_pointers;
 mod patch;
+mod projection;
 mod scene;
 mod shaders;
 mod texture;
@@ -27,12 +30,14 @@ pub use camera::{Camera, SimulationCameraAdapter};
 pub use compositing::{
     CompositeBindings, CompositeParams, CompositingConfig, CompositorResources, LodConfig,
 };
+pub use icons::{ProjectedIconObject, project_icon_objects};
 pub use loading::{
     RoadTextures, extract_chunk_splat_data, extract_decal_data, extract_foliage_chunks,
     extract_road_data, load_decal_textures, load_foliage_sets, load_road_textures,
     load_terrain_textures,
 };
 pub use mesh::TerrainMesh;
+pub use objective_pointers::{ProjectedObjectivePointer, project_objective_pointers};
 pub use patch::{
     TerrainPatchError, TerrainPatchImage, TerrainPatchInstance, TerrainPatchMaterial,
     TerrainPatchRenderer, TerrainPatchRendererDescriptor, TerrainPatchShading,

@@ -34,6 +34,8 @@ pub struct TriggerUpdate {
     pub presentation_effects: u32,
     /// Supported effects skipped because an authored binding or target was invalid.
     pub effects_skipped: u32,
+    /// Effect DBIDs skipped because an authored binding or target was invalid.
+    pub skipped_effect_types: Vec<u16>,
     /// Condition DBIDs encountered without an implementation.
     pub unsupported_condition_types: Vec<u16>,
     /// Effect DBIDs encountered without an implementation.
@@ -49,11 +51,14 @@ impl TriggerUpdate {
         }
     }
 
-    fn record_effect(&mut self, outcome: EffectOutcome) {
+    fn record_effect(&mut self, raw_type: u16, outcome: EffectOutcome) {
         match outcome {
             EffectOutcome::Applied => self.effects_applied += 1,
             EffectOutcome::Presentation => self.presentation_effects += 1,
-            EffectOutcome::Skipped => self.effects_skipped += 1,
+            EffectOutcome::Skipped => {
+                self.effects_skipped += 1;
+                unique_add(&mut self.skipped_effect_types, raw_type);
+            }
             EffectOutcome::Unsupported(raw_type) => {
                 unique_add(&mut self.unsupported_effect_types, raw_type);
             }
@@ -314,7 +319,7 @@ impl TriggerEngine {
         for effect in effects {
             let (outcome, control) =
                 execute_effect(&effect, script, world, context.database, context.gameplay);
-            update.record_effect(outcome);
+            update.record_effect(effect.raw_type, outcome);
             apply_control(control, script, context.current_time, queue);
         }
     }

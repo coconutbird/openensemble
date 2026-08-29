@@ -1,6 +1,8 @@
 //! Authoritative implementations of supported retail trigger effects.
 
 mod ai;
+mod animations;
+mod attachments;
 mod commands;
 mod design_lines;
 mod dispatch;
@@ -14,6 +16,7 @@ mod fog;
 mod forbids;
 mod game_state;
 mod health;
+mod icons;
 mod iterators;
 mod list_processing;
 mod lists;

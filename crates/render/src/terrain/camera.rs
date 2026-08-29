@@ -1,8 +1,8 @@
 //! Camera for terrain rendering.
 
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 
-use sim::{CameraDirective, PlayerId, PlayerPresentationState, World};
+use sim::{CameraDirective, CameraShake, PlayerId, PlayerPresentationState, World};
 
 const DEFAULT_CAMERA_ZOOM: f32 = 300.0;
 
@@ -28,6 +28,7 @@ pub struct Camera {
     pub speed: f32,
     /// Mouse sensitivity.
     pub sensitivity: f32,
+    shake_offset: Vec3,
 }
 
 impl Default for Camera {
@@ -41,6 +42,7 @@ impl Default for Camera {
             far: 10000.0,
             speed: 100.0,
             sensitivity: 0.002,
+            shake_offset: Vec3::ZERO,
         }
     }
 }
@@ -81,7 +83,8 @@ impl Camera {
     /// Get the view matrix.
     #[must_use]
     pub fn view_matrix(&self) -> Mat4 {
-        Mat4::look_at_rh(self.position, self.position + self.forward(), Vec3::Y)
+        let eye = self.position + self.shake_offset;
+        Mat4::look_at_rh(eye, eye + self.forward(), Vec3::Y)
     }
 
     /// Get the projection matrix for the given aspect ratio.
@@ -137,6 +140,9 @@ impl Camera {
 #[derive(Clone, Debug)]
 pub struct SimulationCameraAdapter {
     applied_revision: u32,
+    applied_shake_revision: u32,
+    sampled_shake_time_ms: Option<u32>,
+    accumulated_shake: Vec2,
     hover_point: Option<Vec3>,
     hover_height_offset: f32,
     zoom_distance: f32,
@@ -146,6 +152,9 @@ impl Default for SimulationCameraAdapter {
     fn default() -> Self {
         Self {
             applied_revision: 0,
+            applied_shake_revision: 0,
+            sampled_shake_time_ms: None,
+            accumulated_shake: Vec2::ZERO,
             hover_point: None,
             hover_height_offset: 0.0,
             zoom_distance: DEFAULT_CAMERA_ZOOM,
@@ -155,8 +164,9 @@ impl Default for SimulationCameraAdapter {
 
 impl SimulationCameraAdapter {
     /// Seed renderer-local hover/zoom state after loading a terrain scene.
-    pub fn reset(&mut self, camera: &Camera, hover_point: Vec3) {
+    pub fn reset(&mut self, camera: &mut Camera, hover_point: Vec3) {
         self.applied_revision = 0;
+        self.clear_shake(camera);
         self.hover_point = hover_point.is_finite().then_some(hover_point);
         self.hover_height_offset = 0.0;
         let zoom_distance = camera.position.distance(hover_point);
@@ -184,6 +194,7 @@ impl SimulationCameraAdapter {
         {
             self.apply_directive(camera, directive);
         }
+        self.apply_shake(camera, world.camera_shake(player_id), world.game_time());
         state
     }
 
@@ -209,6 +220,53 @@ impl SimulationCameraAdapter {
         }
         self.applied_revision = directive.revision;
     }
+
+    fn apply_shake(&mut self, camera: &mut Camera, shake: Option<CameraShake>, game_time_ms: u32) {
+        let Some(shake) = shake else {
+            self.clear_shake(camera);
+            return;
+        };
+        if shake.revision() != self.applied_shake_revision {
+            self.applied_shake_revision = shake.revision();
+            self.sampled_shake_time_ms = None;
+            self.accumulated_shake = Vec2::ZERO;
+        }
+        if self.sampled_shake_time_ms == Some(game_time_ms) {
+            return;
+        }
+        let random = shake_sample(shake.revision(), game_time_ms) * shake.strength();
+        let correction = self.accumulated_shake * shake.conservation_factor();
+        self.accumulated_shake += random - correction;
+        let world_forward =
+            Vec3::new(camera.forward().x, 0.0, camera.forward().z).normalize_or_zero();
+        camera.shake_offset =
+            camera.right() * self.accumulated_shake.x + world_forward * self.accumulated_shake.y;
+        self.sampled_shake_time_ms = Some(game_time_ms);
+    }
+
+    fn clear_shake(&mut self, camera: &mut Camera) {
+        self.applied_shake_revision = 0;
+        self.sampled_shake_time_ms = None;
+        self.accumulated_shake = Vec2::ZERO;
+        camera.shake_offset = Vec3::ZERO;
+    }
+}
+
+fn shake_sample(revision: u32, game_time_ms: u32) -> Vec2 {
+    Vec2::new(
+        hash_to_signed_float(revision ^ game_time_ms.rotate_left(11)),
+        hash_to_signed_float(revision.rotate_left(17) ^ game_time_ms),
+    )
+}
+
+fn hash_to_signed_float(mut value: u32) -> f32 {
+    value ^= value >> 16;
+    value = value.wrapping_mul(0x7FEB_352D);
+    value ^= value >> 15;
+    value = value.wrapping_mul(0x846C_A68B);
+    value ^= value >> 16;
+    let sample = u16::try_from(value >> 16).unwrap_or(u16::MAX);
+    f32::from(sample) / f32::from(u16::MAX) * 2.0 - 1.0
 }
 
 fn apply_retail_v4_yaw(camera: &mut Camera, direction: Vec3) {
@@ -231,7 +289,7 @@ mod tests {
     fn simulation_directive_is_one_shot_and_preserves_renderer_zoom() {
         let mut camera = Camera::default();
         let mut adapter = SimulationCameraAdapter::default();
-        adapter.reset(&camera, Vec3::ZERO);
+        adapter.reset(&mut camera, Vec3::ZERO);
         let zoom = camera.position.length();
         let directive = CameraDirective {
             revision: 1,
@@ -246,5 +304,15 @@ mod tests {
         let first_position = camera.position;
         adapter.apply_directive(&mut camera, directive);
         assert_eq!(camera.position, first_position);
+    }
+
+    #[test]
+    fn shake_sampling_is_bounded_and_changes_over_time() {
+        let first = shake_sample(1, 100);
+        let second = shake_sample(1, 101);
+        assert_ne!(first, second);
+        for component in [first.x, first.y, second.x, second.y] {
+            assert!((-1.0..=1.0).contains(&component));
+        }
     }
 }

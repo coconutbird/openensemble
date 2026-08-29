@@ -114,6 +114,42 @@ fn loads_squad_members_buildings_and_base_anchors() {
 }
 
 #[test]
+fn loads_class_zero_visual_objects_and_preserves_scenario_mapping() {
+    let scenario = ScenarioData::from_xml_str(
+        r#"<Scenario>
+            <Players><Player Name="P1" Team="1" /></Players>
+            <Objects>
+                <Object Player="1" ID="1958" Position="5,2,7" Forward="0,0,-1">
+                    env_harvest_forebridge_01
+                </Object>
+            </Objects>
+        </Scenario>"#,
+    )
+    .unwrap();
+    let database = Database {
+        objects: vec![ProtoObject {
+            name: "env_harvest_forebridge_01".to_owned(),
+            dbid: Some(2308),
+            object_class: Some("Object".to_owned()),
+            visual: Some("environment\\harvest\\forebridge_01\\forebridge_01.vis".to_owned()),
+            ..ProtoObject::default()
+        }],
+        ..Database::default()
+    };
+
+    let loaded = load_scenario_into_world(&scenario, &database);
+    let entity_id = loaded.get_entity_id(1958).unwrap();
+    let object = loaded.world.get_object(entity_id).unwrap();
+
+    assert_eq!(entity_id.class(), Some(crate::EntityClass::Object));
+    assert!(object.is_visual());
+    assert_eq!(object.proto_object_id, 2308);
+    assert_eq!(object.proto_object_name, "env_harvest_forebridge_01");
+    assert_eq!(object.base.position, Vec3::new(7.0, 2.0, 5.0));
+    assert_eq!(object.base.forward, Vec3::NEG_X);
+}
+
+#[test]
 fn lobby_leader_selection_configures_database_population_slots() {
     use pipeline::database::hw1::gamedata::PopsWrapper;
     use pipeline::database::hw1::leaders::PopEntry;

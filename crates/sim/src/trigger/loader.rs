@@ -53,6 +53,8 @@ pub type LoadResult<T> = Result<T, LoadError>;
 pub struct TriggerLoadContext<'a> {
     /// Scenario object IDs mapped to current generational simulation IDs.
     pub scenario_entities: Option<&'a HashMap<i32, EntityId>>,
+    /// Scenario object IDs mapped to their representative simulation units.
+    pub scenario_units: Option<&'a HashMap<i32, EntityId>>,
     /// Active scenario-layered database used to resolve prototype names.
     pub database: Option<&'a Database>,
 }
@@ -565,21 +567,25 @@ fn parse_var_value(text: &str, var_type: VarType, context: TriggerLoadContext<'_
         VarType::Cost => parse_cost_value(text),
         // Entity references
         VarType::Unit | VarType::UIUnit => {
-            TriggerValue::Unit(parse_entity_reference(text, context))
+            TriggerValue::Unit(value_types::parse_unit_reference(text, context))
         }
         VarType::Squad | VarType::UISquad => {
-            TriggerValue::Squad(parse_entity_reference(text, context))
+            TriggerValue::Squad(value_types::parse_entity_reference(text, context))
         }
-        VarType::Object => TriggerValue::Object(parse_entity_reference(text, context)),
+        VarType::Object => TriggerValue::Object(value_types::parse_entity_reference(text, context)),
         VarType::Entity | VarType::UIEntity => {
-            TriggerValue::Entity(parse_entity_reference(text, context))
+            TriggerValue::Entity(value_types::parse_entity_reference(text, context))
         }
-        VarType::UnitList => TriggerValue::UnitList(parse_entity_list(text, context)),
+        VarType::UnitList => TriggerValue::UnitList(value_types::parse_unit_list(text, context)),
         VarType::SquadList | VarType::UISquadList => {
-            TriggerValue::SquadList(parse_entity_list(text, context))
+            TriggerValue::SquadList(value_types::parse_entity_list(text, context))
         }
-        VarType::ObjectList => TriggerValue::ObjectList(parse_entity_list(text, context)),
-        VarType::EntityList => TriggerValue::EntityList(parse_entity_list(text, context)),
+        VarType::ObjectList => {
+            TriggerValue::ObjectList(value_types::parse_entity_list(text, context))
+        }
+        VarType::EntityList => {
+            TriggerValue::EntityList(value_types::parse_entity_list(text, context))
+        }
         // Proto types
         VarType::ProtoObject => TriggerValue::ProtoObject(parse_proto_object(text, context)),
         VarType::ProtoSquad => TriggerValue::ProtoSquad(parse_proto_squad(text, context)),
@@ -641,30 +647,6 @@ fn parse_var_value(text: &str, var_type: VarType, context: TriggerLoadContext<'_
         // Default to storing as string for unhandled types
         _ => TriggerValue::String(text.to_string()),
     }
-}
-
-fn parse_entity_reference(text: &str, context: TriggerLoadContext<'_>) -> EntityId {
-    let Ok(raw_id) = text.trim().parse::<u32>() else {
-        return EntityId::INVALID;
-    };
-    if let Some(entities) = context.scenario_entities {
-        return i32::try_from(raw_id)
-            .ok()
-            .and_then(|scenario_id| entities.get(&scenario_id).copied())
-            .unwrap_or(EntityId::INVALID);
-    }
-    EntityId::from_u32(raw_id)
-}
-
-fn parse_entity_list(text: &str, context: TriggerLoadContext<'_>) -> Vec<EntityId> {
-    let mut entities = text
-        .split(',')
-        .map(|token| parse_entity_reference(token, context))
-        .filter(|entity_id| !entity_id.is_invalid())
-        .collect::<Vec<_>>();
-    entities.sort_unstable();
-    entities.dedup();
-    entities
 }
 
 fn parse_proto_object(text: &str, context: TriggerLoadContext<'_>) -> i32 {

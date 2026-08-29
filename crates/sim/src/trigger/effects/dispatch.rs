@@ -2,11 +2,11 @@
 
 use super::{
     ControlAction, Database, Effect, EffectOutcome, EffectType, GameplayCatalog, TriggerScript,
-    World, adjust_count, ai, commands, copy_value, design_lines, economy, entities, entity_flags,
-    entity_visuals, events, execute_control_effect, filters, fog, forbids, game_state, health,
-    is_copy_effect, iterators, list_processing, lists, math, objectives, orders, ownership, powers,
-    presentation, proto_data, rally_points, relationships, resources, revealers, set_teleporter,
-    spatial, support, timers, tower_walls, unit_data, value_lists,
+    World, adjust_count, ai, animations, attachments, commands, copy_value, design_lines, economy,
+    entities, entity_flags, entity_visuals, events, execute_control_effect, filters, fog, forbids,
+    game_state, health, icons, is_copy_effect, iterators, list_processing, lists, math, objectives,
+    orders, ownership, powers, presentation, proto_data, rally_points, relationships, resources,
+    revealers, set_teleporter, spatial, support, timers, tower_walls, unit_data, value_lists,
 };
 
 pub(crate) fn execute_effect(
@@ -28,10 +28,19 @@ pub(crate) fn execute_effect(
     if let Some(outcome) = objectives::execute(effect, script, world) {
         return (outcome, None);
     }
+    if let Some(outcome) = animations::execute(effect, script, world, gameplay) {
+        return (outcome, None);
+    }
+    if let Some(outcome) = attachments::execute(effect, script, world, database) {
+        return (outcome, None);
+    }
+    if let Some(outcome) = icons::execute(effect, script, world, database) {
+        return (outcome, None);
+    }
     if let Some(outcome) = entity_visuals::execute(effect, script, world) {
         return (outcome, None);
     }
-    if let Some(outcome) = entities::execute(effect, script, world, database) {
+    if let Some(outcome) = entities::execute(effect, script, world, database, gameplay) {
         return (outcome, None);
     }
     if let Some(outcome) = design_lines::execute(effect, script, world) {
@@ -125,7 +134,7 @@ fn execute_world_effect(
         EffectType::Work => orders::work(effect, script, world, gameplay),
         EffectType::Repair => health::repair_or_damage(effect, script, world, true),
         EffectType::Damage => health::repair_or_damage(effect, script, world, false),
-        EffectType::CombatDamage => health::combat_damage(effect, script, world),
+        EffectType::CombatDamage => health::combat_damage(effect, script, world, gameplay),
         EffectType::Teleport => spatial::teleport(effect, script, world),
         EffectType::SetPlayableBounds => spatial::set_playable_bounds(effect, script, world),
         EffectType::SetDirection => spatial::set_direction(effect, script, world),

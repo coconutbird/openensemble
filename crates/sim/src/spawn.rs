@@ -263,7 +263,7 @@ fn find_squad_by_id(database: &Database, id: i32) -> Option<&ProtoSquad> {
         .map(|(_, proto)| proto)
 }
 
-fn find_object_by_id(database: &Database, id: i32) -> Option<&ProtoObject> {
+pub(crate) fn find_object_by_id(database: &Database, id: i32) -> Option<&ProtoObject> {
     database
         .objects
         .iter()
@@ -272,6 +272,6 @@ fn find_object_by_id(database: &Database, id: i32) -> Option<&ProtoObject> {
         .map(|(_, proto)| proto)
 }
 
-fn database_id(explicit: Option<i32>, index: usize) -> i32 {
+pub(crate) fn database_id(explicit: Option<i32>, index: usize) -> i32 {
     explicit.unwrap_or_else(|| i32::try_from(index).unwrap_or(-1))
 }

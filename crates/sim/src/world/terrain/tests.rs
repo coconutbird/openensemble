@@ -8,10 +8,10 @@ fn xsd_height_queries_reproduce_retail_blocked_grid_and_clamping() {
     write_height(&mut heights, XsdEndian::Little, 16, 8, 8, -7.25);
     let terrain = TerrainSimulation::from_chunks(&header, &heights).unwrap();
 
-    assert_eq!(
-        terrain.height(Vec3::new(6.9, 999.0, 10.1), false),
-        Some(42.5)
-    );
+    let interpolated = terrain
+        .height(Vec3::new(6.9, 999.0, 10.1), false)
+        .expect("interpolated terrain height");
+    assert!((interpolated - 22.206_25).abs() < 0.000_1);
     assert_eq!(terrain.height(Vec3::new(99.0, 0.0, 99.0), false), None);
     assert_eq!(
         terrain.height(Vec3::new(99.0, 0.0, 99.0), true),
@@ -42,6 +42,37 @@ fn logical_fingerprint_is_independent_of_xsd_byte_order() {
     let big = TerrainSimulation::from_chunks(&big_header, &big_heights).unwrap();
 
     assert_eq!(little.fingerprint, big.fingerprint);
+}
+
+#[test]
+fn projectile_segment_finds_the_retail_triangle_surface() {
+    let header = header(XsdEndian::Little, 8, 8, 2.0);
+    let mut heights = vec![0_u8; 8 * 8 * 2];
+    write_height(&mut heights, XsdEndian::Little, 8, 1, 1, 2.0);
+    let terrain = TerrainSimulation::from_chunks(&header, &heights).unwrap();
+
+    let impact = terrain
+        .projectile_segment_intersection(Vec3::new(2.0, 4.0, 2.0), Vec3::new(2.0, -1.0, 2.0))
+        .expect("vertical segment should strike the raised vertex");
+    assert!((impact.y - 2.0).abs() < 0.000_1);
+}
+
+#[test]
+fn projectile_fast_check_matches_retail_clearance_threshold() {
+    let header = header(XsdEndian::Little, 8, 8, 1.0);
+    let heights = vec![0_u8; 8 * 8 * 2];
+    let terrain = TerrainSimulation::from_chunks(&header, &heights).unwrap();
+
+    assert!(
+        terrain
+            .projectile_segment_intersection(Vec3::new(1.0, 0.5, 1.0), Vec3::new(2.0, 0.5, 1.0),)
+            .is_none()
+    );
+    assert_eq!(
+        terrain
+            .projectile_segment_intersection(Vec3::new(1.0, 0.2, 1.0), Vec3::new(2.0, 0.1, 1.0),),
+        Some(Vec3::new(2.0, 0.0, 1.0))
+    );
 }
 
 fn header(endian: XsdEndian, height_axis: i32, cache_axis: i32, scale: f32) -> Vec<u8> {

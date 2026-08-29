@@ -4,6 +4,32 @@ use pipeline::database::hw1::{Civ, GameData, Leader, ProtoObject, Squad, Tech};
 use pipeline::xmb::Document;
 
 #[test]
+fn scenario_unit_references_resolve_to_spawned_members() {
+    let squad_id = EntityId::new(crate::entity_id::EntityClass::Squad, 7);
+    let unit_id = EntityId::new(crate::entity_id::EntityClass::Unit, 11);
+    let scenario_entities = HashMap::from([(42, squad_id)]);
+    let scenario_units = HashMap::from([(42, unit_id)]);
+    let context = TriggerLoadContext {
+        scenario_entities: Some(&scenario_entities),
+        scenario_units: Some(&scenario_units),
+        database: None,
+    };
+
+    assert_eq!(
+        parse_var_value("42", VarType::Unit, context),
+        TriggerValue::Unit(unit_id)
+    );
+    assert_eq!(
+        parse_var_value("42", VarType::Squad, context),
+        TriggerValue::Squad(squad_id)
+    );
+    assert_eq!(
+        parse_var_value("42", VarType::UnitList, context),
+        TriggerValue::UnitList(vec![unit_id])
+    );
+}
+
+#[test]
 fn retail_variable_type_aliases_resolve_to_runtime_types() {
     for (name, expected) in [
         ("CommandType", VarType::TechDataCommandType),

@@ -94,9 +94,60 @@ pub(super) struct ObjectTargetTraits {
     damage_type: Option<String>,
     object_class: Option<String>,
     object_types: Vec<String>,
-    neutral: bool,
     invulnerable: bool,
     invulnerable_when_gaia: bool,
+    projectile_collision: ProjectileCollisionTraits,
+}
+
+/// Immutable prototype flags consulted by retail projectile collision filtering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct ProjectileCollisionTraits(u8);
+
+impl ProjectileCollisionTraits {
+    const KNOWN: Self = Self(1 << 0);
+    const NEUTRAL: Self = Self(1 << 1);
+    const PROJECTILE_OBSTRUCTABLE: Self = Self(1 << 2);
+    const TARGETS_FOOT_OF_UNIT: Self = Self(1 << 3);
+
+    fn from_proto(object: &ProtoObject) -> Self {
+        let mut flags = Self::KNOWN;
+        flags.set(Self::NEUTRAL, has_flag(object, "Neutral"));
+        flags.set(
+            Self::PROJECTILE_OBSTRUCTABLE,
+            has_flag(object, "ProjectileObstructable"),
+        );
+        flags.set(
+            Self::TARGETS_FOOT_OF_UNIT,
+            has_flag(object, "TargetsFootOfUnit"),
+        );
+        flags
+    }
+
+    pub(crate) const fn is_known(self) -> bool {
+        self.contains(Self::KNOWN)
+    }
+
+    pub(crate) const fn is_neutral(self) -> bool {
+        self.contains(Self::NEUTRAL)
+    }
+
+    pub(crate) const fn is_projectile_obstructable(self) -> bool {
+        self.contains(Self::PROJECTILE_OBSTRUCTABLE)
+    }
+
+    pub(crate) const fn targets_foot_of_unit(self) -> bool {
+        self.contains(Self::TARGETS_FOOT_OF_UNIT)
+    }
+
+    const fn contains(self, flag: Self) -> bool {
+        self.0 & flag.0 != 0
+    }
+
+    fn set(&mut self, flag: Self, enabled: bool) {
+        if enabled {
+            self.0 |= flag.0;
+        }
+    }
 }
 
 impl GameplayCatalog {
@@ -170,6 +221,17 @@ impl GameplayCatalog {
 
     fn target_traits(&self, target_name: Option<&str>) -> Option<&ObjectTargetTraits> {
         self.target_traits.get(&target_name?.to_ascii_lowercase())
+    }
+
+    pub(crate) fn projectile_collision_traits(
+        &self,
+        proto_object_name: &str,
+    ) -> ProjectileCollisionTraits {
+        self.target_traits
+            .get(&proto_object_name.to_ascii_lowercase())
+            .map_or_else(ProjectileCollisionTraits::default, |traits| {
+                traits.projectile_collision
+            })
     }
 }
 
@@ -366,10 +428,12 @@ fn ownership_matches(
             )
         }
         relation if relation.eq_ignore_ascii_case("Enemy") => {
-            query.relation == TacticRelation::Enemy && !target.is_some_and(|traits| traits.neutral)
+            query.relation == TacticRelation::Enemy
+                && !target.is_some_and(|traits| traits.projectile_collision.is_neutral())
         }
         relation if relation.eq_ignore_ascii_case("Neutral") => {
-            query.relation == TacticRelation::Enemy && target.is_some_and(|traits| traits.neutral)
+            query.relation == TacticRelation::Enemy
+                && target.is_some_and(|traits| traits.projectile_collision.is_neutral())
         }
         _ => false,
     }
@@ -429,9 +493,9 @@ impl ObjectTargetTraits {
             damage_type: object.damage_type.clone(),
             object_class: object.object_class.clone(),
             object_types: object.object_types.clone(),
-            neutral: has_flag(object, "Neutral"),
             invulnerable: has_flag(object, "Invulnerable"),
             invulnerable_when_gaia: has_flag(object, "InvulnerableWhenGaia"),
+            projectile_collision: ProjectileCollisionTraits::from_proto(object),
         }
     }
 

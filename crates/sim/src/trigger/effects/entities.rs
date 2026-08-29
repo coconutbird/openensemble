@@ -6,6 +6,7 @@ use super::support::{
 };
 use super::{EffectOutcome, write_value};
 use crate::entities::squads::SquadTransportPlan;
+use crate::gameplay::GameplayCatalog;
 use crate::physics::{BoxCollider, PhysicsBody};
 use crate::scenario::placed::create_trigger_unit_squad;
 use crate::spawn::{MAX_SPAWN_BATCH, object_prototype_id, spawn_object_at, spawn_squad_at};
@@ -19,7 +20,23 @@ pub(super) fn execute(
     script: &mut TriggerScript,
     world: &mut World,
     database: Option<&Database>,
+    gameplay: Option<&GameplayCatalog>,
 ) -> Option<EffectOutcome> {
+    if !matches!(
+        effect.effect_type,
+        EffectType::CreateObject
+            | EffectType::CreateSquad
+            | EffectType::CreateSquads
+            | EffectType::CreateUnit
+            | EffectType::CreateObstructionUnit
+            | EffectType::Kill
+            | EffectType::Destroy
+    ) {
+        return None;
+    }
+    if let Some(gameplay) = gameplay {
+        world.configure_unit_revivals(gameplay);
+    }
     let outcome = match effect.effect_type {
         EffectType::CreateObject => create_object(effect, script, world, database),
         EffectType::CreateSquad => create_squad(effect, script, world, database),
@@ -32,6 +49,9 @@ pub(super) fn execute(
         EffectType::Destroy => kill_or_destroy(effect, script, world, true),
         _ => return None,
     };
+    if let Some(gameplay) = gameplay {
+        world.configure_unit_revivals(gameplay);
+    }
     Some(outcome)
 }
 

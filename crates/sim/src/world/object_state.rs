@@ -1,7 +1,7 @@
 //! Authoritative access to runtime `BObject` state.
 
 use super::World;
-use crate::entities::{DopplePolicy, ObjectState, TargetingSelection};
+use crate::entities::{DopplePolicy, ObjectState, ScriptedAnimation, TargetingSelection};
 use crate::entity_id::{EntityClass, EntityId};
 
 impl World {
@@ -26,6 +26,32 @@ impl World {
     #[must_use]
     pub fn entity_targeting_selection(&self, entity_id: EntityId) -> Option<TargetingSelection> {
         self.entity_object_state(entity_id)?.targeting_selection()
+    }
+
+    /// Return the sim-owned scripted animation for one live entity.
+    #[must_use]
+    pub fn entity_scripted_animation(&self, entity_id: EntityId) -> Option<&ScriptedAnimation> {
+        self.entity_object_state(entity_id)?.scripted_animation()
+    }
+
+    /// Return the database prototype name for one live `BObject` derivative.
+    #[must_use]
+    pub fn entity_proto_object_name(&self, entity_id: EntityId) -> Option<&str> {
+        match entity_id.class()? {
+            EntityClass::Object => self
+                .objects
+                .get(entity_id)
+                .map(|object| object.proto_object_name.as_str()),
+            EntityClass::Unit => self
+                .units
+                .get(entity_id)
+                .map(|unit| unit.proto_object_name.as_str()),
+            EntityClass::Projectile => self
+                .projectiles
+                .get(entity_id)
+                .map(|projectile| projectile.proto_object_name.as_str()),
+            _ => None,
+        }
     }
 
     /// Return one live entity's fog-memory policy.
@@ -66,6 +92,22 @@ impl World {
         true
     }
 
+    /// Install a trigger-authored animation selected by scenario gameplay data.
+    pub fn play_entity_animation(
+        &mut self,
+        entity_id: EntityId,
+        animation_type: String,
+        asset_path: Option<String>,
+        duration_ms: u32,
+    ) -> bool {
+        let now_ms = self.game_time_ms;
+        let Some(state) = self.entity_object_state_mut(entity_id) else {
+            return false;
+        };
+        state.play_scripted_animation(now_ms, animation_type, asset_path, duration_ms);
+        true
+    }
+
     pub(super) fn update_object_states(&mut self) {
         let now_ms = self.game_time_ms;
         for (_, object) in self.objects.iter_mut() {
@@ -79,7 +121,10 @@ impl World {
         }
     }
 
-    fn entity_object_state_mut(&mut self, entity_id: EntityId) -> Option<&mut ObjectState> {
+    pub(super) fn entity_object_state_mut(
+        &mut self,
+        entity_id: EntityId,
+    ) -> Option<&mut ObjectState> {
         match entity_id.class()? {
             EntityClass::Object => self
                 .objects
@@ -127,5 +172,26 @@ mod tests {
         world.game_time_ms = 1_001;
         world.update_object_states();
         assert!(world.entity_targeting_selection(unit_id).is_none());
+    }
+
+    #[test]
+    fn scripted_animation_is_owned_by_the_world_and_survives_completion() {
+        let mut world = World::new();
+        let unit_id = world.create_unit(1);
+        assert!(world.play_entity_animation(
+            unit_id,
+            "Death".to_owned(),
+            Some("art\\death.uax".to_owned()),
+            1_000,
+        ));
+
+        world.game_time_ms = 1_500;
+        world.update_object_states();
+        let animation = world.entity_scripted_animation(unit_id).unwrap();
+        assert_eq!(animation.animation_type(), "Death");
+        assert_eq!(
+            animation.normalized_position(world.game_time()).to_bits(),
+            1.0_f32.to_bits()
+        );
     }
 }

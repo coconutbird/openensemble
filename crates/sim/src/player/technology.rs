@@ -20,7 +20,7 @@ pub struct PlayerTechState {
     active_technologies: Vec<String>,
     action_effects: Vec<ActionEffect>,
     command_effects: Vec<CommandEffect>,
-    damage_effects: Vec<ProtoScalarEffect>,
+    weapon_effects: Vec<WeaponScalarEffect>,
     hitpoint_effects: Vec<ProtoScalarEffect>,
     shieldpoint_effects: Vec<ProtoScalarEffect>,
     player_shield_regen_rate_effects: Vec<ScalarOperation>,
@@ -52,6 +52,12 @@ struct ProtoScalarEffect {
     proto_object: String,
     action: Option<String>,
     operation: ScalarOperation,
+}
+
+#[derive(Debug, Clone)]
+struct WeaponScalarEffect {
+    data_type: ProtoDataType,
+    scalar: ProtoScalarEffect,
 }
 
 #[derive(Debug, Clone)]
@@ -164,51 +170,80 @@ impl PlayerTechState {
     /// Apply player technology effects to one authored weapon damage value.
     #[must_use]
     pub fn weapon_damage(&self, proto_object: &str, weapon: &str, base: f32) -> f32 {
-        let current =
-            apply_proto_scalar_effects(&self.damage_effects, proto_object, Some(weapon), base);
-        self.runtime_proto_data.scalar(
-            ProtoDataType::Damage,
-            proto_object,
-            Some(weapon),
-            base,
-            current,
-        )
+        self.weapon_scalar(ProtoDataType::Damage, proto_object, weapon, base)
     }
 
     /// Apply player-owned prototype changes to an authored weapon range.
     #[must_use]
     pub fn weapon_range(&self, proto_object: &str, weapon: &str, base: f32) -> f32 {
-        self.runtime_proto_data.scalar(
-            ProtoDataType::MaximumRange,
-            proto_object,
-            Some(weapon),
-            base,
-            base,
-        )
+        self.weapon_scalar(ProtoDataType::MaximumRange, proto_object, weapon, base)
     }
 
     /// Apply player-owned prototype changes to authored weapon accuracy.
     #[must_use]
     pub fn weapon_accuracy(&self, proto_object: &str, weapon: &str, base: f32) -> f32 {
-        self.runtime_proto_data.scalar(
-            ProtoDataType::Accuracy,
-            proto_object,
-            Some(weapon),
-            base,
-            base,
-        )
+        self.weapon_scalar(ProtoDataType::Accuracy, proto_object, weapon, base)
+    }
+
+    /// Apply player-owned prototype changes to authored moving accuracy.
+    #[must_use]
+    pub fn weapon_moving_accuracy(&self, proto_object: &str, weapon: &str, base: f32) -> f32 {
+        self.weapon_scalar(ProtoDataType::MovingAccuracy, proto_object, weapon, base)
     }
 
     /// Apply player-owned prototype changes to authored weapon deviation.
     #[must_use]
     pub fn weapon_max_deviation(&self, proto_object: &str, weapon: &str, base: f32) -> f32 {
-        self.runtime_proto_data.scalar(
-            ProtoDataType::MaxDeviation,
+        self.weapon_scalar(ProtoDataType::MaxDeviation, proto_object, weapon, base)
+    }
+
+    /// Apply player-owned prototype changes to authored moving deviation.
+    #[must_use]
+    pub fn weapon_moving_max_deviation(&self, proto_object: &str, weapon: &str, base: f32) -> f32 {
+        self.weapon_scalar(
+            ProtoDataType::MovingMaxDeviation,
             proto_object,
-            Some(weapon),
-            base,
+            weapon,
             base,
         )
+    }
+
+    /// Apply player-owned changes to the accuracy distribution split point.
+    #[must_use]
+    pub fn weapon_accuracy_distance_factor(
+        &self,
+        proto_object: &str,
+        weapon: &str,
+        base: f32,
+    ) -> f32 {
+        self.weapon_scalar(
+            ProtoDataType::AccuracyDistanceFactor,
+            proto_object,
+            weapon,
+            base,
+        )
+    }
+
+    /// Apply player-owned changes to deviation at the distribution split.
+    #[must_use]
+    pub fn weapon_accuracy_deviation_factor(
+        &self,
+        proto_object: &str,
+        weapon: &str,
+        base: f32,
+    ) -> f32 {
+        self.weapon_scalar(
+            ProtoDataType::AccuracyDeviationFactor,
+            proto_object,
+            weapon,
+            base,
+        )
+    }
+
+    /// Apply player-owned prototype changes to launch-time velocity leading.
+    #[must_use]
+    pub fn weapon_max_velocity_lead(&self, proto_object: &str, weapon: &str, base: f32) -> f32 {
+        self.weapon_scalar(ProtoDataType::MaxVelocityLead, proto_object, weapon, base)
     }
 
     /// Apply player-owned prototype changes to primary-target AOE damage.
@@ -219,13 +254,30 @@ impl PlayerTechState {
         weapon: &str,
         base: f32,
     ) -> f32 {
-        self.runtime_proto_data.scalar(
+        self.weapon_scalar(
             ProtoDataType::AoePrimaryTargetFactor,
             proto_object,
-            Some(weapon),
-            base,
+            weapon,
             base,
         )
+    }
+
+    fn weapon_scalar(
+        &self,
+        data_type: ProtoDataType,
+        proto_object: &str,
+        weapon: &str,
+        base: f32,
+    ) -> f32 {
+        let current = apply_weapon_scalar_effects(
+            &self.weapon_effects,
+            data_type,
+            proto_object,
+            weapon,
+            base,
+        );
+        self.runtime_proto_data
+            .scalar(data_type, proto_object, Some(weapon), base, current)
     }
 
     /// Apply player technology effects to one authored maximum hitpoint value.
@@ -391,7 +443,7 @@ impl PlayerTechState {
     fn rebuild(&mut self, database: &Database) {
         self.action_effects.clear();
         self.command_effects.clear();
-        self.damage_effects.clear();
+        self.weapon_effects.clear();
         self.hitpoint_effects.clear();
         self.shieldpoint_effects.clear();
         self.player_shield_regen_rate_effects.clear();
@@ -430,9 +482,10 @@ impl PlayerTechState {
             self.collect_action_effect(effect);
         } else if subtype.eq_ignore_ascii_case("CommandEnable") {
             self.collect_command_effect(effect);
-        } else if subtype.eq_ignore_ascii_case("Damage") {
-            if let Some(effect) = proto_scalar_effect(effect, true) {
-                self.damage_effects.push(effect);
+        } else if let Some(data_type) = weapon_data_type(subtype) {
+            if let Some(scalar) = proto_scalar_effect(effect, true) {
+                self.weapon_effects
+                    .push(WeaponScalarEffect { data_type, scalar });
             }
         } else if subtype.eq_ignore_ascii_case("Hitpoints") {
             if let Some(effect) = proto_scalar_effect(effect, false) {
@@ -595,6 +648,59 @@ fn apply_proto_scalar_effects(
     valid_scalar_result(current, base)
 }
 
+fn apply_weapon_scalar_effects(
+    effects: &[WeaponScalarEffect],
+    data_type: ProtoDataType,
+    proto_object: &str,
+    weapon: &str,
+    base: f32,
+) -> f32 {
+    let current = effects
+        .iter()
+        .filter(|effect| {
+            effect.data_type == data_type
+                && effect
+                    .scalar
+                    .proto_object
+                    .eq_ignore_ascii_case(proto_object)
+                && effect
+                    .scalar
+                    .action
+                    .as_deref()
+                    .is_none_or(|required| required.eq_ignore_ascii_case(weapon))
+        })
+        .fold(base, |current, effect| {
+            effect.scalar.operation.apply(base, current)
+        });
+    valid_scalar_result(current, base)
+}
+
+fn weapon_data_type(subtype: &str) -> Option<ProtoDataType> {
+    [
+        ("MaximumRange", ProtoDataType::MaximumRange),
+        ("Damage", ProtoDataType::Damage),
+        (
+            "AOEPrimaryTargetFactor",
+            ProtoDataType::AoePrimaryTargetFactor,
+        ),
+        ("Accuracy", ProtoDataType::Accuracy),
+        ("MovingAccuracy", ProtoDataType::MovingAccuracy),
+        ("MaxDeviation", ProtoDataType::MaxDeviation),
+        ("MovingMaxDeviation", ProtoDataType::MovingMaxDeviation),
+        (
+            "AccuracyDistanceFactor",
+            ProtoDataType::AccuracyDistanceFactor,
+        ),
+        (
+            "AccuracyDeviationFactor",
+            ProtoDataType::AccuracyDeviationFactor,
+        ),
+        ("MaxVelocityLead", ProtoDataType::MaxVelocityLead),
+    ]
+    .into_iter()
+    .find_map(|(name, data_type)| subtype.eq_ignore_ascii_case(name).then_some(data_type))
+}
+
 fn apply_scalar_operations(effects: &[ScalarOperation], base: f32) -> f32 {
     let current = effects
         .iter()
@@ -672,4 +778,75 @@ fn hash_strings(checksum: &mut SyncChecksum, values: &[String]) {
 fn hash_string(checksum: &mut SyncChecksum, value: &str) {
     checksum.hash_u32(u32::try_from(value.len()).unwrap_or(u32::MAX));
     checksum.hash_bytes(value.as_bytes());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pipeline::database::hw1::techs::{EffectTarget, EffectsWrapper};
+
+    #[test]
+    fn static_and_runtime_weapon_accuracy_effects_layer_in_retail_order() {
+        let technology = Tech {
+            name: "Sharpshooter".to_owned(),
+            effects: Some(EffectsWrapper {
+                entries: vec![
+                    weapon_effect("Accuracy", 0.5, "Percent", Some("Rifle"), false),
+                    weapon_effect("MovingMaxDeviation", 2.0, "Percent", None, true),
+                    weapon_effect("MaxVelocityLead", 5.0, "Assign", None, true),
+                ],
+            }),
+            ..Tech::default()
+        };
+        let mut database = Database::new();
+        database.techs.push(technology.clone());
+        let mut state = PlayerTechState::default();
+        let _transforms = state.activate(&database, &technology);
+
+        assert!((state.weapon_accuracy("Marine", "Rifle", 0.8) - 0.4).abs() < f32::EPSILON);
+        assert!((state.weapon_accuracy("Marine", "Pistol", 0.8) - 0.8).abs() < f32::EPSILON);
+        assert!(
+            (state.weapon_moving_max_deviation("Marine", "Rifle", 3.0) - 6.0).abs() < f32::EPSILON
+        );
+        assert!(
+            (state.weapon_max_velocity_lead("Marine", "Rifle", 0.0) - 5.0).abs() < f32::EPSILON
+        );
+
+        state.modify_proto_data(
+            "Marine",
+            &ProtoDataModification {
+                data_type: ProtoDataType::Accuracy,
+                amount: 2.0,
+                relativity: ProtoDataRelativity::Percent,
+                all_actions: false,
+                name: Some("Rifle".to_owned()),
+                invert: false,
+                command_type: None,
+                command_data: None,
+            },
+        );
+        assert!((state.weapon_accuracy("Marine", "Rifle", 0.8) - 0.8).abs() < f32::EPSILON);
+    }
+
+    fn weapon_effect(
+        subtype: &str,
+        amount: f32,
+        relativity: &str,
+        action: Option<&str>,
+        all_actions: bool,
+    ) -> TechEffect {
+        TechEffect {
+            effect_type: "Data".to_owned(),
+            subtype: Some(subtype.to_owned()),
+            amount: Some(amount),
+            relativity: Some(relativity.to_owned()),
+            action: action.map(str::to_owned),
+            allactions: Some(all_actions),
+            target: Some(EffectTarget {
+                target_type: Some("ProtoUnit".to_owned()),
+                value: Some("Marine".to_owned()),
+            }),
+            ..TechEffect::default()
+        }
+    }
 }

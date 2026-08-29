@@ -66,7 +66,7 @@ reports when that guard is reached.
 - Trigger definitions and live variables, activation state, evaluation times,
   co-op/configuration settings, per-player difficulty scalars, teleporter links,
   general-event subscribers, pending presentation requests, and unit/squad
-  idle-action state participate in the world checksum. Scenario loading
+  idle-action and unit revival state participate in the world checksum. Scenario loading
   initializes every player's difficulty from the layered
   `GameData/DifficultyDefault`; difficulty conditions use the layered Normal,
   Hard, and Legendary thresholds.
@@ -213,8 +213,10 @@ Entity effects preserve the representable retail contracts:
   SquadList, Object, and ObjectList slots in retail order. A kill leaves dead
   state observable until the next entity update. Destroy removes the entity and
   invalidates its generational ID immediately. Squad lifecycle cascades to all
-  member units. Retail's prevent-scoring flag is currently vacuous because no
-  scoring subsystem exists yet.
+  member units. A regular kill of a scenario-layered `_HeroDeath` unit or squad
+  instead leaves the unit alive at one HP with its independent `Down` flag;
+  immediate destruction still removes it. Retail's prevent-scoring flag is
+  currently vacuous because no scoring subsystem exists yet.
 
 Health and ownership effects mutate the same checksummed state used by combat,
 population, conditions, and rendering:
@@ -230,9 +232,12 @@ population, conditions, and rendering:
   maximum; direct damage clamps at zero. Like retail's raw setters, direct
   damage does not emit a combat event or clear the unit's explicit alive flag.
 - DBID 336 `CombatDamage` versions 1/2 uses the normal shield-first damage path,
-  updates the squad damage timestamp, and kills at zero HP. Version-2
-  `OverrideRevive=true` is reported unsupported before mutation until hero
-  revive state exists. Prevent-scoring behavior remains vacuous without a
+  updates the squad damage timestamp, and applies the target's layered mortal,
+  tactic-`Revive`, or `_HeroDeath` zero-HP behavior. Version-2
+  `OverrideRevive=true` reproduces retail's pre-damage check: it only marks a
+  tactic-`Revive` unit that was already at zero HP, which dies on the following
+  entity update. The same lethal event still hibernates the unit, and hero-down
+  units are unaffected. Prevent-scoring behavior remains vacuous without a
   scoring subsystem.
 - DBID 137 `ChangeOwner` version 3 transfers each selected squad and its member
   units. Live population, built population-cap contributions, and an included
@@ -342,9 +347,10 @@ Entity filters are authoritative, ordered, checksummed trigger values:
   a squad to match at least one supplied type; missing children are skipped and
   empty squads pass. A proto-squad predicate checks a squad directly and a unit
   through its current parent squad.
-- `IsAlive` is exact for currently represented unit/squad lifecycle state.
-  Retail additionally rejects unit-only `Down` and `Hibernating` flags; those
-  flags do not yet exist in the sim and remain a bounded fidelity gap.
+- `IsAlive` reproduces `BEntityFilterIsAlive`, `tcIsAliveV3`, and
+  `tcIsDeadV3`: units require their explicit alive flag and reject independent
+  `Down`/`IsHibernating` flags; squads additionally reject either flag on any
+  current child. Inversion is applied only after this complete base test.
 
 Scripted orders mutate the same squad movement and containment state consumed
 by physics, checksums, and rendering:
@@ -490,10 +496,8 @@ for gameplay coverage.
 - Model fly-in transports, attack-move rally behavior, death presentation
   duration, scoring, squad plot-search, object obstruction fallback, generic
   entity-target work, alternate order queues, AI-command abilities, turret
-  hardpoints, and revive overrides so optional effect paths can reproduce every
+  hardpoints, and the remaining optional effect paths needed to reproduce every
   retail side effect rather than reporting a bounded fidelity gap.
-- Model unit `Down` and `Hibernating` state so `EntityFilterAddIsAlive` can
-  reproduce its two unit-only exclusions.
 - Add retail async-condition consensus and UI-input delivery. Async conditions
   currently remain in `Waiting` state.
 - Load external, power, and ability trigger-script lifecycles in addition to

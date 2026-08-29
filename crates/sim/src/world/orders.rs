@@ -21,7 +21,10 @@ impl World {
             return false;
         }
         if self.squads.get(recipient_id).is_some_and(|squad| {
-            squad.base.player_id == player_id && squad.is_alive() && !squad.garrison.is_garrisoned()
+            squad.base.player_id == player_id
+                && squad.is_alive()
+                && !self.is_squad_incapacitated(recipient_id)
+                && !squad.garrison.is_garrisoned()
         }) {
             let Some(squad) = self.squads.get_mut(recipient_id) else {
                 return false;
@@ -82,10 +85,9 @@ impl World {
         {
             return Some((requested_target_id, unit.base.position));
         }
-        let squad = self
-            .squads
-            .get(requested_target_id)
-            .filter(|squad| squad.is_alive())?;
+        let squad = self.squads.get(requested_target_id).filter(|squad| {
+            squad.is_alive() && !self.is_squad_incapacitated(requested_target_id)
+        })?;
         let leader_id = squad.unit_ids.first().copied()?;
         let leader = self.units.get(leader_id).filter(|unit| unit.is_alive())?;
         Some((leader_id, leader.base.position))
@@ -101,7 +103,10 @@ impl World {
         queue: bool,
     ) -> bool {
         if !self.squads.get(squad_id).is_some_and(|squad| {
-            squad.base.player_id == player_id && squad.is_alive() && !squad.garrison.is_garrisoned()
+            squad.base.player_id == player_id
+                && squad.is_alive()
+                && !self.is_squad_incapacitated(squad_id)
+                && !squad.garrison.is_garrisoned()
         }) {
             return false;
         }

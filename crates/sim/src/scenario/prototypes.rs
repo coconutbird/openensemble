@@ -30,6 +30,13 @@ pub(super) fn classify_proto_object(proto: &ProtoObject) -> Option<PlacedUnitKin
         .then_some(PlacedUnitKind::Mobile)
 }
 
+pub(super) fn is_class_zero_object(proto: &ProtoObject) -> bool {
+    proto
+        .object_class
+        .as_deref()
+        .is_some_and(|class| class.eq_ignore_ascii_case("Object"))
+}
+
 pub(super) fn creates_base(proto: &ProtoObject) -> bool {
     prototype_has_flag(proto, "KBCreatesBase")
 }

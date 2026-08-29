@@ -4,8 +4,65 @@
 //! retail. Keeping their visual requests and fog-memory policy here lets the
 //! simulation remain authoritative while renderers consume a read-only view.
 
+use crate::EntityId;
 use crate::sync::SyncChecksum;
 use num_traits::ToPrimitive;
+
+/// Trigger-authored animation selected and timed by the authoritative sim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptedAnimation {
+    revision: u32,
+    animation_type: String,
+    asset_path: Option<String>,
+    started_at_ms: u32,
+    duration_ms: u32,
+}
+
+impl ScriptedAnimation {
+    /// Monotonic revision used by renderers to detect retriggers.
+    #[must_use]
+    pub const fn revision(&self) -> u32 {
+        self.revision
+    }
+
+    /// Retail visual animation type, such as `Death` or `Research`.
+    #[must_use]
+    pub fn animation_type(&self) -> &str {
+        &self.animation_type
+    }
+
+    /// Canonical UAX selected by scenario-layered gameplay data, when known.
+    #[must_use]
+    pub fn asset_path(&self) -> Option<&str> {
+        self.asset_path.as_deref()
+    }
+
+    /// Authoritative game time at which playback began.
+    #[must_use]
+    pub const fn started_at_ms(&self) -> u32 {
+        self.started_at_ms
+    }
+
+    /// Locked animation duration in milliseconds.
+    #[must_use]
+    pub const fn duration_ms(&self) -> u32 {
+        self.duration_ms
+    }
+
+    /// Playback position derived entirely from authoritative sim time.
+    #[must_use]
+    pub fn normalized_position(&self, now_ms: u32) -> f32 {
+        if self.duration_ms == 0 {
+            return 1.0;
+        }
+        now_ms
+            .wrapping_sub(self.started_at_ms)
+            .min(self.duration_ms)
+            .to_f32()
+            .unwrap_or(f32::MAX)
+            / self.duration_ms.to_f32().unwrap_or(f32::MAX)
+    }
+}
 
 /// Retail targeting-selection texture state installed by `FlashEntity`.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -89,6 +146,10 @@ impl DopplePolicy {
 pub struct ObjectState {
     override_tint: [u8; 4],
     targeting_selection: Option<TargetingSelection>,
+    scripted_animation: Option<ScriptedAnimation>,
+    scripted_animation_revision: u32,
+    attachments: Vec<EntityId>,
+    attached_to: Option<EntityId>,
     gray_map_dopples: bool,
     dopples: bool,
     dopple_reset_revision: u32,
@@ -100,6 +161,10 @@ impl Default for ObjectState {
         Self {
             override_tint: [0, 0, 0, u8::MAX],
             targeting_selection: None,
+            scripted_animation: None,
+            scripted_animation_revision: 0,
+            attachments: Vec::new(),
+            attached_to: None,
             gray_map_dopples: false,
             dopples: false,
             dopple_reset_revision: 0,
@@ -113,6 +178,24 @@ impl ObjectState {
     #[must_use]
     pub const fn targeting_selection(&self) -> Option<TargetingSelection> {
         self.targeting_selection
+    }
+
+    /// Return the current scripted animation, including its locked final pose.
+    #[must_use]
+    pub const fn scripted_animation(&self) -> Option<&ScriptedAnimation> {
+        self.scripted_animation.as_ref()
+    }
+
+    /// Child entities attached to this retail object, in creation order.
+    #[must_use]
+    pub fn attachments(&self) -> &[EntityId] {
+        &self.attachments
+    }
+
+    /// Parent object that owns this attachment, when present.
+    #[must_use]
+    pub const fn attached_to(&self) -> Option<EntityId> {
+        self.attached_to
     }
 
     /// Return the current fog-memory policy and invalidation state.
@@ -167,6 +250,39 @@ impl ObjectState {
         self.force_visibility_update_next_frame = true;
     }
 
+    pub(crate) fn play_scripted_animation(
+        &mut self,
+        now_ms: u32,
+        animation_type: String,
+        asset_path: Option<String>,
+        duration_ms: u32,
+    ) {
+        self.scripted_animation_revision = self.scripted_animation_revision.wrapping_add(1);
+        self.scripted_animation = Some(ScriptedAnimation {
+            revision: self.scripted_animation_revision,
+            animation_type,
+            asset_path,
+            started_at_ms: now_ms,
+            duration_ms,
+        });
+    }
+
+    pub(crate) fn add_attachment(&mut self, entity_id: EntityId) {
+        self.attachments.push(entity_id);
+    }
+
+    pub(crate) fn remove_attachment(&mut self, entity_id: EntityId) {
+        self.attachments.retain(|candidate| *candidate != entity_id);
+    }
+
+    pub(crate) fn take_attachments(&mut self) -> Vec<EntityId> {
+        std::mem::take(&mut self.attachments)
+    }
+
+    pub(crate) fn set_attached_to(&mut self, parent_id: Option<EntityId>) {
+        self.attached_to = parent_id;
+    }
+
     pub(crate) fn update(&mut self, now_ms: u32) {
         if self
             .targeting_selection
@@ -193,6 +309,33 @@ impl ObjectState {
             }
             checksum.hash_f32(selection.scroll_speed);
             checksum.hash_f32(selection.intensity);
+        } else {
+            checksum.hash_u32(0);
+        }
+        checksum.hash_u32(self.scripted_animation_revision);
+        if let Some(animation) = &self.scripted_animation {
+            checksum.hash_u32(1);
+            checksum.hash_u32(u32::try_from(animation.animation_type.len()).unwrap_or(u32::MAX));
+            checksum.hash_bytes(animation.animation_type.as_bytes());
+            if let Some(asset_path) = &animation.asset_path {
+                checksum.hash_u32(1);
+                checksum.hash_u32(u32::try_from(asset_path.len()).unwrap_or(u32::MAX));
+                checksum.hash_bytes(asset_path.as_bytes());
+            } else {
+                checksum.hash_u32(0);
+            }
+            checksum.hash_u32(animation.started_at_ms);
+            checksum.hash_u32(animation.duration_ms);
+        } else {
+            checksum.hash_u32(0);
+        }
+        checksum.hash_u32(u32::try_from(self.attachments.len()).unwrap_or(u32::MAX));
+        for attachment in &self.attachments {
+            checksum.hash_u32(attachment.as_u32());
+        }
+        if let Some(parent) = self.attached_to {
+            checksum.hash_u32(1);
+            checksum.hash_u32(parent.as_u32());
         } else {
             checksum.hash_u32(0);
         }
@@ -236,5 +379,32 @@ mod tests {
         assert!(state.targeting_selection().is_some());
         state.update(1_001);
         assert!(state.targeting_selection().is_none());
+    }
+
+    #[test]
+    fn scripted_animation_retriggers_and_locks_at_its_final_position() {
+        let mut state = ObjectState::default();
+        state.play_scripted_animation(
+            100,
+            "Death".to_owned(),
+            Some("art\\bridge_death.uax".to_owned()),
+            1_000,
+        );
+        let first = state.scripted_animation().unwrap();
+        assert_eq!(first.revision(), 1);
+        assert_eq!(first.normalized_position(600).to_bits(), 0.5_f32.to_bits());
+        assert_eq!(
+            first.normalized_position(1_101).to_bits(),
+            1.0_f32.to_bits()
+        );
+
+        state.play_scripted_animation(1_200, "Research".to_owned(), None, 500);
+        let second = state.scripted_animation().unwrap();
+        assert_eq!(second.revision(), 2);
+        assert_eq!(second.animation_type(), "Research");
+        assert_eq!(
+            second.normalized_position(1_200).to_bits(),
+            0.0_f32.to_bits()
+        );
     }
 }

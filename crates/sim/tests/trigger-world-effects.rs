@@ -112,7 +112,7 @@ fn set_direction_and_direct_teleport_update_authoritative_formation_state() {
 }
 
 #[test]
-fn unavailable_plot_turret_and_revive_paths_do_not_partially_mutate() {
+fn unavailable_plot_and_turret_paths_do_not_block_override_revive_damage() {
     let mut world = trigger_world(1);
     let squad_id = world.create_squad_at(1, glam::Vec3::new(2.0, 0.0, 3.0));
     let member_id = world.create_unit_at(1, glam::Vec3::new(2.0, 0.0, 3.0));
@@ -156,8 +156,8 @@ fn unavailable_plot_turret_and_revive_paths_do_not_partially_mutate() {
 
     let update = world.update_triggers();
 
-    assert_eq!(update.effects_applied, 0);
-    assert_eq!(update.unsupported_effect_types, vec![336, 354, 489]);
+    assert_eq!(update.effects_applied, 1);
+    assert_eq!(update.unsupported_effect_types, vec![354, 489]);
     assert_eq!(
         world.get_squad(squad_id).unwrap().base.position,
         glam::Vec3::new(2.0, 0.0, 3.0)
@@ -165,7 +165,7 @@ fn unavailable_plot_turret_and_revive_paths_do_not_partially_mutate() {
     let object = world.get_unit(object_id).unwrap();
     assert_eq!(object.base.position, glam::Vec3::new(4.0, 0.0, 5.0));
     assert_eq!(object.base.forward, glam::Vec3::Z);
-    assert_near(world.get_unit(member_id).unwrap().hitpoints, 100.0);
+    assert_near(world.get_unit(member_id).unwrap().hitpoints, 50.0);
 }
 
 #[test]

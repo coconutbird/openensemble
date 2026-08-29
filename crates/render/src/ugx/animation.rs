@@ -30,6 +30,10 @@ pub(super) struct AnimationPose {
 
 impl AnimationPose {
     pub(super) fn at_start(animation: &Animation) -> Self {
+        Self::at_position(animation, 0.0)
+    }
+
+    pub(super) fn at_position(animation: &Animation, normalized_position: f32) -> Self {
         let mut tracks: Vec<(String, Mat4)> = Vec::new();
         for track in animation
             .track_groups
@@ -45,7 +49,7 @@ impl AnimationPose {
             {
                 continue;
             }
-            match track_matrix(track) {
+            match track_matrix(track, normalized_position) {
                 Ok(matrix) => tracks.push((name.to_owned(), matrix)),
                 Err((component, reason)) => log::warn!(
                     "UGX animation track '{name}' has an unsupported {component} curve; using the bone's bind pose: {reason}"
@@ -63,15 +67,24 @@ impl AnimationPose {
     }
 }
 
-fn track_matrix(track: &TransformTrack) -> Result<Mat4, (&'static str, String)> {
-    let position =
-        sample_values(&track.position, 3, &[0.0; 3]).map_err(|reason| ("position", reason))?;
-    let orientation = sample_values(&track.orientation, 4, &[0.0, 0.0, 0.0, 1.0])
-        .map_err(|reason| ("orientation", reason))?;
-    let scale_shear = sample_values(
+fn track_matrix(
+    track: &TransformTrack,
+    normalized_position: f32,
+) -> Result<Mat4, (&'static str, String)> {
+    let position = sample_values_at(&track.position, 3, &[0.0; 3], normalized_position)
+        .map_err(|reason| ("position", reason))?;
+    let orientation = sample_values_at(
+        &track.orientation,
+        4,
+        &[0.0, 0.0, 0.0, 1.0],
+        normalized_position,
+    )
+    .map_err(|reason| ("orientation", reason))?;
+    let scale_shear = sample_values_at(
         &track.scale_shear,
         9,
         &[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        normalized_position,
     )
     .map_err(|reason| ("scale/shear", reason))?;
 
@@ -106,12 +119,34 @@ fn track_matrix(track: &TransformTrack) -> Result<Mat4, (&'static str, String)> 
     ))
 }
 
+#[cfg(test)]
 fn sample_values(
     curve: &CurveData,
     dimension: usize,
     identity: &[f32],
 ) -> Result<Vec<f32>, String> {
+    sample_values_at(curve, dimension, identity, 0.0)
+}
+
+fn sample_values_at(
+    curve: &CurveData,
+    dimension: usize,
+    identity: &[f32],
+    normalized_position: f32,
+) -> Result<Vec<f32>, String> {
+    let position = normalized_position.clamp(0.0, 1.0);
     match &curve.payload {
+        CurvePayload::DaKeyframes32f {
+            dimension: stored_dimension,
+            controls,
+        } => {
+            require_dimension(
+                usize::try_from(*stored_dimension).unwrap_or_default(),
+                dimension,
+                "keyframes",
+            )?;
+            sample_even_controls(controls, dimension, position)
+        }
         CurvePayload::Identity {
             dimension: stored_dimension,
         } => {
@@ -136,23 +171,29 @@ fn sample_values(
         }
         CurvePayload::DaK32fC32f {
             knots, controls, ..
-        } => {
-            if knots.is_empty() {
-                return Err("floating-point curve has no knots".to_owned());
-            }
-            controls
-                .get(..dimension)
-                .map(<[f32]>::to_vec)
-                .ok_or_else(|| "floating-point curve has no complete first control".to_owned())
-        }
+        } => sample_knotted_controls(knots, controls, dimension, position),
+        _ => sample_compressed_values(curve, dimension, position),
+    }
+}
+
+fn sample_compressed_values(
+    curve: &CurveData,
+    dimension: usize,
+    position: f32,
+) -> Result<Vec<f32>, String> {
+    match &curve.payload {
         CurvePayload::D4nK16uC15u {
             scale_offset_table_entries,
             knots_controls,
             ..
         } => {
             require_dimension(dimension, 4, "D4nK16uC15u")?;
-            decode_quantized_quaternion::<u16>(*scale_offset_table_entries, knots_controls)
-                .map(|values| values.to_vec())
+            sample_quantized_quaternion::<u16>(
+                *scale_offset_table_entries,
+                knots_controls,
+                position,
+            )
+            .map(|values| values.to_vec())
         }
         CurvePayload::D4nK8uC7u {
             scale_offset_table_entries,
@@ -160,7 +201,7 @@ fn sample_values(
             ..
         } => {
             require_dimension(dimension, 4, "D4nK8uC7u")?;
-            decode_quantized_quaternion::<u8>(*scale_offset_table_entries, knots_controls)
+            sample_quantized_quaternion::<u8>(*scale_offset_table_entries, knots_controls, position)
                 .map(|values| values.to_vec())
         }
         CurvePayload::D3K16uC16u {
@@ -170,7 +211,7 @@ fn sample_values(
             ..
         } => {
             require_dimension(dimension, 3, "D3K16uC16u")?;
-            decode_quantized_vec3::<u16>(control_scales, control_offsets, knots_controls)
+            sample_quantized_vec3::<u16>(control_scales, control_offsets, knots_controls, position)
                 .map(|values| values.to_vec())
         }
         CurvePayload::D3K8uC8u {
@@ -180,8 +221,33 @@ fn sample_values(
             ..
         } => {
             require_dimension(dimension, 3, "D3K8uC8u")?;
-            decode_quantized_vec3::<u8>(control_scales, control_offsets, knots_controls)
+            sample_quantized_vec3::<u8>(control_scales, control_offsets, knots_controls, position)
                 .map(|values| values.to_vec())
+        }
+        CurvePayload::D3I1K32fC32f {
+            control_scales,
+            control_offsets,
+            knots_controls,
+            ..
+        } => {
+            require_dimension(dimension, 3, "D3I1K32fC32f")?;
+            sample_identity_vec3(control_scales, control_offsets, knots_controls, position)
+                .map(|values| values.to_vec())
+        }
+        CurvePayload::D3I1K16uC16u {
+            control_scales,
+            control_offsets,
+            knots_controls,
+            ..
+        } => {
+            require_dimension(dimension, 3, "D3I1K16uC16u")?;
+            sample_identity_quantized_vec3(
+                control_scales,
+                control_offsets,
+                knots_controls,
+                position,
+            )
+            .map(|values| values.to_vec())
         }
         CurvePayload::D3I1K8uC8u {
             control_scales,
@@ -190,11 +256,94 @@ fn sample_values(
             ..
         } => {
             require_dimension(dimension, 3, "D3I1K8uC8u")?;
-            decode_identity_quantized_vec3(control_scales, control_offsets, knots_controls)
-                .map(|values| values.to_vec())
+            sample_identity_quantized_vec3(
+                control_scales,
+                control_offsets,
+                knots_controls,
+                position,
+            )
+            .map(|values| values.to_vec())
         }
         _ => Err(format!("unsupported curve format {}", curve.format)),
     }
+}
+
+fn sample_even_controls(
+    controls: &[f32],
+    dimension: usize,
+    position: f32,
+) -> Result<Vec<f32>, String> {
+    if dimension == 0 || !controls.len().is_multiple_of(dimension) {
+        return Err("floating-point curve has incomplete controls".to_owned());
+    }
+    let count = controls.len() / dimension;
+    let (lower, upper, blend) = even_interval(count, position)?;
+    interpolate_controls(controls, dimension, lower, upper, blend)
+}
+
+fn sample_knotted_controls(
+    knots: &[f32],
+    controls: &[f32],
+    dimension: usize,
+    position: f32,
+) -> Result<Vec<f32>, String> {
+    if controls.len() < knots.len().saturating_mul(dimension) {
+        return Err("floating-point curve has incomplete controls".to_owned());
+    }
+    let (lower, upper, blend) = knot_interval(knots, position)?;
+    interpolate_controls(controls, dimension, lower, upper, blend)
+}
+
+fn interpolate_controls(
+    controls: &[f32],
+    dimension: usize,
+    lower: usize,
+    upper: usize,
+    blend: f32,
+) -> Result<Vec<f32>, String> {
+    let lower = controls
+        .get(lower.saturating_mul(dimension)..lower.saturating_add(1).saturating_mul(dimension))
+        .ok_or_else(|| "curve has no complete lower control".to_owned())?;
+    let upper = controls
+        .get(upper.saturating_mul(dimension)..upper.saturating_add(1).saturating_mul(dimension))
+        .ok_or_else(|| "curve has no complete upper control".to_owned())?;
+    Ok(lower
+        .iter()
+        .zip(upper)
+        .map(|(lower, upper)| lower + (upper - lower) * blend)
+        .collect())
+}
+
+fn even_interval(count: usize, position: f32) -> Result<(usize, usize, f32), String> {
+    if count == 0 {
+        return Err("curve has no controls".to_owned());
+    }
+    let scaled =
+        position * num_traits::ToPrimitive::to_f32(&count.saturating_sub(1)).unwrap_or(0.0);
+    let lower = num_traits::ToPrimitive::to_usize(&scaled.floor()).unwrap_or_default();
+    let upper = lower.saturating_add(1).min(count - 1);
+    Ok((lower, upper, scaled.fract()))
+}
+
+fn knot_interval(knots: &[f32], position: f32) -> Result<(usize, usize, f32), String> {
+    let Some((&first, &last)) = knots.first().zip(knots.last()) else {
+        return Err("curve has no knots".to_owned());
+    };
+    if knots.len() == 1 || !first.is_finite() || !last.is_finite() || last <= first {
+        return even_interval(knots.len(), position);
+    }
+    let target = first + (last - first) * position;
+    let upper = knots
+        .partition_point(|knot| *knot < target)
+        .min(knots.len() - 1);
+    let lower = upper.saturating_sub(1);
+    let span = knots[upper] - knots[lower];
+    let blend = if span > f32::EPSILON {
+        ((target - knots[lower]) / span).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    Ok((lower, upper, blend))
 }
 
 fn exact_dimension(values: &[f32], dimension: usize, label: &str) -> Result<Vec<f32>, String> {
@@ -248,15 +397,28 @@ impl Quantized for u16 {
     }
 }
 
-fn decode_quantized_quaternion<T: Quantized>(
+fn sample_quantized_quaternion<T: Quantized>(
     table_entries: u16,
     data: &[T],
+    position: f32,
 ) -> Result<[f32; 4], String> {
     let knot_count = data.len() / 4;
-    if knot_count == 0 {
-        return Err("quantized quaternion has no knots".to_owned());
+    let (lower, upper, blend) = quantized_knot_interval(data, knot_count, position)?;
+    let lower = Quat::from_array(decode_quantized_quaternion_at(table_entries, data, lower)?);
+    let upper = Quat::from_array(decode_quantized_quaternion_at(table_entries, data, upper)?);
+    Ok(lower.slerp(upper, blend).normalize().to_array())
+}
+
+fn decode_quantized_quaternion_at<T: Quantized>(
+    table_entries: u16,
+    data: &[T],
+    index: usize,
+) -> Result<[f32; 4], String> {
+    let knot_count = data.len() / 4;
+    if index >= knot_count {
+        return Err("quantized quaternion has no requested control".to_owned());
     }
-    let control_offset = knot_count;
+    let control_offset = knot_count + index.saturating_mul(3);
     let packed = [
         data.get(control_offset).copied().map(T::widen),
         data.get(control_offset + 1).copied().map(T::widen),
@@ -295,16 +457,41 @@ fn decode_quantized_quaternion<T: Quantized>(
     Ok(quaternion.normalize().to_array())
 }
 
+#[cfg(test)]
 fn decode_quantized_vec3<T: Quantized>(
     scales: &[f32; 3],
     offsets: &[f32; 3],
     data: &[T],
 ) -> Result<[f32; 3], String> {
+    decode_quantized_vec3_at(scales, offsets, data, 0)
+}
+
+fn sample_quantized_vec3<T: Quantized>(
+    scales: &[f32; 3],
+    offsets: &[f32; 3],
+    data: &[T],
+    position: f32,
+) -> Result<[f32; 3], String> {
     let knot_count = data.len() / 4;
-    if knot_count == 0 {
-        return Err("quantized D3 curve has no knots".to_owned());
+    let (lower, upper, blend) = quantized_knot_interval(data, knot_count, position)?;
+    let lower = decode_quantized_vec3_at(scales, offsets, data, lower)?;
+    let upper = decode_quantized_vec3_at(scales, offsets, data, upper)?;
+    Ok(core::array::from_fn(|component| {
+        lower[component] + (upper[component] - lower[component]) * blend
+    }))
+}
+
+fn decode_quantized_vec3_at<T: Quantized>(
+    scales: &[f32; 3],
+    offsets: &[f32; 3],
+    data: &[T],
+    index: usize,
+) -> Result<[f32; 3], String> {
+    let knot_count = data.len() / 4;
+    if index >= knot_count {
+        return Err("quantized D3 curve has no requested control".to_owned());
     }
-    let control_offset = knot_count;
+    let control_offset = knot_count + index.saturating_mul(3);
     let mut result = [0.0; 3];
     for (component, output) in result.iter_mut().enumerate() {
         let value = data
@@ -317,26 +504,92 @@ fn decode_quantized_vec3<T: Quantized>(
     Ok(result)
 }
 
-fn decode_identity_quantized_vec3(
+fn sample_identity_quantized_vec3<T: Quantized>(
     scales: &[f32; 3],
     offsets: &[f32; 3],
-    data: &[u8],
+    data: &[T],
+    position: f32,
 ) -> Result<[f32; 3], String> {
     let knot_count = data.len() / 2;
-    let parameter = data
-        .get(knot_count)
+    let (lower, upper, blend) = quantized_knot_interval(data, knot_count, position)?;
+    let lower = data
+        .get(knot_count + lower)
         .copied()
-        .ok_or_else(|| "identity-quantized D3 curve has no first control".to_owned())?;
+        .map(T::widen)
+        .ok_or_else(|| "identity-quantized D3 curve has no lower control".to_owned())?;
+    let upper = data
+        .get(knot_count + upper)
+        .copied()
+        .map(T::widen)
+        .ok_or_else(|| "identity-quantized D3 curve has no upper control".to_owned())?;
+    let parameter = f32::from(lower) + (f32::from(upper) - f32::from(lower)) * blend;
     Ok(core::array::from_fn(|component| {
-        offsets[component] + scales[component] * f32::from(parameter)
+        offsets[component] + scales[component] * parameter
     }))
+}
+
+fn sample_identity_vec3(
+    scales: &[f32; 3],
+    offsets: &[f32; 3],
+    data: &[f32],
+    position: f32,
+) -> Result<[f32; 3], String> {
+    let knot_count = data.len() / 2;
+    let (lower, upper, blend) = knot_interval(
+        data.get(..knot_count)
+            .ok_or_else(|| "identity D3 curve has no knots".to_owned())?,
+        position,
+    )?;
+    let lower = *data
+        .get(knot_count + lower)
+        .ok_or_else(|| "identity D3 curve has no lower control".to_owned())?;
+    let upper = *data
+        .get(knot_count + upper)
+        .ok_or_else(|| "identity D3 curve has no upper control".to_owned())?;
+    let parameter = lower + (upper - lower) * blend;
+    Ok(core::array::from_fn(|component| {
+        offsets[component] + scales[component] * parameter
+    }))
+}
+
+fn quantized_knot_interval<T: Quantized>(
+    data: &[T],
+    knot_count: usize,
+    position: f32,
+) -> Result<(usize, usize, f32), String> {
+    let knots = data
+        .get(..knot_count)
+        .ok_or_else(|| "quantized curve has no knots".to_owned())?
+        .iter()
+        .copied()
+        .map(T::widen)
+        .map(f32::from)
+        .collect::<Vec<_>>();
+    knot_interval(&knots, position)
 }
 
 #[cfg(test)]
 mod tests {
     use pipeline::uax::types::{CurveData, CurvePayload};
 
-    use super::{decode_quantized_vec3, sample_values};
+    use super::{decode_quantized_vec3, sample_values, sample_values_at};
+
+    #[test]
+    fn keyframes_interpolate_at_the_sim_owned_playback_position() {
+        let curve = CurveData {
+            format: 0,
+            degree: 1,
+            payload: CurvePayload::DaKeyframes32f {
+                dimension: 3,
+                controls: vec![0.0, 10.0, 20.0, 20.0, 30.0, 40.0],
+            },
+        };
+
+        assert_eq!(
+            sample_values_at(&curve, 3, &[0.0; 3], 0.25).unwrap(),
+            [5.0, 15.0, 25.0]
+        );
+    }
 
     #[test]
     fn identity_curves_use_the_component_identity() {

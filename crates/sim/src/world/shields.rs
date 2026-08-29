@@ -18,8 +18,55 @@ impl World {
             .is_some_and(|unit| unit.damage(damage));
         if damaged {
             self.notify_unit_damaged(unit_id);
+            if self
+                .units
+                .get(unit_id)
+                .is_some_and(crate::entities::Unit::is_incapacitated)
+            {
+                self.cancel_incapacitated_squad_orders(unit_id);
+            }
         }
         damaged
+    }
+
+    /// Configure scenario-layered revival behavior before applying combat damage.
+    pub fn damage_unit_with_gameplay(
+        &mut self,
+        unit_id: EntityId,
+        damage: f32,
+        gameplay: &GameplayCatalog,
+    ) -> bool {
+        self.damage_unit_with_gameplay_override(unit_id, damage, gameplay, false)
+    }
+
+    /// Apply combat damage with retail's optional revive-action override.
+    pub fn damage_unit_with_override(
+        &mut self,
+        unit_id: EntityId,
+        damage: f32,
+        override_revive: bool,
+    ) -> bool {
+        if override_revive
+            && self
+                .units
+                .get_mut(unit_id)
+                .is_some_and(crate::entities::Unit::override_revival_at_zero)
+        {
+            return true;
+        }
+        self.damage_unit(unit_id, damage)
+    }
+
+    /// Configure layered revival behavior, then apply optional override damage.
+    pub fn damage_unit_with_gameplay_override(
+        &mut self,
+        unit_id: EntityId,
+        damage: f32,
+        gameplay: &GameplayCatalog,
+        override_revive: bool,
+    ) -> bool {
+        let _configured = self.configure_unit_revival(unit_id, gameplay);
+        self.damage_unit_with_override(unit_id, damage, override_revive)
     }
 
     pub(super) fn update_shields(&mut self, dt: f32, gameplay: &GameplayCatalog) {
@@ -107,6 +154,7 @@ impl World {
         for &unit_id in unit_ids {
             if let Some(unit) = self.units.get_mut(unit_id)
                 && unit.is_alive()
+                && !unit.is_down()
                 && unit.shields.is_enabled()
             {
                 unit.shields.start_recharge(duration);
@@ -127,7 +175,7 @@ impl World {
                             .technologies
                             .shield_regen_rate(gameplay.shield_regen_rate())
                     });
-            if let Some(unit) = self.units.get_mut(unit_id) {
+            if let Some(unit) = self.units.get_mut(unit_id).filter(|unit| !unit.is_down()) {
                 unit.shields.advance_recharge(dt, player_rate);
             }
         }

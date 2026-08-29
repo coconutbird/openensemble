@@ -358,6 +358,10 @@ fn diplomacy_filter_does_not_fall_back_when_a_used_player_is_invalid() {
     let update = world.update_triggers();
 
     assert_eq!(update.effects_skipped, 1);
+    assert_eq!(
+        update.skipped_effect_types,
+        vec![EffectType::EntityFilterAddDiplomacy as u16]
+    );
     assert_eq!(script_filter_set(&world, script_id, 0).filter_count(), 0);
 }
 

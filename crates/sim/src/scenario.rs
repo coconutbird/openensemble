@@ -54,7 +54,7 @@ pub use objectives::ObjectiveLoadError;
 pub use pipeline::hw1::scenario::{ScenarioData, ScenarioObject, ScenarioPlayer, ScenarioPosition};
 use prototypes::{
     PlacedUnitKind, classify_proto_object, creates_base, database_id, find_proto_object,
-    find_proto_squad, prototype_has_flag,
+    find_proto_squad, is_class_zero_object, prototype_has_flag,
 };
 
 /// Result of loading a scenario into a world.
@@ -67,6 +67,8 @@ pub struct LoadedScenario {
     pub gameplay: GameplayCatalog,
     /// Mapping from scenario object IDs to simulation entity IDs.
     pub scenario_id_to_entity_id: HashMap<i32, EntityId>,
+    /// Mapping from scenario object IDs to their representative simulation unit.
+    pub scenario_id_to_unit_id: HashMap<i32, EntityId>,
     /// Initial base assigned to each active player with a scenario start.
     pub initial_base_ids: BTreeMap<PlayerId, BaseId>,
 }
@@ -130,6 +132,12 @@ impl LoadedScenario {
     #[must_use]
     pub fn get_entity_id(&self, scenario_id: i32) -> Option<EntityId> {
         self.scenario_id_to_entity_id.get(&scenario_id).copied()
+    }
+
+    /// Get the representative unit ID for a scenario object or squad placement.
+    #[must_use]
+    pub fn get_unit_id(&self, scenario_id: i32) -> Option<EntityId> {
+        self.scenario_id_to_unit_id.get(&scenario_id).copied()
     }
 
     /// Get the initial base assigned to an active player.
@@ -216,6 +224,12 @@ pub fn load_scenario_from_game_dir(
     design_lines::load_design_lines(&mut simulation.world, &trigger_document)?;
     forbids::apply_scenario_forbids(&mut simulation.world, &content.database, &trigger_document);
     triggers::load_trigger_systems(&mut simulation, &content.database, &trigger_document)?;
+    let animation_requests = triggers::scripted_animation_requests(&simulation);
+    simulation.gameplay.load_scripted_animation_requests(
+        &content.database,
+        &mut source,
+        animation_requests,
+    );
 
     Ok(LoadedGameScenario {
         simulation,
@@ -260,6 +274,7 @@ fn load_scenario_into_world_with_max_players(
             .and_then(|game_data| game_data.construction_damage_multiplier),
     );
     let mut scenario_id_to_entity_id = HashMap::new();
+    let mut scenario_id_to_unit_id = HashMap::new();
     let players = scenario.players.as_ref().map_or(&[][..], |w| &w.entries);
     let objects = scenario.objects.as_ref().map_or(&[][..], |w| &w.entries);
     let player_count =
@@ -273,18 +288,32 @@ fn load_scenario_into_world_with_max_players(
             continue;
         };
         if obj.id >= 0 {
+            if let Some(unit_id) = representative_unit_id(&world, entity_id) {
+                scenario_id_to_unit_id.insert(obj.id, unit_id);
+            }
             scenario_id_to_entity_id.insert(obj.id, entity_id);
         }
     }
     let initial_base_ids =
         starts::create_initial_bases(&mut world, scenario, db, player_count, max_players);
+    world.configure_unit_revivals(&gameplay);
 
     LoadedScenario {
         world,
         gameplay,
         scenario_id_to_entity_id,
+        scenario_id_to_unit_id,
         initial_base_ids,
     }
+}
+
+fn representative_unit_id(world: &World, entity_id: EntityId) -> Option<EntityId> {
+    if world.get_unit(entity_id).is_some() {
+        return Some(entity_id);
+    }
+    world
+        .get_squad(entity_id)
+        .and_then(|squad| squad.unit_ids.first().copied())
 }
 
 fn configure_players(world: &mut World, players: &[ScenarioPlayer], db: &Database) {
@@ -554,21 +583,6 @@ pub(crate) fn add_squad_member_from_prototype(
         sockets::materialize_authored_sockets(world, unit_id, prototype, db);
     }
     Some(unit_id)
-}
-
-fn create_scenario_unit(
-    world: &mut World,
-    object: &ScenarioObject,
-    db: &Database,
-) -> Option<EntityId> {
-    create_object_from_prototype(
-        world,
-        u8::try_from(object.player).unwrap_or_default(),
-        scenario_position(object),
-        scenario_forward(object),
-        object.proto_name.trim(),
-        db,
-    )
 }
 
 pub(crate) fn create_object_from_prototype(

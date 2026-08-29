@@ -142,7 +142,14 @@ fn assert_projectile_roster(
     assert!(scene.roster_matches(&simulation.world));
     assert_eq!(
         scene.simulation_entity_count(),
-        simulation.world.units.len() + simulation.world.projectiles.len()
+        simulation
+            .world
+            .objects
+            .iter()
+            .filter(|(_, object)| object.is_visual())
+            .count()
+            + simulation.world.units.len()
+            + simulation.world.projectiles.len()
     );
     for projectile_id in projectile_ids {
         let projectile = simulation

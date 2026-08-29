@@ -227,7 +227,7 @@ impl TerrainViewer {
                 if first_load {
                     self.camera.position = hover_point + Vec3::new(0.0, 200.0, -300.0);
                 }
-                self.camera_adapter.reset(&self.camera, hover_point);
+                self.camera_adapter.reset(&mut self.camera, hover_point);
                 self.scene = Some(scene);
                 self.load_error = None;
             }
@@ -289,19 +289,8 @@ fn load_scenario_inputs(scenario_name: &str) -> Result<TerrainLoadInputs, String
             environment.hdr_scale(),
         );
     }
-    let active_proto_names = simulation
-        .world
-        .units
-        .iter()
-        .map(|(_, unit)| unit.proto_object_name.as_str())
-        .chain(
-            simulation
-                .world
-                .projectiles
-                .iter()
-                .map(|(_, projectile)| projectile.proto_object_name.as_str()),
-        )
-        .collect::<Vec<_>>();
+    let active_proto_names =
+        render::ugx::simulation_proto_names(&simulation.world).collect::<Vec<_>>();
     let loaded_visuals = content.load_visuals_for(&mut source, active_proto_names.iter().copied());
     log::info!("Loaded {loaded_visuals} active proto visual definitions");
     let ugx_scene = UgxUnitScene::load_world(

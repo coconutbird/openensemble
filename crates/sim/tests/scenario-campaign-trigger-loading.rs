@@ -55,6 +55,7 @@ fn every_campaign_trigger_catalog_loads_with_retail_variable_aliases() {
         assert_hint_callout_state(scenario, &loaded);
         assert_objective_state(scenario, &loaded);
         assert_entity_visual_state(scenario, &loaded);
+        assert_icon_state(scenario, &loaded);
         assert_tower_wall_state(scenario, &loaded);
         assert_timer_state(scenario, &loaded);
         assert_trigger_created_squads(scenario, &loaded);
@@ -79,9 +80,9 @@ fn assert_catalog(scenario: &str, engine: &TriggerEngine) {
 
 fn assert_update_frontier(scenario: &str, update: &TriggerUpdate) {
     for effect_type in [
-        36, 55, 66, 117, 237, 283, 285, 385, 413, 439, 456, 457, 460, 526, 532, 658, 659, 712, 717,
-        741, 809, 810, 833, 863, 867, 868, 869, 870, 872, 884, 922, 935, 936, 937, 938, 984, 1000,
-        1001, 1007, 1034, 1037, 1044, 1045, 1048, 1054, 1061,
+        36, 55, 66, 74, 117, 237, 283, 285, 385, 413, 439, 456, 457, 460, 520, 526, 532, 588, 632,
+        658, 659, 687, 712, 717, 741, 773, 809, 810, 833, 841, 863, 867, 868, 869, 870, 872, 884,
+        922, 935, 936, 937, 938, 984, 1000, 1001, 1007, 1034, 1037, 1044, 1045, 1048, 1054, 1061,
     ] {
         assert!(
             !update.unsupported_effect_types.contains(&effect_type),
@@ -111,6 +112,8 @@ fn assert_update_frontier(scenario: &str, update: &TriggerUpdate) {
     }
     if scenario == "PHXscn04" {
         assert!(!update.unsupported_effect_types.contains(&875));
+        assert_eq!(update.effects_skipped, 0);
+        assert!(update.skipped_effect_types.is_empty());
     }
 }
 
@@ -396,10 +399,31 @@ fn assert_presentation_state(scenario: &str, loaded: &LoadedGameScenario) {
     let world = &loaded.simulation.world;
     match scenario {
         "PHXscn01" => assert!(!world.hud_item_enabled(sim::HudItem::Resources)),
-        "PHXscn03" => assert_eq!(
-            world.minimap_rotation_degrees().to_bits(),
-            180.0_f32.to_bits()
-        ),
+        "PHXscn03" => {
+            assert_eq!(
+                world.minimap_rotation_degrees().to_bits(),
+                180.0_f32.to_bits()
+            );
+            assert!(world.chats_enabled());
+            let shake = world.camera_shake(1).expect("PHXscn03 camera shake");
+            assert_eq!(shake.strength().to_bits(), 2.0_f32.to_bits());
+            assert_eq!(shake.conservation_factor().to_bits(), 0.5_f32.to_bits());
+            let rumbles = world.rumble_requests(2).collect::<Vec<_>>();
+            let [rumble] = rumbles.as_slice() else {
+                panic!("PHXscn03 should start one player-two rumble, got {rumbles:?}");
+            };
+            assert_eq!(rumble.id(), 0);
+            assert_eq!(rumble.left().rumble_type(), Some("Fixed"));
+            assert_eq!(rumble.right().rumble_type(), Some("Fixed"));
+            assert_eq!(rumble.left().strength().to_bits(), 0.75_f32.to_bits());
+            assert_eq!(rumble.duration_seconds().to_bits(), 1.0_f32.to_bits());
+            assert!(!rumble.looped());
+            assert!(rumble.pattern().is_none());
+            for player_id in 1..world.player_count() {
+                let player_id = u8::try_from(player_id).unwrap();
+                assert!(world.objective_pointers(player_id).next().is_none());
+            }
+        }
         "PHXscn04" => assert!(!world.render_terrain_skirt_enabled()),
         "PHXscn05" => assert_eq!(
             world.minimap_rotation_degrees().to_bits(),
@@ -539,6 +563,32 @@ fn assert_objective_state(scenario: &str, loaded: &LoadedGameScenario) {
 
 fn assert_entity_visual_state(scenario: &str, loaded: &LoadedGameScenario) {
     let world = &loaded.simulation.world;
+    if scenario == "PHXscn03" {
+        for (scenario_id, animation_type, output_id) in
+            [(1958, "Death", 4548), (616, "Research", 7371)]
+        {
+            let entity_id = loaded
+                .simulation
+                .get_entity_id(scenario_id)
+                .unwrap_or_else(|| panic!("PHXscn03 scenario object {scenario_id}"));
+            let animation = world
+                .entity_scripted_animation(entity_id)
+                .unwrap_or_else(|| panic!("PHXscn03 {animation_type} animation"));
+            assert_eq!(animation.animation_type(), animation_type);
+            assert!(animation.asset_path().is_some());
+            assert_eq!(animation.duration_ms(), 2_000);
+            assert_eq!(
+                animation.normalized_position(world.game_time()).to_bits(),
+                0.0_f32.to_bits()
+            );
+            let output = world
+                .trigger_engine()
+                .get_script(1)
+                .and_then(|script| script.get_variable(output_id))
+                .map(|variable| &variable.value);
+            assert_eq!(output, Some(&TriggerValue::Time(2_000)));
+        }
+    }
     if scenario == "PHXscn01" {
         let flashes = world
             .units
@@ -574,6 +624,74 @@ fn assert_entity_visual_state(scenario: &str, loaded: &LoadedGameScenario) {
             policies
                 .iter()
                 .all(|policy| policy.visibility_update_pending())
+        );
+    }
+}
+
+fn assert_icon_state(scenario: &str, loaded: &LoadedGameScenario) {
+    match scenario {
+        "PHXscn04" => assert_phx04_location_icons(loaded),
+        "PHXscn14" => assert_phx14_attached_icons(loaded),
+        _ => {}
+    }
+}
+
+fn assert_phx04_location_icons(loaded: &LoadedGameScenario) {
+    let world = &loaded.simulation.world;
+    let script = world
+        .trigger_engine()
+        .get_script(1)
+        .expect("PHXscn04 scenario trigger script");
+    let mut outputs = Vec::new();
+    for output_id in [19593, 19594] {
+        let Some(TriggerValue::Object(icon_id)) = script
+            .get_variable(output_id)
+            .map(|variable| &variable.value)
+        else {
+            panic!("PHXscn04 icon output {output_id}")
+        };
+        assert_ne!(*icon_id, sim::EntityId::INVALID);
+        assert_eq!(icon_id.class(), Some(sim::EntityClass::Object));
+        assert!(
+            world.get_object(*icon_id).is_none(),
+            "PHXscn04 Init destroys each temporary RunTo icon after creating it"
+        );
+        outputs.push(*icon_id);
+    }
+    assert_ne!(outputs[0], outputs[1]);
+}
+
+fn assert_phx14_attached_icons(loaded: &LoadedGameScenario) {
+    let world = &loaded.simulation.world;
+    let Some(TriggerValue::Squad(squad_id)) = world
+        .trigger_engine()
+        .get_script(1)
+        .and_then(|script| script.get_variable(2140))
+        .map(|variable| &variable.value)
+    else {
+        panic!("PHXscn14 FTLCoreSquad output")
+    };
+    let squad = world
+        .get_squad(*squad_id)
+        .expect("PHXscn14 FTLCoreSquad should remain live");
+    assert!(!squad.unit_ids.is_empty());
+    for unit_id in &squad.unit_ids {
+        let [attachment_id] = world
+            .entity_object_state(*unit_id)
+            .expect("PHXscn14 FTL child object state")
+            .attachments()
+        else {
+            panic!("PHXscn14 FTL child should own one icon attachment")
+        };
+        let attachment = world
+            .get_object(*attachment_id)
+            .expect("PHXscn14 live icon attachment");
+        assert_eq!(attachment.proto_object_name, "sys_icon_27_01");
+        assert!(attachment.icon().is_some());
+        assert_eq!(attachment.object_state.attached_to(), Some(*unit_id));
+        assert_eq!(
+            attachment.base.position,
+            world.get_unit(*unit_id).unwrap().base.position
         );
     }
 }
@@ -652,6 +770,8 @@ struct CampaignCoverage {
     dopple_policy_units: usize,
     tower_wall_actions: usize,
     hint_callouts: usize,
+    icon_objects: usize,
+    attached_objects: usize,
 }
 
 impl CampaignCoverage {
@@ -713,6 +833,23 @@ impl CampaignCoverage {
             usize::from(loaded.simulation.world.scenario_score_info().is_some());
         self.design_lines += loaded.simulation.world.design_line_count();
         self.objectives += loaded.simulation.world.objectives().count();
+        self.include_unit_state(loaded);
+        self.include_object_state(loaded);
+        self.granted_powers += loaded
+            .simulation
+            .world
+            .players()
+            .map(|player| player.power_entries().len())
+            .sum::<usize>();
+        self.modified_prototypes += loaded
+            .simulation
+            .world
+            .players()
+            .map(|player| player.technologies.runtime_proto_modification_count())
+            .sum::<usize>();
+    }
+
+    fn include_unit_state(&mut self, loaded: &LoadedGameScenario) {
         self.flashed_units += loaded
             .simulation
             .world
@@ -768,31 +905,36 @@ impl CampaignCoverage {
                 .filter(|(_, unit)| unit.proto_object_name.eq_ignore_ascii_case(prototype_name))
                 .count();
         }
-        for (object_id, object) in loaded.simulation.world.objects.iter() {
-            assert!(
-                object.revealer().is_some(),
-                "campaign class-0 object {object_id:?} should expose authoritative revealer state"
-            );
-        }
-        self.revealers += loaded.simulation.world.objects.len();
-        self.granted_powers += loaded
-            .simulation
-            .world
-            .players()
-            .map(|player| player.power_entries().len())
-            .sum::<usize>();
-        self.modified_prototypes += loaded
-            .simulation
-            .world
-            .players()
-            .map(|player| player.technologies.runtime_proto_modification_count())
-            .sum::<usize>();
         self.modified_unit_scalars += loaded
             .simulation
             .world
             .units
             .iter()
             .filter(|(_, unit)| unit_has_modified_scalar(unit))
+            .count();
+    }
+
+    fn include_object_state(&mut self, loaded: &LoadedGameScenario) {
+        for (object_id, object) in loaded.simulation.world.objects.iter() {
+            assert!(
+                object.revealer().is_some() || object.icon().is_some() || object.is_visual(),
+                "campaign class-0 object {object_id:?} should expose a supported sim kind"
+            );
+        }
+        self.icon_objects += loaded.simulation.world.icon_objects().count();
+        self.attached_objects += loaded
+            .simulation
+            .world
+            .objects
+            .iter()
+            .filter(|(_, object)| object.object_state.attached_to().is_some())
+            .count();
+        self.revealers += loaded
+            .simulation
+            .world
+            .objects
+            .iter()
+            .filter(|(_, object)| object.revealer().is_some())
             .count();
     }
 
@@ -825,6 +967,8 @@ impl CampaignCoverage {
         assert!(self.dopple_policy_units > 0);
         assert!(self.tower_wall_actions > 0);
         assert!(self.hint_callouts > 0);
+        assert!(self.icon_objects > 0);
+        assert!(self.attached_objects > 0);
     }
 }
 

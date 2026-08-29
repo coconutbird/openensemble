@@ -1,7 +1,12 @@
 #[path = "scenario_asset_loading/catalog_assertions.rs"]
 mod catalog_assertions;
+#[path = "scenario_asset_loading/combat_assertions.rs"]
+mod combat_assertions;
 
 use catalog_assertions::assert_loaded_gameplay_catalog;
+use combat_assertions::{
+    damaged_squad_member_count, squad_member_hitpoint_snapshot, squad_member_hitpoints,
+};
 use sim::entities::squads::marine::MARINE_SQUAD_NAME;
 use sim::{
     AttackQuery, BuildingCommand, CommandEntry, CommandExecutor, LoadedGameScenario, MS_PER_TICK,
@@ -857,6 +862,8 @@ fn assert_real_marine_rocket_recovery(
 ) {
     let command_id = database_ability_id(&loaded.content.database, "Command");
     let rocket_id = database_ability_id(&loaded.content.database, "UnscMarineRockets");
+    let (target_member_ids, initial_target_hitpoints) =
+        squad_member_hitpoint_snapshot(&loaded.simulation.world, target_squad_id);
     let mut command = WorkCommand::attack_squads(
         i32::from(attacker_player_id),
         vec![attacker_squad_id],
@@ -870,6 +877,7 @@ fn assert_real_marine_rocket_recovery(
     );
 
     let mut saw_rocket_action = false;
+    let mut damaged_member_count = 0;
     for _ in 0..600 {
         clock.tick_with_scenario(&mut loaded.simulation, &loaded.content.database);
         let squad = loaded
@@ -885,7 +893,12 @@ fn assert_real_marine_rocket_recovery(
                 .and_then(|unit| unit.combat.action_name())
                 .is_some_and(|action| action.eq_ignore_ascii_case("RocketAttackAction"))
         });
-        if squad.recovery.is_recovering() {
+        damaged_member_count = damaged_squad_member_count(
+            &loaded.simulation.world,
+            &target_member_ids,
+            &initial_target_hitpoints,
+        );
+        if squad.recovery.is_recovering() && damaged_member_count >= 2 {
             break;
         }
     }
@@ -900,6 +913,10 @@ fn assert_real_marine_rocket_recovery(
     assert_eq!(squad.recovery.ability_id(), Some(rocket_id));
     assert!(squad.recovery.remaining() > 0.0);
     assert!(squad.recovery.remaining() <= 20.0);
+    assert!(
+        damaged_member_count >= 2,
+        "Marine rocket AOE should damage multiple authoritative squad members"
+    );
 
     let previous_target = squad.attack_target;
     let (target_player_id, target_position) = loaded
@@ -953,12 +970,4 @@ fn database_ability_id(database: &pipeline::database::hw1::Database, name: &str)
         .position(|ability| ability.name.eq_ignore_ascii_case(name))
         .and_then(|index| u8::try_from(index).ok())
         .unwrap_or_else(|| panic!("real database should contain ability {name}"))
-}
-
-fn squad_member_hitpoints(world: &sim::World, member_ids: &[sim::EntityId]) -> f32 {
-    member_ids
-        .iter()
-        .filter_map(|&unit_id| world.get_unit(unit_id))
-        .map(|unit| unit.hitpoints)
-        .sum()
 }

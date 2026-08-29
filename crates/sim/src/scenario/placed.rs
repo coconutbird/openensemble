@@ -2,12 +2,13 @@
 
 use super::{
     PlacedUnitKind, ScenarioObject, classify_proto_object, configure_unit_from_proto,
-    create_scenario_squad, create_scenario_unit, database_id, find_proto_object, find_proto_squad,
+    create_scenario_squad, database_id, find_proto_object, find_proto_squad, is_class_zero_object,
     refresh_squad_member_settings, scenario_forward, scenario_position, valid_nonnegative,
 };
+use crate::entities::objects::is_icon_prototype;
 use crate::entities::squads::marine::is_marine_squad;
 use crate::entities::squads::warthog::{WarthogSquadSpec, is_warthog_squad};
-use crate::entities::{SquadArchetype, SquadFormation};
+use crate::entities::{IconObject, Object, SquadArchetype, SquadFormation};
 use crate::{EntityId, World};
 use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad};
 
@@ -28,9 +29,15 @@ pub(super) fn create_scenario_object(
         return Some(create_scenario_squad(world, object, database));
     }
     let (prototype_index, prototype) = find_proto_object(database, object.proto_name.trim())?;
-    if classify_proto_object(prototype).is_none() {
-        return create_scenario_unit(world, object, database);
+    if is_class_zero_object(prototype) {
+        return Some(create_class_zero_object(
+            world,
+            object,
+            prototype_index,
+            prototype,
+        ));
     }
+    classify_proto_object(prototype)?;
     create_proto_object_squad(
         world,
         database,
@@ -44,6 +51,41 @@ pub(super) fn create_scenario_object(
         },
     )
     .map(|(squad_id, _)| squad_id)
+}
+
+fn create_class_zero_object(
+    world: &mut World,
+    placement: &ScenarioObject,
+    prototype_index: usize,
+    prototype: &ProtoObject,
+) -> EntityId {
+    let id = world.objects.allocate_id();
+    let owner = u8::try_from(placement.player).unwrap_or_default();
+    let position = scenario_position(placement);
+    let forward = scenario_forward(placement);
+    let prototype_id = database_id(prototype.dbid, prototype_index);
+    let object = if is_icon_prototype(prototype) {
+        Object::new_icon(
+            id,
+            owner,
+            position,
+            forward,
+            prototype_id,
+            prototype.name.clone(),
+            IconObject::from_prototype(prototype, None, false),
+        )
+    } else {
+        Object::new_visual(
+            id,
+            owner,
+            position,
+            forward,
+            prototype_id,
+            prototype.name.clone(),
+        )
+    };
+    world.objects.insert(id, object);
+    id
 }
 
 pub(crate) fn create_trigger_unit_squad(
