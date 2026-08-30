@@ -39,6 +39,32 @@ impl World {
         requested_target_id: EntityId,
         ability_id: Option<u8>,
     ) -> bool {
+        self.issue_join_order_internal(
+            player_id,
+            source_squad_id,
+            requested_target_id,
+            ability_id,
+            false,
+        )
+    }
+
+    pub(crate) fn issue_auto_join_order(
+        &mut self,
+        player_id: PlayerId,
+        source_squad_id: EntityId,
+        requested_target_id: EntityId,
+    ) -> bool {
+        self.issue_join_order_internal(player_id, source_squad_id, requested_target_id, None, true)
+    }
+
+    fn issue_join_order_internal(
+        &mut self,
+        player_id: PlayerId,
+        source_squad_id: EntityId,
+        requested_target_id: EntityId,
+        ability_id: Option<u8>,
+        allow_multiple: bool,
+    ) -> bool {
         let Some(target_squad_id) = self.join_target_squad(requested_target_id) else {
             return false;
         };
@@ -48,10 +74,13 @@ impl World {
         {
             return false;
         }
+        let _cancelled = self.cancel_capture_order(source_squad_id);
+        let _repair_cancelled = self.cancel_repair_other_order(source_squad_id);
         let Some(source) = self.squads.get_mut(source_squad_id) else {
             return false;
         };
-        source.begin_join(target_squad_id, ability_id);
+        source.begin_join(target_squad_id, ability_id, allow_multiple);
+        self.cancel_incoming_power_transport(source_squad_id);
         true
     }
 
@@ -129,8 +158,12 @@ impl World {
             .squads
             .get(source_squad_id)
             .is_some_and(Squad::join_is_connected);
-        let in_range =
-            self.update_join_follow(source_squad_id, target.position, action.work_range());
+        let in_range = self.update_join_follow(
+            source_squad_id,
+            target_squad_id,
+            target.position,
+            action.work_range(),
+        );
         if !connected
             && (!in_range
                 || !self.connect_follow_join(
@@ -169,9 +202,12 @@ impl World {
     fn update_join_follow(
         &mut self,
         source_squad_id: EntityId,
+        target_squad_id: EntityId,
         target_position: Vec3,
         work_range: f32,
     ) -> bool {
+        let source_radius = self.squad_obstruction_radius(source_squad_id);
+        let target_radius = self.squad_obstruction_radius(target_squad_id);
         let Some(source) = self.squads.get_mut(source_squad_id) else {
             return false;
         };
@@ -180,7 +216,8 @@ impl World {
             0.0,
             target_position.z - source.base.position.z,
         );
-        let in_range = delta.length_squared() <= work_range.max(0.0).powi(2);
+        let surface_distance = delta.length() - source_radius - target_radius;
+        let in_range = surface_distance <= work_range.max(0.0);
         source.follow_join_target(target_position, work_range);
         in_range
     }
@@ -477,6 +514,13 @@ impl World {
         target_squad_id: EntityId,
         merge_type: JoinMergeType,
     ) -> bool {
+        if self
+            .squads
+            .get(source_squad_id)
+            .is_some_and(Squad::join_allows_multiple)
+        {
+            return false;
+        }
         self.squads
             .get(target_squad_id)
             .and_then(Squad::merge_state)

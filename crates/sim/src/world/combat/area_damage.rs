@@ -75,7 +75,17 @@ impl World {
                 )
             });
         };
-        self.apply_area_damage(attack, profile, gameplay)
+        self.apply_area_damage(attack, profile, gameplay, false)
+    }
+
+    pub(super) fn apply_attack_splash_after_pull(
+        &mut self,
+        attack: &AttackDamage,
+        gameplay: &GameplayCatalog,
+    ) -> f32 {
+        attack.area_damage.map_or(0.0, |profile| {
+            self.apply_area_damage(attack, profile, Some(gameplay), true)
+        })
     }
 
     fn apply_area_damage(
@@ -83,14 +93,25 @@ impl World {
         attack: &AttackDamage,
         profile: AreaDamageProfile,
         gameplay: Option<&GameplayCatalog>,
+        suppress_primary: bool,
     ) -> f32 {
-        let primary = self.apply_primary_area_damage(attack, profile, gameplay);
+        let primary = if suppress_primary {
+            PrimaryDamage::default()
+        } else {
+            self.apply_primary_area_damage(attack, profile, gameplay)
+        };
         let attribution = DamageAttribution::combat(attack.attacker_id, attack.attacker_player_id);
         let splash_pool = attack.primary_target_id.map_or(attack.damage, |_| {
             (1.0 - profile.primary_target_factor) * attack.damage
         });
         let external_shield = self.primary_external_shield_volume(attack.primary_target_id);
-        let mut candidates = self.area_damage_candidates(attack, profile, primary, external_shield);
+        let mut candidates = self.area_damage_candidates(
+            attack,
+            profile,
+            primary,
+            external_shield,
+            suppress_primary,
+        );
         let mut total = primary.dealt;
         total += self.apply_uncapped_gaia_damage(
             &candidates.uncapped_gaia,
@@ -156,9 +177,13 @@ impl World {
         profile: AreaDamageProfile,
         primary: PrimaryDamage,
         external_shield: Option<ExternalShieldVolume>,
+        suppress_primary: bool,
     ) -> AreaCandidates {
         let mut candidates = AreaCandidates::default();
         for (id, unit) in self.units.iter() {
+            if suppress_primary && attack.primary_target_id == Some(id) {
+                continue;
+            }
             if !self.is_area_damage_candidate(
                 id,
                 unit,

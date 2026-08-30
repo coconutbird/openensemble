@@ -3,8 +3,7 @@
 use super::{World, flight_forward, normalized_forward};
 use crate::EntityId;
 use crate::entities::squads::{
-    PowerTransportPhase, SquadContainmentState, SquadPowerTransport,
-    SquadPowerTransportPlan,
+    PowerTransportPhase, SquadContainmentState, SquadPowerTransport, SquadPowerTransportPlan,
 };
 use crate::entities::{SquadState, UnitState};
 use crate::entity::Entity;
@@ -38,9 +37,11 @@ impl World {
         else {
             return false;
         };
-        if !plan.passenger_squad_ids.iter().all(|passenger_id| {
-            self.power_transport_passenger_is_ready(*passenger_id, player_id)
-        }) {
+        if !plan
+            .passenger_squad_ids
+            .iter()
+            .all(|passenger_id| self.power_transport_passenger_is_ready(*passenger_id, player_id))
+        {
             return false;
         }
 
@@ -59,21 +60,27 @@ impl World {
                 passenger.base.velocity = Vec3::ZERO;
             }
         }
-        self.place_squad_members(
-            transport_squad_id,
-            plan.start_position,
-            forward,
-            true,
-        );
+        self.place_squad_members(transport_squad_id, plan.start_position, forward, true);
         true
     }
 
     pub(crate) fn squad_has_power_transport_reservation(&self, squad_id: EntityId) -> bool {
         self.squads.iter().any(|(_, carrier)| {
             carrier.power_transport.as_ref().is_some_and(|action| {
-                action.passenger_squad_ids().binary_search(&squad_id).is_ok()
+                action
+                    .passenger_squad_ids()
+                    .binary_search(&squad_id)
+                    .is_ok()
             })
         })
+    }
+
+    pub(crate) fn cancel_incoming_power_transport(&mut self, squad_id: EntityId) {
+        for (_, carrier) in self.squads.iter_mut() {
+            if let Some(action) = &mut carrier.power_transport {
+                let _removed = action.remove_pending_passenger(squad_id);
+            }
+        }
     }
 
     pub(super) fn update_power_transport_flights(&mut self, dt: f32) {
@@ -103,11 +110,7 @@ impl World {
         }
     }
 
-    fn power_transport_passenger_is_ready(
-        &self,
-        passenger_id: EntityId,
-        player_id: u8,
-    ) -> bool {
+    fn power_transport_passenger_is_ready(&self, passenger_id: EntityId, player_id: u8) -> bool {
         self.get_squad(passenger_id).is_some_and(|passenger| {
             passenger.is_alive()
                 && passenger.base.player_id == player_id
@@ -117,9 +120,8 @@ impl World {
     }
 
     fn load_power_transport(&mut self, transport_squad_id: EntityId) {
-        let Some((passenger_ids, container_unit_id, position, forward, player_id)) = self
-            .get_squad(transport_squad_id)
-            .and_then(|transport| {
+        let Some((passenger_ids, container_unit_id, position, forward, player_id)) =
+            self.get_squad(transport_squad_id).and_then(|transport| {
                 Some((
                     transport
                         .power_transport
@@ -207,9 +209,8 @@ impl World {
     }
 
     fn unload_power_transport(&mut self, transport_squad_id: EntityId) {
-        let Some((passenger_ids, dropoff, forward)) = self
-            .get_squad(transport_squad_id)
-            .and_then(|transport| {
+        let Some((passenger_ids, dropoff, forward)) =
+            self.get_squad(transport_squad_id).and_then(|transport| {
                 Some((
                     transport
                         .power_transport
@@ -231,8 +232,8 @@ impl World {
             .unwrap_or(f32::MAX)
             * 0.5;
         for (index, passenger_id) in passenger_ids.into_iter().enumerate() {
-            let mut position = dropoff
-                + right * ((index.to_f32().unwrap_or(f32::MAX) - center) * 4.0);
+            let mut position =
+                dropoff + right * ((index.to_f32().unwrap_or(f32::MAX) - center) * 4.0);
             if let Some(height) = self.terrain_height(position, true) {
                 position.y = height;
             }

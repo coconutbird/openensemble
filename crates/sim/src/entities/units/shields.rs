@@ -2,6 +2,10 @@
 
 use crate::sync::SyncChecksum;
 
+mod presentation;
+
+pub use presentation::{EnergyShieldPhase, EnergyShieldPresentationKind, UnitEnergyShieldAction};
+
 /// Shield coverage authored by a proto object's `DamageType` entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
@@ -16,7 +20,7 @@ pub enum ShieldCoverage {
 }
 
 /// Runtime energy-shield values and recharge-action state.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct UnitShields {
     /// Shield coverage supplied by the proto object.
     pub coverage: ShieldCoverage,
@@ -29,6 +33,7 @@ pub struct UnitShields {
     recharge_requested: bool,
     seconds_since_damage: Option<f32>,
     recharge_time_remaining: f32,
+    visual_actions: Vec<UnitEnergyShieldAction>,
 }
 
 impl Default for UnitShields {
@@ -42,6 +47,7 @@ impl Default for UnitShields {
             recharge_requested: false,
             seconds_since_damage: None,
             recharge_time_remaining: 0.0,
+            visual_actions: Vec::new(),
         }
     }
 }
@@ -63,7 +69,7 @@ impl UnitShields {
 
     /// Return whether the proto object supplies an integral shield.
     #[must_use]
-    pub fn is_enabled(self) -> bool {
+    pub fn is_enabled(&self) -> bool {
         self.coverage != ShieldCoverage::None
     }
 
@@ -96,7 +102,7 @@ impl UnitShields {
         self.regen_delay_scalar = valid_nonnegative(delay).unwrap_or(1.0);
     }
 
-    pub(crate) fn regen_delay_scalar(self) -> f32 {
+    pub(crate) fn regen_delay_scalar(&self) -> f32 {
         self.regen_delay_scalar
     }
 
@@ -173,7 +179,7 @@ impl UnitShields {
         }
     }
 
-    pub(crate) fn hash_state(self, checksum: &mut SyncChecksum) {
+    pub(crate) fn hash_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_u32(self.coverage as u32);
         checksum.hash_f32(self.current);
         checksum.hash_f32(self.maximum);
@@ -182,6 +188,7 @@ impl UnitShields {
         checksum.hash_u32(u32::from(self.recharge_requested));
         checksum.hash_f32(self.seconds_since_damage.unwrap_or(-1.0));
         checksum.hash_f32(self.recharge_time_remaining);
+        self.hash_energy_shield_actions(checksum);
     }
 }
 

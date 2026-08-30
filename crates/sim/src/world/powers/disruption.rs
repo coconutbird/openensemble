@@ -135,6 +135,27 @@ pub(super) fn disrupting_power_circle(
         .map(DisruptionPowerExecution::id)
 }
 
+pub(super) fn disrupting_power_segment(
+    world: &World,
+    source_attributes: &PowerAttributes,
+    start: Vec3,
+    end: Vec3,
+) -> Option<PowerExecutionId> {
+    if source_attributes.not_disruptable.unwrap_or(false) {
+        return None;
+    }
+    world
+        .power_manager
+        .disruption_executions
+        .iter()
+        .find(|execution| {
+            execution.is_active()
+                && planar_point_segment_distance_squared(execution.target_location, start, end)
+                    < execution.radius * execution.radius
+        })
+        .map(DisruptionPowerExecution::id)
+}
+
 fn create_execution(
     world: &mut World,
     database: &Database,
@@ -275,6 +296,19 @@ fn planar_distance_squared(left: Vec3, right: Vec3) -> f32 {
     let x = left.x - right.x;
     let z = left.z - right.z;
     x.mul_add(x, z * z)
+}
+
+fn planar_point_segment_distance_squared(point: Vec3, start: Vec3, end: Vec3) -> f32 {
+    let point = Vec3::new(point.x, 0.0, point.z);
+    let start = Vec3::new(start.x, 0.0, start.z);
+    let end = Vec3::new(end.x, 0.0, end.z);
+    let segment = end - start;
+    let length_squared = segment.length_squared();
+    if length_squared <= f32::EPSILON {
+        return point.distance_squared(start);
+    }
+    let fraction = ((point - start).dot(segment) / length_squared).clamp(0.0, 1.0);
+    point.distance_squared(start + segment * fraction)
 }
 
 #[cfg(test)]

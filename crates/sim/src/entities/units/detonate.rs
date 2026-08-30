@@ -1,5 +1,9 @@
 //! Checksummed per-unit `BUnitActionDetonate` state.
 
+mod bomb;
+
+pub use bomb::BombPhase;
+
 use super::Unit;
 use crate::player::PlayerId;
 use crate::sync::SyncChecksum;
@@ -38,6 +42,7 @@ pub(crate) struct UnitDetonation {
 /// Per-unit state retained while its squad is glowing or an action is active.
 #[derive(Debug, Clone)]
 pub(crate) struct UnitDetonate {
+    bomb: bomb::UnitBomb,
     action_name: Option<String>,
     phase: UnitDetonatePhase,
     velocity_scalar: f32,
@@ -53,6 +58,7 @@ pub(crate) struct UnitDetonate {
 impl Default for UnitDetonate {
     fn default() -> Self {
         Self {
+            bomb: bomb::UnitBomb::default(),
             action_name: None,
             phase: UnitDetonatePhase::Inactive,
             velocity_scalar: 1.0,
@@ -147,6 +153,12 @@ impl UnitDetonate {
             .flatten()
     }
 
+    fn force(&mut self) -> Option<UnitDetonation> {
+        (self.phase != UnitDetonatePhase::Inactive)
+            .then(|| self.take_detonation())
+            .flatten()
+    }
+
     fn physics_collision(&mut self, projected_velocity: f32) {
         let activates = self
             .physics_trigger_threshold
@@ -181,6 +193,7 @@ impl UnitDetonate {
     }
 
     fn hash_state(&self, checksum: &mut SyncChecksum) {
+        self.bomb.hash_state(checksum);
         checksum.hash_u32(self.phase as u32);
         checksum.hash_f32(self.velocity_scalar);
         hash_optional_string(checksum, self.action_name.as_deref());
@@ -246,6 +259,10 @@ impl Unit {
 
     pub(crate) fn notify_detonate_death(&mut self) -> Option<UnitDetonation> {
         self.detonate.notify_death()
+    }
+
+    pub(crate) fn force_detonate_action(&mut self) -> Option<UnitDetonation> {
+        self.detonate.force()
     }
 
     pub(crate) fn notify_detonate_physics_collision(&mut self, projected_velocity: f32) {

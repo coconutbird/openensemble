@@ -7,6 +7,8 @@ use crate::gameplay::GameplayCatalog;
 use crate::player::PlayerId;
 use glam::Vec3;
 
+mod presentation;
+
 impl World {
     /// Apply already-modified damage and emit the unit/squad damage event.
     ///
@@ -41,6 +43,7 @@ impl World {
         damage: f32,
         direction: Option<Vec3>,
     ) -> bool {
+        let was_alive = self.units.get(unit_id).is_some_and(Entity::is_alive);
         let damaged = self
             .units
             .get_mut(unit_id)
@@ -49,6 +52,9 @@ impl World {
                 None => unit.damage(damage),
             });
         if damaged {
+            if was_alive && self.units.get(unit_id).is_some_and(|unit| !unit.is_alive()) {
+                self.recompute_unit_base_child_damage(unit_id);
+            }
             self.notify_unit_damaged(unit_id);
             if self
                 .units
@@ -69,6 +75,7 @@ impl World {
         gameplay: &GameplayCatalog,
     ) -> bool {
         let unit_id = self.resolve_damage_target(unit_id);
+        self.configure_air_avoidance_for_damage(unit_id, gameplay);
         let _configured = self.configure_unit_revival(unit_id, gameplay);
         self.damage_resolved_unit_oriented(unit_id, damage, Some(direction))
     }
@@ -111,6 +118,7 @@ impl World {
         override_revive: bool,
     ) -> bool {
         let unit_id = self.resolve_damage_target(unit_id);
+        self.configure_air_avoidance_for_damage(unit_id, gameplay);
         let _configured = self.configure_unit_revival(unit_id, gameplay);
         if override_revive
             && self
@@ -128,9 +136,18 @@ impl World {
         self.start_standalone_recharges(gameplay);
         self.advance_shield_recharges(dt, gameplay);
         self.advance_shield_damage_clocks(dt);
+        self.update_energy_shield_presentations(dt, gameplay);
     }
 
     pub(super) fn notify_unit_damaged(&mut self, unit_id: EntityId) {
+        self.notify_unit_cloak_damaged(unit_id);
+        if let Some(unit) = self.units.get_mut(unit_id) {
+            unit.notify_projectile_defense_damaged(self.game_time_ms);
+            let shieldpoints = unit.shields.current;
+            let alive = unit.is_alive();
+            unit.shields
+                .notify_energy_shield_actions_damaged(shieldpoints, alive);
+        }
         let squad_id = self.units.get(unit_id).and_then(|unit| unit.squad_id);
         if let Some(squad_id) = squad_id {
             if let Some(squad) = self.squads.get_mut(squad_id) {

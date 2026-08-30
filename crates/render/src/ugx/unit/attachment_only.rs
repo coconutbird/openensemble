@@ -1,9 +1,7 @@
 //! Visual graphs whose root contains effects but no UGX model asset.
 
-use super::{
-    LoadedUnit, UnitAttachment, UnitAttachmentKind, UnitAttachmentTrigger, UnitLoadError,
-    canonical_art_path,
-};
+use super::paths::canonical_art_path;
+use super::{LoadedUnit, UnitAttachment, UnitAttachmentKind, UnitAttachmentTrigger, UnitLoadError};
 use glam::Mat4;
 use pipeline::database::hw1::visual::{Attachment, Model as VisualModel};
 
@@ -61,6 +59,7 @@ fn direct_asset(
         sync_animations: false,
         trigger: UnitAttachmentTrigger::Persistent,
         anchor_transform: local_transform,
+        anchor_binding: None,
         target_bone_resolved: true,
     })
 }
@@ -90,6 +89,7 @@ fn append_authored(
             sync_animations: attachment.sync_anims.unwrap_or(false),
             trigger: trigger.clone(),
             anchor_transform: local_transform,
+            anchor_binding: None,
             target_bone_resolved: attachment.to_bone.is_none(),
         });
     }

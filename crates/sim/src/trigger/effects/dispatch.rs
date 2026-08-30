@@ -2,12 +2,12 @@
 
 use super::{
     ControlAction, Database, Effect, EffectOutcome, EffectType, GameplayCatalog, TriggerScript,
-    World, adjust_count, ai, ammunition, animations, attachments, commands, copy_value,
-    design_lines, economy, entities, entity_flags, entity_visuals, events, execute_control_effect,
-    filters, fog, forbids, game_state, health, icons, is_copy_effect, iterators, list_processing,
-    lists, math, objectives, orders, ownership, powers, presentation, proto_data, rally_points,
-    relationships, resources, revealers, set_teleporter, spatial, support, timers, tower_walls,
-    unit_data, value_lists, veterancy,
+    World, adjust_count, ai, ammunition, animations, attachments, carpet_bomb, commands,
+    copy_value, design_lines, economy, entities, entity_flags, entity_visuals, events,
+    execute_control_effect, filters, fog, forbids, game_state, health, icons, is_copy_effect,
+    iterators, list_processing, lists, math, objectives, orders, ownership, powers, presentation,
+    proto_data, rally_points, relationships, resources, revealers, set_teleporter, spatial,
+    support, timers, tower_walls, unit_data, value_lists, veterancy,
 };
 
 pub(crate) fn execute_effect(
@@ -36,6 +36,9 @@ pub(crate) fn execute_effect(
         return (outcome, None);
     }
     if let Some(outcome) = attachments::execute(effect, script, world, database) {
+        return (outcome, None);
+    }
+    if let Some(outcome) = carpet_bomb::execute(effect, script, world, database) {
         return (outcome, None);
     }
     if let Some(outcome) = icons::execute(effect, script, world, database) {
@@ -135,7 +138,7 @@ fn execute_world_effect(
         EffectType::GetOwner => ownership::get_owner(effect, script, world),
         EffectType::GetChildUnits => relationships::get_child_units(effect, script, world),
         EffectType::GetParentSquad => relationships::get_parent_squad(effect, script, world),
-        EffectType::Work => orders::work(effect, script, world, gameplay),
+        EffectType::Work => orders::work(effect, script, world, database, gameplay),
         EffectType::Repair => health::repair_or_damage(effect, script, world, true),
         EffectType::Damage => health::repair_or_damage(effect, script, world, false),
         EffectType::CombatDamage => health::combat_damage(effect, script, world, gameplay),

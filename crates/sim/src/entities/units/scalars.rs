@@ -135,13 +135,14 @@ impl Unit {
     }
 
     pub(crate) const fn effective_damage_multiplier(&self) -> f32 {
-        self.damage_multiplier * self.join_damage_multiplier
+        self.damage_multiplier * self.join_damage_multiplier * self.spirit_bond_damage_multiplier
     }
 
     pub(crate) const fn effective_damage_taken_multiplier(&self) -> f32 {
         self.damage_taken_multiplier
             * self.join_damage_taken_multiplier
             * self.cryo_damage_taken_modifier()
+            * self.child_object_damage_taken_multiplier()
     }
 
     pub(crate) const fn join_damage_multiplier(&self) -> f32 {
@@ -150,6 +151,16 @@ impl Unit {
 
     pub(crate) const fn join_damage_taken_multiplier(&self) -> f32 {
         self.join_damage_taken_multiplier
+    }
+
+    pub(crate) fn set_spirit_bond_damage_multiplier(&mut self, multiplier: f32) {
+        self.spirit_bond_damage_multiplier = multiplier;
+    }
+
+    /// Return the outgoing multiplier contributed by Hunter `SpiritBond`.
+    #[must_use]
+    pub const fn spirit_bond_damage_multiplier(&self) -> f32 {
+        self.spirit_bond_damage_multiplier
     }
 
     /// Read one live scalar exactly as retail exposes it for synchronization.

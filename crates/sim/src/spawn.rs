@@ -44,7 +44,7 @@ pub enum SpawnError {
     /// No squad prototype has the requested name.
     #[error("squad prototype '{0}' was not found")]
     SquadPrototypeNameNotFound(String),
-    /// The object prototype is not a mobile unit or building.
+    /// The object prototype is not a class-zero object, mobile unit, or building.
     #[error("object prototype database ID {0} is not spawnable")]
     ObjectPrototypeNotSpawnable(i32),
     /// A supplied position or facing contains non-finite values.
@@ -138,7 +138,7 @@ pub fn spawn_squads_at(
     Ok(spawned)
 }
 
-/// Spawn one fully configured mobile unit or building at a world transform.
+/// Spawn one fully configured class-zero object, mobile unit, or building.
 ///
 /// # Errors
 ///

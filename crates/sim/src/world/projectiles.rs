@@ -1,6 +1,7 @@
 //! Projectile-pool access and lifecycle integration.
 
 mod collision;
+mod defense;
 
 use super::World;
 use crate::entities::Projectile;

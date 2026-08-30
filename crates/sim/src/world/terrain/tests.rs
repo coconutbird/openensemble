@@ -45,6 +45,32 @@ fn logical_fingerprint_is_independent_of_xsd_byte_order() {
 }
 
 #[test]
+fn xsd_surface_queries_use_retail_row_major_clamping() {
+    let mut little_header = header(XsdEndian::Little, 8, 8, 1.0);
+    write_i32(&mut little_header[4..8], XsdEndian::Little, 4);
+    write_f32(&mut little_header[8..12], XsdEndian::Little, 2.0);
+    let heights = vec![0_u8; 8 * 8 * 2];
+    let tile_types = (0_u8..16).collect::<Vec<_>>();
+    let terrain =
+        TerrainSimulation::from_chunks_with_tile_types(&little_header, &heights, Some(&tile_types))
+            .unwrap();
+
+    assert_eq!(terrain.surface_type(Vec3::new(5.9, 20.0, 3.9)), Some(6));
+    assert_eq!(terrain.surface_type(Vec3::new(-1.9, 0.0, -1.9)), Some(0));
+    assert_eq!(terrain.surface_type(Vec3::new(500.0, 0.0, 500.0)), Some(15));
+    assert_eq!(terrain.surface_type(Vec3::splat(f32::NAN)), None);
+}
+
+#[test]
+fn xsd_surface_query_is_absent_when_synthetic_chunk_is_omitted() {
+    let header = header(XsdEndian::Little, 8, 8, 1.0);
+    let heights = vec![0_u8; 8 * 8 * 2];
+    let terrain = TerrainSimulation::from_chunks(&header, &heights).unwrap();
+
+    assert_eq!(terrain.surface_type(Vec3::ZERO), None);
+}
+
+#[test]
 fn projectile_segment_finds_the_retail_triangle_surface() {
     let header = header(XsdEndian::Little, 8, 8, 2.0);
     let mut heights = vec![0_u8; 8 * 8 * 2];

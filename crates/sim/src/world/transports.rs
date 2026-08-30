@@ -1,13 +1,23 @@
 //! Authoritative trigger-created carrier flight and passenger release.
 
 use super::World;
-use crate::entities::squads::{SquadTransportFlyIn, SquadTransportPlan, TransportFlyInPhase};
+use crate::entities::squads::{
+    SquadContainmentState, SquadTransportFlyIn, SquadTransportPlan, TransportFlyInPhase,
+};
 use crate::entities::{SquadState, UnitState};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use glam::Vec3;
+use num_traits::ToPrimitive;
+use std::collections::BTreeSet;
 
+mod planning;
 mod power;
+
+pub(crate) use planning::{
+    TransportGroupPlan, TransportGroupRequest, average_transport_position, plan_transport_groups,
+    transport_carrier_spacing,
+};
 
 impl World {
     /// Attach a newly created squad to a synthetic transport and start flight.
@@ -16,75 +26,90 @@ impl World {
         transport_squad_id: EntityId,
         plan: SquadTransportPlan,
     ) -> bool {
-        if transport_squad_id == plan.passenger_squad_id
-            || !transport_plan_is_finite(plan)
-            || self
-                .squads
-                .get(transport_squad_id)
-                .is_none_or(|squad| !squad.is_alive() || squad.transport_fly_in.is_some())
-        {
+        self.start_transport_fly_in_batch(vec![(transport_squad_id, plan)])
+    }
+
+    /// Atomically preload and launch one or more trigger-created carriers.
+    pub(crate) fn start_transport_fly_in_batch(
+        &mut self,
+        flights: Vec<(EntityId, SquadTransportPlan)>,
+    ) -> bool {
+        if !self.transport_fly_in_batch_is_valid(&flights) {
             return false;
         }
-        let Some((passenger_player_id, passenger_units)) = self
-            .squads
-            .get(plan.passenger_squad_id)
-            .filter(|squad| squad.is_alive() && !squad.garrison.is_garrisoned())
-            .map(|squad| (squad.base.player_id, squad.unit_ids.clone()))
-        else {
-            return false;
-        };
-        let Some((transport_player_id, container_unit_id, speed)) = self
+        for (transport_squad_id, plan) in flights {
+            self.start_validated_transport_fly_in(transport_squad_id, plan);
+        }
+        true
+    }
+
+    fn start_validated_transport_fly_in(
+        &mut self,
+        transport_squad_id: EntityId,
+        plan: SquadTransportPlan,
+    ) {
+        let passenger_squad_ids = plan.passenger_squad_ids.clone();
+        let (container_unit_id, speed) = self
             .squads
             .get(transport_squad_id)
-            .and_then(|squad| Some((squad.base.player_id, *squad.unit_ids.first()?, squad.speed)))
-        else {
-            return false;
-        };
-        if transport_player_id != passenger_player_id || passenger_units.is_empty() {
-            return false;
-        }
-
-        let flight_forward = flight_forward(plan.start_position, plan.incoming_target);
+            .and_then(|squad| Some((*squad.unit_ids.first()?, squad.speed)))
+            .expect("validated trigger transport carrier");
+        let start_position = plan.start_position;
+        let flight_forward = flight_forward(start_position, plan.incoming_target);
+        let action = SquadTransportFlyIn::new(plan, speed);
         if let Some(transport) = self.squads.get_mut(transport_squad_id) {
-            transport.base.position = plan.start_position;
+            transport.base.position = start_position;
             transport.base.forward = flight_forward;
             transport.base.velocity = Vec3::ZERO;
             transport.state = SquadState::Moving;
-            transport
-                .garrison
-                .add_contained_squad(plan.passenger_squad_id);
-            transport.transport_fly_in = Some(SquadTransportFlyIn::new(plan, speed));
+            for passenger_squad_id in &passenger_squad_ids {
+                transport.garrison.add_contained_squad(*passenger_squad_id);
+            }
+            transport.transport_fly_in = Some(action);
         }
-        for unit_id in &passenger_units {
-            if let Some(unit) = self.units.get_mut(*unit_id) {
+        for passenger_squad_id in passenger_squad_ids {
+            self.attach_trigger_transport_passenger(
+                passenger_squad_id,
+                container_unit_id,
+                start_position,
+                flight_forward,
+            );
+        }
+        self.place_squad_members(transport_squad_id, start_position, flight_forward, true);
+    }
+
+    fn attach_trigger_transport_passenger(
+        &mut self,
+        passenger_squad_id: EntityId,
+        container_unit_id: EntityId,
+        position: Vec3,
+        forward: Vec3,
+    ) {
+        let passenger_units = self
+            .squads
+            .get(passenger_squad_id)
+            .map_or_else(Vec::new, |squad| squad.unit_ids.clone());
+        for unit_id in passenger_units {
+            if let Some(unit) = self.units.get_mut(unit_id) {
                 unit.garrison.set_container(Some(container_unit_id));
                 unit.stop();
                 unit.state = UnitState::Idle;
             }
             if let Some(container) = self.units.get_mut(container_unit_id) {
-                container.garrison.add_contained_unit(*unit_id);
+                container.garrison.add_contained_unit(unit_id);
             }
         }
-        if let Some(passenger) = self.squads.get_mut(plan.passenger_squad_id) {
+        if let Some(passenger) = self.squads.get_mut(passenger_squad_id) {
             passenger.remove_all_orders();
-            passenger.base.position = plan.start_position;
+            passenger.base.position = position;
+            passenger.base.forward = forward;
+            passenger.base.velocity = Vec3::ZERO;
+            passenger.state = SquadState::Idle;
             passenger
                 .garrison
                 .mark_garrisoned(container_unit_id, self.game_time_ms);
         }
-        self.place_squad_members(
-            transport_squad_id,
-            plan.start_position,
-            flight_forward,
-            true,
-        );
-        self.place_squad_members(
-            plan.passenger_squad_id,
-            plan.start_position,
-            flight_forward,
-            false,
-        );
-        true
+        self.place_squad_members(passenger_squad_id, position, forward, false);
     }
 
     pub(crate) fn update_transport_fly_ins(&mut self, dt: f32) {
@@ -164,7 +189,6 @@ impl World {
         else {
             return;
         };
-        let passenger_squad_id = action.passenger_squad_id();
         let facing = action.facing().map_or_else(
             || {
                 self.squads
@@ -173,26 +197,26 @@ impl World {
             },
             normalized_forward,
         );
-        self.detach_passenger_refs(passenger_squad_id);
-        let player_id = self
-            .squads
-            .get(passenger_squad_id)
-            .map(|squad| squad.base.player_id);
-        if let Some(passenger) = self.squads.get_mut(passenger_squad_id) {
-            passenger.garrison.finish_action();
-            passenger.base.position = action.dropoff_position();
-            passenger.base.forward = facing;
-            passenger.base.velocity = Vec3::ZERO;
-            passenger.state = SquadState::Idle;
-        }
-        self.place_squad_members(passenger_squad_id, action.dropoff_position(), facing, true);
-        if let (Some(player_id), Some(rally_point)) = (player_id, action.rally_point()) {
-            let _issued = self.issue_squad_move_order_to_position(
-                player_id,
+        let passengers = action.passenger_squad_ids().to_vec();
+        let right = Vec3::Y.cross(facing).normalize_or(Vec3::X);
+        let center = passengers
+            .len()
+            .saturating_sub(1)
+            .to_f32()
+            .unwrap_or(f32::MAX)
+            * 0.5;
+        for (index, passenger_squad_id) in passengers.into_iter().enumerate() {
+            let lateral = index.to_f32().unwrap_or(f32::MAX) - center;
+            let mut position = action.dropoff_position() + right * (lateral * 4.0);
+            if let Some(height) = self.terrain_height(position, true) {
+                position.y = height;
+            }
+            self.release_trigger_transport_passenger(
                 passenger_squad_id,
-                rally_point,
+                position,
+                facing,
+                action.rally_point(),
                 action.attack_move(),
-                false,
             );
         }
         if let Some(transport) = self.squads.get_mut(transport_squad_id) {
@@ -202,9 +226,94 @@ impl World {
             transport.state = SquadState::Moving;
         }
     }
+
+    fn release_trigger_transport_passenger(
+        &mut self,
+        passenger_squad_id: EntityId,
+        position: Vec3,
+        facing: Vec3,
+        rally_point: Option<Vec3>,
+        attack_move: bool,
+    ) {
+        self.detach_passenger_refs(passenger_squad_id);
+        let player_id = self
+            .squads
+            .get(passenger_squad_id)
+            .map(|squad| squad.base.player_id);
+        if let Some(passenger) = self.squads.get_mut(passenger_squad_id) {
+            passenger.garrison.finish_action();
+            passenger.base.position = position;
+            passenger.base.forward = facing;
+            passenger.base.velocity = Vec3::ZERO;
+            passenger.state = SquadState::Idle;
+        }
+        self.place_squad_members(passenger_squad_id, position, facing, true);
+        if let (Some(player_id), Some(rally_point)) = (player_id, rally_point) {
+            let _issued = self.issue_squad_move_order_to_position(
+                player_id,
+                passenger_squad_id,
+                rally_point,
+                attack_move,
+                false,
+            );
+        }
+    }
+
+    fn transport_fly_in_batch_is_valid(&self, flights: &[(EntityId, SquadTransportPlan)]) -> bool {
+        if flights.is_empty() {
+            return false;
+        }
+        let carriers = flights
+            .iter()
+            .map(|(carrier_id, _)| *carrier_id)
+            .collect::<BTreeSet<_>>();
+        if carriers.len() != flights.len() {
+            return false;
+        }
+        let mut passengers = BTreeSet::new();
+        for (carrier_id, plan) in flights {
+            let Some(player_id) = self.trigger_transport_carrier_player(*carrier_id) else {
+                return false;
+            };
+            if plan.passenger_squad_ids.is_empty() || !transport_plan_is_finite(plan) {
+                return false;
+            }
+            for passenger_id in &plan.passenger_squad_ids {
+                if carriers.contains(passenger_id)
+                    || !passengers.insert(*passenger_id)
+                    || !self.trigger_transport_passenger_is_ready(*passenger_id, player_id)
+                {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn trigger_transport_carrier_player(&self, carrier_id: EntityId) -> Option<u8> {
+        self.squads.get(carrier_id).and_then(|carrier| {
+            (carrier.is_alive()
+                && carrier.transport_fly_in.is_none()
+                && carrier.power_transport.is_none()
+                && carrier
+                    .unit_ids
+                    .first()
+                    .is_some_and(|unit_id| self.units.contains(*unit_id)))
+            .then_some(carrier.base.player_id)
+        })
+    }
+
+    fn trigger_transport_passenger_is_ready(&self, passenger_id: EntityId, player_id: u8) -> bool {
+        self.squads.get(passenger_id).is_some_and(|passenger| {
+            passenger.is_alive()
+                && passenger.base.player_id == player_id
+                && !passenger.unit_ids.is_empty()
+                && matches!(passenger.garrison.state(), SquadContainmentState::Free)
+        })
+    }
 }
 
-fn transport_plan_is_finite(plan: SquadTransportPlan) -> bool {
+fn transport_plan_is_finite(plan: &SquadTransportPlan) -> bool {
     plan.start_position.is_finite()
         && plan.dropoff_position.is_finite()
         && plan.incoming_target.is_finite()

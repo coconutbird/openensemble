@@ -10,18 +10,34 @@ use glam::Vec3;
 use pipeline::database::hw1::{Database, Power};
 use thiserror::Error;
 
+mod carpet_bombing;
+mod cleansing;
 mod common;
 mod cryo;
 mod disruption;
+mod manager;
 mod odst;
+mod orbital;
+mod projectile;
 mod rage;
 mod repair;
 mod transport;
+mod wave;
 
+pub use carpet_bombing::{
+    CarpetBomb, CarpetBombingPhase, CarpetBombingPowerError, CarpetBombingPowerExecution,
+    CarpetBombingPowerInvocation,
+};
+pub use cleansing::{CleansingPowerError, CleansingPowerExecution, CleansingPowerInvocation};
 pub use odst::{OdstDrop, OdstPowerError, OdstPowerExecution, OdstPowerInvocation};
+pub use orbital::{OrbitalPowerError, OrbitalPowerExecution, OrbitalPowerInvocation, OrbitalShot};
 pub use rage::{RagePowerExecution, RagePowerPhase};
 pub use repair::RepairPowerExecution;
 pub use transport::{TransportPowerError, TransportPowerExecution, TransportPowerInvocation};
+pub use wave::{
+    WaveCapturedObject, WaveFakeObject, WaveGravityBallState, WavePowerError, WavePowerExecution,
+    WavePowerInvocation,
+};
 
 /// Stable simulation ID for one running native power execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -583,104 +599,21 @@ impl DisruptionPowerExecution {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(super) struct PowerVisualLifetime {
-    pub object_id: EntityId,
-    pub expires_at_ms: u32,
-}
-
-#[derive(Debug)]
-pub(super) struct PowerManagerState {
-    next_execution_id: u32,
-    cryo_executions: Vec<CryoPowerExecution>,
-    disruption_executions: Vec<DisruptionPowerExecution>,
-    odst_executions: Vec<OdstPowerExecution>,
-    rage_executions: Vec<RagePowerExecution>,
-    repair_executions: Vec<RepairPowerExecution>,
-    transport_executions: Vec<TransportPowerExecution>,
-    pending_rage_kills: Vec<rage::PendingRageKill>,
-    transient_visuals: Vec<PowerVisualLifetime>,
-}
-
-impl Default for PowerManagerState {
-    fn default() -> Self {
-        Self {
-            next_execution_id: 1,
-            cryo_executions: Vec::new(),
-            disruption_executions: Vec::new(),
-            odst_executions: Vec::new(),
-            rage_executions: Vec::new(),
-            repair_executions: Vec::new(),
-            transport_executions: Vec::new(),
-            pending_rage_kills: Vec::new(),
-            transient_visuals: Vec::new(),
-        }
-    }
-}
-
-impl PowerManagerState {
-    pub(super) fn allocate_id(&mut self) -> PowerExecutionId {
-        let id = PowerExecutionId(self.next_execution_id.max(1));
-        self.next_execution_id = id.0.wrapping_add(1).max(1);
-        id
-    }
-
-    pub(super) fn reset(&mut self) {
-        *self = Self::default();
-    }
-
-    pub(super) fn track_visual(&mut self, object_id: EntityId, expires_at_ms: u32) {
-        self.forget_visual(object_id);
-        self.transient_visuals.push(PowerVisualLifetime {
-            object_id,
-            expires_at_ms,
-        });
-    }
-
-    pub(super) fn forget_visual(&mut self, object_id: EntityId) {
-        self.transient_visuals
-            .retain(|visual| visual.object_id != object_id);
-    }
-
-    pub(super) fn hash_state(&self, checksum: &mut SyncChecksum) {
-        checksum.hash_u32(self.next_execution_id);
-        checksum.hash_u32(u32::try_from(self.cryo_executions.len()).unwrap_or(u32::MAX));
-        for execution in &self.cryo_executions {
-            execution.hash_state(checksum);
-        }
-        checksum.hash_u32(u32::try_from(self.disruption_executions.len()).unwrap_or(u32::MAX));
-        for execution in &self.disruption_executions {
-            execution.hash_state(checksum);
-        }
-        checksum.hash_u32(u32::try_from(self.odst_executions.len()).unwrap_or(u32::MAX));
-        for execution in &self.odst_executions {
-            execution.hash_state(checksum);
-        }
-        checksum.hash_u32(u32::try_from(self.rage_executions.len()).unwrap_or(u32::MAX));
-        for execution in &self.rage_executions {
-            execution.hash_state(checksum);
-        }
-        checksum.hash_u32(u32::try_from(self.repair_executions.len()).unwrap_or(u32::MAX));
-        for execution in &self.repair_executions {
-            execution.hash_state(checksum);
-        }
-        checksum.hash_u32(u32::try_from(self.transport_executions.len()).unwrap_or(u32::MAX));
-        for execution in &self.transport_executions {
-            execution.hash_state(checksum);
-        }
-        checksum.hash_u32(u32::try_from(self.pending_rage_kills.len()).unwrap_or(u32::MAX));
-        for killed in &self.pending_rage_kills {
-            killed.hash_state(checksum);
-        }
-        checksum.hash_u32(u32::try_from(self.transient_visuals.len()).unwrap_or(u32::MAX));
-        for visual in &self.transient_visuals {
-            checksum.hash_u32(visual.object_id.as_u32());
-            checksum.hash_u32(visual.expires_at_ms);
-        }
-    }
-}
+pub(super) use manager::PowerManagerState;
 
 impl World {
+    /// Running Carpet Bombing sessions and bomb fuses are authoritative sim state.
+    #[must_use]
+    pub fn active_carpet_bombing_powers(&self) -> &[CarpetBombingPowerExecution] {
+        &self.power_manager.carpet_bombing_executions
+    }
+
+    /// Running Cleansing beams, upkeep, and damage ticks are authoritative sim state.
+    #[must_use]
+    pub fn active_cleansing_powers(&self) -> &[CleansingPowerExecution] {
+        &self.power_manager.cleansing_executions
+    }
+
     /// Running Cryo powers are renderer-facing projections of simulation state.
     #[must_use]
     pub fn active_cryo_powers(&self) -> &[CryoPowerExecution] {
@@ -699,6 +632,12 @@ impl World {
         &self.power_manager.odst_executions
     }
 
+    /// Running Orbital targeting sessions and shot queues are authoritative sim state.
+    #[must_use]
+    pub fn active_orbital_powers(&self) -> &[OrbitalPowerExecution] {
+        &self.power_manager.orbital_executions
+    }
+
     /// Running Rage actions are authoritative squad and unit state.
     #[must_use]
     pub fn active_rage_powers(&self) -> &[RagePowerExecution] {
@@ -715,6 +654,12 @@ impl World {
     #[must_use]
     pub fn active_transport_powers(&self) -> &[TransportPowerExecution] {
         &self.power_manager.transport_executions
+    }
+
+    /// Running Wave gravity balls and captured debris are authoritative sim state.
+    #[must_use]
+    pub fn active_wave_powers(&self) -> &[WavePowerExecution] {
+        &self.power_manager.wave_executions
     }
 
     /// Resolve the database power type and invoke its native sim implementation.
@@ -740,6 +685,15 @@ impl World {
         if power_type.eq_ignore_ascii_case("Cryo") {
             return self.invoke_cryo_power(database, invocation.into());
         }
+        if power_type.eq_ignore_ascii_case("Cleansing") {
+            return cleansing::invoke(self, database, invocation);
+        }
+        if power_type.eq_ignore_ascii_case("CarpetBombing") {
+            return carpet_bombing::invoke(self, database, invocation);
+        }
+        if power_type.eq_ignore_ascii_case("Orbital") {
+            return orbital::invoke(self, database, invocation);
+        }
         if power_type.eq_ignore_ascii_case("Disruption") {
             return self.invoke_disruption_power(database, invocation.into());
         }
@@ -754,6 +708,9 @@ impl World {
         }
         if power_type.eq_ignore_ascii_case("Transport") {
             return transport::invoke(self, database, invocation);
+        }
+        if power_type.eq_ignore_ascii_case("Wave") {
+            return wave::invoke(self, database, invocation);
         }
         Err(NativePowerError::UnsupportedPowerType(
             power_type.to_owned(),
@@ -835,11 +792,43 @@ impl World {
         no_cost: bool,
     ) -> bool {
         match power_user_id.power_type() {
+            1 => cleansing::submit_input_by_user(self, database, power_user_id, input, no_cost),
+            2 => orbital::submit_input_by_user(self, database, power_user_id, input, no_cost),
+            3 => {
+                carpet_bombing::submit_input_by_user(self, database, power_user_id, input, no_cost)
+            }
             5 => rage::submit_input_by_user(self, database, power_user_id, input, no_cost),
+            6 => wave::submit_input_by_user(self, database, power_user_id, input, no_cost),
             8 => transport::submit_input_by_user(self, database, power_user_id, input, no_cost),
             9 => odst::submit_input_by_user(self, database, power_user_id, input, no_cost),
             _ => false,
         }
+    }
+
+    pub(in crate::world) fn notify_power_projectile_impact(
+        &mut self,
+        database: Option<&Database>,
+        execution_id: u32,
+        projectile_id: EntityId,
+        position: Vec3,
+        direction: Vec3,
+        damaged_unit_ids: &[EntityId],
+    ) {
+        carpet_bombing::notify_projectile_impact(
+            self,
+            execution_id,
+            projectile_id,
+            position,
+            damaged_unit_ids,
+        );
+        orbital::notify_projectile_impact(
+            self,
+            database,
+            execution_id,
+            projectile_id,
+            position,
+            direction,
+        );
     }
 
     pub(super) fn update_active_powers(
@@ -848,11 +837,15 @@ impl World {
         database: &Database,
         gameplay: Option<&GameplayCatalog>,
     ) {
+        cleansing::update(self, dt, database, gameplay);
+        orbital::update(self, dt, database, gameplay);
+        carpet_bombing::update(self, dt, database, gameplay);
         cryo::update(self, dt, database);
         disruption::update(self, dt, database);
         odst::update(self, dt, database, gameplay);
         rage::update(self, dt, database, gameplay);
         repair::update(self, database);
+        wave::update(self, dt, database, gameplay);
     }
 
     pub(super) fn resolve_pending_rage_kills(&mut self, database: Option<&Database>) {

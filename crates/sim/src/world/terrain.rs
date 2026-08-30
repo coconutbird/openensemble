@@ -10,6 +10,7 @@ use num_traits::ToPrimitive;
 const XSD_VERSION: i32 = 4;
 const XSD_HEADER_CHUNK: u64 = 0x1111;
 const XSD_HEIGHTS_CHUNK: u64 = 0x2222;
+const XSD_TILE_TYPES_CHUNK: u64 = 0x8888;
 const XSD_HEADER_SIZE: usize = 32;
 const HEIGHT_BLOCK_AXIS: usize = 8;
 const HEIGHT_BLOCK_SIZE: usize = HEIGHT_BLOCK_AXIS * HEIGHT_BLOCK_AXIS;
@@ -35,6 +36,9 @@ pub enum TerrainLoadError {
     /// The height chunk did not contain the cache-aligned retail grid.
     #[error("XSD height grid is truncated: expected {expected} bytes, found {actual}")]
     TruncatedHeights { expected: usize, actual: usize },
+    /// The optional tile-type chunk did not contain the row-major data grid.
+    #[error("XSD tile-type grid is truncated: expected {expected} bytes, found {actual}")]
+    TruncatedTileTypes { expected: usize, actual: usize },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -87,10 +91,13 @@ impl XsdEndian {
 /// Immutable simulation height grid loaded from a scenario XSD.
 #[derive(Debug)]
 pub(super) struct TerrainSimulation {
+    data_axis: usize,
+    data_tile_scale: f32,
     height_axis: usize,
     cache_axis: usize,
     height_tile_scale: f32,
     heights: Vec<f32>,
+    tile_types: Option<Vec<u8>>,
     fingerprint: u32,
 }
 
@@ -103,10 +110,24 @@ impl TerrainSimulation {
         let heights = container
             .chunk_data_by_id(XSD_HEIGHTS_CHUNK)
             .map_err(|error| missing_chunk(error, XSD_HEIGHTS_CHUNK))?;
-        Self::from_chunks(&header, &heights)
+        let tile_types = match container.chunk_data_by_id(XSD_TILE_TYPES_CHUNK) {
+            Ok(tile_types) => Some(tile_types),
+            Err(ecf::Error::ChunkNotFound(_)) => None,
+            Err(error) => return Err(TerrainLoadError::Container(error)),
+        };
+        Self::from_chunks_with_tile_types(&header, &heights, tile_types.as_deref())
     }
 
+    #[cfg(test)]
     fn from_chunks(header: &[u8], height_bytes: &[u8]) -> Result<Self, TerrainLoadError> {
+        Self::from_chunks_with_tile_types(header, height_bytes, None)
+    }
+
+    fn from_chunks_with_tile_types(
+        header: &[u8],
+        height_bytes: &[u8],
+        tile_type_bytes: Option<&[u8]>,
+    ) -> Result<Self, TerrainLoadError> {
         if header.len() < XSD_HEADER_SIZE {
             return Err(TerrainLoadError::TruncatedHeader {
                 expected: XSD_HEADER_SIZE,
@@ -114,6 +135,8 @@ impl TerrainSimulation {
             });
         }
         let endian = XsdEndian::from_version(header)?;
+        let data_axis = positive_usize(endian.read_i32(&header[4..8]), "data tile axis")?;
+        let data_tile_scale = endian.read_f32(&header[8..12]);
         let height_axis = positive_usize(endian.read_i32(&header[16..20]), "height axis")?;
         let cache_axis = positive_usize(endian.read_i32(&header[20..24]), "cache axis")?;
         let height_tile_scale = endian.read_f32(&header[24..28]);
@@ -125,6 +148,11 @@ impl TerrainSimulation {
         if !height_tile_scale.is_finite() || height_tile_scale <= 0.0 {
             return Err(TerrainLoadError::InvalidDimensions(
                 "height tile scale must be finite and positive",
+            ));
+        }
+        if !data_tile_scale.is_finite() || data_tile_scale <= 0.0 {
+            return Err(TerrainLoadError::InvalidDimensions(
+                "data tile scale must be finite and positive",
             ));
         }
         let sample_count =
@@ -153,19 +181,60 @@ impl TerrainSimulation {
                 "height samples must be finite",
             ));
         }
+        let tile_types = if let Some(bytes) = tile_type_bytes {
+            let expected =
+                data_axis
+                    .checked_mul(data_axis)
+                    .ok_or(TerrainLoadError::InvalidDimensions(
+                        "tile-type grid overflows memory",
+                    ))?;
+            if bytes.len() < expected {
+                return Err(TerrainLoadError::TruncatedTileTypes {
+                    expected,
+                    actual: bytes.len(),
+                });
+            }
+            Some(bytes[..expected].to_vec())
+        } else {
+            None
+        };
         let fingerprint = terrain_fingerprint(
+            data_axis,
+            data_tile_scale,
             height_axis,
             cache_axis,
             height_tile_scale,
             heights.as_slice(),
+            tile_types.as_deref(),
         );
         Ok(Self {
+            data_axis,
+            data_tile_scale,
             height_axis,
             cache_axis,
             height_tile_scale,
             heights,
+            tile_types,
             fingerprint,
         })
+    }
+
+    fn surface_type(&self, position: Vec3) -> Option<u8> {
+        if !position.is_finite() {
+            return None;
+        }
+        let tile_types = self.tile_types.as_ref()?;
+        let x = checked_grid_coordinate(
+            world_to_grid(position.x, self.data_tile_scale),
+            self.data_axis,
+            true,
+        )?;
+        let z = checked_grid_coordinate(
+            world_to_grid(position.z, self.data_tile_scale),
+            self.data_axis,
+            true,
+        )?;
+        tile_types.get(z * self.data_axis + x).copied()
     }
 
     fn height(&self, position: Vec3, clamp: bool) -> Option<f32> {
@@ -199,6 +268,10 @@ impl TerrainSimulation {
             x_fraction,
         );
         Some(interpolate(bottom, top, z_fraction))
+    }
+
+    const fn tile_scale(&self) -> f32 {
+        self.height_tile_scale
     }
 
     fn height_sample(&self, x: i32, z: i32, clamp: bool) -> Option<f32> {
@@ -429,17 +502,28 @@ fn checked_grid_coordinate(value: i32, axis: usize, clamp: bool) -> Option<usize
 }
 
 fn terrain_fingerprint(
+    data_axis: usize,
+    data_tile_scale: f32,
     height_axis: usize,
     cache_axis: usize,
     height_tile_scale: f32,
     heights: &[f32],
+    tile_types: Option<&[u8]>,
 ) -> u32 {
     let mut checksum = SyncChecksum::new();
+    checksum.hash_u32(u32::try_from(data_axis).unwrap_or(u32::MAX));
+    checksum.hash_f32(data_tile_scale);
     checksum.hash_u32(u32::try_from(height_axis).unwrap_or(u32::MAX));
     checksum.hash_u32(u32::try_from(cache_axis).unwrap_or(u32::MAX));
     checksum.hash_f32(height_tile_scale);
     for &height in heights {
         checksum.hash_f32(height);
+    }
+    if let Some(tile_types) = tile_types {
+        checksum.hash_u32(1);
+        checksum.hash_bytes(tile_types);
+    } else {
+        checksum.hash_u32(0);
     }
     checksum.value()
 }
@@ -470,10 +554,49 @@ impl World {
             .and_then(|terrain| terrain.height(position, clamp))
     }
 
+    /// Return the retail terrain surface byte at a world-space point.
+    ///
+    /// Coordinates are truncated and clamped exactly like `BTerrainSimRep`.
+    #[must_use]
+    pub fn terrain_surface_type(&self, position: Vec3) -> Option<u8> {
+        self.terrain_simulation
+            .as_ref()
+            .and_then(|terrain| terrain.surface_type(position))
+    }
+
+    pub(super) fn terrain_simulation_tile_scale(&self) -> f32 {
+        self.terrain_simulation
+            .as_ref()
+            .map_or(0.0, TerrainSimulation::tile_scale)
+    }
+
     pub(super) fn projectile_terrain_intersection(&self, start: Vec3, end: Vec3) -> Option<Vec3> {
         self.terrain_simulation
             .as_ref()
             .and_then(|terrain| terrain.projectile_segment_intersection(start, end))
+    }
+
+    #[cfg(test)]
+    pub(super) fn configure_flat_test_terrain(&mut self, height: f32) {
+        let heights = vec![height; HEIGHT_BLOCK_SIZE];
+        self.terrain_simulation = Some(TerrainSimulation {
+            data_axis: HEIGHT_BLOCK_AXIS,
+            data_tile_scale: 1.0,
+            height_axis: HEIGHT_BLOCK_AXIS,
+            cache_axis: HEIGHT_BLOCK_AXIS,
+            height_tile_scale: 1.0,
+            fingerprint: terrain_fingerprint(
+                HEIGHT_BLOCK_AXIS,
+                1.0,
+                HEIGHT_BLOCK_AXIS,
+                HEIGHT_BLOCK_AXIS,
+                1.0,
+                &heights,
+                None,
+            ),
+            heights,
+            tile_types: None,
+        });
     }
 }
 

@@ -1,9 +1,11 @@
+use glam::Vec2;
 use num_traits::ToPrimitive;
 use render::terrain::GPU_TESS_SHADER;
 use render::wgpu;
 use wgpu::util::DeviceExt;
 
 use super::{PatchMesh, TessellationBuildConfig};
+use crate::dynamic_alpha::DynamicTerrainAlphaTexture;
 use crate::types::RawXtdData;
 
 use super::super::{
@@ -129,7 +131,7 @@ pub(super) fn create_mask_texture(
     let (width, height, values) = source.map_or_else(
         || {
             let width = num_verts;
-            let height = (num_verts / 2).max(1);
+            let height = num_verts;
             let length = width
                 .checked_mul(height)
                 .and_then(|count| usize::try_from(count).ok())
@@ -139,7 +141,7 @@ pub(super) fn create_mask_texture(
         },
         |(values, width, height)| {
             log::info!(
-                "Using half-resolution {mask_name} texture: {width}x{height} ({} bytes)",
+                "Using {mask_name} texture: {width}x{height} ({} bytes)",
                 values.len()
             );
             (width, height, values.to_vec())
@@ -184,48 +186,15 @@ pub(super) fn create_mask_texture(
 pub(super) fn create_dynamic_alpha_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    num_verts: u32,
-) -> wgpu::TextureView {
-    let width = num_verts.div_ceil(32);
-    let texel_count = width
-        .checked_mul(num_verts)
-        .and_then(|count| usize::try_from(count).ok())
-        .expect("dynamic alpha texture size must fit usize");
-    let words = vec![u32::MAX; texel_count];
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("Dynamic Terrain Alpha Bitmask"),
-        size: wgpu::Extent3d {
-            width,
-            height: num_verts,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::R32Uint,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        bytemuck::cast_slice(&words),
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(width * 4),
-            rows_per_image: Some(num_verts),
-        },
-        wgpu::Extent3d {
-            width,
-            height: num_verts,
-            depth_or_array_layers: 1,
-        },
-    );
-    texture.create_view(&wgpu::TextureViewDescriptor::default())
+    raw: &RawXtdData,
+) -> DynamicTerrainAlphaTexture {
+    DynamicTerrainAlphaTexture::new(
+        device,
+        queue,
+        raw.num_verts_per_axis,
+        Vec2::new(raw.world_min[2], raw.world_min[0]),
+        Vec2::new(raw.world_max[2], raw.world_max[0]),
+    )
 }
 
 pub(super) fn create_gpu_texture_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
@@ -243,7 +212,7 @@ pub(super) fn create_gpu_texture_layout(device: &wgpu::Device) -> wgpu::BindGrou
             sampler_layout_entry(3, vertex),
             sampler_layout_entry(4, both),
             buffer_layout_entry(5, fragment, wgpu::BufferBindingType::Uniform),
-            texture_layout_entry(6, fragment, filterable, wgpu::TextureViewDimension::D2),
+            texture_layout_entry(6, vertex, filterable, wgpu::TextureViewDimension::D2),
             texture_layout_entry(7, both, filterable, wgpu::TextureViewDimension::D2),
             texture_layout_entry(14, fragment, filterable, wgpu::TextureViewDimension::D2),
             buffer_layout_entry(15, both, wgpu::BufferBindingType::Uniform),
@@ -256,7 +225,7 @@ pub(super) fn create_gpu_texture_layout(device: &wgpu::Device) -> wgpu::BindGrou
             texture_layout_entry(17, fragment, filterable, wgpu::TextureViewDimension::D2),
             texture_layout_entry(18, fragment, filterable, wgpu::TextureViewDimension::D2),
             buffer_layout_entry(19, fragment, storage),
-            sampler_layout_entry(20, fragment),
+            sampler_layout_entry(20, both),
             texture_layout_entry(21, vertex, filterable, wgpu::TextureViewDimension::D2),
             texture_layout_entry(
                 22,
@@ -269,7 +238,7 @@ pub(super) fn create_gpu_texture_layout(device: &wgpu::Device) -> wgpu::BindGrou
             texture_layout_entry(
                 25,
                 fragment,
-                filterable,
+                wgpu::TextureSampleType::Depth,
                 wgpu::TextureViewDimension::D2Array,
             ),
             texture_layout_entry(26, fragment, filterable, wgpu::TextureViewDimension::D3),
@@ -393,68 +362,6 @@ pub(super) fn create_placeholder_view(
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
-pub(super) fn create_placeholder_array_view(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    label: &str,
-    layers: u32,
-    pixel: [u8; 4],
-) -> wgpu::TextureView {
-    let layer_count = usize::try_from(layers).expect("placeholder layer count must fit usize");
-    let pixels = pixel.repeat(layer_count);
-    let texture = device.create_texture_with_data(
-        queue,
-        &wgpu::TextureDescriptor {
-            label: Some(label),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: layers,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        },
-        wgpu::util::TextureDataOrder::LayerMajor,
-        &pixels,
-    );
-    texture.create_view(&wgpu::TextureViewDescriptor {
-        dimension: Some(wgpu::TextureViewDimension::D2Array),
-        ..Default::default()
-    })
-}
-
-pub(super) fn create_placeholder_volume_view(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    label: &str,
-    pixel: [u8; 4],
-) -> wgpu::TextureView {
-    let texture = device.create_texture_with_data(
-        queue,
-        &wgpu::TextureDescriptor {
-            label: Some(label),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D3,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        },
-        wgpu::util::TextureDataOrder::LayerMajor,
-        &pixel,
-    );
-    texture.create_view(&wgpu::TextureViewDescriptor::default())
-}
-
 pub(super) fn create_light_view(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -515,6 +422,7 @@ pub(super) fn create_shadow_resources(
     queue: &wgpu::Queue,
     raw_data: &RawXtdData,
     bindings: &ShadowResourceBindings<'_>,
+    local_shadow_layout: &wgpu::BindGroupLayout,
 ) -> crate::shadow::ShadowResources {
     let vertex_layouts = [
         wgpu::VertexBufferLayout {
@@ -548,8 +456,12 @@ pub(super) fn create_shadow_resources(
             ],
         },
     ];
-    let mut shadow =
-        crate::shadow::ShadowResources::new(device, bindings.camera_layout, &vertex_layouts);
+    let mut shadow = crate::shadow::ShadowResources::new(
+        device,
+        bindings.camera_layout,
+        local_shadow_layout,
+        &vertex_layouts,
+    );
     let patch_count = bindings
         .num_patches
         .to_f32()

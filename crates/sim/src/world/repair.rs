@@ -7,6 +7,8 @@ use crate::scenario::add_squad_member_from_prototype;
 use num_traits::ToPrimitive;
 use pipeline::database::hw1::{Database, ProtoObject};
 
+mod other;
+
 #[derive(Debug, Clone)]
 struct RepairMemberProfile {
     prototype: String,
@@ -30,6 +32,39 @@ struct SpreadRepair {
 }
 
 impl World {
+    pub(super) fn repair_squad_by_hitpoints(
+        &mut self,
+        database: &Database,
+        squad_id: EntityId,
+        requested_hitpoints: f32,
+        allow_reinforce: bool,
+    ) -> f32 {
+        let Some(profile) = self.squad_repair_profile(squad_id, database) else {
+            return requested_hitpoints;
+        };
+        self.repair_squad_hitpoints(
+            database,
+            squad_id,
+            &profile,
+            requested_hitpoints,
+            allow_reinforce,
+        )
+    }
+
+    pub(super) fn squad_is_missing_authored_members(
+        &self,
+        squad_id: EntityId,
+        database: &Database,
+    ) -> bool {
+        let Some(profile) = self.squad_repair_profile(squad_id, database) else {
+            return false;
+        };
+        self.get_squad(squad_id).is_some_and(|squad| {
+            squad.unit_ids.len()
+                < usize::try_from(authored_member_count(&profile)).unwrap_or(usize::MAX)
+        })
+    }
+
     pub(crate) fn squad_hitpoint_fraction(&self, squad_id: EntityId, database: &Database) -> f32 {
         let Some(profile) = self.squad_repair_profile(squad_id, database) else {
             return 0.0;

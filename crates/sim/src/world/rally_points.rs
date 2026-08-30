@@ -96,15 +96,6 @@ impl World {
             .unwrap_or_else(|| rally_point.position())
     }
 
-    pub(crate) fn training_rally_point(
-        &self,
-        building_id: EntityId,
-        player_id: PlayerId,
-    ) -> Option<RallyPoint> {
-        self.unit_rally_point(building_id, player_id)
-            .or_else(|| self.player_rally_point(player_id))
-    }
-
     fn validated_rally_point(
         &self,
         position: Vec3,

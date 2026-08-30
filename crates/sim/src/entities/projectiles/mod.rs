@@ -1,8 +1,11 @@
 //! Projectile entities owned and advanced by the authoritative simulation.
 
+mod defense;
 mod flight;
+mod impact_effect;
 mod perturbance;
 mod sticky;
+mod visual_source;
 
 use crate::entities::{BaseEntity, ObjectState};
 use crate::entity::Entity;
@@ -15,13 +18,13 @@ use glam::Vec3;
 use perturbance::ProjectilePerturbance;
 use sticky::ProjectileMotionState;
 
-pub(crate) use flight::launch_target_position;
+pub(crate) use flight::{ballistic_aim_direction, launch_target_position};
 
 const MIN_COLLISION_RADIUS: f32 = 0.25;
 const DIRECTION_EPSILON: f32 = 0.000_001;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-struct ProjectileRuntimeFlags(u16);
+struct ProjectileRuntimeFlags(u32);
 
 impl ProjectileRuntimeFlags {
     const FRIENDLY_FIRE: Self = Self(1 << 0);
@@ -35,6 +38,12 @@ impl ProjectileRuntimeFlags {
     const EXPLODE_ON_TIMER: Self = Self(1 << 8);
     const EXPIRE_ON_TIMER: Self = Self(1 << 9);
     const STICKY: Self = Self(1 << 10);
+    const CHECKED_FOR_DEFENSE: Self = Self(1 << 11);
+    const DEFLECTED: Self = Self(1 << 12);
+    const IGNORE_TARGET_COLLISIONS: Self = Self(1 << 13);
+    const DODGEABLE: Self = Self(1 << 14);
+    const DEFLECTABLE: Self = Self(1 << 15);
+    const SMALL_ARMS_DEFLECTABLE: Self = Self(1 << 16);
 
     fn from_launch(launch: &ProjectileLaunch, profile: &ProjectileProfile) -> Self {
         let mut flags = Self::default();
@@ -93,6 +102,7 @@ pub(crate) struct ProjectileLaunch {
     pub damage: f32,
     pub weapon_type: Option<String>,
     pub area_damage: Option<AreaDamageProfile>,
+    pub impact_effect: Option<crate::gameplay::ImpactEffectProfile>,
     pub friendly_fire: bool,
     pub collides_with_all_units: bool,
 }
@@ -112,6 +122,7 @@ impl ProjectileLaunch {
             damage: 0.0,
             weapon_type: None,
             area_damage: None,
+            impact_effect: None,
             friendly_fire: false,
             collides_with_all_units: true,
         }
@@ -138,8 +149,13 @@ pub struct Projectile {
     pub proto_object_id: i32,
     /// Proto-object name retained for rendering and checksums.
     pub proto_object_name: String,
+    visual_proto_object_name: Option<String>,
+    visual_center_offset: Vec3,
     /// Unit that launched this projectile.
     pub source_id: EntityId,
+    created_by_player_id: PlayerId,
+    /// Stable native-power execution that owns impact callbacks for this shot.
+    owning_power_execution_id: Option<u32>,
     /// Concrete target unit selected when the shot was launched.
     pub target_id: EntityId,
     /// Last known destination, updated by tracking projectiles.
@@ -152,6 +168,7 @@ pub struct Projectile {
     pub weapon_type: Option<String>,
     /// Launch-time area-damage values applied at the impact position.
     pub area_damage: Option<AreaDamageProfile>,
+    impact_effect: Option<crate::gameplay::ImpactEffectProfile>,
     /// Desired flight speed.
     pub desired_speed: f32,
     /// Current scalar speed before gravity is applied.
@@ -206,13 +223,18 @@ impl Projectile {
             object_state: ObjectState::default(),
             proto_object_id: profile.proto_object_id,
             proto_object_name: profile.proto_object_name.clone(),
+            visual_proto_object_name: None,
+            visual_center_offset: Vec3::ZERO,
             source_id: launch.source_id,
+            created_by_player_id: player_id,
+            owning_power_execution_id: None,
             target_id: launch.target_id,
             target_position: launch.target_position,
             target_offset: launch.target_offset,
             damage: launch.damage,
             weapon_type: launch.weapon_type,
             area_damage: launch.area_damage,
+            impact_effect: launch.impact_effect,
             desired_speed: profile.speed,
             current_speed,
             acceleration: profile.acceleration,
@@ -305,12 +327,14 @@ impl Projectile {
         let previous = self.base.position;
         self.move_projectile(elapsed, perturbance);
 
-        if segment_reaches_target(
-            previous,
-            self.base.position,
-            self.target_position,
-            self.target_radius,
-        ) {
+        if !self.abandoned_target()
+            && segment_reaches_target(
+                previous,
+                self.base.position,
+                self.target_position,
+                self.target_radius,
+            )
+        {
             self.base.position = self.target_position;
             if !self.has_timed_lifecycle() {
                 self.base.kill();
@@ -475,8 +499,21 @@ impl Projectile {
             >= self.initial_position.distance_squared(self.target_position) * 0.95
     }
 
-    pub(crate) const fn initial_position(&self) -> Vec3 {
+    /// World-space launch position retained for range and presentation checks.
+    #[must_use]
+    pub const fn initial_position(&self) -> Vec3 {
         self.initial_position
+    }
+
+    /// Associate this projectile with one running native power.
+    pub(crate) fn set_owning_power_execution_id(&mut self, execution_id: u32) {
+        self.owning_power_execution_id = (execution_id != 0).then_some(execution_id);
+    }
+
+    /// Stable native-power execution that receives this projectile's impact.
+    #[must_use]
+    pub const fn owning_power_execution_id(&self) -> Option<u32> {
+        self.owning_power_execution_id
     }
 
     pub(crate) const fn friendly_fire(&self) -> bool {
@@ -545,7 +582,20 @@ impl Projectile {
         checksum.hash_i32(self.proto_object_id);
         checksum.hash_u32(u32::try_from(self.proto_object_name.len()).unwrap_or(u32::MAX));
         checksum.hash_bytes(self.proto_object_name.as_bytes());
+        hash_optional_string(checksum, self.visual_proto_object_name.as_deref());
+        checksum.hash_vec3(
+            self.visual_center_offset.x,
+            self.visual_center_offset.y,
+            self.visual_center_offset.z,
+        );
         checksum.hash_u32(self.source_id.as_u32());
+        checksum.hash_u32(u32::from(self.created_by_player_id));
+        if let Some(execution_id) = self.owning_power_execution_id {
+            checksum.hash_u32(1);
+            checksum.hash_u32(execution_id);
+        } else {
+            checksum.hash_u32(0);
+        }
         checksum.hash_u32(self.target_id.as_u32());
         checksum.hash_vec3(
             self.target_position.x,
@@ -560,7 +610,8 @@ impl Projectile {
         checksum.hash_f32(self.damage);
         hash_optional_string(checksum, self.weapon_type.as_deref());
         hash_area_damage(checksum, self.area_damage);
-        checksum.hash_u32(u32::from(self.runtime_flags.0));
+        self.hash_impact_effect(checksum);
+        checksum.hash_u32(self.runtime_flags.0);
         checksum.hash_f32(self.desired_speed);
         checksum.hash_f32(self.current_speed);
         checksum.hash_f32(self.acceleration);
@@ -690,6 +741,7 @@ mod tests {
                 damage: 5.0,
                 weapon_type: None,
                 area_damage: None,
+                impact_effect: None,
                 friendly_fire: false,
                 collides_with_all_units: true,
             },
@@ -754,6 +806,7 @@ mod tests {
             damage: 5.0,
             weapon_type: None,
             area_damage: None,
+            impact_effect: None,
             friendly_fire: false,
             collides_with_all_units: true,
         };

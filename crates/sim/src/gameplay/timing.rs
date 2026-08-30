@@ -8,6 +8,19 @@ use pipeline::database::hw1::{ProtoObject, visual};
 use pipeline::source::{AssetSource, StdFileProvider};
 use std::collections::BTreeMap;
 
+mod anchors;
+mod events;
+mod hardpoints;
+mod orientation;
+
+pub use events::{
+    AttackAnimationAnchor, AttackAnimationEvent, AttackAnimationEventKind, AttackAttachmentPose,
+    AttackSingleBonePose, PhysicsImpulseEvent,
+};
+pub use hardpoints::AttackHardpointProfile;
+pub use orientation::AttackOrientationProfile;
+pub(crate) use orientation::AttackOrientationTolerances;
+
 /// One weighted animation variant used by the shared unit attack executor.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttackAnimation {
@@ -19,6 +32,26 @@ pub struct AttackAnimation {
     pub duration: f32,
     /// Normalized Attack-tag positions in authored order.
     pub attack_positions: Vec<f32>,
+    /// Ordered authoritative events carried by this exact visual asset.
+    pub events: Vec<AttackAnimationEvent>,
+    pub(crate) hardpoint_track: Option<anchors::AttackAnchorTrack>,
+}
+
+impl AttackAnimation {
+    pub(crate) fn hardpoint_anchor_at(&self, position: f32) -> Option<AttackAnimationAnchor> {
+        self.hardpoint_track
+            .as_ref()
+            .map(|track| track.sample(position))
+    }
+}
+
+/// Authored animation timeline substituted while a charged pull can execute.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChargedAttackAnimation {
+    /// Animation type selected from the persistent `Charge` action.
+    pub animation_type: String,
+    /// Weighted UAX variants and their authoritative Attack tags.
+    pub animations: Vec<AttackAnimation>,
 }
 
 /// Immutable area-damage values authored on one weapon.
@@ -70,6 +103,54 @@ impl Default for AttackAccuracyProfile {
     }
 }
 
+/// Weapon-authored permissions for persistent projectile reactions.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ProjectileReactionFlags(u8);
+
+impl ProjectileReactionFlags {
+    const DODGEABLE: Self = Self(1 << 0);
+    const DEFLECTABLE: Self = Self(1 << 1);
+    const SMALL_ARMS_DEFLECTABLE: Self = Self(1 << 2);
+
+    /// Build reaction permissions for synthetic gameplay definitions.
+    #[must_use]
+    pub const fn new(dodgeable: bool, deflectable: bool, small_arms_deflectable: bool) -> Self {
+        let mut bits = 0;
+        if dodgeable {
+            bits |= Self::DODGEABLE.0;
+        }
+        if deflectable {
+            bits |= Self::DEFLECTABLE.0;
+        }
+        if small_arms_deflectable {
+            bits |= Self::SMALL_ARMS_DEFLECTABLE.0;
+        }
+        Self(bits)
+    }
+
+    /// Whether a persistent Dodge action may react to this weapon.
+    #[must_use]
+    pub const fn dodgeable(self) -> bool {
+        self.contains(Self::DODGEABLE)
+    }
+
+    /// Whether a normal persistent Deflect action may react to this weapon.
+    #[must_use]
+    pub const fn deflectable(self) -> bool {
+        self.contains(Self::DEFLECTABLE)
+    }
+
+    /// Whether a small-arms-only Deflect action may react to this weapon.
+    #[must_use]
+    pub const fn small_arms_deflectable(self) -> bool {
+        self.contains(Self::SMALL_ARMS_DEFLECTABLE)
+    }
+
+    const fn contains(self, flag: Self) -> bool {
+        self.0 & flag.0 != 0
+    }
+}
+
 /// Retail ammunition use and depleted-action result for one unit attack.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum AttackAmmunition {
@@ -101,14 +182,26 @@ impl AttackAmmunition {
 pub struct AttackProfile {
     /// Tactic action name.
     pub action_name: String,
+    /// Visual animation type selected by the tactic action.
+    pub animation_type: String,
     /// Tactic weapon name.
     pub weapon_name: String,
     /// Weapon type used for target damage modifiers.
     pub weapon_type: Option<String>,
     /// Projectile proto-object name, or `None` for an instant/melee hit.
     pub projectile: Option<String>,
+    /// Named impact prototype and size retained until a projectile lands.
+    pub impact_effect: Option<super::ImpactEffectProfile>,
     /// Authored area-damage contract, present only for a positive radius.
     pub area_damage: Option<AreaDamageProfile>,
+    /// Authored charged squad-pull contract, present only for `PullUnits` weapons.
+    pub pull: Option<PullAttackProfile>,
+    /// Hardpoint selected by the weapon, including retail angle and rate rules.
+    pub hardpoint: Option<AttackHardpointProfile>,
+    /// Action and owner flags controlling retail's orientation update.
+    pub orientation: AttackOrientationProfile,
+    /// Optional persistent-`Charge` animation used for a pull-capable cycle.
+    pub charged_animation: Option<ChargedAttackAnimation>,
     /// Whether direct projectile collision may hit the attacker or allied units.
     pub friendly_fire: bool,
     /// Whether the projectile aims at the target's ground point instead of its body.
@@ -116,6 +209,8 @@ pub struct AttackProfile {
     /// Retail also uses this to disable collisions with prototypes carrying the
     /// `TargetsFootOfUnit` flag for this particular launch.
     pub targets_foot_of_unit: bool,
+    /// Whether persistent Dodge and Deflect actions may react to its projectile.
+    pub projectile_reactions: ProjectileReactionFlags,
     /// Maximum authored weapon range.
     pub max_range: f32,
     /// Maximum target velocity considered by launch-time projectile leading.
@@ -140,6 +235,19 @@ pub struct AttackProfile {
     pub uses_height_bonus_damage: bool,
 }
 
+/// Immutable inputs used by retail's charged `JumpPull` attack replacement.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PullAttackProfile {
+    /// Maximum attack range while the persistent Charge action is ready.
+    pub max_range: f32,
+    /// Prototypes excluded from this pull action.
+    pub invalid_targets: Vec<String>,
+    /// Target animation played throughout the spline flight.
+    pub end_animation_type: Option<String>,
+    /// World units per second used to advance the pull spline.
+    pub velocity_scalar: f32,
+}
+
 impl AttackProfile {
     /// Return retail's maximum Attack-tag count across animation variants.
     #[must_use]
@@ -151,12 +259,39 @@ impl AttackProfile {
             .and_then(|count| u32::try_from(count).ok())
             .unwrap_or_default()
     }
+
+    /// Return the animation type selected for the current combat cycle.
+    #[must_use]
+    pub fn cycle_animation_type(&self, charged: bool) -> &str {
+        if charged {
+            self.charged_animation
+                .as_ref()
+                .map_or(&self.animation_type, |animation| &animation.animation_type)
+        } else {
+            &self.animation_type
+        }
+    }
+
+    /// Return the weighted animation variants selected for the current cycle.
+    #[must_use]
+    pub fn cycle_animations(&self, charged: bool) -> &[AttackAnimation] {
+        if charged {
+            self.charged_animation
+                .as_ref()
+                .map_or(&self.animations, |animation| {
+                    animation.animations.as_slice()
+                })
+        } else {
+            &self.animations
+        }
+    }
 }
 
 #[derive(Debug, Default)]
 pub(super) struct TimingAssetCache {
     visuals: BTreeMap<String, Result<Visual, String>>,
     animation_durations: BTreeMap<String, Result<f32, String>>,
+    anchors: anchors::AnchorAssetCache,
 }
 
 pub(super) struct AttackProfileLoad {
@@ -195,10 +330,22 @@ pub(super) fn load_attack_profiles(
             return loaded;
         }
     };
+    let charged_animation = persistent_charge_action(tactics).and_then(|action| {
+        match build_charged_attack_animation(object, &visual, action, source, cache) {
+            Ok(animation) => Some(animation),
+            Err(reason) => {
+                loaded.issues.push((action.name.clone(), reason));
+                None
+            }
+        }
+    });
 
     for ranged in ranged_actions {
         match build_attack_profile(object, &visual, ranged, source, cache) {
-            Ok(profile) => {
+            Ok(mut profile) => {
+                if profile.pull.is_some() {
+                    profile.charged_animation.clone_from(&charged_animation);
+                }
                 loaded
                     .profiles
                     .insert(profile.action_name.to_ascii_lowercase(), profile);
@@ -267,7 +414,7 @@ fn build_attack_profile(
             model.name
         )
     })?;
-    let variants = load_attack_animations(animation, source, cache)?;
+    let variants = load_profile_animations(object, visual, model, animation, source, cache)?;
     if !variants
         .iter()
         .any(|variant| !variant.attack_positions.is_empty())
@@ -311,12 +458,19 @@ fn build_attack_profile(
 
     Ok(AttackProfile {
         action_name: ranged.action.name.clone(),
+        animation_type: animation_name.to_owned(),
         weapon_name: ranged.weapon.name.clone(),
         weapon_type: ranged.weapon.weapon_type.clone(),
         projectile: ranged.weapon.projectile.clone(),
+        impact_effect: super::ImpactEffectProfile::from_weapon(ranged.weapon),
         area_damage: area_damage_profile(ranged.weapon),
+        pull: pull_attack_profile(ranged.action, ranged.weapon),
+        hardpoint: AttackHardpointProfile::from_weapon(object, ranged.weapon),
+        orientation: AttackOrientationProfile::from_action(object, ranged.action),
+        charged_animation: None,
         friendly_fire: ranged.weapon.allow_friendly_fire == Some(true),
         targets_foot_of_unit: ranged.weapon.targets_foot_of_unit == Some(true),
+        projectile_reactions: projectile_reaction_flags(ranged.weapon),
         max_range: finite_nonnegative(ranged.weapon.max_range),
         max_velocity_lead: finite_nonnegative(ranged.weapon.max_velocity_lead),
         accuracy: attack_accuracy_profile(ranged.weapon),
@@ -345,6 +499,102 @@ fn build_attack_profile(
     })
 }
 
+fn load_profile_animations(
+    object: &ProtoObject,
+    visual: &Visual,
+    model: &Model,
+    animation: &Anim,
+    source: &mut AssetSource<StdFileProvider>,
+    cache: &mut TimingAssetCache,
+) -> Result<Vec<AttackAnimation>, String> {
+    load_attack_animations(
+        animation,
+        Some((visual, model)),
+        &object.single_bone_ik,
+        source,
+        cache,
+    )
+}
+
+fn persistent_charge_action(tactics: &TacticData) -> Option<&Action> {
+    let rules = tactics.tactic.as_ref()?;
+    rules.persistent_actions.iter().find_map(|name| {
+        tactics.actions.iter().find(|action| {
+            action.name.eq_ignore_ascii_case(name)
+                && action
+                    .action_type
+                    .as_deref()
+                    .is_some_and(|kind| kind.eq_ignore_ascii_case("Charge"))
+        })
+    })
+}
+
+fn build_charged_attack_animation(
+    object: &ProtoObject,
+    visual: &Visual,
+    action: &Action,
+    source: &mut AssetSource<StdFileProvider>,
+    cache: &mut TimingAssetCache,
+) -> Result<ChargedAttackAnimation, String> {
+    let animation_type = action
+        .anim
+        .as_ref()
+        .map(|animation| animation.name.trim())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| "persistent Charge action has no animation".to_owned())?;
+    let model = select_base_action_model(visual, action)
+        .ok_or_else(|| "visual has no usable model for persistent Charge".to_owned())?;
+    let animation = find_animation(model, animation_type).ok_or_else(|| {
+        format!(
+            "visual model {} has no {animation_type} animation for persistent Charge",
+            model.name
+        )
+    })?;
+    let animations = load_attack_animations(
+        animation,
+        Some((visual, model)),
+        &object.single_bone_ik,
+        source,
+        cache,
+    )?;
+    if !animations
+        .iter()
+        .any(|variant| !variant.attack_positions.is_empty())
+    {
+        return Err(format!(
+            "visual model {} Charge animation {animation_type} has no Attack tags",
+            model.name
+        ));
+    }
+    Ok(ChargedAttackAnimation {
+        animation_type: animation_type.to_owned(),
+        animations,
+    })
+}
+
+fn pull_attack_profile(action: &Action, weapon: &Weapon) -> Option<PullAttackProfile> {
+    (weapon.pull_units == Some(true)).then(|| PullAttackProfile {
+        max_range: finite_nonnegative(weapon.max_pull_range),
+        invalid_targets: action
+            .invalid_targets
+            .iter()
+            .map(|target| target.trim())
+            .filter(|target| !target.is_empty())
+            .map(str::to_owned)
+            .collect(),
+        end_animation_type: action
+            .end_anim
+            .as_ref()
+            .map(|animation| animation.name.trim())
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned),
+        velocity_scalar: action
+            .velocity_scalar
+            .filter(|velocity| velocity.is_finite())
+            .unwrap_or(1.0),
+    })
+}
+
 fn attack_accuracy_profile(weapon: &Weapon) -> AttackAccuracyProfile {
     let defaults = AttackAccuracyProfile::default();
     AttackAccuracyProfile {
@@ -355,6 +605,14 @@ fn attack_accuracy_profile(weapon: &Weapon) -> AttackAccuracyProfile {
         distance_factor: finite_or(weapon.accuracy_distance_factor, defaults.distance_factor),
         deviation_factor: finite_or(weapon.accuracy_deviation_factor, defaults.deviation_factor),
     }
+}
+
+fn projectile_reaction_flags(weapon: &Weapon) -> ProjectileReactionFlags {
+    ProjectileReactionFlags::new(
+        weapon.dodgeable == Some(true),
+        weapon.deflectable == Some(true),
+        weapon.small_arms_deflectable == Some(true),
+    )
 }
 
 fn area_damage_profile(weapon: &Weapon) -> Option<AreaDamageProfile> {
@@ -403,6 +661,14 @@ fn select_attack_model<'a>(
         return Some(model);
     }
 
+    select_default_model(visual)
+}
+
+fn select_base_action_model<'a>(visual: &'a Visual, action: &Action) -> Option<&'a Model> {
+    squad_mode_model(visual, action.squad_mode.as_deref()).or_else(|| select_default_model(visual))
+}
+
+fn select_default_model(visual: &Visual) -> Option<&Model> {
     visual
         .default_model
         .as_deref()
@@ -441,15 +707,18 @@ pub(super) fn find_animation<'a>(model: &'a Model, name: &str) -> Option<&'a Ani
 
 fn load_attack_animations(
     animation: &Anim,
+    anchor_model: Option<(&Visual, &Model)>,
+    single_bones: &[String],
     source: &mut AssetSource<StdFileProvider>,
     cache: &mut TimingAssetCache,
 ) -> Result<Vec<AttackAnimation>, String> {
     let mut variants = Vec::new();
     let mut failures = Vec::new();
-    for asset in animation
+    for (asset_index, asset) in animation
         .assets
         .iter()
-        .filter(|asset| asset.asset_type.eq_ignore_ascii_case("Anim"))
+        .enumerate()
+        .filter(|(_, asset)| asset.asset_type.eq_ignore_ascii_case("Anim"))
     {
         let Some(file) = asset.file.as_deref() else {
             failures.push("animation asset has no file".to_owned());
@@ -458,11 +727,31 @@ fn load_attack_animations(
         let path = canonical_animation_path(file);
         match load_animation_duration(&path, source, cache) {
             Ok(duration) => {
-                let mut attack_positions = asset
-                    .tags
+                let mut events = events::simulation_events(&asset.tags);
+                let hardpoint_track = anchor_model.and_then(|(visual, model)| {
+                    match anchors::resolve_event_anchors(
+                        visual,
+                        model,
+                        single_bones,
+                        (&animation.anim_type, asset_index, &path),
+                        &mut events,
+                        source,
+                        &mut cache.anchors,
+                    ) {
+                        Ok(track) => Some(track),
+                        Err(reason) => {
+                            log::debug!(
+                                "Could not resolve posed event anchors for {} {}: {reason}",
+                                model.name,
+                                animation.anim_type
+                            );
+                            None
+                        }
+                    }
+                });
+                let mut attack_positions = events
                     .iter()
-                    .filter(|tag| tag.tag_type.eq_ignore_ascii_case("Attack"))
-                    .map(|tag| tag.position.unwrap_or_default().clamp(0.0, 1.0))
+                    .filter_map(AttackAnimationEvent::attack_position)
                     .collect::<Vec<_>>();
                 attack_positions.sort_by(f32::total_cmp);
                 variants.push(AttackAnimation {
@@ -470,6 +759,8 @@ fn load_attack_animations(
                     weight: asset.weight.unwrap_or(1),
                     duration,
                     attack_positions,
+                    events,
+                    hardpoint_track,
                 });
             }
             Err(reason) => failures.push(reason),
@@ -543,7 +834,7 @@ fn load_weighted_duration(
     source: &mut AssetSource<StdFileProvider>,
     cache: &mut TimingAssetCache,
 ) -> Result<f32, String> {
-    let variants = load_attack_animations(animation, source, cache)?;
+    let variants = load_attack_animations(animation, None, &[], source, cache)?;
     weighted_average(&variants, |variant| variant.duration)
 }
 
@@ -627,79 +918,4 @@ pub(super) fn canonical_animation_path(animation_ref: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn animation(weight: i32, duration: f32, attacks: usize) -> AttackAnimation {
-        AttackAnimation {
-            asset_path: format!("attack_{duration}.uax"),
-            weight,
-            duration,
-            attack_positions: vec![0.5; attacks],
-        }
-    }
-
-    #[test]
-    fn weighted_values_match_retail_attack_info_math() {
-        let variants = [animation(1, 1.0, 1), animation(3, 2.0, 2)];
-        assert!(
-            (weighted_average(&variants, |variant| variant.duration).unwrap() - 1.75).abs() < 0.001
-        );
-        assert!(
-            (weighted_average(&variants, |variant| {
-                variant.attack_positions.len().to_f32().unwrap_or(f32::MAX)
-            })
-            .unwrap()
-                - 1.75)
-                .abs()
-                < 0.001
-        );
-    }
-
-    #[test]
-    fn canonical_asset_paths_preserve_existing_prefixes_and_extensions() {
-        assert_eq!(
-            canonical_visual_path("unsc/marine.vis"),
-            "art\\unsc\\marine.vis"
-        );
-        assert_eq!(
-            canonical_visual_path("art\\unsc\\marine.vis"),
-            "art\\unsc\\marine.vis"
-        );
-        assert_eq!(
-            canonical_animation_path("unsc/marine_attack"),
-            "art\\unsc\\marine_attack.uax"
-        );
-        assert_eq!(
-            canonical_animation_path("art\\unsc\\marine_attack.uax"),
-            "art\\unsc\\marine_attack.uax"
-        );
-    }
-
-    #[test]
-    fn area_damage_profile_preserves_authored_weapon_contract() {
-        let weapon = Weapon {
-            aoe_radius: Some(4.0),
-            aoe_primary_target_factor: Some(0.25),
-            aoe_distance_factor: Some(0.5),
-            aoe_damage_factor: Some(0.2),
-            aoe_linear_damage: Some(true),
-            aoe_ignores_y_axis: Some(true),
-            allow_friendly_fire: Some(true),
-            ..Weapon::default()
-        };
-        assert_eq!(
-            area_damage_profile(&weapon),
-            Some(AreaDamageProfile {
-                radius: 4.0,
-                primary_target_factor: 0.25,
-                distance_factor: 0.5,
-                damage_factor: 0.2,
-                linear_damage: true,
-                ignores_y_axis: true,
-                friendly_fire: true,
-            })
-        );
-        assert_eq!(area_damage_profile(&Weapon::default()), None);
-    }
-}
+mod tests;

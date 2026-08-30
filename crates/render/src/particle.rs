@@ -3,8 +3,8 @@
 //! The original PC path submits one point per particle and expands it in a
 //! geometry shader. `wgpu` does not expose geometry shaders, so this renderer
 //! performs the equivalent expansion with `vertex_index` and instance data.
-//! It deliberately does not simulate emitters: a later simulation layer can
-//! supply resolved instances without creating a second rendering path.
+//! The authored emitter runtime resolves PFX timing, motion, appearance, beams,
+//! and trails into the same instance stream used by direct callers.
 
 use glam::{Mat4, Vec3};
 use num_traits::ToPrimitive;
@@ -18,18 +18,32 @@ use crate::postprocess::DISTORTION_FORMAT;
 
 mod effect;
 mod gpu;
+mod image;
+mod packed;
+mod runtime;
 #[cfg(test)]
 mod tests;
 
 use gpu::{
-    color_blend_state, create_instance_buffer, create_material_bind_group, create_material_layout,
-    create_pipeline, create_scene_layout,
+    create_instance_buffer, create_material_bind_group, create_material_layout, create_pipeline,
+    create_scene_layout, particle_blend_state,
 };
+use image::substitute_failed_particle_layers;
+use packed::{PackedParticleInstance, PackedParticleMaterial, PackedParticleScene};
 
+pub(crate) use effect::canonical_effect_path;
 pub use effect::{
+    ParticleColorDefinition, ParticleColorKey, ParticleColorKind, ParticleColorProgression,
     ParticleEffect, ParticleEffectError, ParticleEmitter, ParticleEmitterKind,
-    ParticleMaterialDefinition, ParticleTextureDefinition, ParticleTextureStage,
-    ParticleUvAnimation,
+    ParticleEmitterShape, ParticleEmitterShapeKind, ParticleEmitterTiming, ParticleForceDefinition,
+    ParticleMagnetDefinition, ParticleMagnetKind, ParticleMaterialDefinition, ParticlePaletteEntry,
+    ParticleRuntimeDefinition, ParticleScalarKey, ParticleScalarProgression,
+    ParticleScalarProperty, ParticleTextureDefinition, ParticleTextureStage, ParticleTrailEmission,
+    ParticleTrailUv, ParticleUvAnimation, ParticleVarying, ParticleVectorProperty,
+};
+pub use runtime::{
+    ParticleEffectRuntime, ParticleEmitterRuntime, ParticleEmitterState, ParticleNestedEvent,
+    ParticleRenderContext,
 };
 
 const SHADER: &str = include_str!("particle.wgsl");
@@ -38,6 +52,8 @@ const MATERIAL_HAS_INTENSITY: u32 = 1 << 0;
 const MATERIAL_LIGHT_VOLUME: u32 = 1 << 1;
 const MATERIAL_SOFT_PARTICLES: u32 = 1 << 2;
 const MATERIAL_SOFT_FADE_RGB: u32 = 1 << 3;
+const MATERIAL_PREMULTIPLY_COLOR_ALPHA: u32 = 1 << 4;
+const MATERIAL_ALPHA_TEST: u32 = 1 << 5;
 
 /// Particle geometry families present in shipped PFX data.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -50,7 +66,7 @@ pub enum ParticleGeometry {
     UpFacing = 1,
     /// Camera-facing quad constrained to an authored axis.
     OrientedAxial = 2,
-    /// Axial quad whose long axis follows particle velocity.
+    /// Quad whose surface normal follows particle velocity.
     VelocityAligned = 3,
     /// Camera-facing segment between two beam control points.
     Beam = 4,
@@ -60,13 +76,17 @@ pub enum ParticleGeometry {
     TrailCross = 6,
     /// Horizontal patch used for terrain decals/effects.
     TerrainPatch = 7,
+    /// Beam ribbon whose width follows world up.
+    BeamVertical = 8,
+    /// Beam ribbon whose width is horizontal to its direction.
+    BeamHorizontal = 9,
 }
 
 impl ParticleGeometry {
     fn is_segment(self) -> bool {
         matches!(
             self,
-            Self::Beam | Self::Trail | Self::TrailCross | Self::VelocityAligned
+            Self::Beam | Self::BeamVertical | Self::BeamHorizontal | Self::Trail | Self::TrailCross
         )
     }
 }
@@ -77,7 +97,8 @@ pub enum ParticleBlendMode {
     /// Source-over alpha blending (`eAlphaBlend`).
     #[default]
     Alpha,
-    /// Source-alpha additive blending (`eAdditive`).
+    /// One-plus-one blending after the shader premultiplies particle alpha
+    /// (`eAdditive`).
     Additive,
     /// Premultiplied source-over blending (`ePremultipliedAlpha`).
     PremultipliedAlpha,
@@ -107,14 +128,17 @@ pub struct ParticleInstance {
     pub rotation: f32,
     /// Long/facing axis. Segment constructors normalize this automatically.
     pub axis: [f32; 3],
-    /// Half-length for beam/trail/velocity-aligned geometry.
+    /// Secondary up axis used by crossed trails.
+    pub up_axis: [f32; 3],
+    /// Half-length for beam/trail geometry.
     pub half_length: f32,
-    /// Full quad width and height. Segment geometry uses width and ignores
-    /// height in favor of `half_length`.
+    /// Full quad width and height. Segment constructors seed both ribbon widths
+    /// from `width`; their longitudinal extent lives in `half_length`.
     pub size: [f32; 2],
     /// Progression/tint RGBA already evaluated by the simulation layer.
     pub color: [f32; 4],
-    /// RGB intensity progression and alpha multiplier.
+    /// RGB intensity progression. The fourth lane is reserved to preserve the
+    /// retail vertex layout.
     pub intensity: [f32; 4],
     /// Per-map UV rectangles: diffuse 1/2/3 followed by intensity.
     pub uv_rects: [[f32; 4]; 4],
@@ -122,8 +146,8 @@ pub struct ParticleInstance {
     pub texture_layers: [u32; 4],
     /// Geometry expansion family.
     pub geometry: ParticleGeometry,
-    /// World/view-depth distance over which a soft particle fades in.
-    pub soft_fade_range: f32,
+    /// Retail multiplier applied to the particle/scene view-depth delta.
+    pub soft_fade_scale: f32,
 }
 
 impl ParticleInstance {
@@ -134,6 +158,7 @@ impl ParticleInstance {
             position,
             rotation: 0.0,
             axis: [0.0, 1.0, 0.0],
+            up_axis: [0.0, 1.0, 0.0],
             half_length: size[1] * 0.5,
             size,
             color,
@@ -141,7 +166,7 @@ impl ParticleInstance {
             uv_rects: [[0.0, 0.0, 1.0, 1.0]; 4],
             texture_layers: [0; 4],
             geometry: ParticleGeometry::Billboard,
-            soft_fade_range: 0.5,
+            soft_fade_scale: 1.0,
         }
     }
 
@@ -163,8 +188,7 @@ impl ParticleInstance {
         } else {
             Vec3::Y
         };
-        let mut instance =
-            Self::billboard(((start + end) * 0.5).to_array(), [width, length], color);
+        let mut instance = Self::billboard(((start + end) * 0.5).to_array(), [width, width], color);
         instance.axis = axis.to_array();
         instance.half_length = length * 0.5;
         instance.geometry = if geometry.is_segment() {
@@ -189,10 +213,11 @@ impl ParticleInstance {
                 self.axis[2],
                 self.half_length.max(0.0),
             ],
+            up_axis: [self.up_axis[0], self.up_axis[1], self.up_axis[2], 0.0],
             half_size_softness: [
                 self.size[0].abs() * 0.5,
                 self.size[1].abs() * 0.5,
-                self.soft_fade_range.max(f32::EPSILON),
+                self.soft_fade_scale.max(0.0),
                 0.0,
             ],
             color: self.color,
@@ -272,10 +297,18 @@ impl ParticleImage {
     }
 }
 
-/// Same-sized images uploaded as one particle texture array.
+/// GPU-compatible images uploaded as one particle texture array.
+///
+/// Authored sets occasionally mix resolutions or reference an absent frame.
+/// Since every layer is sampled in normalized UV space, smaller layers are
+/// resampled to the set's largest dimensions. Failed stages reuse the first
+/// decodable stage in the same set, avoiding the retail uploader's dependency
+/// on unrelated texture-array load order.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParticleTextureArray {
     layers: Vec<ParticleImage>,
+    resampled_layer_count: usize,
+    fallback_layer_count: usize,
 }
 
 impl ParticleTextureArray {
@@ -283,48 +316,80 @@ impl ParticleTextureArray {
     ///
     /// # Errors
     ///
-    /// Returns an error for an empty array or mismatched layer dimensions.
-    pub fn new(layers: Vec<ParticleImage>) -> Result<Self, ParticleError> {
+    /// Returns an error for an empty array or invalid image payload.
+    pub fn new(mut layers: Vec<ParticleImage>) -> Result<Self, ParticleError> {
         let Some(first) = layers.first() else {
             return Err(ParticleError::EmptyTextureArray);
         };
         validate_image(first.width, first.height, first.pixels.len())?;
-        for (index, layer) in layers.iter().enumerate().skip(1) {
+        let dimensions =
+            layers
+                .iter()
+                .try_fold([first.width, first.height], |[width, height], layer| {
+                    validate_image(layer.width, layer.height, layer.pixels.len())?;
+                    Ok::<_, ParticleError>([width.max(layer.width), height.max(layer.height)])
+                })?;
+        let mut resampled_layer_count = 0;
+        for layer in &mut layers {
             validate_image(layer.width, layer.height, layer.pixels.len())?;
-            if (layer.width, layer.height) != (first.width, first.height) {
-                return Err(ParticleError::TextureArrayDimensions {
-                    layer: index,
-                    expected: [first.width, first.height],
-                    actual: [layer.width, layer.height],
-                });
+            if [layer.width, layer.height] != dimensions {
+                *layer = resize_particle_image(layer, dimensions)?;
+                resampled_layer_count += 1;
             }
         }
         u32::try_from(layers.len()).map_err(|_| ParticleError::TooManyTextureLayers {
             actual: layers.len(),
         })?;
-        Ok(Self { layers })
+        Ok(Self {
+            layers,
+            resampled_layer_count,
+            fallback_layer_count: 0,
+        })
     }
 
     /// Loads all named DDX layers from PFX-style texture references.
     ///
     /// # Errors
     ///
-    /// Propagates missing/invalid texture and array validation errors.
+    /// Failed stages reuse the first stage in the set that decodes. Returns an
+    /// error when no authored stage can be decoded or array validation fails.
     pub fn load(
         source: &mut AssetSource<StdFileProvider>,
         paths: &[String],
     ) -> Result<Self, ParticleError> {
-        let layers = paths
+        let decoded = paths
             .iter()
             .map(|path| ParticleImage::load(source, path))
-            .collect::<Result<Vec<_>, _>>()?;
-        Self::new(layers)
+            .collect::<Vec<_>>();
+        let (layers, fallback_layer_count) = substitute_failed_particle_layers(decoded)?;
+        let mut array = Self::new(layers)?;
+        array.fallback_layer_count = fallback_layer_count;
+        Ok(array)
     }
 
     /// Returns decoded layers in texture-array order.
     #[must_use]
     pub fn layers(&self) -> &[ParticleImage] {
         &self.layers
+    }
+
+    /// Returns the shared layer dimensions in texels.
+    #[must_use]
+    pub fn dimensions(&self) -> [u32; 2] {
+        let first = &self.layers[0];
+        [first.width, first.height]
+    }
+
+    /// Returns how many authored layers required normalized-UV resampling.
+    #[must_use]
+    pub const fn resampled_layer_count(&self) -> usize {
+        self.resampled_layer_count
+    }
+
+    /// Returns how many authored stages reused the first decodable layer.
+    #[must_use]
+    pub const fn fallback_layer_count(&self) -> usize {
+        self.fallback_layer_count
     }
 
     fn hdr_scale(&self) -> f32 {
@@ -336,6 +401,70 @@ impl ParticleTextureArray {
     }
 }
 
+fn resize_particle_image(
+    image: &ParticleImage,
+    [width, height]: [u32; 2],
+) -> Result<ParticleImage, ParticleError> {
+    let expected = image_byte_len(width, height).unwrap_or(usize::MAX);
+    if width == 0 || height == 0 || expected == usize::MAX {
+        return Err(ParticleError::InvalidImage {
+            width,
+            height,
+            expected,
+            actual: 0,
+        });
+    }
+    let mut pixels = vec![0; expected];
+    let source_width = image.width.to_f32().expect("texture width must fit f32");
+    let source_height = image.height.to_f32().expect("texture height must fit f32");
+    let x_scale = source_width / width.to_f32().expect("texture width must fit f32");
+    let y_scale = source_height / height.to_f32().expect("texture height must fit f32");
+    for y in 0..height {
+        let source_y = ((y.to_f32().expect("texture Y must fit f32") + 0.5) * y_scale - 0.5)
+            .clamp(0.0, source_height - 1.0);
+        let y0 = source_y.floor().to_u32().unwrap_or(image.height - 1);
+        let y1 = (y0 + 1).min(image.height - 1);
+        let y_alpha = source_y - y0.to_f32().expect("texture Y must fit f32");
+        for x in 0..width {
+            let source_x = ((x.to_f32().expect("texture X must fit f32") + 0.5) * x_scale - 0.5)
+                .clamp(0.0, source_width - 1.0);
+            let x0 = source_x.floor().to_u32().unwrap_or(image.width - 1);
+            let x1 = (x0 + 1).min(image.width - 1);
+            let x_alpha = source_x - x0.to_f32().expect("texture X must fit f32");
+            let destination = usize::try_from((y * width + x) * 4)
+                .expect("validated texture index must fit usize");
+            for channel in 0..4 {
+                let top = sample_channel(image, x0, y0, channel).mul_add(
+                    1.0 - x_alpha,
+                    sample_channel(image, x1, y0, channel) * x_alpha,
+                );
+                let bottom = sample_channel(image, x0, y1, channel).mul_add(
+                    1.0 - x_alpha,
+                    sample_channel(image, x1, y1, channel) * x_alpha,
+                );
+                pixels[destination + channel] = top
+                    .mul_add(1.0 - y_alpha, bottom * y_alpha)
+                    .round()
+                    .to_u8()
+                    .unwrap_or(u8::MAX);
+            }
+        }
+    }
+    Ok(ParticleImage {
+        width,
+        height,
+        pixels,
+        hdr_scale: image.hdr_scale,
+    })
+}
+
+fn sample_channel(image: &ParticleImage, x: u32, y: u32, channel: usize) -> f32 {
+    let index = usize::try_from((y * image.width + x) * 4)
+        .expect("validated texture index must fit usize")
+        + channel;
+    f32::from(image.pixels[index])
+}
+
 /// Static material data shared by an emitter's particle instances.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParticleMaterial {
@@ -343,6 +472,8 @@ pub struct ParticleMaterial {
     pub diffuse: [Option<ParticleTextureArray>; 3],
     /// Optional intensity texture array.
     pub intensity: Option<ParticleTextureArray>,
+    /// Authored optional texture sets that could not be decoded and were disabled.
+    pub unavailable_texture_sets: usize,
     /// Blend between diffuse layers one and two.
     pub layer_1_to_2: ParticleLayerBlend,
     /// Blend between the accumulated color and diffuse layer three.
@@ -355,6 +486,8 @@ pub struct ParticleMaterial {
     pub light_volume: bool,
     /// Multiplier for sampled light-volume RGB.
     pub light_volume_intensity: f32,
+    /// Authored quad-corner modulation colors in retail vertex order.
+    pub corner_colors: [[f32; 4]; 4],
 }
 
 impl Default for ParticleMaterial {
@@ -362,12 +495,14 @@ impl Default for ParticleMaterial {
         Self {
             diffuse: [None, None, None],
             intensity: None,
+            unavailable_texture_sets: 0,
             layer_1_to_2: ParticleLayerBlend::Multiply,
             layer_2_to_3: ParticleLayerBlend::Multiply,
             blend: ParticleBlendMode::Alpha,
             soft_particles: false,
             light_volume: false,
             light_volume_intensity: 1.0,
+            corner_colors: [[1.0; 4]; 4],
         }
     }
 }
@@ -387,6 +522,8 @@ pub struct ParticleScene {
     pub depth_unproject: [f32; 2],
     /// World-to-light-volume rows producing normalized texture coordinates.
     pub light_volume_rows: [[f32; 4]; 3],
+    /// Color-field decode scale multiplied by the scenario particle-light scale.
+    pub light_volume_intensity_scale: f32,
 }
 
 impl ParticleScene {
@@ -410,7 +547,28 @@ impl ParticleScene {
                 [0.0, 1.0, 0.0, 0.0],
                 [0.0, 0.0, 1.0, 0.0],
             ],
+            light_volume_intensity_scale: crate::light_volume::LIGHT_VOLUME_DECODE_SCALE,
         }
+    }
+
+    /// Supplies shared field addressing and the scenario's particle-light scale.
+    #[must_use]
+    pub fn with_light_volume(mut self, rows: [[f32; 4]; 3], particle_intensity_scale: f32) -> Self {
+        self.light_volume_rows = rows;
+        self.light_volume_intensity_scale =
+            crate::light_volume::LIGHT_VOLUME_DECODE_SCALE * particle_intensity_scale.max(0.0);
+        self
+    }
+
+    /// Derives the retail reciprocal eye-depth reconstruction coefficients
+    /// from a right-handed perspective projection matrix.
+    #[must_use]
+    pub fn perspective_depth_unproject(projection: Mat4) -> [f32; 2] {
+        let depth_offset = projection.w_axis.z;
+        if !depth_offset.is_finite() || depth_offset.abs() <= f32::EPSILON {
+            return [0.0, 0.0];
+        }
+        [depth_offset.recip(), projection.z_axis.z / depth_offset]
     }
 }
 
@@ -483,7 +641,7 @@ impl ParticleRenderer {
                 &layout,
                 color_format,
                 "fs_color",
-                color_blend_state(material.blend),
+                Some(particle_blend_state(material.blend)),
                 "Particle Color Pipeline",
             )
         });
@@ -494,7 +652,7 @@ impl ParticleRenderer {
                 &layout,
                 DISTORTION_FORMAT,
                 "fs_distortion",
-                Some(wgpu::BlendState::ALPHA_BLENDING),
+                Some(particle_blend_state(material.blend)),
                 "Particle Distortion Pipeline",
             )
         });
@@ -551,6 +709,24 @@ impl ParticleRenderer {
         Ok(())
     }
 
+    /// Evaluates a live authored emitter and uploads its resolved instances.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParticleError::TooManyInstances`] when the evaluated draw
+    /// count cannot fit the GPU's `u32` instance range.
+    pub fn update_emitter_runtime(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        runtime: &ParticleEmitterRuntime,
+        material: &ParticleMaterial,
+        context: ParticleRenderContext,
+    ) -> Result<(), ParticleError> {
+        let instances = runtime.instances(material, context);
+        self.update_instances(device, queue, &instances)
+    }
+
     /// Draws non-distortion particles into the HDR scene target.
     pub fn render_color<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {
         let Some(pipeline) = &self.color_pipeline else {
@@ -588,7 +764,7 @@ impl WorldRenderer for ParticleRenderer {
         match phase {
             RenderPhase::World => self.render_color(pass),
             RenderPhase::Distortion => self.render_distortion(pass),
-            RenderPhase::Sky | RenderPhase::Shadow { .. } => {}
+            RenderPhase::Sky | RenderPhase::Shadow { .. } | RenderPhase::LocalShadow { .. } => {}
         }
     }
 }
@@ -654,131 +830,8 @@ pub enum ParticleError {
     },
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct PackedParticleInstance {
-    position_rotation: [f32; 4],
-    axis_half_length: [f32; 4],
-    half_size_softness: [f32; 4],
-    color: [f32; 4],
-    intensity: [f32; 4],
-    uv_rect0: [f32; 4],
-    uv_rect1: [f32; 4],
-    uv_rect2: [f32; 4],
-    uv_rect_intensity: [f32; 4],
-    texture_layers: [u32; 4],
-    geometry: [u32; 4],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
-struct PackedParticleScene {
-    view_projection: [[f32; 4]; 4],
-    world_to_view: [[f32; 4]; 4],
-    view_to_world: [[f32; 4]; 4],
-    camera_position: [f32; 4],
-    viewport_depth: [f32; 4],
-    light_volume_row0: [f32; 4],
-    light_volume_row1: [f32; 4],
-    light_volume_row2: [f32; 4],
-}
-
-impl PackedParticleScene {
-    fn from_scene(scene: &ParticleScene) -> Self {
-        Self {
-            view_projection: scene.view_projection.to_cols_array_2d(),
-            world_to_view: scene.world_to_view.to_cols_array_2d(),
-            view_to_world: scene.world_to_view.inverse().to_cols_array_2d(),
-            camera_position: [
-                scene.camera_position[0],
-                scene.camera_position[1],
-                scene.camera_position[2],
-                0.0,
-            ],
-            viewport_depth: [
-                scene.viewport_size[0].to_f32().unwrap_or(f32::MAX),
-                scene.viewport_size[1].to_f32().unwrap_or(f32::MAX),
-                scene.depth_unproject[0],
-                scene.depth_unproject[1],
-            ],
-            light_volume_row0: scene.light_volume_rows[0],
-            light_volume_row1: scene.light_volume_rows[1],
-            light_volume_row2: scene.light_volume_rows[2],
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct PackedParticleMaterial {
-    flags: [u32; 4],
-    hdr_scales: [f32; 4],
-    light_params: [f32; 4],
-}
-
-impl PackedParticleMaterial {
-    fn from_material(material: &ParticleMaterial) -> Self {
-        let layer_count = material
-            .diffuse
-            .iter()
-            .rposition(Option::is_some)
-            .map_or(1, |index| index + 1);
-        let mut flags = 0;
-        for (enabled, flag) in [
-            (material.intensity.is_some(), MATERIAL_HAS_INTENSITY),
-            (material.light_volume, MATERIAL_LIGHT_VOLUME),
-            (material.soft_particles, MATERIAL_SOFT_PARTICLES),
-            (
-                matches!(
-                    material.blend,
-                    ParticleBlendMode::Additive
-                        | ParticleBlendMode::Subtractive
-                        | ParticleBlendMode::Distortion
-                ),
-                MATERIAL_SOFT_FADE_RGB,
-            ),
-        ] {
-            if enabled {
-                flags |= flag;
-            }
-        }
-        Self {
-            flags: [
-                flags,
-                u32::try_from(layer_count).unwrap_or(1),
-                material.layer_1_to_2 as u32,
-                material.layer_2_to_3 as u32,
-            ],
-            hdr_scales: [
-                material.diffuse[0]
-                    .as_ref()
-                    .map_or(1.0, ParticleTextureArray::hdr_scale),
-                material.diffuse[1]
-                    .as_ref()
-                    .map_or(1.0, ParticleTextureArray::hdr_scale),
-                material.diffuse[2]
-                    .as_ref()
-                    .map_or(1.0, ParticleTextureArray::hdr_scale),
-                material
-                    .intensity
-                    .as_ref()
-                    .map_or(1.0, ParticleTextureArray::hdr_scale),
-            ],
-            light_params: [material.light_volume_intensity.max(0.0), 0.0, 0.0, 0.0],
-        }
-    }
-}
-
 fn validate_image(width: u32, height: u32, actual: usize) -> Result<(), ParticleError> {
-    let expected = usize::try_from(width)
-        .ok()
-        .and_then(|width| {
-            usize::try_from(height)
-                .ok()
-                .and_then(|height| width.checked_mul(height))
-        })
-        .and_then(|texels| texels.checked_mul(4))
-        .unwrap_or(usize::MAX);
+    let expected = image_byte_len(width, height).unwrap_or(usize::MAX);
     if width == 0 || height == 0 || actual != expected {
         Err(ParticleError::InvalidImage {
             width,
@@ -789,6 +842,17 @@ fn validate_image(width: u32, height: u32, actual: usize) -> Result<(), Particle
     } else {
         Ok(())
     }
+}
+
+fn image_byte_len(width: u32, height: u32) -> Option<usize> {
+    usize::try_from(width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .and_then(|texels| texels.checked_mul(4))
 }
 
 fn canonical_particle_texture_path(path: &str) -> String {

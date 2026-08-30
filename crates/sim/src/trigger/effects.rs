@@ -4,6 +4,7 @@ mod ai;
 mod ammunition;
 mod animations;
 mod attachments;
+mod carpet_bomb;
 mod commands;
 mod design_lines;
 mod dispatch;

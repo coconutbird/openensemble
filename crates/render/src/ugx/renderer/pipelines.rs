@@ -1,8 +1,11 @@
-use std::{collections::HashMap, mem};
+use std::{collections::HashMap, mem, num::NonZeroU64};
 
 use crate::gpu::{
     buffer_layout_entry, filtering_sampler_layout_entry,
     texture_layout_entry as shared_texture_layout_entry,
+};
+use crate::local_shadow::{
+    LOCAL_SHADOW_DEPTH_BIAS, LOCAL_SHADOW_FORMAT, LOCAL_SHADOW_PASS_UNIFORM_SIZE,
 };
 use crate::postprocess::DISTORTION_FORMAT;
 use crate::ugx::model::{BlendMode, Vertex};
@@ -91,12 +94,103 @@ pub(super) fn create_shadow_layout(device: &wgpu::Device) -> wgpu::BindGroupLayo
                 wgpu::ShaderStages::FRAGMENT,
                 wgpu::BufferBindingType::Storage { read_only: true },
             ),
-            texture(3, wgpu::TextureViewDimension::D2Array),
+            shared_texture_layout_entry(
+                3,
+                wgpu::ShaderStages::FRAGMENT,
+                wgpu::TextureSampleType::Depth,
+                wgpu::TextureViewDimension::D2Array,
+            ),
             sampler(4),
             texture(5, wgpu::TextureViewDimension::D3),
             texture(6, wgpu::TextureViewDimension::D3),
             sampler(7),
+            wgpu::BindGroupLayoutEntry {
+                binding: 8,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: NonZeroU64::new(LOCAL_SHADOW_PASS_UNIFORM_SIZE),
+                },
+                count: None,
+            },
         ],
+    })
+}
+
+pub(super) fn create_local_shadow_pipelines(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    scene_layout: &wgpu::BindGroupLayout,
+    material_layout: &wgpu::BindGroupLayout,
+    shadow_layout: &wgpu::BindGroupLayout,
+) -> [wgpu::RenderPipeline; 2] {
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("UGX Local Shadow Pipeline Layout"),
+        bind_group_layouts: &[scene_layout, material_layout, shadow_layout],
+        push_constant_ranges: &[],
+    });
+    [false, true].map(|two_sided| create_local_shadow_pipeline(device, shader, &layout, two_sided))
+}
+
+fn create_local_shadow_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    two_sided: bool,
+) -> wgpu::RenderPipeline {
+    const ATTRIBUTES: [wgpu::VertexAttribute; 10] = wgpu::vertex_attr_array![
+        0 => Float32x3,
+        1 => Float32x3,
+        2 => Float32x4,
+        3 => Float32x4,
+        4 => Float32x2,
+        5 => Float32x2,
+        6 => Float32x2,
+        7 => Float32x4,
+        8 => Uint32x4,
+        9 => Float32x4
+    ];
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("UGX Local Shadow Pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: u64::try_from(mem::size_of::<Vertex>())
+                    .expect("UGX vertex stride must fit u64"),
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &ATTRIBUTES,
+            }],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            targets: &[],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: (!two_sided).then_some(wgpu::Face::Back),
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: LOCAL_SHADOW_FORMAT,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState {
+                constant: LOCAL_SHADOW_DEPTH_BIAS,
+                slope_scale: 1.5,
+                clamp: 0.0,
+            },
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
     })
 }
 
@@ -128,6 +222,37 @@ pub(super) fn create_pipelines(
                     &pipeline_layout,
                     blend,
                     two_sided,
+                )
+            })
+        })
+        .collect()
+}
+
+pub(super) fn create_fade_pipelines(
+    device: &wgpu::Device,
+    surface_format: wgpu::TextureFormat,
+    shader: &wgpu::ShaderModule,
+    scene_layout: &wgpu::BindGroupLayout,
+    material_layout: &wgpu::BindGroupLayout,
+    shadow_layout: &wgpu::BindGroupLayout,
+) -> Vec<wgpu::RenderPipeline> {
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("UGX Fade Pipeline Layout"),
+        bind_group_layouts: &[scene_layout, material_layout, shadow_layout],
+        push_constant_ranges: &[],
+    });
+    BlendMode::DRAW_ORDER
+        .into_iter()
+        .flat_map(|blend| {
+            [false, true].map(|two_sided| {
+                create_material_pipeline(
+                    device,
+                    surface_format,
+                    shader,
+                    &pipeline_layout,
+                    blend,
+                    two_sided,
+                    MaterialPipelineKind::WorldFade,
                 )
             })
         })
@@ -358,6 +483,7 @@ fn create_pipeline(
 #[derive(Clone, Copy)]
 enum MaterialPipelineKind {
     World,
+    WorldFade,
     Sky,
 }
 
@@ -382,32 +508,39 @@ fn create_material_pipeline(
         8 => Uint32x4,
         9 => Float32x4
     ];
-    let target_blend = match blend {
-        BlendMode::Opaque | BlendMode::AlphaTest => None,
-        BlendMode::Over => Some(wgpu::BlendState::ALPHA_BLENDING),
-        BlendMode::Additive => Some(wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::SrcAlpha,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
-            },
-            alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
-            },
-        }),
+    let alpha_fade = matches!(kind, MaterialPipelineKind::WorldFade)
+        && matches!(blend, BlendMode::Opaque | BlendMode::AlphaTest);
+    let target_blend = if alpha_fade {
+        Some(wgpu::BlendState::ALPHA_BLENDING)
+    } else {
+        match blend {
+            BlendMode::Opaque | BlendMode::AlphaTest => None,
+            BlendMode::Over => Some(wgpu::BlendState::ALPHA_BLENDING),
+            BlendMode::Additive => Some(wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::SrcAlpha,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            }),
+        }
     };
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(match kind {
             MaterialPipelineKind::World => "UGX Legacy Material Pipeline",
+            MaterialPipelineKind::WorldFade => "UGX Fading Material Pipeline",
             MaterialPipelineKind::Sky => "UGX Sky Material Pipeline",
         }),
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
             entry_point: Some(match kind {
-                MaterialPipelineKind::World => "vs_main",
+                MaterialPipelineKind::World | MaterialPipelineKind::WorldFade => "vs_main",
                 MaterialPipelineKind::Sky => "vs_sky",
             }),
             buffers: &[wgpu::VertexBufferLayout {

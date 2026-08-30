@@ -40,6 +40,10 @@ impl World {
             .ground_vehicle_physics_profiles()
             .map(|(name, profile)| (name.to_owned(), profile.clone()))
             .collect();
+        self.prototype_flight_controllers = gameplay
+            .flight_controller_profiles()
+            .map(|(name, profile)| (name.to_owned(), profile))
+            .collect();
     }
 
     /// Return the scenario-layered shield coverage used by future unit spawns.
@@ -59,6 +63,17 @@ impl World {
     ) -> Option<&crate::gameplay::GroundVehiclePhysicsProfile> {
         self.prototype_ground_vehicle_physics
             .get(&proto_object_name.to_ascii_lowercase())
+    }
+
+    pub(crate) fn prototype_flight_controller(
+        &self,
+        proto_object_name: &str,
+    ) -> crate::entities::FlightControllerKind {
+        self.prototype_flight_controllers
+            .get(&proto_object_name.to_ascii_lowercase())
+            .map_or(crate::entities::FlightControllerKind::Direct, |profile| {
+                profile.resolve(self.is_config_defined("EnableFlight"))
+            })
     }
 
     /// Test whether a proto-object has a concrete or abstract object type.
@@ -199,6 +214,13 @@ impl World {
             u32::try_from(self.prototype_ground_vehicle_physics.len()).unwrap_or(u32::MAX),
         );
         for (prototype_name, profile) in &self.prototype_ground_vehicle_physics {
+            checksum.hash_u32(u32::try_from(prototype_name.len()).unwrap_or(u32::MAX));
+            checksum.hash_bytes(prototype_name.as_bytes());
+            profile.hash_state(checksum);
+        }
+        checksum
+            .hash_u32(u32::try_from(self.prototype_flight_controllers.len()).unwrap_or(u32::MAX));
+        for (prototype_name, profile) in &self.prototype_flight_controllers {
             checksum.hash_u32(u32::try_from(prototype_name.len()).unwrap_or(u32::MAX));
             checksum.hash_bytes(prototype_name.as_bytes());
             profile.hash_state(checksum);

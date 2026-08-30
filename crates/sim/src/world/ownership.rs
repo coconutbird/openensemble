@@ -1,6 +1,7 @@
 //! Authoritative squad ownership transfer.
 
 use super::World;
+use crate::entities::units::BuiltEconomyState;
 use crate::entity_id::EntityId;
 use crate::player::{PlayerId, PopulationCost};
 use std::collections::BTreeSet;
@@ -12,6 +13,7 @@ struct UnitOwnershipCost {
     population: Vec<PopulationCost>,
     population_cap: Vec<PopulationCost>,
     built: bool,
+    built_economy: BuiltEconomyState,
 }
 
 impl World {
@@ -25,6 +27,7 @@ impl World {
             population: unit.population_costs.clone(),
             population_cap: unit.population_cap_additions.clone(),
             built: unit.built,
+            built_economy: unit.built_economy,
         }) else {
             return false;
         };
@@ -43,6 +46,7 @@ impl World {
                 player.adjust_population_cap(&cost.population_cap, true);
             }
         }
+        self.transfer_unit_built_economy(cost.old_owner, new_owner, cost.built_economy);
         if let Some(unit) = self.units.get_mut(unit_id) {
             unit.base.player_id = new_owner;
         }
@@ -111,6 +115,7 @@ impl World {
                     population: unit.population_costs.clone(),
                     population_cap: unit.population_cap_additions.clone(),
                     built: unit.built,
+                    built_economy: unit.built_economy,
                 })
             })
             .collect::<Vec<_>>();
@@ -135,6 +140,9 @@ impl World {
                 }
             }
         }
+        for cost in &unit_costs {
+            self.transfer_unit_built_economy(cost.old_owner, new_owner, cost.built_economy);
+        }
 
         if let Some(squad) = self.squads.get_mut(squad_id) {
             squad.base.player_id = new_owner;
@@ -155,6 +163,9 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pipeline::database::hw1::gamedata::{RatesWrapper, ResourceDef, ResourcesWrapper};
+    use pipeline::database::hw1::objects::{AddedResource, ObjectRate};
+    use pipeline::database::hw1::{Database, GameData, ProtoObject};
 
     fn squad_with_member(world: &mut World, player_id: PlayerId) -> (EntityId, EntityId) {
         let squad_id = world.create_squad(player_id);
@@ -197,5 +208,59 @@ mod tests {
 
         assert!(world.change_squad_owner(source, 2));
         assert_eq!(world.entity_owner(target), Some(1));
+    }
+
+    #[test]
+    fn ownership_transfer_moves_live_built_economy_contributions() {
+        let database = Database {
+            objects: vec![ProtoObject {
+                name: "generator".to_owned(),
+                object_class: Some("Building".to_owned()),
+                add_resource: Some(AddedResource {
+                    resource_type: "Power".to_owned(),
+                    amount: Some(10.0),
+                }),
+                rate: Some(ObjectRate {
+                    rate_type: Some("Power".to_owned()),
+                    value: 3.0,
+                }),
+                ..ProtoObject::default()
+            }],
+            game_data: Some(GameData {
+                resources: Some(ResourcesWrapper {
+                    entries: vec![ResourceDef {
+                        name: "Power".to_owned(),
+                        ..ResourceDef::default()
+                    }],
+                }),
+                rates: Some(RatesWrapper {
+                    entries: vec!["Power".to_owned()],
+                }),
+                ..GameData::default()
+            }),
+            ..Database::default()
+        };
+        let mut world = World::new();
+        world.init_players(2);
+        for player_id in [1, 2] {
+            world
+                .get_player_mut(player_id)
+                .unwrap()
+                .configure_rate_slots(1);
+        }
+        let building_id = world.create_building(1);
+        assert!(world.activate_unit_built_economy(building_id, &database, &database.objects[0]));
+        assert_close(world.get_player(1).unwrap().get_resource(0), 10.0);
+        assert_close(world.get_player(1).unwrap().get_rate(0), 3.0);
+
+        assert!(world.change_unit_owner(building_id, 2));
+        assert_close(world.get_player(1).unwrap().get_resource(0), 0.0);
+        assert_close(world.get_player(1).unwrap().get_rate(0), 0.0);
+        assert_close(world.get_player(2).unwrap().get_resource(0), 10.0);
+        assert_close(world.get_player(2).unwrap().get_rate(0), 3.0);
+    }
+
+    fn assert_close(left: f32, right: f32) {
+        assert!((left - right).abs() <= f32::EPSILON, "{left} != {right}");
     }
 }

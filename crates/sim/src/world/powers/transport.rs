@@ -7,16 +7,19 @@ use super::common::{
 use super::{
     NativePowerError, NativePowerInput, NativePowerInvocation, PowerExecutionId, power_by_id,
 };
+use crate::EntityId;
 use crate::commands::PowerUserId;
-use crate::entities::squads::{SquadContainmentState, SquadPowerTransportPlan};
 use crate::entities::SquadMode;
+use crate::entities::squads::{SquadContainmentState, SquadPowerTransportPlan};
 use crate::entity::Entity;
 use crate::player::{PlayerId, ProtoPowerId};
 use crate::scenario::placed::create_trigger_unit_squad;
 use crate::spawn::object_prototype_id;
 use crate::sync::SyncChecksum;
-use crate::world::{GeneralEvent, GeneralEventType, World};
-use crate::EntityId;
+use crate::world::{
+    GeneralEvent, GeneralEventType, TransportGroupPlan, TransportGroupRequest, World,
+    average_transport_position, plan_transport_groups, transport_carrier_spacing,
+};
 use glam::Vec3;
 use num_traits::ToPrimitive;
 use pipeline::database::hw1::powers::PowerAttributes;
@@ -191,13 +194,6 @@ struct TransportProfile {
     outgoing_offset: f32,
     pickup_height: f32,
     dropoff_height: f32,
-}
-
-#[derive(Debug)]
-struct TransportGroup {
-    passengers: Vec<EntityId>,
-    pickup: Vec3,
-    dropoff: Vec3,
 }
 
 impl World {
@@ -593,10 +589,11 @@ fn squad_is_transportable(world: &World, squad_id: EntityId, check_reserved: boo
         && !squad.is_hitched()
         && squad.hitched_squad().is_none()
         && squad.board_state().is_none()
-        && squad
-            .unit_ids
-            .iter()
-            .all(|unit_id| world.get_unit(*unit_id).is_some_and(|unit| !unit.is_being_boarded()))
+        && squad.unit_ids.iter().all(|unit_id| {
+            world
+                .get_unit(*unit_id)
+                .is_some_and(|unit| !unit.is_being_boarded())
+        })
         && (!check_reserved || !squad_is_reserved(world, squad_id))
 }
 
@@ -621,9 +618,23 @@ fn launch_transports(
         .iter()
         .copied()
         .filter(|squad_id| squad_is_transportable(world, *squad_id, false))
-        .filter(|squad_id| transport_accepts_squad(world, execution, *squad_id))
         .collect::<Vec<_>>();
-    let groups = transport_groups(world, execution, &selected, pickup, dropoff);
+    let formation_center = average_transport_position(world, &selected).unwrap_or(pickup);
+    let groups = plan_transport_groups(
+        world,
+        database,
+        TransportGroupRequest {
+            passenger_squad_ids: &selected,
+            formation_center,
+            dropoff_center: dropoff,
+            count_accepted_object_types: &execution.transport_contains,
+            count_capacity: execution.max_contained_population,
+            load_accepted_object_types: &execution.transport_contains,
+            load_capacity: execution.max_contained_population,
+            maximum_transports: execution.maximum_transports,
+            carrier_spacing: execution.carrier_spacing,
+        },
+    );
     let mut carriers = Vec::with_capacity(groups.len());
     for group in groups {
         if let Some(carrier_id) = launch_transport_group(world, database, execution, group) {
@@ -633,89 +644,19 @@ fn launch_transports(
     carriers
 }
 
-fn transport_groups(
-    world: &World,
-    execution: &TransportPowerExecution,
-    selected: &[EntityId],
-    pickup: Vec3,
-    dropoff: Vec3,
-) -> Vec<TransportGroup> {
-    let total_population = selected
-        .iter()
-        .map(|squad_id| rounded_transport_population(world, *squad_id))
-        .sum::<f32>();
-    let count = (total_population / execution.max_contained_population)
-        .ceil()
-        .to_u32()
-        .unwrap_or(u32::MAX)
-        .min(execution.maximum_transports);
-    if count == 0 {
-        return Vec::new();
-    }
-    let average = average_squad_position(world, selected).unwrap_or(pickup);
-    let direction = horizontal_direction(dropoff - average).unwrap_or(Vec3::Z);
-    let right = Vec3::Y.cross(direction).normalize_or(Vec3::X);
-    let center = count.saturating_sub(1).to_f32().unwrap_or(f32::MAX) * 0.5;
-    let mut remaining = selected.to_vec();
-    let mut result = Vec::new();
-    for index in 0..count {
-        let offset = right
-            * ((index.to_f32().unwrap_or(f32::MAX) - center) * execution.carrier_spacing);
-        let carrier_pickup = ground_position(world, average + offset);
-        let carrier_dropoff = ground_position(world, dropoff + offset);
-        remaining.sort_by(|left, right| {
-            squad_distance_squared(world, *left, carrier_pickup)
-                .total_cmp(&squad_distance_squared(world, *right, carrier_pickup))
-                .then_with(|| left.cmp(right))
-        });
-        let passengers = take_transport_load(
-            world,
-            &mut remaining,
-            execution.max_contained_population,
-        );
-        if !passengers.is_empty() {
-            result.push(TransportGroup {
-                passengers,
-                pickup: carrier_pickup,
-                dropoff: carrier_dropoff,
-            });
-        }
-    }
-    result
-}
-
-fn take_transport_load(
-    world: &World,
-    remaining: &mut Vec<EntityId>,
-    capacity: f32,
-) -> Vec<EntityId> {
-    let mut loaded = Vec::new();
-    let mut population = 0.0;
-    let mut index = 0;
-    while index < remaining.len() {
-        let squad_population = rounded_transport_population(world, remaining[index]);
-        if population + squad_population <= capacity {
-            population += squad_population;
-            loaded.push(remaining.remove(index));
-        } else {
-            index += 1;
-        }
-    }
-    loaded
-}
-
 fn launch_transport_group(
     world: &mut World,
     database: &Database,
     execution: &TransportPowerExecution,
-    group: TransportGroup,
+    group: TransportGroupPlan,
 ) -> Option<EntityId> {
-    let direction = horizontal_direction(group.dropoff - group.pickup).unwrap_or(Vec3::Z);
-    let start = group.pickup - direction * execution.incoming_offset
+    let direction =
+        horizontal_direction(group.dropoff_position - group.pickup_position).unwrap_or(Vec3::Z);
+    let start = group.pickup_position - direction * execution.incoming_offset
         + Vec3::Y * execution.incoming_height;
-    let pickup_target = group.pickup + Vec3::Y * execution.pickup_height;
-    let dropoff_target = group.dropoff + Vec3::Y * execution.dropoff_height;
-    let outgoing_target = group.dropoff
+    let pickup_target = group.pickup_position + Vec3::Y * execution.pickup_height;
+    let dropoff_target = group.dropoff_position + Vec3::Y * execution.dropoff_height;
+    let outgoing_target = group.dropoff_position
         + direction * execution.outgoing_offset
         + Vec3::Y * execution.outgoing_height;
     let (carrier_id, carrier_unit_id) = create_trigger_unit_squad(
@@ -736,11 +677,11 @@ fn launch_transport_group(
     let started = world.start_power_transport_flight(
         carrier_id,
         SquadPowerTransportPlan {
-            passenger_squad_ids: group.passengers,
+            passenger_squad_ids: group.passenger_squad_ids,
             start_position: start,
-            pickup_position: group.pickup,
+            pickup_position: group.pickup_position,
             pickup_target,
-            dropoff_position: group.dropoff,
+            dropoff_position: group.dropoff_position,
             dropoff_target,
             outgoing_target,
         },
@@ -750,50 +691,6 @@ fn launch_transport_group(
         return None;
     }
     Some(carrier_id)
-}
-
-fn transport_accepts_squad(
-    world: &World,
-    execution: &TransportPowerExecution,
-    squad_id: EntityId,
-) -> bool {
-    execution.transport_contains.iter().any(|object_type| {
-        world.squad_object_type_match(squad_id, object_type) == Some(true)
-    })
-}
-
-fn rounded_transport_population(world: &World, squad_id: EntityId) -> f32 {
-    world
-        .get_squad(squad_id)
-        .and_then(|squad| squad.population_costs.first())
-        .map_or(0.0, |population| population.amount.max(0.0).round())
-}
-
-fn average_squad_position(world: &World, squads: &[EntityId]) -> Option<Vec3> {
-    let mut total = Vec3::ZERO;
-    let mut count = 0_u32;
-    for squad_id in squads {
-        if let Some(squad) = world.get_squad(*squad_id) {
-            total += squad.base.position;
-            count += 1;
-        }
-    }
-    (count > 0).then(|| {
-        ground_position(world, total / count.to_f32().unwrap_or(f32::MAX))
-    })
-}
-
-fn ground_position(world: &World, mut position: Vec3) -> Vec3 {
-    if let Some(height) = world.terrain_height(position, true) {
-        position.y = height;
-    }
-    position
-}
-
-fn squad_distance_squared(world: &World, squad_id: EntityId, location: Vec3) -> f32 {
-    world.get_squad(squad_id).map_or(f32::INFINITY, |squad| {
-        planar_distance_squared(squad.base.position, location)
-    })
 }
 
 fn planar_distance_squared(left: Vec3, right: Vec3) -> f32 {
@@ -814,25 +711,16 @@ impl TransportProfile {
     ) -> Result<Self, NativePowerError> {
         validate_level(attributes, invocation.power_level)?;
         let ui_radius = finite_positive(attributes.ui_radius, "UIRadius")?;
-        let min_transport_distance = optional_float(
-            attributes,
-            invocation.power_level,
-            "MinTransportDistance",
-        )?
-        .unwrap_or(ui_radius);
+        let min_transport_distance =
+            optional_float(attributes, invocation.power_level, "MinTransportDistance")?
+                .unwrap_or(ui_radius);
         if min_transport_distance < 0.0 {
             return Err(NativePowerError::InvalidData("MinTransportDistance"));
         }
-        let max_ground_vehicles = optional_limit(
-            attributes,
-            invocation.power_level,
-            "MaxGroundVehicles",
-        )?;
-        let max_infantry_units = optional_limit(
-            attributes,
-            invocation.power_level,
-            "MaxInfantryUnits",
-        )?;
+        let max_ground_vehicles =
+            optional_limit(attributes, invocation.power_level, "MaxGroundVehicles")?;
+        let max_infantry_units =
+            optional_limit(attributes, invocation.power_level, "MaxInfantryUnits")?;
         let (transport_prototype, transport_prototype_id, prototype) =
             player_transport_prototype(world, database, invocation.player_id)?;
         let max_contained_population = prototype
@@ -844,8 +732,7 @@ impl TransportProfile {
             .game_data
             .as_ref()
             .and_then(|game_data| game_data.transport_max)
-            .filter(|value| *value > 0)
-            .ok_or(NativePowerError::InvalidData("TransportMax"))?;
+            .unwrap_or(3);
         let settings = database.game_data.as_ref();
         Ok(Self {
             ui_radius,
@@ -858,13 +745,28 @@ impl TransportProfile {
             max_contained_population,
             maximum_transports,
             carrier_speed: finite_positive(prototype.velocity, "TransportVelocity")?,
-            carrier_spacing: carrier_spacing(prototype),
-            incoming_height: setting(settings.and_then(|data| data.transport_incoming_height), 40.0),
-            incoming_offset: setting(settings.and_then(|data| data.transport_incoming_offset), 60.0),
-            outgoing_height: setting(settings.and_then(|data| data.transport_outgoing_height), 120.0),
-            outgoing_offset: setting(settings.and_then(|data| data.transport_outgoing_offset), 60.0),
-            pickup_height: setting(settings.and_then(|data| data.transport_pickup_height), 8.0),
-            dropoff_height: setting(settings.and_then(|data| data.transport_dropoff_height), 15.0),
+            carrier_spacing: transport_carrier_spacing(prototype),
+            incoming_height: setting(
+                settings.and_then(|data| data.transport_incoming_height),
+                60.0,
+            ),
+            incoming_offset: setting(
+                settings.and_then(|data| data.transport_incoming_offset),
+                40.0,
+            ),
+            outgoing_height: setting(
+                settings.and_then(|data| data.transport_outgoing_height),
+                60.0,
+            ),
+            outgoing_offset: setting(
+                settings.and_then(|data| data.transport_outgoing_offset),
+                40.0,
+            ),
+            pickup_height: setting(settings.and_then(|data| data.transport_pickup_height), 12.0),
+            dropoff_height: setting(
+                settings.and_then(|data| data.transport_dropoff_height),
+                12.0,
+            ),
         })
     }
 }
@@ -911,15 +813,6 @@ fn finite_positive(value: Option<f32>, name: &'static str) -> Result<f32, Native
     value
         .filter(|value| value.is_finite() && *value > 0.0)
         .ok_or(NativePowerError::InvalidData(name))
-}
-
-fn carrier_spacing(prototype: &ProtoObject) -> f32 {
-    let radius = prototype
-        .obstruction_radius_x
-        .unwrap_or_default()
-        .abs()
-        .max(prototype.obstruction_radius_z.unwrap_or_default().abs());
-    (radius * 2.0 + 2.0).max(8.0)
 }
 
 fn setting(value: Option<f32>, fallback: f32) -> f32 {

@@ -11,7 +11,7 @@ fn random_location_uses_retail_radius_distribution_rotation_and_rng_stream() {
     let mut oracle = World::new();
     let radial_sample = oracle.trigger_random_float(0.0, 1.0);
     let radius = radial_sample.sqrt() * 8.0 + 2.0;
-    let theta = oracle.trigger_random_float(0.0, RETAIL_TWO_PI);
+    let theta = oracle.trigger_random_float(0.0, std::f32::consts::TAU);
     let expected = TriggerVec3::new(
         100.0 + theta.cos() * radius,
         7.0,

@@ -130,11 +130,12 @@ impl World {
         };
         self.prepare_remove_unit_garrison(unit_id);
         self.refund_production_for_removed_unit(&source);
+        self.deactivate_unit_built_economy(unit_id);
         let now_ms = self.game_time_ms;
         let Some(unit) = self.get_unit_mut(unit_id) else {
             return;
         };
-        unit.reset_for_death_replacement(request.target_kind, now_ms);
+        unit.reset_for_prototype_transform(request.target_kind, now_ms);
         configure_unit_from_proto(
             self,
             unit_id,
@@ -188,6 +189,7 @@ impl World {
                 );
             }
         }
+        self.recompute_unit_base_child_damage(unit_id);
     }
 
     fn retain_death_replacement_squad(&mut self, squad_id: Option<EntityId>, force_normal: bool) {

@@ -15,7 +15,7 @@ fn transport_hides_passenger_then_releases_and_self_destructs() {
     let (transport, transport_unit) = squad_with_unit(&mut world, 1, Vec3::ZERO);
     world.get_squad_mut(transport).unwrap().speed = 20.0;
     let plan = SquadTransportPlan {
-        passenger_squad_id: passenger,
+        passenger_squad_ids: vec![passenger],
         start_position: Vec3::new(-10.0, 10.0, 0.0),
         dropoff_position: Vec3::ZERO,
         incoming_target: Vec3::new(0.0, 5.0, 0.0),
@@ -25,7 +25,7 @@ fn transport_hides_passenger_then_releases_and_self_destructs() {
         facing: Some(Vec3::X),
     };
 
-    assert!(world.start_transport_fly_in(transport, plan));
+    assert!(world.start_transport_fly_in(transport, plan.clone()));
     assert!(world.get_unit(passenger_unit).unwrap().is_garrisoned());
     assert_eq!(
         world.get_unit(transport_unit).unwrap().base.forward,
@@ -68,7 +68,7 @@ fn invalid_cross_owner_plan_is_atomic() {
     let (passenger, passenger_unit) = squad_with_unit(&mut world, 1, Vec3::ZERO);
     let (transport, _) = squad_with_unit(&mut world, 2, Vec3::ZERO);
     let plan = SquadTransportPlan {
-        passenger_squad_id: passenger,
+        passenger_squad_ids: vec![passenger],
         start_position: Vec3::ZERO,
         dropoff_position: Vec3::ZERO,
         incoming_target: Vec3::X,
@@ -86,4 +86,98 @@ fn invalid_cross_owner_plan_is_atomic() {
             .transport_fly_in()
             .is_none()
     );
+}
+
+#[test]
+fn one_trigger_carrier_preloads_and_releases_multiple_squads() {
+    let mut world = World::new();
+    world.init_players(1);
+    let (first, first_unit) = squad_with_unit(&mut world, 1, Vec3::ZERO);
+    let (second, second_unit) = squad_with_unit(&mut world, 1, Vec3::X);
+    let (transport, transport_unit) = squad_with_unit(&mut world, 1, Vec3::ZERO);
+    world.get_squad_mut(transport).unwrap().speed = 100.0;
+    let plan = SquadTransportPlan {
+        passenger_squad_ids: vec![first, second],
+        start_position: Vec3::new(-10.0, 10.0, 0.0),
+        dropoff_position: Vec3::ZERO,
+        incoming_target: Vec3::new(0.0, 5.0, 0.0),
+        outgoing_target: Vec3::new(10.0, 10.0, 0.0),
+        rally_point: None,
+        attack_move: false,
+        facing: Some(Vec3::Z),
+    };
+
+    assert!(world.start_transport_fly_in(transport, plan));
+    let action = world
+        .get_squad(transport)
+        .unwrap()
+        .transport_fly_in()
+        .unwrap();
+    assert_eq!(action.passenger_squad_ids(), &[first, second]);
+    assert_eq!(
+        world
+            .get_unit(transport_unit)
+            .unwrap()
+            .garrison
+            .contained_unit_ids(),
+        &[first_unit, second_unit]
+    );
+    assert!(world.get_unit(first_unit).unwrap().is_garrisoned());
+    assert!(world.get_unit(second_unit).unwrap().is_garrisoned());
+
+    world.update_entities(0.2);
+    assert!(!world.get_unit(first_unit).unwrap().is_garrisoned());
+    assert!(!world.get_unit(second_unit).unwrap().is_garrisoned());
+    assert_ne!(
+        world.get_squad(first).unwrap().base.position,
+        world.get_squad(second).unwrap().base.position
+    );
+    assert_eq!(
+        world
+            .get_squad(transport)
+            .unwrap()
+            .transport_fly_in()
+            .unwrap()
+            .phase(),
+        TransportFlyInPhase::Outgoing
+    );
+
+    world.update_entities(0.2);
+    assert!(world.get_squad(transport).is_none());
+}
+
+#[test]
+fn multi_carrier_start_validates_every_flight_before_mutating() {
+    let mut world = World::new();
+    world.init_players(2);
+    let (valid_passenger, valid_unit) = squad_with_unit(&mut world, 1, Vec3::ZERO);
+    let (wrong_owner, wrong_owner_unit) = squad_with_unit(&mut world, 2, Vec3::ZERO);
+    let (first_transport, _) = squad_with_unit(&mut world, 1, Vec3::ZERO);
+    let (second_transport, _) = squad_with_unit(&mut world, 1, Vec3::ZERO);
+    let plan = |passenger_squad_ids| SquadTransportPlan {
+        passenger_squad_ids,
+        start_position: Vec3::ZERO,
+        dropoff_position: Vec3::ZERO,
+        incoming_target: Vec3::X,
+        outgoing_target: Vec3::X * 2.0,
+        rally_point: None,
+        attack_move: false,
+        facing: None,
+    };
+
+    assert!(!world.start_transport_fly_in_batch(vec![
+        (first_transport, plan(vec![valid_passenger])),
+        (second_transport, plan(vec![wrong_owner])),
+    ]));
+    assert!(!world.get_unit(valid_unit).unwrap().is_garrisoned());
+    assert!(!world.get_unit(wrong_owner_unit).unwrap().is_garrisoned());
+    for transport_id in [first_transport, second_transport] {
+        assert!(
+            world
+                .get_squad(transport_id)
+                .unwrap()
+                .transport_fly_in()
+                .is_none()
+        );
+    }
 }

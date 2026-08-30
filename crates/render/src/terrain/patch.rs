@@ -22,9 +22,10 @@ mod gpu;
 mod tests;
 
 use gpu::{
-    buffer_entry, create_2d_fallback, create_array_fallback, create_image_view,
-    create_instance_buffer, create_volume_fallback, sampler_entry, storage_entry, texture_entry,
-    texture_entry_layout, uniform_entry,
+    buffer_entry, create_2d_fallback, create_array_fallback, create_depth_array_fallback,
+    create_image_view, create_instance_buffer, create_uint_2d_fallback, create_volume_fallback,
+    depth_texture_entry_layout, sampler_entry, storage_entry, texture_entry, texture_entry_layout,
+    uint_texture_entry_layout, uniform_entry,
 };
 
 use super::{CameraUniform, HEIGHTFIELD_SHADER, LightingParams, TerrainHeightfield};
@@ -218,7 +219,7 @@ impl TerrainPatchInstance {
 pub struct TerrainPatchWorldBindings<'a> {
     /// Canonical accepted-axis terrain position texture.
     pub heightfield: Option<TerrainHeightfield<'a>>,
-    /// Decoded terrain visibility/holes texture.
+    /// Bit-packed dynamic terrain visibility mask.
     pub terrain_alpha: Option<&'a wgpu::TextureView>,
     /// Directional variance-shadow array.
     pub directional_shadow: Option<&'a wgpu::TextureView>,
@@ -522,7 +523,7 @@ fn load_map(
     TerrainPatchImage::from_rgba(decoded.width, decoded.height, decoded.pixels).map(Some)
 }
 
-fn canonical_patch_path(path: &str) -> String {
+pub(crate) fn canonical_patch_path(path: &str) -> String {
     let mut normalized = path
         .trim()
         .trim_start_matches(['\\', '/'])
@@ -611,7 +612,7 @@ fn create_world_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             wgpu::ShaderStages::VERTEX,
         ),
         sampler_entry(4, wgpu::ShaderStages::VERTEX),
-        texture_entry_layout(
+        uint_texture_entry_layout(
             5,
             wgpu::TextureViewDimension::D2,
             wgpu::ShaderStages::VERTEX,
@@ -633,7 +634,7 @@ fn create_world_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
         ),
         storage_entry(9, wgpu::ShaderStages::FRAGMENT),
         sampler_entry(10, wgpu::ShaderStages::FRAGMENT),
-        texture_entry_layout(
+        depth_texture_entry_layout(
             11,
             wgpu::TextureViewDimension::D2Array,
             wgpu::ShaderStages::FRAGMENT,
@@ -713,7 +714,7 @@ fn create_world_bind_group(
     let heightfield = world
         .heightfield
         .map_or(&fallback_heightfield, |heightfield| heightfield.view);
-    let fallback_alpha = create_2d_fallback(device, queue, "Patch Terrain Alpha", [255; 4]);
+    let fallback_alpha = create_uint_2d_fallback(device, queue, "Patch Terrain Alpha", u32::MAX);
     let terrain_alpha = world.terrain_alpha.unwrap_or(&fallback_alpha);
     let fallback_directional = create_array_fallback(device, queue, "Patch CSM", 4);
     let directional = world.directional_shadow.unwrap_or(&fallback_directional);
@@ -723,7 +724,7 @@ fn create_world_bind_group(
     let unexplored = world.unexplored.unwrap_or(&fallback_unexplored);
     let fallback_lights = LocalLightBuffer::empty(device);
     let local_lights = world.local_lights.unwrap_or(&fallback_lights);
-    let fallback_local_shadow = create_array_fallback(device, queue, "Patch Local Shadow", 8);
+    let fallback_local_shadow = create_depth_array_fallback(device, "Patch Local Shadow", 8);
     let local_shadow = world.local_shadow.unwrap_or(&fallback_local_shadow);
     let fallback_volume_color = create_volume_fallback(device, queue, "Patch Volume Color", [0; 4]);
     let volume_color = world.light_volume_color.unwrap_or(&fallback_volume_color);

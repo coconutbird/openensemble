@@ -74,7 +74,7 @@ pub(super) fn create_material_layout(device: &wgpu::Device) -> wgpu::BindGroupLa
         },
         wgpu::BindGroupLayoutEntry {
             binding: 8,
-            visibility: wgpu::ShaderStages::FRAGMENT,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
@@ -262,7 +262,7 @@ pub(super) fn create_instance_buffer(device: &wgpu::Device, capacity: usize) -> 
 }
 
 fn particle_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 11] = wgpu::vertex_attr_array![
+    const ATTRIBUTES: [wgpu::VertexAttribute; 12] = wgpu::vertex_attr_array![
         0 => Float32x4,
         1 => Float32x4,
         2 => Float32x4,
@@ -272,8 +272,9 @@ fn particle_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
         6 => Float32x4,
         7 => Float32x4,
         8 => Float32x4,
-        9 => Uint32x4,
-        10 => Uint32x4
+        9 => Float32x4,
+        10 => Uint32x4,
+        11 => Uint32x4
     ];
     wgpu::VertexBufferLayout {
         array_stride: mem::size_of::<PackedParticleInstance>() as u64,
@@ -335,28 +336,43 @@ pub(super) fn create_pipeline(
     })
 }
 
-pub(super) fn color_blend_state(mode: ParticleBlendMode) -> Option<wgpu::BlendState> {
-    match mode {
-        ParticleBlendMode::Alpha => Some(wgpu::BlendState::ALPHA_BLENDING),
-        ParticleBlendMode::Additive => Some(wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::SrcAlpha,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
-            },
-            alpha: wgpu::BlendComponent::OVER,
-        }),
-        ParticleBlendMode::PremultipliedAlpha => {
-            Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING)
-        }
-        ParticleBlendMode::Subtractive => Some(wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::SrcAlpha,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::ReverseSubtract,
-            },
-            alpha: wgpu::BlendComponent::OVER,
-        }),
-        ParticleBlendMode::Distortion => None,
+pub(super) fn particle_blend_state(mode: ParticleBlendMode) -> wgpu::BlendState {
+    let component = match mode {
+        ParticleBlendMode::Alpha => blend_component(
+            wgpu::BlendFactor::SrcAlpha,
+            wgpu::BlendFactor::OneMinusSrcAlpha,
+            wgpu::BlendOperation::Add,
+        ),
+        ParticleBlendMode::Additive | ParticleBlendMode::Distortion => blend_component(
+            wgpu::BlendFactor::One,
+            wgpu::BlendFactor::One,
+            wgpu::BlendOperation::Add,
+        ),
+        ParticleBlendMode::PremultipliedAlpha => blend_component(
+            wgpu::BlendFactor::One,
+            wgpu::BlendFactor::OneMinusSrcAlpha,
+            wgpu::BlendOperation::Add,
+        ),
+        ParticleBlendMode::Subtractive => blend_component(
+            wgpu::BlendFactor::SrcAlpha,
+            wgpu::BlendFactor::One,
+            wgpu::BlendOperation::ReverseSubtract,
+        ),
+    };
+    wgpu::BlendState {
+        color: component,
+        alpha: component,
+    }
+}
+
+fn blend_component(
+    src_factor: wgpu::BlendFactor,
+    dst_factor: wgpu::BlendFactor,
+    operation: wgpu::BlendOperation,
+) -> wgpu::BlendComponent {
+    wgpu::BlendComponent {
+        src_factor,
+        dst_factor,
+        operation,
     }
 }

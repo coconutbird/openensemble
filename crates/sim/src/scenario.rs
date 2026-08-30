@@ -34,17 +34,19 @@ use std::collections::{BTreeMap, HashMap};
 
 mod garrison;
 
+mod animation_requests;
+pub(crate) mod child_objects;
 mod config;
 mod coordinates;
 mod design_lines;
 mod forbids;
 mod objectives;
+pub(crate) mod parking_lots;
 pub(crate) mod placed;
 pub(crate) mod population;
 mod prototypes;
 mod resources;
 mod settings;
-mod sockets;
 mod starts;
 mod technology;
 mod triggers;
@@ -53,6 +55,7 @@ mod units;
 pub(crate) use units::{
     add_squad_member_from_prototype, configure_unit_from_player_proto, configure_unit_from_proto,
     create_object_from_prototype, create_unbuilt_building_from_prototype,
+    create_unit_squad_from_prototype,
 };
 
 // Re-export scenario types from pipeline for convenience
@@ -238,7 +241,12 @@ pub fn load_scenario_from_game_dir(
     design_lines::load_design_lines(&mut simulation.world, &trigger_document)?;
     forbids::apply_scenario_forbids(&mut simulation.world, &content.database, &trigger_document);
     triggers::load_trigger_systems(&mut simulation, &content.database, &trigger_document)?;
-    let animation_requests = triggers::scripted_animation_requests(&simulation);
+    let animation_requests = triggers::scripted_animation_requests(&simulation)
+        .into_iter()
+        .chain(animation_requests::trained_birth_animation_requests(
+            &content.database,
+        ))
+        .chain(simulation.gameplay.energy_shield_animation_requests());
     simulation.gameplay.load_scripted_animation_requests(
         &content.database,
         &mut source,
@@ -531,6 +539,29 @@ pub(crate) fn create_squad_from_prototype(
     proto_name: &str,
     db: &Database,
 ) -> EntityId {
+    create_squad_from_prototype_internal(world, player_id, position, forward, proto_name, db, true)
+}
+
+pub(crate) fn create_empty_squad_from_prototype(
+    world: &mut World,
+    player_id: PlayerId,
+    position: Vec3,
+    forward: Vec3,
+    proto_name: &str,
+    db: &Database,
+) -> EntityId {
+    create_squad_from_prototype_internal(world, player_id, position, forward, proto_name, db, false)
+}
+
+fn create_squad_from_prototype_internal(
+    world: &mut World,
+    player_id: PlayerId,
+    position: Vec3,
+    forward: Vec3,
+    proto_name: &str,
+    db: &Database,
+    create_members: bool,
+) -> EntityId {
     let squad_id = world.create_squad_at(player_id, position);
     let logical_proto = find_proto_squad(db, proto_name);
     let effective_proto_name = world
@@ -569,6 +600,7 @@ pub(crate) fn create_squad_from_prototype(
             squad.formation = SquadFormation::Flock;
             squad.aggro_distance = stock.aggro_distance;
             squad.leash_distance = stock.leash_distance;
+            squad.configure_leash_profile(stock.leash_deadzone, stock.leash_recall_delay_ms);
         }
         if proto
             .and_then(|(_, squad)| squad.formation_type.as_deref())
@@ -596,9 +628,18 @@ pub(crate) fn create_squad_from_prototype(
         {
             squad.leash_distance = authored_leash;
         }
+        let leash_deadzone =
+            valid_nonnegative(proto.and_then(|(_, prototype)| prototype.leash_deadzone))
+                .unwrap_or_else(|| squad.leash_deadzone());
+        let leash_recall_delay = proto
+            .and_then(|(_, prototype)| prototype.leash_recall_delay)
+            .unwrap_or_else(|| squad.leash_recall_delay_ms());
+        squad.configure_leash_profile(leash_deadzone, leash_recall_delay);
     }
     if let Some((_, proto)) = proto {
-        create_squad_members(world, squad_id, proto, db);
+        if create_members {
+            create_squad_members(world, squad_id, proto, db);
+        }
         population::apply_squad_population(world, squad_id, db, proto);
     }
     world.refresh_squad_ammunition(squad_id, db);

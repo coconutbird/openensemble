@@ -69,7 +69,12 @@ impl World {
     /// Return whether any child keeps this squad from accepting normal orders.
     #[must_use]
     pub fn is_squad_incapacitated(&self, squad_id: EntityId) -> bool {
-        self.is_squad_down(squad_id) || self.is_squad_hibernating(squad_id)
+        self.is_squad_down(squad_id)
+            || self.is_squad_hibernating(squad_id)
+            || self
+                .squads
+                .get(squad_id)
+                .is_some_and(crate::entities::Squad::is_being_pulled)
     }
 
     /// Test the exact liveness contract shared by retail V3 conditions and filters.
@@ -96,10 +101,23 @@ impl World {
     pub(super) fn update_revivals(&mut self, dt: f32, gameplay: &GameplayCatalog) {
         self.configure_unit_revivals(gameplay);
         let mut ready_heroes = Vec::new();
+        let mut changed_bases = Vec::new();
         for (unit_id, unit) in self.units.iter_mut() {
-            if unit.is_alive() && unit.advance_revival(dt) {
+            let was_alive = unit.is_alive();
+            if was_alive && unit.advance_revival(dt) {
                 ready_heroes.push(unit_id);
             }
+            if was_alive
+                && !unit.is_alive()
+                && let Some(base_id) = unit.base_id
+            {
+                changed_bases.push(base_id);
+            }
+        }
+        changed_bases.sort_unstable();
+        changed_bases.dedup();
+        for base_id in changed_bases {
+            self.recompute_base_child_damage(base_id);
         }
         for unit_id in ready_heroes {
             if self.hero_has_revival_ally(unit_id)

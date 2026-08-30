@@ -168,6 +168,29 @@ random offsets, so the MVP uses a deterministic centered 2-by-2 seed for its
 four Marines. That seed is an implementation choice, not a recovered vanilla
 constant.
 
+Non-physics members no longer inherit a teleported copy of the squad transform.
+Each member owns checksummed `BUnitActionMove`-style phase, interim target,
+action velocity, and retry state. For a Move4 squad order, the sim follows
+`BSquad::getChildInterimTarget_4`: it transforms the member's formation offset
+at the current squad waypoint and orients that offset along the path. Members
+inherit the squad action's accelerated velocity while it is working, then use
+their own desired velocity to settle into the final formation.
+
+The per-unit turn controller follows `BUnitActionMove::calcTurning`, including
+the constant yaw limit, the 0.125/0.25/0.5/0.75 slowdown bands below
+5.625/11.25/22.5/45 degrees, the turn-duration distance clamp, the 0.1-unit
+Move4 completion epsilon, and the three-attempt Pathing retry guard. Ground
+squad completion uses XZ distance, and the world samples the authoritative
+scenario terrain for the moving squad center and each independently moving
+member. This prevents elevation differences from leaving ground squads circling
+a target they can never reach.
+
+The remaining generic-movement boundary is the retail multi-level pather and
+obstruction-manager response: reduced paths, dynamic repathing, wait ownership,
+unit-to-unit avoidance, formation reassignment, and movement-animation
+controller transitions are not yet complete. Renderer movement remains a
+read-only projection of each unit's sim-owned action and transform.
+
 The complete inspected function set, including Warthog physics and air-move
 comparison functions, is renamed and repeatably commented in the saved IDA
 database beside `xgameFinal.exe`.

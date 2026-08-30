@@ -57,6 +57,8 @@ struct JoiningSquadSettings {
     max_turn_radius: f32,
     aggro_distance: f32,
     leash_distance: f32,
+    leash_deadzone: f32,
+    leash_recall_delay_ms: u32,
     trained_by: Option<EntityId>,
     train_limit_bucket: Option<u8>,
 }
@@ -90,6 +92,7 @@ pub(crate) struct SquadJoin {
     target_squad_id: Option<EntityId>,
     ability_id: Option<u8>,
     connected: bool,
+    allow_multiple: bool,
     kind: Option<JoinKind>,
     merge_type: Option<JoinMergeType>,
     follow_attack_refresh_seconds: f32,
@@ -99,10 +102,11 @@ pub(crate) struct SquadJoin {
 }
 
 impl SquadJoin {
-    fn begin(&mut self, target_squad_id: EntityId, ability_id: Option<u8>) {
+    fn begin(&mut self, target_squad_id: EntityId, ability_id: Option<u8>, allow_multiple: bool) {
         self.target_squad_id = Some(target_squad_id);
         self.ability_id = ability_id;
         self.connected = false;
+        self.allow_multiple = allow_multiple;
         self.kind = None;
         self.merge_type = None;
         self.follow_attack_refresh_seconds = 0.0;
@@ -115,6 +119,7 @@ impl SquadJoin {
         self.target_squad_id = None;
         self.ability_id = None;
         self.connected = false;
+        self.allow_multiple = false;
         self.kind = None;
         self.merge_type = None;
         self.follow_attack_refresh_seconds = 0.0;
@@ -125,6 +130,7 @@ impl SquadJoin {
         checksum.hash_u32(self.target_squad_id.map_or(u32::MAX, EntityId::as_u32));
         checksum.hash_u32(self.ability_id.map_or(u32::MAX, u32::from));
         checksum.hash_u32(u32::from(self.connected));
+        checksum.hash_u32(u32::from(self.allow_multiple));
         checksum.hash_u32(self.kind.map_or(u32::MAX, join_kind_wire_value));
         checksum.hash_u32(self.merge_type.map_or(u32::MAX, join_merge_type_wire_value));
         checksum.hash_f32(self.follow_attack_refresh_seconds);
@@ -474,6 +480,8 @@ impl JoiningSquadSettings {
             max_turn_radius: squad.max_turn_radius,
             aggro_distance: squad.aggro_distance,
             leash_distance: squad.leash_distance,
+            leash_deadzone: squad.leash_deadzone(),
+            leash_recall_delay_ms: squad.leash_recall_delay_ms(),
             trained_by: squad.trained_by,
             train_limit_bucket: squad.train_limit_bucket,
         }
@@ -488,6 +496,7 @@ impl JoiningSquadSettings {
         squad.max_turn_radius = self.max_turn_radius;
         squad.aggro_distance = self.aggro_distance;
         squad.leash_distance = self.leash_distance;
+        squad.configure_leash_profile(self.leash_deadzone, self.leash_recall_delay_ms);
         squad.trained_by = self.trained_by;
         squad.train_limit_bucket = self.train_limit_bucket;
     }
@@ -501,6 +510,8 @@ impl JoiningSquadSettings {
         checksum.hash_f32(self.max_turn_radius);
         checksum.hash_f32(self.aggro_distance);
         checksum.hash_f32(self.leash_distance);
+        checksum.hash_f32(self.leash_deadzone);
+        checksum.hash_u32(self.leash_recall_delay_ms);
         checksum.hash_u32(self.trained_by.map_or(u32::MAX, EntityId::as_u32));
         checksum.hash_u32(self.train_limit_bucket.map_or(u32::MAX, u32::from));
     }
@@ -559,9 +570,18 @@ impl Squad {
         self.join.last_bubble_damage_time_ms
     }
 
-    pub(crate) fn begin_join(&mut self, target_squad_id: EntityId, ability_id: Option<u8>) {
+    pub(crate) fn begin_join(
+        &mut self,
+        target_squad_id: EntityId,
+        ability_id: Option<u8>,
+        allow_multiple: bool,
+    ) {
         self.remove_all_orders();
-        self.join.begin(target_squad_id, ability_id);
+        self.join.begin(target_squad_id, ability_id, allow_multiple);
+    }
+
+    pub(crate) const fn join_allows_multiple(&self) -> bool {
+        self.join.allow_multiple
     }
 
     pub(crate) fn cancel_join(&mut self) {

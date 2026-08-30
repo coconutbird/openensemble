@@ -99,10 +99,10 @@ fn evaluate_spot_specular(
 fn local_shadow_bounds(preset: u32) -> vec4<f32> {
     switch min(preset, 4u) {
         case 0u: {
-            return vec4<f32>(0.0, 0.0, 0.5, 0.5);
+            return vec4<f32>(0.0, 0.0, 1.0, 1.0);
         }
         case 1u: {
-            return vec4<f32>(0.0, 0.0, 1.0, 1.0);
+            return vec4<f32>(0.0, 0.0, 0.5, 0.5);
         }
         case 2u: {
             return vec4<f32>(0.5, 0.0, 1.0, 0.5);
@@ -116,8 +116,30 @@ fn local_shadow_bounds(preset: u32) -> vec4<f32> {
     }
 }
 
+fn local_shadow_layer(normalized_coordinate: f32) -> u32 {
+    return u32(clamp(
+        floor(normalized_coordinate * 8.0),
+        0.0,
+        7.0,
+    ));
+}
+
+fn load_local_shadow(
+    shadow_map: texture_depth_2d_array,
+    uv: vec2<f32>,
+    layer: u32,
+) -> f32 {
+    let dimensions = vec2<i32>(textureDimensions(shadow_map, 0));
+    let texel = clamp(
+        vec2<i32>(floor(uv * vec2<f32>(dimensions))),
+        vec2<i32>(0),
+        dimensions - vec2<i32>(1),
+    );
+    return textureLoad(shadow_map, texel, i32(layer), 0);
+}
+
 fn local_shadow_bilinear(
-    shadow_map: texture_2d_array<f32>,
+    shadow_map: texture_depth_2d_array,
     shadow_sampler: sampler,
     uv: vec2<f32>,
     depth: f32,
@@ -130,10 +152,10 @@ fn local_shadow_bilinear(
 
     let comparisons = clamp(
         vec4<f32>(
-            textureSampleLevel(shadow_map, shadow_sampler, uv + vec2<f32>(-half_texel.x, -half_texel.y), layer, 0.0).r,
-            textureSampleLevel(shadow_map, shadow_sampler, uv + vec2<f32>( half_texel.x, -half_texel.y), layer, 0.0).r,
-            textureSampleLevel(shadow_map, shadow_sampler, uv + vec2<f32>(-half_texel.x,  half_texel.y), layer, 0.0).r,
-            textureSampleLevel(shadow_map, shadow_sampler, uv + vec2<f32>( half_texel.x,  half_texel.y), layer, 0.0).r,
+            load_local_shadow(shadow_map, uv + vec2<f32>(-half_texel.x, -half_texel.y), layer),
+            load_local_shadow(shadow_map, uv + vec2<f32>( half_texel.x, -half_texel.y), layer),
+            load_local_shadow(shadow_map, uv + vec2<f32>(-half_texel.x,  half_texel.y), layer),
+            load_local_shadow(shadow_map, uv + vec2<f32>( half_texel.x,  half_texel.y), layer),
         ) - vec4<f32>(depth),
         vec4<f32>(0.0),
         vec4<f32>(1.0 / 20000.0),
@@ -155,7 +177,7 @@ fn evaluate_local_shadow(
     shadow_row2: vec4<f32>,
     bounds_preset: f32,
     shadow_fade: f32,
-    shadow_map: texture_2d_array<f32>,
+    shadow_map: texture_depth_2d_array,
     shadow_sampler: sampler,
 ) -> f32 {
     let homogeneous_position = vec4<f32>(world_pos, 1.0);
@@ -179,7 +201,7 @@ fn evaluate_local_shadow(
             -shadow_index - 0.875,
             transformed.z < 0.0,
         );
-        layer = u32(max(layer_coordinate, 0.0));
+        layer = local_shadow_layer(max(layer_coordinate, 0.0));
     } else {
         let safe_z = select(
             transformed.z,
@@ -189,7 +211,7 @@ fn evaluate_local_shadow(
         let bounds = local_shadow_bounds(u32(max(bounds_preset, 0.0)));
         uv = clamp(transformed.xy / safe_z, bounds.xy, bounds.zw);
         depth = (transformed.z * 1.007874 - 1.007874) / safe_z;
-        layer = u32(max(shadow_index, 0.0));
+        layer = local_shadow_layer(max(shadow_index, 0.0));
     }
 
     let shadow = local_shadow_bilinear(
@@ -216,7 +238,7 @@ fn evaluate_spot_specular_shadowed(
     world_reflect: vec3<f32>,
     spec_power: f32,
     shadows_enabled: bool,
-    shadow_map: texture_2d_array<f32>,
+    shadow_map: texture_depth_2d_array,
     shadow_sampler: sampler,
 ) -> LocalLightResult {
     var result = evaluate_spot_specular(

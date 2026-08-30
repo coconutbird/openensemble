@@ -45,19 +45,35 @@ fn train_squad_command_pays_reserves_completes_and_releases_population() {
     clock.tick_with_world_and_database(&mut world, &database);
     assert_eq!(world.squads.len(), squads_before + 1);
 
-    let squad = world
+    let squad_id = world
         .squads
         .iter()
-        .map(|(_, squad)| squad)
-        .find(|squad| squad.trained_by == Some(barracks_id))
+        .find_map(|(id, squad)| (squad.trained_by == Some(barracks_id)).then_some(id))
         .expect("completed queue should create one linked squad");
+    let squad = world.get_squad(squad_id).unwrap();
     assert_eq!(squad.proto_squad_name, MARINE);
     assert_eq!(squad.unit_ids.len(), 4);
-    assert!(squad.base.position.z > 0.0);
+    assert!(
+        squad
+            .unit_ids
+            .iter()
+            .all(|unit_id| world.get_unit(*unit_id).unwrap().is_garrisoned())
+    );
+    assert_eq!(trained_birth_count(&world, barracks_id), 1);
     assert_close(world.get_player(1).unwrap().population[0].future, 0.0);
     assert_close(world.get_player(1).unwrap().population[0].count, 1.0);
 
-    let squad_id = squad.base.id;
+    clock.tick_with_world_and_database(&mut world, &database);
+    let squad = world.get_squad(squad_id).unwrap();
+    assert!(squad.base.position.z > 0.0);
+    assert!(
+        squad
+            .unit_ids
+            .iter()
+            .all(|unit_id| !world.get_unit(*unit_id).unwrap().is_garrisoned())
+    );
+    assert_eq!(trained_birth_count(&world, barracks_id), 0);
+
     world.remove_squad(squad_id).unwrap();
     assert_close(world.get_player(1).unwrap().population[0].count, 0.0);
 }
@@ -165,16 +181,196 @@ fn train_unit_command_uses_runtime_object_ids() {
     clock.tick_with_world_and_database(&mut world, &database);
     clock.tick_with_world_and_database(&mut world, &database);
     assert_eq!(world.units.len(), units_before + 1);
-    let drone = world
+    let drone_id = world
         .units
         .iter()
-        .map(|(_, unit)| unit)
-        .find(|unit| unit.trained_by == Some(barracks_id))
+        .find_map(|(id, unit)| (unit.trained_by == Some(barracks_id)).then_some(id))
         .expect("TrainUnit should create a linked standalone object");
+    let drone = world.get_unit(drone_id).unwrap();
     assert_eq!(drone.proto_object_name, DRONE);
-    assert!(drone.squad_id.is_none());
+    let parent_squad = drone
+        .squad_id
+        .expect("retail assigns trained objects a parent squad");
+    assert_eq!(world.get_squad(parent_squad).unwrap().unit_ids, [drone_id]);
+    assert!(drone.is_garrisoned());
+    assert_eq!(trained_birth_count(&world, barracks_id), 1);
     assert_close(world.get_player(1).unwrap().resources.get(0), 75.0);
     assert_close(world.get_player(1).unwrap().population[0].count, 1.0);
+
+    clock.tick_with_world_and_database(&mut world, &database);
+    assert!(!world.get_unit(drone_id).unwrap().is_garrisoned());
+    assert_eq!(trained_birth_count(&world, barracks_id), 0);
+}
+
+#[test]
+fn train_unit_batch_escalates_against_future_counts_and_refunds_exact_prices() {
+    let mut database = production_database(false);
+    let drone = database
+        .objects
+        .iter_mut()
+        .find(|object| object.name == DRONE)
+        .unwrap();
+    drone.cost_escalation = Some(10.0);
+    drone.cost_escalation_object = vec![DRONE.to_owned()];
+    drone.flags.push("LinearCostEscalation".to_owned());
+    let (mut world, barracks_id) = production_world(&database, 10.0, 200.0);
+    let drone_id = object_runtime_id(&database, DRONE).unwrap();
+
+    assert_close(
+        world.object_cost(&database, 1, drone_id).unwrap().get(0),
+        25.0,
+    );
+    assert_eq!(
+        world
+            .queue_training(1, barracks_id, &database, TrainingKind::Unit, drone_id, 3)
+            .unwrap(),
+        TrainingQueueResult {
+            accepted: 3,
+            requested: 3,
+        }
+    );
+    assert_close(world.get_player(1).unwrap().resources.get(0), 95.0);
+    assert_close(
+        world.object_cost(&database, 1, drone_id).unwrap().get(0),
+        55.0,
+    );
+
+    assert_eq!(
+        world
+            .cancel_training(1, barracks_id, &database, TrainingKind::Unit, drone_id, 3)
+            .unwrap(),
+        3
+    );
+    assert_close(world.get_player(1).unwrap().resources.get(0), 200.0);
+    assert_close(
+        world.object_cost(&database, 1, drone_id).unwrap().get(0),
+        25.0,
+    );
+}
+
+#[test]
+fn exponential_object_cost_rounds_to_the_nearest_ten_after_live_counts() {
+    let mut database = production_database(false);
+    let drone = database
+        .objects
+        .iter_mut()
+        .find(|object| object.name == DRONE)
+        .unwrap();
+    drone.costs[0].amount = 100.0;
+    drone.cost_escalation = Some(1.15);
+    let (mut world, _barracks_id) = production_world(&database, 10.0, 1_000.0);
+    let runtime_id = object_runtime_id(&database, DRONE).unwrap();
+    let prototype_id = object_prototype_id(&database, DRONE).unwrap();
+
+    assert_close(
+        world.object_cost(&database, 1, runtime_id).unwrap().get(0),
+        100.0,
+    );
+    spawn_object_at(&mut world, &database, 1, prototype_id, Vec3::X, Vec3::Z).unwrap();
+    assert_close(
+        world.object_cost(&database, 1, runtime_id).unwrap().get(0),
+        120.0,
+    );
+    spawn_object_at(&mut world, &database, 1, prototype_id, Vec3::NEG_X, Vec3::Z).unwrap();
+    assert_close(
+        world.object_cost(&database, 1, runtime_id).unwrap().get(0),
+        130.0,
+    );
+}
+
+#[test]
+fn instant_training_spawns_now_and_locks_only_its_building_command() {
+    let mut database = production_database(false);
+    let marine = database
+        .squads
+        .iter_mut()
+        .find(|squad| squad.name == MARINE)
+        .unwrap();
+    marine.build_points = Some(1.0);
+    marine.flags.push("InstantTrainWithRecharge".to_owned());
+    let (mut world, barracks_id) = production_world(&database, 3.0, 500.0);
+    world
+        .get_building_mut(barracks_id)
+        .unwrap()
+        .work_rate_scalar = 10.0;
+    let marine_id = squad_runtime_id(&database, MARINE).unwrap();
+    let squads_before = world.squads.len();
+
+    assert_eq!(
+        world
+            .queue_training(1, barracks_id, &database, TrainingKind::Squad, marine_id, 2)
+            .unwrap(),
+        TrainingQueueResult {
+            accepted: 2,
+            requested: 2,
+        }
+    );
+    assert_eq!(world.squads.len(), squads_before + 2);
+    assert_eq!(trained_birth_count(&world, barracks_id), 2);
+    assert!(
+        world
+            .get_building(barracks_id)
+            .unwrap()
+            .production
+            .is_idle()
+    );
+    assert!(
+        world
+            .training_progress(1, barracks_id, &database, TrainingKind::Squad, marine_id)
+            .unwrap()
+            .is_none()
+    );
+    assert_close(world.get_player(1).unwrap().resources.get(0), 300.0);
+    assert_close(world.get_player(1).unwrap().population[0].future, 0.0);
+    assert_close(world.get_player(1).unwrap().population[0].count, 2.0);
+    assert_close(
+        world
+            .training_recharge(barracks_id, TrainingKind::Squad, marine_id)
+            .unwrap()
+            .time_remaining(),
+        1.0,
+    );
+
+    assert_eq!(
+        world
+            .queue_training(1, barracks_id, &database, TrainingKind::Squad, marine_id, 1)
+            .unwrap(),
+        TrainingQueueResult {
+            accepted: 0,
+            requested: 1,
+        }
+    );
+    assert_close(world.get_player(1).unwrap().resources.get(0), 300.0);
+    let checksum_before_recharge_tick = world.checksum();
+
+    let update = world.update_production(0.4, &database);
+    assert_eq!(update.completed_training, 0);
+    assert_eq!(trained_birth_count(&world, barracks_id), 1);
+    assert_ne!(world.checksum(), checksum_before_recharge_tick);
+    assert_close(
+        world
+            .training_recharge(barracks_id, TrainingKind::Squad, marine_id)
+            .unwrap()
+            .time_remaining(),
+        0.6,
+    );
+    let _expired = world.update_production(0.6, &database);
+    assert_eq!(trained_birth_count(&world, barracks_id), 0);
+    assert!(
+        world
+            .training_recharge(barracks_id, TrainingKind::Squad, marine_id)
+            .is_none()
+    );
+
+    assert_eq!(
+        world
+            .queue_training(1, barracks_id, &database, TrainingKind::Squad, marine_id, 1)
+            .unwrap()
+            .accepted,
+        1
+    );
+    assert_eq!(world.squads.len(), squads_before + 3);
+    assert_close(world.get_player(1).unwrap().resources.get(0), 200.0);
 }
 
 #[test]
@@ -303,6 +499,15 @@ fn enqueue_training(clock: &mut Simulation, command: BuildingCommand) {
     clock
         .command_queue
         .enqueue_building(command, clock.game_time_ms + MS_PER_TICK, 1);
+}
+
+fn trained_birth_count(world: &World, building_id: EntityId) -> usize {
+    world
+        .get_building(building_id)
+        .unwrap()
+        .production
+        .trained_squad_births()
+        .count()
 }
 
 fn production_world(database: &Database, cap: f32, supplies: f32) -> (World, EntityId) {

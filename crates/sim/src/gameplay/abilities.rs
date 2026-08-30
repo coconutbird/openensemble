@@ -27,6 +27,9 @@ pub struct AbilityGameplay {
     recovery_start: Option<AbilityRecoveryStart>,
     recovery_type: Option<RecoveryType>,
     recovery_time: f32,
+    duration: f32,
+    damage_taken_modifier: f32,
+    dodge_modifier: f32,
 }
 
 impl AbilityGameplay {
@@ -95,6 +98,28 @@ impl AbilityGameplay {
     pub const fn recovery_time(&self) -> f32 {
         self.recovery_time
     }
+
+    /// Return the authored active lifetime in seconds.
+    #[must_use]
+    pub const fn duration(&self) -> f32 {
+        self.duration
+    }
+
+    /// Return the incoming-damage scalar applied while the ability is active.
+    ///
+    /// Zero means that the ability does not adjust the live unit scalar.
+    #[must_use]
+    pub const fn damage_taken_modifier(&self) -> f32 {
+        self.damage_taken_modifier
+    }
+
+    /// Return the dodge scalar applied while the ability is active.
+    ///
+    /// Zero means that the ability does not adjust the live unit scalar.
+    #[must_use]
+    pub const fn dodge_modifier(&self) -> f32 {
+        self.dodge_modifier
+    }
 }
 
 pub(super) fn collect_abilities(database: &Database) -> Vec<AbilityGameplay> {
@@ -127,9 +152,19 @@ pub(super) fn collect_abilities(database: &Database) -> Vec<AbilityGameplay> {
                     .recover_time
                     .filter(|time| time.is_finite() && *time >= 0.0)
                     .unwrap_or_default(),
+                duration: ability
+                    .duration
+                    .filter(|time| time.is_finite() && *time >= 0.0)
+                    .unwrap_or_default(),
+                damage_taken_modifier: finite_modifier(ability.damage_taken_modifier),
+                dodge_modifier: finite_modifier(ability.dodge_modifier),
             })
         })
         .collect()
+}
+
+fn finite_modifier(value: Option<f32>) -> f32 {
+    value.filter(|value| value.is_finite()).unwrap_or_default()
 }
 
 pub(super) fn command_ability_id(database: &Database) -> Option<u8> {

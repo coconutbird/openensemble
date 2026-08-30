@@ -23,6 +23,8 @@ use transforms::PrototypeTransforms;
 pub struct PlayerTechState {
     active_technologies: Vec<String>,
     action_effects: Vec<ActionEffect>,
+    ability_disabled_effects: Vec<AbilityDisabledEffect>,
+    action_work_rate_effects: Vec<ProtoScalarEffect>,
     command_effects: Vec<CommandEffect>,
     weapon_effects: Vec<WeaponScalarEffect>,
     weapon_type_modifier_effects: Vec<WeaponTypeModifierEffect>,
@@ -45,6 +47,12 @@ struct ActionEffect {
     proto_object: String,
     action: Option<String>,
     enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+struct AbilityDisabledEffect {
+    proto_object: String,
+    disabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +138,26 @@ impl PlayerTechState {
                         .is_none_or(|name| name.eq_ignore_ascii_case(action))
             })
             .fold(authored_enabled, |_, effect| effect.enabled)
+    }
+
+    /// Resolve the player-owned prototype's command-ability disabled flag.
+    #[must_use]
+    pub fn ability_disabled(&self, proto_object: &str, authored_disabled: bool) -> bool {
+        self.ability_disabled_effects
+            .iter()
+            .filter(|effect| effect.proto_object.eq_ignore_ascii_case(proto_object))
+            .fold(authored_disabled, |_, effect| effect.disabled)
+    }
+
+    /// Apply player technology effects to an authored tactic action work rate.
+    #[must_use]
+    pub fn action_work_rate(&self, proto_object: &str, action: &str, base: f32) -> f32 {
+        apply_proto_scalar_effects(
+            &self.action_work_rate_effects,
+            proto_object,
+            Some(action),
+            base,
+        )
     }
 
     /// Resolve one building command against authored state and active techs.
@@ -532,6 +560,8 @@ impl PlayerTechState {
 
     fn rebuild(&mut self, database: &Database) {
         self.action_effects.clear();
+        self.ability_disabled_effects.clear();
+        self.action_work_rate_effects.clear();
         self.command_effects.clear();
         self.weapon_effects.clear();
         self.weapon_type_modifier_effects.clear();
@@ -572,8 +602,14 @@ impl PlayerTechState {
         let Some(subtype) = nonempty(effect.subtype.as_deref()) else {
             return;
         };
-        if subtype.eq_ignore_ascii_case("ActionEnable") {
+        if subtype.eq_ignore_ascii_case("AbilityDisabled") {
+            self.collect_ability_disabled_effect(effect);
+        } else if subtype.eq_ignore_ascii_case("ActionEnable") {
             self.collect_action_effect(effect);
+        } else if subtype.eq_ignore_ascii_case("WorkRate") {
+            if let Some(effect) = proto_scalar_effect(effect, true) {
+                self.action_work_rate_effects.push(effect);
+            }
         } else if subtype.eq_ignore_ascii_case("CommandEnable") {
             self.collect_command_effect(effect);
         } else if subtype.eq_ignore_ascii_case("DamageModifier") {
@@ -657,6 +693,19 @@ impl PlayerTechState {
             proto_object: normalize(proto_object),
             action,
             enabled: amount != 0.0,
+        });
+    }
+
+    fn collect_ability_disabled_effect(&mut self, effect: &TechEffect) {
+        let (Some(proto_object), Some(amount)) = (
+            effect_target(effect, "ProtoUnit"),
+            effect.amount.filter(|amount| amount.is_finite()),
+        ) else {
+            return;
+        };
+        self.ability_disabled_effects.push(AbilityDisabledEffect {
+            proto_object: normalize(proto_object),
+            disabled: amount != 0.0,
         });
     }
 

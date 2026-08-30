@@ -3,10 +3,11 @@
 //! Uses packed XTD vertex textures, the GPU XTT compositor, terrain-conforming
 //! roads, and foliage reconstructed from the XTT index buffers.
 //! WASD + mouse to fly around the terrain.
-//! Display mode 12 is the canonical GPU-composited terrain view.
+//! Display mode 0 is the retail-style lit terrain view.
 
 mod camera;
 mod capture;
+mod dynamic_alpha;
 mod foliage;
 mod gpu;
 mod resources;
@@ -34,6 +35,7 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<CliOptions> {
     let mut source = None;
     let mut capture_path = None;
     let mut capture_size = DEFAULT_CAPTURE_SIZE;
+    let mut capture_mode = 0;
     let mut capture_center = None;
     let mut capture_span = None;
     let mut show_help = false;
@@ -56,6 +58,17 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<CliOptions> {
                     .with_context(|| format!("invalid capture size '{value}'"))?;
                 if capture_size == 0 {
                     bail!("capture size must be greater than zero");
+                }
+            }
+            "--capture-mode" => {
+                let value = args
+                    .next()
+                    .context("--capture-mode requires a mode number")?;
+                capture_mode = value
+                    .parse::<u32>()
+                    .with_context(|| format!("invalid capture mode '{value}'"))?;
+                if capture_mode > 15 {
+                    bail!("capture mode must be between 0 and 15");
                 }
             }
             "--capture-center" => {
@@ -96,6 +109,9 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<CliOptions> {
     if capture_path.is_none() && capture_size != DEFAULT_CAPTURE_SIZE {
         bail!("--capture-size requires --capture-top-down");
     }
+    if capture_path.is_none() && capture_mode != 0 {
+        bail!("--capture-mode requires --capture-top-down");
+    }
     if capture_path.is_none() && (capture_center.is_some() || capture_span.is_some()) {
         bail!("--capture-center and --capture-span require --capture-top-down");
     }
@@ -104,7 +120,7 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<CliOptions> {
     }
 
     let capture = capture_path.map(|path| {
-        let config = CaptureConfig::new(path, capture_size);
+        let config = CaptureConfig::new(path, capture_size).with_debug_mode(capture_mode);
         match (capture_center, capture_span) {
             (Some(center), Some(span)) => config.with_region(center, span),
             _ => config,
@@ -120,7 +136,7 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<CliOptions> {
 
 fn print_usage() {
     println!(
-        "Terrain Viewer\n\nUsage:\n  terrain_viewer [SCENARIO|FILE.xtd]\n  terrain_viewer [SCENARIO|FILE.xtd] --capture-top-down OUTPUT.png [--capture-size PIXELS] [--capture-center X Z --capture-span WORLD_UNITS]"
+        "Terrain Viewer\n\nUsage:\n  terrain_viewer [SCENARIO|FILE.xtd]\n  terrain_viewer [SCENARIO|FILE.xtd] --capture-top-down OUTPUT.png [--capture-size PIXELS] [--capture-mode 0..15] [--capture-center X Z --capture-span WORLD_UNITS]"
     );
 }
 
@@ -151,7 +167,8 @@ fn main() -> Result<()> {
     let capture_size = options.capture.as_ref().map(|capture| capture.size);
     if let Some(capture) = options.capture {
         log::info!(
-            "Capturing deterministic top-down mode 12 view to {}",
+            "Capturing deterministic top-down mode {} view to {}",
+            capture.debug_mode,
             capture.output_path.display()
         );
         viewer = viewer.with_capture(capture);
@@ -188,6 +205,7 @@ mod tests {
         let capture = options.capture.expect("capture must be configured");
         assert_eq!(capture.output_path, Path::new("out.png"));
         assert_eq!(capture.size, 1024);
+        assert_eq!(capture.debug_mode, 0);
     }
 
     #[test]
@@ -213,5 +231,23 @@ mod tests {
         let capture = options.capture.expect("capture must be configured");
         assert_eq!(capture.center, Some(Vec2::new(780.0, 880.0)));
         assert_eq!(capture.span, Some(192.0));
+    }
+
+    #[test]
+    fn capture_cli_accepts_an_explicit_debug_mode() {
+        let options = parse_cli([
+            "--capture-top-down".to_string(),
+            "lit.png".to_string(),
+            "--capture-mode".to_string(),
+            "8".to_string(),
+        ])
+        .expect("valid lit capture arguments");
+        assert_eq!(
+            options
+                .capture
+                .expect("capture must be configured")
+                .debug_mode,
+            8
+        );
     }
 }

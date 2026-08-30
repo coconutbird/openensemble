@@ -5,46 +5,89 @@
 //! distinction without inventing a separate entity class.
 
 mod actions;
+mod air_avoidance;
 mod ammunition;
+mod authored_children;
 mod building;
+mod built_economy;
+mod capture;
+mod charge;
+mod child_damage;
 mod collision_attack;
 mod combat;
 mod cryo;
+mod death;
 mod death_replacement;
 mod detonate;
+mod flight;
 mod garrison;
+mod gather;
+mod ground_movement;
+mod heal;
+mod idle;
+mod infect;
+mod jump;
 pub mod marine;
+mod persistent_spawns;
 mod physics_replacement;
+mod projectile_defense;
+mod pull;
 pub(crate) mod rally_points;
 mod revival;
 mod scalars;
 mod shields;
 mod tactic_state;
+mod targeting;
+mod thrown;
 mod tower_wall;
+mod unique_technologies;
 mod vehicle;
+mod visual_meshes;
 pub mod warthog;
 
 pub use actions::UnitActions;
+pub use air_avoidance::AircraftCrashPhase;
 pub use ammunition::UnitAmmunition;
+pub(crate) use authored_children::{AuthoredUnitChildKind, UnitAuthoredChildren};
 pub use building::{
-    BuildingProduction, ConstructionKind, ConstructionProgress, ConstructionTask, ResearchProgress,
-    ResearchTask, TrainingKind, TrainingProgress, TrainingTask,
+    AIR_TRAFFIC_LANDING_SPOT_COUNT, AirTrafficControl, AirTrafficLandingSpot, BuildingProduction,
+    ConstructionKind, ConstructionProgress, ConstructionTask, ResearchProgress, ResearchTask,
+    TrainedSquadBirth, TrainingKind, TrainingProgress, TrainingRecharge, TrainingTask,
 };
 pub(crate) use building::{ProductionTask, TriggerCommandStateRef};
+pub(crate) use built_economy::BuiltEconomyState;
+pub use capture::CapturePhase;
 pub(crate) use collision_attack::UnitCollisionAttack;
+pub(crate) use combat::AttackAdvance;
 pub use combat::UnitCombat;
 pub(crate) use cryo::UnitCryo;
+pub(crate) use death::UnitDeathState;
 pub(crate) use death_replacement::UnitStaticDeathReplacement;
-pub use detonate::UnitDetonatePhase;
+pub use detonate::{BombPhase, UnitDetonatePhase};
 pub(crate) use detonate::{UnitDetonateTriggerConfig, UnitDetonation};
+pub use flight::FlightControllerKind;
+pub(crate) use flight::{MoveAirActionState, MoveAirState, MoveAirTacticState, UnitFlight};
 pub use garrison::UnitGarrison;
+pub use gather::GatherPhase;
+pub use ground_movement::GroundMovePhase;
+pub use heal::HealPhase;
+pub(crate) use infect::InfectionVisual;
+pub use infect::{InfectionExposure, InfectionPhase};
+pub use jump::UnitJumpPhase;
+pub(crate) use persistent_spawns::UnitPersistentSpawns;
 pub(crate) use physics_replacement::UnitPhysicsReplacement;
+pub(crate) use projectile_defense::UnitProjectileDefense;
 pub use rally_points::RallyPoint;
 pub use scalars::UnitDataScalar;
 pub(crate) use scalars::UnitScalarModifiers;
-pub use shields::{ShieldCoverage, UnitShields};
+pub use shields::{
+    EnergyShieldPhase, EnergyShieldPresentationKind, ShieldCoverage, UnitEnergyShieldAction,
+    UnitShields,
+};
+pub(crate) use thrown::UnitThrown;
 pub use tower_wall::TowerWallAction;
 pub(crate) use vehicle::configure_ground_vehicle_physics;
+pub use visual_meshes::UnitVisualMeshMask;
 
 use super::{BaseEntity, BaseId, EntityIdle, ObjectState};
 use crate::entity::Entity;
@@ -100,27 +143,6 @@ enum MovementFacing {
     Reverse,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum ExternalShieldState {
-    #[default]
-    Disabled,
-    Enabled,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum InvulnerabilityState {
-    #[default]
-    Vulnerable,
-    Invulnerable,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum BoardingState {
-    #[default]
-    Free,
-    BeingBoarded,
-}
-
 /// An individual mobile unit or building.
 #[derive(Debug, Clone)]
 pub struct Unit {
@@ -146,6 +168,12 @@ pub struct Unit {
     pub object_types: Vec<String>,
     /// Retail flying flag derived from the prototype movement type.
     pub flying: bool,
+    /// Specialized movement action selected from the layered prototype.
+    flight: UnitFlight,
+    /// Per-member retail ground-movement action owned by squad movement.
+    ground_move: ground_movement::UnitGroundMove,
+    /// Voluntary squad Jump spline and targetability state.
+    jump: jump::UnitJump,
     /// Current hit points.
     pub hitpoints: f32,
     /// Maximum hit points.
@@ -154,6 +182,8 @@ pub struct Unit {
     pub shields: UnitShields,
     /// Independent retail hero-down or tactic hibernation state.
     revival: UnitRevival,
+    /// Killer identity and weapon type retained after lethal damage.
+    death: UnitDeathState,
     /// Live outgoing damage multiplier (veterancy and tech effects layer here).
     pub damage_multiplier: f32,
     /// Live incoming damage multiplier.
@@ -162,6 +192,8 @@ pub struct Unit {
     join_damage_multiplier: f32,
     /// Incoming modifier contributed by an active squad Join relationship.
     join_damage_taken_multiplier: f32,
+    /// Outgoing modifier contributed by an active Hunter `SpiritBond`.
+    spirit_bond_damage_multiplier: f32,
     /// Live ranged-attack accuracy multiplier.
     pub accuracy_scalar: f32,
     /// Live ranged-attack dodge modifier applied alongside accuracy.
@@ -177,21 +209,27 @@ pub struct Unit {
     /// Whether automatic target acquisition may choose this object.
     auto_attackable: bool,
     /// Whether retail action state currently rejects all incoming damage.
-    invulnerability: InvulnerabilityState,
+    invulnerability: targeting::InvulnerabilityState,
     /// Whether a hostile Board action temporarily reserves this target.
-    boarding_state: BoardingState,
+    boarding_state: targeting::BoardingState,
+    /// Whether a critical `JumpPull` temporarily makes this unit untargetable.
+    jump_pull_target_state: pull::JumpPullTargetState,
     /// Whether projectiles and AOE use retail's external-shield volume rules.
-    external_shield: ExternalShieldState,
+    external_shield: targeting::ExternalShieldState,
     /// Whether movement keeps this unit facing opposite its travel direction.
     movement_facing: MovementFacing,
     /// Movement speed in world units per second.
     pub speed: f32,
+    /// Authored reverse speed; absence means the retail maximum-speed fallback.
+    reverse_speed: Option<f32>,
     /// Acceleration in world units per second squared; zero means immediate.
     pub acceleration: f32,
     /// Maximum yaw rate in degrees per second; zero means immediate.
     pub turn_rate_degrees: f32,
     /// Gameplay obstruction radii even when no live rigid body is active.
     pub obstruction_half_extents: Vec3,
+    /// Whether this prototype blocks aircraft avoidance destinations.
+    air_obstruction: air_avoidance::AirObstructionState,
     /// Deterministic rigid body, when this object participates in physics.
     pub physics: Option<PhysicsBody>,
     /// Standalone movement target.
@@ -208,6 +246,18 @@ pub struct Unit {
     tactic_state: tactic_state::UnitTacticState,
     /// Containment state and immutable container capabilities.
     pub garrison: UnitGarrison,
+    /// Finite or unlimited resource payload exposed by gatherable units.
+    pub(crate) resource_node: gather::UnitResourceNode,
+    /// Per-unit retail gather action connected by squad work.
+    pub(crate) gather: gather::UnitGatherAction,
+    /// Per-unit capture action plus target-side progress and payment links.
+    pub(crate) capture: capture::UnitCapture,
+    /// Persistent retail hitpoint-healing action and opportunity phase.
+    pub(crate) heal: heal::UnitHeal,
+    /// Persistent infection action plus victim transformation state.
+    pub(crate) infection: infect::UnitInfection,
+    pub(crate) charge: charge::UnitCharge,
+    pub(crate) air_avoidance: air_avoidance::UnitAirAvoidance,
     /// Per-unit authored attack animation/cooldown state.
     pub combat: UnitCombat,
     /// Persistent retail ammunition amount and regeneration action.
@@ -220,16 +270,32 @@ pub struct Unit {
     pub(crate) detonate: detonate::UnitDetonate,
     /// Whether this entity is a physics death replacement awaiting cleanup.
     pub(crate) physics_replacement: UnitPhysicsReplacement,
+    /// General thrown-unit action and temporary-body ownership.
+    pub(crate) thrown: UnitThrown,
+    /// Authoritative per-mesh visibility projected by presentation.
+    visual_mesh_mask: UnitVisualMeshMask,
+    /// Authoritative whole-model opacity projected by presentation.
+    visual_opacity: f32,
     /// In-place static replacement retained after the source unit dies.
     pub(crate) static_death_replacement: UnitStaticDeathReplacement,
     /// Persistent retail tower-wall action after a destination is assigned.
     pub tower_wall: Option<TowerWallAction>,
     /// Research/production work owned by building units.
     pub production: BuildingProduction,
+    /// Technologies whose retail unique node is keyed by this unit's entity ID.
+    unique_technologies: unique_technologies::UnitUniqueTechnologies,
     /// Primary and co-op rally destinations retained by this unit.
     rally_points: rally_points::UnitRallyPoints,
     /// Whether construction has completed and built-state effects are active.
     pub built: bool,
+    /// Resource and rate deltas that must be revoked with built state.
+    pub(crate) built_economy: BuiltEconomyState,
+    /// Parent-owned `AssociatedUnit` and `AssociatedFoundation` relationships.
+    pub(crate) authored_children: UnitAuthoredChildren,
+    /// Source-authored base protection and the currently applied multiplier.
+    child_damage: child_damage::UnitChildDamageState,
+    pub(crate) persistent_spawns: UnitPersistentSpawns,
+    pub(crate) projectile_defense: UnitProjectileDefense,
     /// Unit whose command created this building.
     pub built_by: Option<EntityId>,
     /// Concrete socket entity supplied by a direct build command.
@@ -242,6 +308,8 @@ pub struct Unit {
     pub(crate) socket_parent_id: Option<EntityId>,
     /// Authored socket units associated with this unit, in entity-ref order.
     pub(crate) associated_socket_ids: Vec<EntityId>,
+    /// Parking-lot unit that owns this building's trained-squad birth queue.
+    pub(crate) associated_parking_lot_id: Option<EntityId>,
     /// Socket position in its parent's right/up/forward coordinate frame.
     pub(crate) socket_local_offset: Vec3,
     /// Socket yaw relative to its parent's facing, in degrees.
@@ -276,14 +344,19 @@ impl Default for Unit {
             logical_proto_object_name: String::new(),
             object_types: Vec::new(),
             flying: false,
+            flight: UnitFlight::default(),
+            ground_move: ground_movement::UnitGroundMove::default(),
+            jump: jump::UnitJump::default(),
             hitpoints: 100.0,
             max_hitpoints: 100.0,
             shields: UnitShields::default(),
             revival: UnitRevival::default(),
+            death: UnitDeathState::default(),
             damage_multiplier: 1.0,
             damage_taken_multiplier: 1.0,
             join_damage_multiplier: 1.0,
             join_damage_taken_multiplier: 1.0,
+            spirit_bond_damage_multiplier: 1.0,
             accuracy_scalar: 1.0,
             dodge_scalar: 1.0,
             work_rate_scalar: 1.0,
@@ -291,14 +364,17 @@ impl Default for Unit {
             velocity_scalar: 1.0,
             weapon_range_scalar: 1.0,
             auto_attackable: true,
-            invulnerability: InvulnerabilityState::Vulnerable,
-            boarding_state: BoardingState::Free,
-            external_shield: ExternalShieldState::Disabled,
+            invulnerability: targeting::InvulnerabilityState::Vulnerable,
+            boarding_state: targeting::BoardingState::Free,
+            jump_pull_target_state: pull::JumpPullTargetState::default(),
+            external_shield: targeting::ExternalShieldState::Disabled,
             movement_facing: MovementFacing::Forward,
             speed: 10.0,
+            reverse_speed: None,
             acceleration: 0.0,
             turn_rate_degrees: 0.0,
             obstruction_half_extents: Vec3::ZERO,
+            air_obstruction: air_avoidance::AirObstructionState::default(),
             physics: None,
             move_target: None,
             attack_target: None,
@@ -307,23 +383,40 @@ impl Default for Unit {
             actions: UnitActions::default(),
             tactic_state: tactic_state::UnitTacticState::default(),
             garrison: UnitGarrison::default(),
+            resource_node: gather::UnitResourceNode::default(),
+            gather: gather::UnitGatherAction::default(),
+            capture: capture::UnitCapture::default(),
+            heal: heal::UnitHeal::default(),
+            infection: infect::UnitInfection::default(),
+            charge: charge::UnitCharge::default(),
+            air_avoidance: air_avoidance::UnitAirAvoidance::default(),
             combat: UnitCombat::default(),
             ammunition: UnitAmmunition::default(),
             cryo: UnitCryo::default(),
             collision_attack: UnitCollisionAttack::default(),
             detonate: detonate::UnitDetonate::default(),
             physics_replacement: UnitPhysicsReplacement::default(),
+            thrown: UnitThrown::default(),
+            visual_mesh_mask: UnitVisualMeshMask::default(),
+            visual_opacity: 1.0,
             static_death_replacement: UnitStaticDeathReplacement::default(),
             tower_wall: None,
             production: BuildingProduction::default(),
+            unique_technologies: unique_technologies::UnitUniqueTechnologies::default(),
             rally_points: rally_points::UnitRallyPoints::default(),
             built: true,
+            built_economy: BuiltEconomyState::default(),
+            authored_children: UnitAuthoredChildren::default(),
+            child_damage: child_damage::UnitChildDamageState::default(),
+            persistent_spawns: UnitPersistentSpawns::default(),
+            projectile_defense: UnitProjectileDefense::default(),
             built_by: None,
             build_socket_id: None,
             build_socket_index: None,
             socket_plug_id: None,
             socket_parent_id: None,
             associated_socket_ids: Vec::new(),
+            associated_parking_lot_id: None,
             socket_local_offset: Vec3::ZERO,
             socket_local_yaw_degrees: 0.0,
             population_costs: Vec::new(),
@@ -360,118 +453,10 @@ impl Unit {
         building
     }
 
-    /// Return the stable logical prototype name retained across technology transforms.
-    #[must_use]
-    pub fn logical_proto_object_name(&self) -> &str {
-        &self.logical_proto_object_name
-    }
-
     /// Check whether this unit is a building.
     #[must_use]
     pub fn is_building(&self) -> bool {
         self.kind == UnitKind::Building
-    }
-
-    /// Check whether this unit can perform completed-unit gameplay actions.
-    #[must_use]
-    pub fn is_operational(&self) -> bool {
-        self.is_alive()
-            && !self.is_incapacitated()
-            && !self.is_garrisoned()
-            && (!self.is_building() || self.built)
-    }
-
-    /// Return whether combat may currently target and damage this unit.
-    #[must_use]
-    pub fn is_attackable(&self) -> bool {
-        self.is_alive()
-            && !self.is_incapacitated()
-            && !self.is_garrisoned()
-            && !self.is_invulnerable()
-            && !self.is_being_boarded()
-    }
-
-    /// Return whether automatic combat acquisition may target this object.
-    #[must_use]
-    pub fn is_auto_attackable(&self) -> bool {
-        self.auto_attackable && self.is_attackable()
-    }
-
-    /// Return whether this prototype owns a retail external-shield volume.
-    #[must_use]
-    pub const fn is_external_shield(&self) -> bool {
-        matches!(self.external_shield, ExternalShieldState::Enabled)
-    }
-
-    /// Return retail's synchronized simulation-bounding-box center.
-    #[must_use]
-    pub(crate) fn simulation_center(&self) -> Vec3 {
-        if self.flying {
-            self.base.position
-        } else {
-            self.base.position + Vec3::Y * self.obstruction_half_extents.y.abs()
-        }
-    }
-
-    /// Return the horizontal obstruction radius used by retail range math.
-    #[must_use]
-    pub(crate) fn obstruction_radius(&self) -> f32 {
-        self.obstruction_half_extents
-            .x
-            .abs()
-            .max(self.obstruction_half_extents.z.abs())
-    }
-
-    /// Return the authoritative axis-aligned bounds used by sim-space queries.
-    pub(crate) fn simulation_bounds(&self) -> (Vec3, Vec3) {
-        (
-            self.simulation_center(),
-            self.obstruction_half_extents.abs(),
-        )
-    }
-
-    pub(crate) const fn auto_attackable_setting(&self) -> bool {
-        self.auto_attackable
-    }
-
-    pub(crate) fn set_auto_attackable(&mut self, auto_attackable: bool) {
-        self.auto_attackable = auto_attackable;
-    }
-
-    /// Return whether a persistent retail action currently prevents damage.
-    #[must_use]
-    pub const fn is_invulnerable(&self) -> bool {
-        matches!(self.invulnerability, InvulnerabilityState::Invulnerable)
-    }
-
-    pub(crate) fn set_invulnerable(&mut self, invulnerable: bool) {
-        self.invulnerability = if invulnerable {
-            InvulnerabilityState::Invulnerable
-        } else {
-            InvulnerabilityState::Vulnerable
-        };
-    }
-
-    /// Return whether a timed Board action currently owns this target.
-    #[must_use]
-    pub const fn is_being_boarded(&self) -> bool {
-        matches!(self.boarding_state, BoardingState::BeingBoarded)
-    }
-
-    pub(crate) fn set_being_boarded(&mut self, being_boarded: bool) {
-        self.boarding_state = if being_boarded {
-            BoardingState::BeingBoarded
-        } else {
-            BoardingState::Free
-        };
-    }
-
-    pub(crate) fn set_external_shield(&mut self, external_shield: bool) {
-        self.external_shield = if external_shield {
-            ExternalShieldState::Enabled
-        } else {
-            ExternalShieldState::Disabled
-        };
     }
 
     /// Return whether retail reverse movement is enabled for this unit.
@@ -486,30 +471,6 @@ impl Unit {
         } else {
             MovementFacing::Forward
         };
-    }
-
-    /// Return whether the retail idle action currently exists.
-    #[must_use]
-    pub fn has_idle_action(&self) -> bool {
-        self.idle.is_active()
-    }
-
-    /// Return the elapsed duration of the current idle action in milliseconds.
-    #[must_use]
-    pub fn idle_duration(&self) -> u32 {
-        self.idle.duration_ms()
-    }
-
-    pub(crate) fn reconcile_idle_action(&mut self, elapsed_ms: u32, parent_is_idle: bool) {
-        let should_be_idle = self.is_alive()
-            && !self.is_incapacitated()
-            && self.state == UnitState::Idle
-            && parent_is_idle;
-        self.idle.reconcile(should_be_idle, elapsed_ms);
-    }
-
-    pub(crate) fn cancel_idle_action(&mut self) {
-        self.idle.cancel();
     }
 
     /// Check whether another unit currently contains this unit.
@@ -547,6 +508,12 @@ impl Unit {
     #[must_use]
     pub fn associated_sockets(&self) -> &[EntityId] {
         &self.associated_socket_ids
+    }
+
+    /// Return the parking-lot unit that performs this building's births.
+    #[must_use]
+    pub const fn associated_parking_lot(&self) -> Option<EntityId> {
+        self.associated_parking_lot_id
     }
 
     /// Return the live building ID recorded as this socket's plug.
@@ -607,6 +574,10 @@ impl Unit {
             self.shields
                 .absorb_damage(amount, directional, direction_dot_forward);
         self.hitpoints = (self.hitpoints - hitpoint_damage).max(0.0);
+        if self.hitpoints <= 1.0 && self.intercept_lethal_aircraft_damage() {
+            self.hitpoints = 1.0_f32.min(self.max_hitpoints);
+            return true;
+        }
         match self.revival.on_damage(self.hitpoints, self.max_hitpoints) {
             DamageDisposition::Mortal => self.kill(),
             DamageDisposition::Incapacitated => {
@@ -695,7 +666,10 @@ impl Unit {
         self.attack_ability_id = None;
         self.combat.reset();
         self.cancel_detonate_action();
+        self.cancel_gather_action();
+        self.cancel_capture_action();
         self.clear_tactic_state();
+        self.cancel_squad_ground_move();
         self.move_target = None;
         self.base.velocity = Vec3::ZERO;
         self.state = UnitState::Idle;
@@ -708,10 +682,15 @@ impl Unit {
         self.state = UnitState::Dead;
         self.base.kill();
         self.revival.clear_incapacitation();
+        self.air_avoidance.finish();
+        self.set_jump_pull_untargetable(false);
+        self.cancel_jump_action();
         self.attack_target = None;
         self.attack_range = 0.0;
         self.attack_ability_id = None;
         self.combat.reset();
+        self.cancel_gather_action();
+        self.cancel_capture_action();
         self.clear_tactic_state();
         self.cancel_idle_action();
         self.stop();
@@ -727,6 +706,8 @@ impl Unit {
             || !self.is_alive()
             || self.is_incapacitated()
             || self.is_garrisoned()
+            || self.is_thrown()
+            || self.is_undergoing_infection()
         {
             return false;
         }
@@ -734,6 +715,8 @@ impl Unit {
         self.attack_range = 0.0;
         self.attack_ability_id = None;
         self.combat.reset();
+        self.cancel_gather_action();
+        self.cancel_capture_action();
         self.cancel_idle_action();
         self.move_target = Some(target);
         self.state = UnitState::Moving;
@@ -749,6 +732,8 @@ impl Unit {
         self.attack_range = valid_attack_range(range);
         self.attack_ability_id = ability_id;
         self.combat.reset();
+        self.cancel_gather_action();
+        self.cancel_capture_action();
         self.cancel_idle_action();
         self.move_target = None;
         self.base.velocity = Vec3::ZERO;
@@ -776,19 +761,10 @@ impl Unit {
         }
     }
 
-    pub(crate) fn hold_attack_position(&mut self, target: Vec3) {
+    pub(crate) fn hold_attack_position(&mut self, _target: Vec3) {
         if self.state == UnitState::Attacking {
             self.move_target = None;
             self.base.velocity = Vec3::ZERO;
-            let direction = Vec3::new(
-                target.x - self.base.position.x,
-                0.0,
-                target.z - self.base.position.z,
-            )
-            .normalize_or_zero();
-            if direction != Vec3::ZERO {
-                self.base.set_forward(direction);
-            }
         }
     }
 
@@ -819,9 +795,19 @@ impl Unit {
         true
     }
 
+    pub(crate) fn set_physics_velocity(&mut self, velocity: Vec3) -> bool {
+        let Some(body) = &mut self.physics else {
+            return false;
+        };
+        body.set_linear_velocity(&mut self.base, velocity)
+    }
+
     /// Stop standalone movement.
     pub fn stop(&mut self) {
-        let interrupted_movement = self.state == UnitState::Moving || self.move_target.is_some();
+        let interrupted_movement = self.state == UnitState::Moving
+            || self.move_target.is_some()
+            || self.ground_move_owns_squad_transform();
+        self.cancel_squad_ground_move();
         self.move_target = None;
         self.base.velocity = Vec3::ZERO;
         if self.state == UnitState::Moving {
@@ -884,20 +870,35 @@ impl Entity for Unit {
 
     fn update(&mut self, dt: f32) {
         self.ammunition.advance(dt);
+        let squad_ground_move = self.ground_move_owns_squad_transform();
+        let squad_jump = self.is_jumping();
+        if squad_ground_move
+            && !self.is_incapacitated()
+            && !self.is_garrisoned()
+            && !self.is_undergoing_infection()
+            && !self.is_thrown()
+            && !self.is_cryo_frozen()
+        {
+            self.advance_squad_ground_move(dt);
+        }
         let airborne = self
             .physics
             .as_ref()
             .is_some_and(|body| !body.is_grounded());
-        if self.base.is_mobile()
+        if !squad_ground_move
+            && !squad_jump
             && !self.is_incapacitated()
             && !self.is_garrisoned()
+            && !self.is_undergoing_infection()
             && (airborne
-                || self.is_physics_replacement()
-                || self.state == UnitState::Moving
-                || (self.state == UnitState::Attacking && self.move_target.is_some()))
+                || (self.base.is_mobile()
+                    && (self.is_physics_replacement()
+                        || self.state == UnitState::Moving
+                        || (self.state == UnitState::Attacking && self.move_target.is_some()))))
         {
             self.update_movement(dt);
         }
+        self.finish_throw_if_grounded();
     }
 
     fn is_alive(&self) -> bool {

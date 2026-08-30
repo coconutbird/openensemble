@@ -72,6 +72,18 @@ fn off_center_impulse_changes_linear_and_angular_velocity() {
 }
 
 #[test]
+fn angular_impulse_is_scaled_by_box_inertia() {
+    let (_entity, mut body) = dynamic_body(Vec3::ZERO);
+
+    body.apply_angular_impulse(Vec3::new(0.0, 100.0, 0.0));
+
+    assert!(
+        body.angular_velocity()
+            .abs_diff_eq(Vec3::new(0.0, 1.5, 0.0), 1.0e-6)
+    );
+}
+
+#[test]
 fn dynamic_body_is_separated_from_static_obstruction() {
     let mut units = EntityManager::new(EntityClass::Unit);
     let moving_id = units.allocate_id();
@@ -89,7 +101,7 @@ fn dynamic_body_is_separated_from_static_obstruction() {
     )));
     units.insert(static_id, obstruction);
 
-    let contacts = resolve_unit_collisions(&mut units);
+    let contacts = resolve_unit_collisions(&mut units, &std::collections::BTreeSet::new());
 
     let moving = units.get(moving_id).unwrap();
     assert!(moving.base.position.x <= -2.0);

@@ -8,6 +8,23 @@ use crate::player::PlayerId;
 use glam::Vec3;
 
 impl World {
+    /// Reproduce `BSimHelper::randomCircularDistribution` on retail's sim RNG.
+    pub(crate) fn random_circular_position(
+        &mut self,
+        center: Vec3,
+        outer_radius: f32,
+        inner_radius: f32,
+    ) -> Vec3 {
+        let distribution = self.trigger_random_float(0.0, 1.0);
+        let radius = distribution.sqrt() * (outer_radius - inner_radius) + inner_radius;
+        let theta = self.trigger_random_float(0.0, std::f32::consts::TAU);
+        Vec3::new(
+            center.x + theta.cos() * radius,
+            center.y,
+            center.z - theta.sin() * radius,
+        )
+    }
+
     /// Read a live trigger-addressable entity's world position.
     #[must_use]
     pub fn entity_position(&self, entity_id: EntityId) -> Option<Vec3> {

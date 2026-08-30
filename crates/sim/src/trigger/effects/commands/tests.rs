@@ -91,8 +91,71 @@ fn custom_command_remove_consumes_the_assigned_id() {
 }
 
 #[test]
-fn building_command_tracks_no_cost_squads_until_real_completion() {
-    let database = building_command_database();
+fn building_command_no_cost_squads_complete_immediately_without_recharge() {
+    let mut database = building_command_database();
+    database.objects[1].population = vec![pipeline::database::hw1::objects::PopulationAmount {
+        population_type: Some("Unit".to_owned()),
+        amount: 1.0,
+    }];
+    database.game_data.as_mut().unwrap().pops =
+        Some(pipeline::database::hw1::gamedata::PopsWrapper {
+            entries: vec!["Unit".to_owned()],
+        });
+    let (mut world, building_id) = building_command_world();
+    let player = world.get_player_mut(1).unwrap();
+    player.configure_population_slots(1);
+    assert!(player.set_population_limits(0, 0.0, 0.0));
+    let mut script = building_command_script(building_id);
+    script.add_variable(
+        TriggerVar::new(2, VarType::ProtoSquad).with_value(TriggerValue::ProtoSquad(0)),
+    );
+    script.add_variable(TriggerVar::new(3, VarType::Integer).with_value(TriggerValue::Int(2)));
+    script.add_variable(TriggerVar::new(4, VarType::Bool).with_value(TriggerValue::Bool(true)));
+    let mut effect = Effect::new(1, EffectType::BuildingCommand)
+        .with_input_at(1, 1)
+        .with_input_at(2, 2)
+        .with_input_at(3, 3)
+        .with_input_at(4, 4)
+        .with_output_at(5, 5);
+    effect.version = 4;
+
+    assert_eq!(
+        building_command(&effect, &mut script, &mut world, Some(&database)),
+        EffectOutcome::Applied
+    );
+    let state = command_state(&script);
+    assert!(state.is_done());
+    assert_eq!(state.trained_squads().len(), 2);
+    assert!(
+        state
+            .trained_squads()
+            .iter()
+            .all(|squad_id| world.get_squad(*squad_id).is_some())
+    );
+    assert!(
+        world
+            .get_building(building_id)
+            .unwrap()
+            .production
+            .is_idle()
+    );
+    assert!(
+        world
+            .training_recharge(building_id, crate::entities::TrainingKind::Squad, 0)
+            .is_none()
+    );
+    assert_close(world.get_player(1).unwrap().resources.get(0), 0.0);
+    assert_close(world.get_player(1).unwrap().population[0].count, 2.0);
+    assert_close(world.get_player(1).unwrap().population[0].future, 0.0);
+}
+
+#[test]
+fn instant_recharge_training_finishes_trigger_state_without_queueing() {
+    let mut database = building_command_database();
+    database.squads[0]
+        .flags
+        .push("InstantTrainWithRecharge".to_owned());
+    database.squads[0].build_points = Some(3.0);
     let (mut world, building_id) = building_command_world();
     let mut script = building_command_script(building_id);
     script.add_variable(
@@ -113,17 +176,6 @@ fn building_command_tracks_no_cost_squads_until_real_completion() {
         EffectOutcome::Applied
     );
     let state = command_state(&script);
-    assert!(!state.is_done());
-    assert!(state.trained_squads().is_empty());
-    assert_close(world.get_player(1).unwrap().resources.get(0), 0.0);
-
-    world.trigger_engine_mut().add_script(script);
-    for _ in 0..4 {
-        let _update = world.update_production(0.05, &database);
-    }
-
-    let script = world.trigger_engine().get_script(1).unwrap();
-    let state = command_state(script);
     assert!(state.is_done());
     assert_eq!(state.trained_squads().len(), 2);
     assert!(
@@ -132,7 +184,20 @@ fn building_command_tracks_no_cost_squads_until_real_completion() {
             .iter()
             .all(|squad_id| world.get_squad(*squad_id).is_some())
     );
-    assert_close(world.get_player(1).unwrap().resources.get(0), 0.0);
+    assert!(
+        world
+            .get_building(building_id)
+            .unwrap()
+            .production
+            .is_idle()
+    );
+    assert_close(
+        world
+            .training_recharge(building_id, crate::entities::TrainingKind::Squad, 0)
+            .unwrap()
+            .time_remaining(),
+        3.0,
+    );
 }
 
 #[test]
@@ -154,6 +219,43 @@ fn instant_trigger_research_finishes_state_without_queueing() {
         EffectOutcome::Applied
     );
 
+    assert!(command_state(&script).is_done());
+    assert!(
+        world
+            .get_player(1)
+            .unwrap()
+            .technologies
+            .is_active(INSTANT_TECH)
+    );
+    assert!(
+        world
+            .get_building(building_id)
+            .unwrap()
+            .production
+            .is_idle()
+    );
+    assert_close(world.get_player(1).unwrap().resources.get(0), 0.0);
+}
+
+#[test]
+fn no_cost_trigger_research_finishes_immediately_without_instant_flag() {
+    let mut database = building_command_database();
+    database.techs[0].flags.clear();
+    let (mut world, building_id) = building_command_world();
+    let mut script = building_command_script(building_id);
+    script.add_variable(TriggerVar::new(4, VarType::Bool).with_value(TriggerValue::Bool(true)));
+    script.add_variable(TriggerVar::new(6, VarType::Tech).with_value(TriggerValue::Tech(0)));
+    let mut effect = Effect::new(1, EffectType::BuildingCommand)
+        .with_input_at(1, 1)
+        .with_input_at(4, 4)
+        .with_input_at(6, 6)
+        .with_output_at(5, 5);
+    effect.version = 4;
+
+    assert_eq!(
+        building_command(&effect, &mut script, &mut world, Some(&database)),
+        EffectOutcome::Applied
+    );
     assert!(command_state(&script).is_done());
     assert!(
         world

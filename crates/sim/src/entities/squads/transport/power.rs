@@ -99,6 +99,17 @@ impl SquadPowerTransport {
         self.phase = PowerTransportPhase::Outgoing;
     }
 
+    pub(crate) fn remove_pending_passenger(&mut self, squad_id: EntityId) -> bool {
+        if self.phase != PowerTransportPhase::Incoming {
+            return false;
+        }
+        let Ok(index) = self.passenger_squad_ids.binary_search(&squad_id) else {
+            return false;
+        };
+        self.passenger_squad_ids.remove(index);
+        true
+    }
+
     pub(crate) fn hash_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_u32(u32::try_from(self.passenger_squad_ids.len()).unwrap_or(u32::MAX));
         for passenger_id in &self.passenger_squad_ids {

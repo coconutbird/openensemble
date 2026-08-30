@@ -100,6 +100,8 @@ impl World {
             return Err(GarrisonError::CannotContain);
         }
 
+        let _cancelled = self.cancel_capture_order(squad_id);
+        let _repair_cancelled = self.cancel_repair_other_order(squad_id);
         let now_ms = self.game_time_ms;
         let range = valid_nonnegative(range).unwrap_or_default();
         let squad = self
@@ -112,6 +114,7 @@ impl World {
             .garrison
             .begin_garrison(container.unit_id, range, now_ms);
         squad.move_to_garrison_target(container.position);
+        self.cancel_incoming_power_transport(squad_id);
         Ok(())
     }
 
@@ -304,6 +307,9 @@ impl World {
         }
         if squad.garrison.is_garrisoned() {
             return Err(GarrisonError::AlreadyGarrisoned);
+        }
+        if squad.is_jumping() {
+            return Err(GarrisonError::SquadUnavailable);
         }
         if !squad.is_alive()
             || !squad
@@ -718,7 +724,7 @@ impl World {
         surface_distance <= range.max(0.0)
     }
 
-    fn squad_obstruction_radius(&self, squad_id: EntityId) -> f32 {
+    pub(super) fn squad_obstruction_radius(&self, squad_id: EntityId) -> f32 {
         self.squads.get(squad_id).map_or(0.0, |squad| {
             squad
                 .unit_ids

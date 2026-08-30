@@ -56,6 +56,40 @@ impl SelectionOverlay {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(in crate::ugx) struct VisualState {
+    selection: SelectionOverlay,
+    opacity: f32,
+}
+
+impl VisualState {
+    pub(in crate::ugx) fn new(selection: SelectionOverlay, opacity: f32) -> Self {
+        let opacity = if opacity.is_finite() {
+            opacity.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        Self { selection, opacity }
+    }
+
+    pub(super) const fn selection(self) -> SelectionOverlay {
+        self.selection
+    }
+
+    pub(super) const fn opacity(self) -> f32 {
+        self.opacity
+    }
+}
+
+impl Default for VisualState {
+    fn default() -> Self {
+        Self {
+            selection: SelectionOverlay::default(),
+            opacity: 1.0,
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(super) struct SceneUniform {
@@ -101,7 +135,7 @@ impl SceneUniform {
             &LightingParams::default(),
             0.0,
             terrain,
-            SelectionOverlay::default(),
+            VisualState::default(),
         )
     }
 
@@ -111,7 +145,7 @@ impl SceneUniform {
         lighting: &LightingParams,
         time_seconds: f32,
         terrain: TerrainHeightfieldInfo,
-        selection: SelectionOverlay,
+        visual_state: VisualState,
     ) -> Self {
         Self {
             view_projection: view_projection.to_cols_array_2d(),
@@ -131,7 +165,7 @@ impl SceneUniform {
             planar_fog_color: lighting.planar_fog_color,
             planar_fog_params: lighting.planar_fog_params,
             ao_params: lighting.ao_params,
-            frame_params: [time_seconds, 0.0, 0.0, 0.0],
+            frame_params: [time_seconds, visual_state.opacity(), 0.0, 0.0],
             shadow_vp_col0: lighting.shadow_vp_col0,
             shadow_vp_col1: lighting.shadow_vp_col1,
             shadow_vp_col2: lighting.shadow_vp_col2,
@@ -154,8 +188,8 @@ impl SceneUniform {
             light_volume_row0: lighting.light_volume_row0,
             light_volume_row1: lighting.light_volume_row1,
             light_volume_row2: lighting.light_volume_row2,
-            selection_color: selection.color(),
-            selection_params: selection.params(),
+            selection_color: visual_state.selection().color(),
+            selection_params: visual_state.selection().params(),
         }
     }
 }
@@ -296,4 +330,25 @@ fn velocity_pair(material: &Material, first: MapType, second: MapType) -> [f32; 
     let first = material.map_velocity(first);
     let second = material.map_velocity(second);
     [first[0], first[1], second[0], second[1]]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scene_uniform_projects_sim_opacity_separately_from_ui_selection() {
+        let uniform = SceneUniform::from_frame(
+            Mat4::IDENTITY,
+            Mat4::IDENTITY,
+            &LightingParams::default(),
+            2.0,
+            TerrainHeightfieldInfo::default(),
+            VisualState::new(SelectionOverlay::default(), 0.25),
+        );
+        assert_eq!(
+            uniform.frame_params.map(f32::to_bits),
+            [2.0, 0.25, 0.0, 0.0].map(f32::to_bits)
+        );
+    }
 }

@@ -94,7 +94,7 @@ struct Material {
 @group(2) @binding(0) var directional_shadow_map: texture_2d_array<f32>;
 @group(2) @binding(1) var directional_shadow_sampler: sampler;
 @group(2) @binding(2) var<storage, read> local_lights: array<vec4<f32>>;
-@group(2) @binding(3) var local_shadow_map: texture_2d_array<f32>;
+@group(2) @binding(3) var local_shadow_map: texture_depth_2d_array;
 @group(2) @binding(4) var local_shadow_sampler: sampler;
 @group(2) @binding(5) var light_volume_color: texture_3d<f32>;
 @group(2) @binding(6) var light_volume_vector: texture_3d<f32>;
@@ -332,7 +332,7 @@ fn fs_distortion(input: VertexOutput) -> @location(0) vec4<f32> {
     if abs(offset.y) <= dead_zone {
         offset.y = 0.0;
     }
-    offset *= material.params.x;
+    offset *= material.params.x * scene.frame_params.y;
     let magnitude = abs(offset.x) + abs(offset.y);
     if magnitude < material.params.y {
         discard;
@@ -542,10 +542,10 @@ fn evaluate_local_light(
 fn local_shadow_bounds(preset: u32) -> vec4<f32> {
     switch min(preset, 4u) {
         case 0u: {
-            return vec4<f32>(0.0, 0.0, 0.5, 0.5);
+            return vec4<f32>(0.0, 0.0, 1.0, 1.0);
         }
         case 1u: {
-            return vec4<f32>(0.0, 0.0, 1.0, 1.0);
+            return vec4<f32>(0.0, 0.0, 0.5, 0.5);
         }
         case 2u: {
             return vec4<f32>(0.5, 0.0, 1.0, 0.5);
@@ -559,6 +559,24 @@ fn local_shadow_bounds(preset: u32) -> vec4<f32> {
     }
 }
 
+fn local_shadow_layer(normalized_coordinate: f32) -> u32 {
+    return u32(clamp(
+        floor(normalized_coordinate * 8.0),
+        0.0,
+        7.0,
+    ));
+}
+
+fn load_local_shadow(uv: vec2<f32>, layer: u32) -> f32 {
+    let dimensions = vec2<i32>(textureDimensions(local_shadow_map, 0));
+    let texel = clamp(
+        vec2<i32>(floor(uv * vec2<f32>(dimensions))),
+        vec2<i32>(0),
+        dimensions - vec2<i32>(1),
+    );
+    return textureLoad(local_shadow_map, texel, i32(layer), 0);
+}
+
 fn local_shadow_bilinear(
     uv: vec2<f32>,
     depth: f32,
@@ -570,34 +588,10 @@ fn local_shadow_bilinear(
     let inverse = vec2<f32>(1.0) - fractional;
     let comparisons = clamp(
         vec4<f32>(
-            textureSampleLevel(
-                local_shadow_map,
-                local_shadow_sampler,
-                uv + vec2<f32>(-half_texel.x, -half_texel.y),
-                layer,
-                0.0,
-            ).r,
-            textureSampleLevel(
-                local_shadow_map,
-                local_shadow_sampler,
-                uv + vec2<f32>(half_texel.x, -half_texel.y),
-                layer,
-                0.0,
-            ).r,
-            textureSampleLevel(
-                local_shadow_map,
-                local_shadow_sampler,
-                uv + vec2<f32>(-half_texel.x, half_texel.y),
-                layer,
-                0.0,
-            ).r,
-            textureSampleLevel(
-                local_shadow_map,
-                local_shadow_sampler,
-                uv + vec2<f32>(half_texel.x, half_texel.y),
-                layer,
-                0.0,
-            ).r,
+            load_local_shadow(uv + vec2<f32>(-half_texel.x, -half_texel.y), layer),
+            load_local_shadow(uv + vec2<f32>( half_texel.x, -half_texel.y), layer),
+            load_local_shadow(uv + vec2<f32>(-half_texel.x,  half_texel.y), layer),
+            load_local_shadow(uv + vec2<f32>( half_texel.x,  half_texel.y), layer),
         ) - vec4<f32>(depth),
         vec4<f32>(0.0),
         vec4<f32>(1.0 / 20000.0),
@@ -641,7 +635,7 @@ fn evaluate_local_shadow(
             -shadow_index - 0.875,
             transformed.z < 0.0,
         );
-        layer = u32(max(layer_coordinate, 0.0));
+        layer = local_shadow_layer(max(layer_coordinate, 0.0));
     } else {
         let safe_z = select(
             transformed.z,
@@ -651,7 +645,7 @@ fn evaluate_local_shadow(
         let bounds = local_shadow_bounds(u32(max(bounds_preset, 0.0)));
         uv = clamp(transformed.xy / safe_z, bounds.xy, bounds.zw);
         depth = (transformed.z * 1.007874 - 1.007874) / safe_z;
-        layer = u32(max(shadow_index, 0.0));
+        layer = local_shadow_layer(max(shadow_index, 0.0));
     }
 
     let shadow = local_shadow_bilinear(uv, depth, layer);
@@ -788,6 +782,7 @@ fn fs_main(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @l
     if opacity <= max(2.0 / 255.0, material.params.y) {
         discard;
     }
+    opacity *= scene.frame_params.y;
 
     var vertex_normal = normalize(input.world_normal);
     if has_flag(TWO_SIDED) && !front_facing {

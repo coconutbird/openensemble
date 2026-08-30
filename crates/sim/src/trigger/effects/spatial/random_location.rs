@@ -4,9 +4,6 @@ use super::super::support::{bool_at, float_at, used_variable_id, variable_is_use
 use super::super::{EffectOutcome, write_value};
 use crate::World;
 use crate::trigger::{Effect, TriggerScript, TriggerValue, TriggerVec3};
-use glam::Vec3;
-
-const RETAIL_TWO_PI: f32 = std::f32::consts::TAU;
 
 pub(in crate::trigger::effects) fn random_location(
     effect: &Effect,
@@ -45,7 +42,7 @@ pub(in crate::trigger::effects) fn random_location(
         return EffectOutcome::Skipped;
     }
 
-    let mut output = circular_distribution(world, input, outer_radius, inner_radius);
+    let mut output = world.random_circular_position(input, outer_radius, inner_radius);
     if let Some(height) = world.terrain_height(output, true) {
         output.y = height;
     }
@@ -53,24 +50,6 @@ pub(in crate::trigger::effects) fn random_location(
         script,
         output_id,
         TriggerValue::Vector(TriggerVec3::new(output.x, output.y, output.z)),
-    )
-}
-
-fn circular_distribution(
-    world: &mut World,
-    center: Vec3,
-    outer_radius: f32,
-    inner_radius: f32,
-) -> Vec3 {
-    let distribution = world.trigger_random_float(0.0, 1.0);
-    let radius = distribution.sqrt() * (outer_radius - inner_radius) + inner_radius;
-    let theta = world.trigger_random_float(0.0, RETAIL_TWO_PI);
-    let sine = theta.sin();
-    let cosine = theta.cos();
-    Vec3::new(
-        center.x + cosine * radius,
-        center.y,
-        center.z - sine * radius,
     )
 }
 

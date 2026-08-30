@@ -11,13 +11,22 @@ use num_traits::ToPrimitive;
 use pipeline::database::hw1::powers::{DataEntry, DataLevel, PowerAttributes, PowerCost};
 use pipeline::database::hw1::{Database, Power, ProtoObject};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub(super) struct PowerPayment {
     cost: Resources,
     pay_cost: bool,
 }
 
-#[derive(Debug)]
+impl PowerPayment {
+    pub(super) fn hash_state(self, checksum: &mut SyncChecksum) {
+        for amount in self.cost.amounts {
+            checksum.hash_f32(amount);
+        }
+        checksum.hash_u32(u32::from(self.pay_cost));
+    }
+}
+
+#[derive(Debug, Clone)]
 pub(super) struct BomberProfile {
     pub prototype: String,
     pub bomb_time: f32,
@@ -43,6 +52,16 @@ impl BomberProfile {
             speed: required_float(attributes, level, "BomberSpeed")?,
             flyout_time: required_float(attributes, level, "BomberFlyOutTime")?,
         })
+    }
+
+    pub(super) fn hash_state(&self, checksum: &mut SyncChecksum) {
+        hash_string(checksum, &self.prototype);
+        checksum.hash_f32(self.bomb_time);
+        checksum.hash_f32(self.flyin_distance);
+        checksum.hash_f32(self.flyin_height);
+        checksum.hash_f32(self.bomb_height);
+        checksum.hash_f32(self.speed);
+        checksum.hash_f32(self.flyout_time);
     }
 }
 

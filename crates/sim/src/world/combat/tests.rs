@@ -75,12 +75,19 @@ fn combat_catalog_with_tuning(
     };
     let profile = AttackProfile {
         action_name: "RifleAttack".to_owned(),
+        animation_type: "Attack".to_owned(),
         weapon_name: "Rifle".to_owned(),
         weapon_type: Some("SmallArms".to_owned()),
         projectile: Some("test_bullet".to_owned()),
+        impact_effect: None,
         area_damage,
+        pull: None,
+        hardpoint: None,
+        orientation: crate::gameplay::AttackOrientationProfile::default(),
+        charged_animation: None,
         friendly_fire: false,
         targets_foot_of_unit: false,
+        projectile_reactions: crate::gameplay::ProjectileReactionFlags::default(),
         max_range: 10.0,
         max_velocity_lead,
         accuracy,
@@ -91,6 +98,8 @@ fn combat_catalog_with_tuning(
             weight: 1,
             duration: 0.1,
             attack_positions: vec![0.0],
+            events: Vec::new(),
+            hardpoint_track: None,
         }],
         pre_attack_cooldown: [0.0, 0.0],
         post_attack_cooldown: [0.0, 0.0],
@@ -212,6 +221,24 @@ fn combat_world() -> (World, EntityId, EntityId) {
 }
 
 #[test]
+fn in_range_squad_attack_updates_the_retail_last_attacked_clock() {
+    let gameplay = combat_catalog(None);
+    let (mut world, attacker_id, target_id) = combat_world();
+    world
+        .get_unit_mut(attacker_id)
+        .unwrap()
+        .clear_attack_order();
+    let squad_id = world.create_squad_at(1, Vec3::ZERO);
+    assert!(world.attach_unit_to_squad(attacker_id, squad_id));
+    assert!(world.issue_attack_order(1, squad_id, target_id, 0.0));
+    world.advance_time(750);
+
+    world.update_entities_with_gameplay(0.05, &gameplay);
+
+    assert_eq!(world.get_squad(squad_id).unwrap().last_attacked_time, 750);
+}
+
+#[test]
 fn hand_attack_uses_shared_timing_and_instant_damage_executor() {
     let gameplay = hand_attack_catalog();
     let (mut world, attacker_id, target_id) = combat_world();
@@ -304,6 +331,39 @@ fn projectile_hp_bounty_banks_then_commits_when_the_ordered_target_dies() {
     assert!(nearly_equal(attacker.experience(), 2.5));
     assert!(nearly_equal(attacker.banked_experience(), 0.0));
     assert_eq!(attacker.attack_target, None);
+}
+
+#[test]
+fn lethal_weapon_damage_records_authoritative_killer_identity() {
+    let gameplay = combat_catalog(None);
+    let mut world = World::new();
+    world.init_players(2);
+    world.get_player_mut(1).unwrap().team_id = 3;
+    world.get_player_mut(2).unwrap().team_id = 4;
+    let attacker_id = world.create_unit(1);
+    let target_id = world.create_unit(2);
+    world
+        .get_unit_mut(target_id)
+        .unwrap()
+        .set_max_hitpoints(4.0);
+
+    let dealt = world.apply_attributed_weapon_damage(
+        damage::DamageAttribution::combat(attacker_id, 1),
+        target_id,
+        5.0,
+        Some("SmallArms"),
+        Some(&gameplay),
+    );
+
+    assert!(dealt > 0.0);
+    let target = world
+        .get_unit(target_id)
+        .expect("dead unit remains until update");
+    assert!(!target.is_alive());
+    assert_eq!(target.killed_by_entity_id(), Some(attacker_id));
+    assert_eq!(target.killed_by_player_id(), Some(1));
+    assert_eq!(target.killed_by_team_id(), Some(3));
+    assert_eq!(target.killed_by_weapon_type(), Some("SmallArms"));
 }
 
 fn nearly_equal(left: f32, right: f32) -> bool {

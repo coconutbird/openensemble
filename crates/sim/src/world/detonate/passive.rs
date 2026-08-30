@@ -13,6 +13,48 @@ use glam::Vec3;
 use num_traits::ToPrimitive;
 
 impl World {
+    pub(super) fn activate_persistent_unit_detonations(&mut self, gameplay: &GameplayCatalog) {
+        let unit_ids = self.units.ids().collect::<Vec<_>>();
+        for unit_id in unit_ids {
+            let profile = self.units.get(unit_id).and_then(|unit| {
+                (unit.is_alive()
+                    && !unit.is_detonate_armed()
+                    && unit.detonate_phase() == UnitDetonatePhase::Inactive)
+                    .then(|| gameplay.first_persistent_detonate_action(&unit.proto_object_name))
+                    .flatten()
+            });
+            let Some(profile) = profile else {
+                continue;
+            };
+            if self.persistent_detonate_action_enabled(unit_id, &profile) {
+                let _started =
+                    self.begin_profile_detonate_action(unit_id, &profile, false, false, None);
+            }
+        }
+    }
+
+    fn persistent_detonate_action_enabled(
+        &self,
+        unit_id: EntityId,
+        profile: &DetonateActionProfile,
+    ) -> bool {
+        let Some(unit) = self.units.get(unit_id) else {
+            return false;
+        };
+        let authored_enabled = !profile.starts_disabled();
+        let player_enabled =
+            self.get_player(unit.base.player_id)
+                .map_or(authored_enabled, |player| {
+                    player.technologies.action_enabled(
+                        &unit.proto_object_name,
+                        profile.action_name(),
+                        authored_enabled,
+                    )
+                });
+        unit.actions
+            .is_enabled(profile.action_name(), !player_enabled)
+    }
+
     /// Create an action that evaluates the triggers authored on `action_name`.
     ///
     /// Bomb and physical-replacement systems use this entry point after they
@@ -59,6 +101,25 @@ impl World {
             unit.arm_detonate(profile.action_name(), 1.0);
         }
         unit.begin_detonate_action(config)
+    }
+
+    pub(in crate::world) fn force_active_unit_detonation(
+        &mut self,
+        unit_id: EntityId,
+        gameplay: &GameplayCatalog,
+    ) -> bool {
+        let Some(detonation) = self
+            .units
+            .get_mut(unit_id)
+            .and_then(crate::entities::Unit::force_detonate_action)
+        else {
+            return false;
+        };
+        let Some(explosion) = self.detonate_explosion(unit_id, &detonation, gameplay) else {
+            return false;
+        };
+        self.resolve_detonate_explosion(&explosion, gameplay);
+        true
     }
 
     fn detonate_trigger_config(

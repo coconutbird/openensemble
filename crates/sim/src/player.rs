@@ -3,6 +3,7 @@
 //! Based on `BPlayer` from the original source.
 
 mod forbids;
+mod one_time_spawns;
 mod powers;
 mod rally_points;
 mod research;
@@ -255,6 +256,8 @@ pub struct Player {
     pub id: PlayerId,
     /// Team ID.
     pub team_id: TeamId,
+    /// Retail shared-control partner used by co-op building cost escalation.
+    coop_player_id: Option<PlayerId>,
     /// Civilization ID.
     pub civ_id: CivId,
     /// Leader ID.
@@ -283,6 +286,8 @@ pub struct Player {
     rally_point: Option<crate::entities::RallyPoint>,
     /// Per-player object, squad, and technology availability overrides.
     forbids: forbids::PlayerForbidState,
+    /// Proto squads already consumed by an authored one-time child spawn.
+    one_time_spawns: one_time_spawns::OneTimeSpawnState,
     /// Retail power-menu entries and their authoritative remaining uses.
     powers: powers::PlayerPowerState,
     /// Player-global technology work currently assigned to buildings.
@@ -296,6 +301,7 @@ impl Player {
         Self {
             id,
             team_id: 0,
+            coop_player_id: None,
             civ_id: -1,
             leader_id: -1,
             state: PlayerState::Playing,
@@ -310,6 +316,7 @@ impl Player {
             technologies: PlayerTechState::default(),
             rally_point: None,
             forbids: forbids::PlayerForbidState::default(),
+            one_time_spawns: one_time_spawns::OneTimeSpawnState::default(),
             powers: powers::PlayerPowerState::default(),
             research: PlayerResearchState::default(),
         }
@@ -331,6 +338,17 @@ impl Player {
     #[must_use]
     pub fn is_ai(&self) -> bool {
         self.player_type == PlayerType::ComputerAi
+    }
+
+    /// Return the retail shared-control partner for co-op calculations.
+    #[must_use]
+    pub const fn coop_player_id(&self) -> Option<PlayerId> {
+        self.coop_player_id
+    }
+
+    /// Configure the retail shared-control partner for co-op calculations.
+    pub fn set_coop_player_id(&mut self, partner_id: Option<PlayerId>) {
+        self.coop_player_id = partner_id.filter(|partner_id| *partner_id != self.id);
     }
 
     /// Get a resource amount.

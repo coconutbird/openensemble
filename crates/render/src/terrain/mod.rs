@@ -13,6 +13,7 @@
 mod callouts;
 mod camera;
 mod compositing;
+mod dynamic_alpha;
 mod icons;
 pub mod loading;
 mod mesh;
@@ -30,6 +31,7 @@ pub use camera::{Camera, SimulationCameraAdapter};
 pub use compositing::{
     CompositeBindings, CompositeParams, CompositingConfig, CompositorResources, LodConfig,
 };
+pub use dynamic_alpha::DynamicTerrainAlphaMask;
 pub use icons::{ProjectedIconObject, project_icon_objects};
 pub use loading::{
     RoadTextures, extract_chunk_splat_data, extract_decal_data, extract_foliage_chunks,
@@ -38,6 +40,7 @@ pub use loading::{
 };
 pub use mesh::TerrainMesh;
 pub use objective_pointers::{ProjectedObjectivePointer, project_objective_pointers};
+pub(crate) use patch::canonical_patch_path;
 pub use patch::{
     TerrainPatchError, TerrainPatchImage, TerrainPatchInstance, TerrainPatchMaterial,
     TerrainPatchRenderer, TerrainPatchRendererDescriptor, TerrainPatchShading,

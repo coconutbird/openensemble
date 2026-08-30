@@ -1,8 +1,16 @@
 //! Deterministic production state owned by class-1 building units.
 
+mod air_traffic_control;
+mod trained_birth;
+
 use crate::entity_id::EntityId;
 use crate::player::{PlayerId, PopulationCost, Resources};
 use crate::sync::SyncChecksum;
+
+pub use air_traffic_control::{
+    AIR_TRAFFIC_LANDING_SPOT_COUNT, AirTrafficControl, AirTrafficLandingSpot,
+};
+pub use trained_birth::TrainedSquadBirth;
 
 /// Trigger variable notified when production work finishes or is canceled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +124,37 @@ impl TrainingKind {
             Self::Unit => "TrainUnit",
             Self::Squad => "TrainSquad",
         }
+    }
+}
+
+/// Per-building lockout created by retail `InstantTrainWithRecharge` training.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TrainingRecharge {
+    kind: TrainingKind,
+    prototype_id: i32,
+    time_remaining: f32,
+}
+
+impl TrainingRecharge {
+    #[must_use]
+    pub const fn kind(self) -> TrainingKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub const fn prototype_id(self) -> i32 {
+        self.prototype_id
+    }
+
+    #[must_use]
+    pub const fn time_remaining(self) -> f32 {
+        self.time_remaining
+    }
+
+    fn hash_state(self, checksum: &mut SyncChecksum) {
+        checksum.hash_u32(self.kind as u32);
+        checksum.hash_i32(self.prototype_id);
+        checksum.hash_f32(self.time_remaining);
     }
 }
 
@@ -338,9 +377,19 @@ impl ProductionTask {
 pub struct BuildingProduction {
     pub(crate) current_item: Option<ProductionTask>,
     pub(crate) queued_items: Vec<ProductionTask>,
+    recharges: Vec<TrainingRecharge>,
+    trained_squads: Vec<TrainedSquadBirth>,
+    trained_squad_birth_time: f32,
+    pub(crate) air_traffic_control: Option<AirTrafficControl>,
 }
 
 impl BuildingProduction {
+    /// Active persistent air-traffic-control state, when this unit owns it.
+    #[must_use]
+    pub const fn air_traffic_control(&self) -> Option<&AirTrafficControl> {
+        self.air_traffic_control.as_ref()
+    }
+
     #[must_use]
     pub fn current_research(&self) -> Option<&ResearchTask> {
         self.current_item
@@ -403,6 +452,58 @@ impl BuildingProduction {
     #[must_use]
     pub fn is_idle(&self) -> bool {
         self.current_item.is_none() && self.queued_items.is_empty()
+    }
+
+    /// Return the active instant-training lockout for one prototype.
+    #[must_use]
+    pub fn training_recharge(
+        &self,
+        kind: TrainingKind,
+        prototype_id: i32,
+    ) -> Option<TrainingRecharge> {
+        self.recharges
+            .iter()
+            .copied()
+            .find(|recharge| recharge.kind == kind && recharge.prototype_id == prototype_id)
+    }
+
+    /// Iterate authoritative instant-training lockouts in insertion order.
+    pub fn training_recharges(&self) -> impl Iterator<Item = TrainingRecharge> + '_ {
+        self.recharges.iter().copied()
+    }
+
+    pub(crate) fn needs_update(&self) -> bool {
+        !self.is_idle() || !self.recharges.is_empty() || self.has_trained_squad_birth_work()
+    }
+
+    pub(crate) fn set_training_recharge(
+        &mut self,
+        kind: TrainingKind,
+        prototype_id: i32,
+        time_remaining: f32,
+    ) {
+        let time_remaining = time_remaining.max(0.0);
+        if let Some(recharge) = self
+            .recharges
+            .iter_mut()
+            .find(|recharge| recharge.kind == kind && recharge.prototype_id == prototype_id)
+        {
+            recharge.time_remaining = time_remaining;
+            return;
+        }
+        self.recharges.push(TrainingRecharge {
+            kind,
+            prototype_id,
+            time_remaining,
+        });
+    }
+
+    pub(crate) fn advance_training_recharges(&mut self, dt: f32) {
+        for recharge in &mut self.recharges {
+            recharge.time_remaining -= dt;
+        }
+        self.recharges
+            .retain(|recharge| recharge.time_remaining > 0.0);
     }
 
     pub(crate) fn enqueue_research(&mut self, task: ResearchTask) {
@@ -580,6 +681,15 @@ impl BuildingProduction {
         checksum.hash_u32(u32::try_from(self.queued_items.len()).unwrap_or(u32::MAX));
         for task in &self.queued_items {
             task.hash_state(checksum);
+        }
+        checksum.hash_u32(u32::try_from(self.recharges.len()).unwrap_or(u32::MAX));
+        for recharge in &self.recharges {
+            recharge.hash_state(checksum);
+        }
+        self.hash_trained_squad_birth_state(checksum);
+        checksum.hash_u32(u32::from(self.air_traffic_control.is_some()));
+        if let Some(control) = &self.air_traffic_control {
+            control.hash_state(checksum);
         }
     }
 

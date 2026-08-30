@@ -141,6 +141,34 @@ fn ram_weapon_caps_and_reflection_use_action_scoped_technology() {
     );
 }
 
+#[test]
+fn action_work_rate_uses_named_and_all_action_technology_effects() {
+    let technology = Tech {
+        name: "FasterActions".to_owned(),
+        effects: Some(EffectsWrapper {
+            entries: vec![
+                weapon_effect("WorkRate", 2.0, "Percent", Some("FiendishReturn"), false),
+                weapon_effect("WorkRate", 0.25, "Absolute", None, true),
+            ],
+        }),
+        ..Tech::default()
+    };
+    let mut database = Database::new();
+    database.techs.push(technology.clone());
+    let mut state = PlayerTechState::default();
+    let _transforms = state.activate(&database, &technology);
+
+    assert_close(
+        state.action_work_rate("Marine", "FiendishReturn", 0.5),
+        1.25,
+    );
+    assert_close(state.action_work_rate("Marine", "Other", 0.5), 0.75);
+    assert_close(
+        state.action_work_rate("OtherProto", "FiendishReturn", 0.5),
+        0.5,
+    );
+}
+
 fn damage_modifier_effect(amount: f32, relativity: &str) -> TechEffect {
     TechEffect {
         effect_type: "Data".to_owned(),

@@ -5,6 +5,7 @@
 //! - `render` — GPU initialization and render pass logic
 
 mod input;
+mod presentation;
 mod rendering;
 
 use std::path::{Path, PathBuf};
@@ -82,7 +83,7 @@ pub struct TerrainViewer {
     pub tone_map_resources: Option<ToneMapResources>,
     /// Monotonic render time used by authored material and foliage animation.
     pub render_time_seconds: f32,
-    /// Display mode. Mode 12 is the canonical GPU-composited terrain view.
+    /// Display mode. Mode 0 is the retail-style lit terrain view.
     pub debug_mode: u32,
     /// Normal map strength (gBumpPower in game, scales XY components).
     pub bump_power: f32,
@@ -137,7 +138,7 @@ impl TerrainViewer {
             scene_format: HDR_COLOR_FORMAT,
             tone_map_resources: None,
             render_time_seconds: 0.0,
-            debug_mode: 12,
+            debug_mode: 0,
             bump_power: 1.0,
             compositor: None,
             compositor_bind_group: None,
@@ -293,9 +294,10 @@ fn load_scenario_inputs(scenario_name: &str) -> Result<TerrainLoadInputs, String
         render::ugx::simulation_proto_names(&simulation.world).collect::<Vec<_>>();
     let loaded_visuals = content.load_visuals_for(&mut source, active_proto_names.iter().copied());
     log::info!("Loaded {loaded_visuals} active proto visual definitions");
-    let ugx_scene = UgxUnitScene::load_world(
+    let ugx_scene = UgxUnitScene::load_world_with_gameplay(
         &mut source,
         &simulation.world,
+        &simulation.gameplay,
         &content.visuals,
         &content.database.objects,
     );
@@ -335,6 +337,16 @@ fn log_ugx_scene_summary(scene: &UgxUnitScene) {
             issue.proto_name(),
             issue.reason()
         );
+    }
+    log::info!(
+        "Resolved {} PFX graphs ({} issues) and {} LGT graphs ({} issues)",
+        scene.particle_effect_count(),
+        scene.particle_effect_issue_count(),
+        scene.light_effect_count(),
+        scene.light_effect_issue_count(),
+    );
+    for issue in scene.light_effect_issues() {
+        log::warn!("Scenario LGT attachment was skipped: {issue}");
     }
 }
 

@@ -1,12 +1,14 @@
 //! Cascaded directional shadow-map generation.
 
 use glam::{Mat4, Vec3};
+use render::local_shadow::{LOCAL_SHADOW_DEPTH_BIAS, LOCAL_SHADOW_FORMAT, LocalShadowMap};
 use render::terrain::NORMALIZED_TERRAIN_Y_OFFSET;
 use render::{RenderPhase, WorldRenderer, wgpu};
 
 const SHADOW_MAP_SIZE: u32 = 2048;
 pub const SHADOW_CASCADE_COUNT: u32 = 4;
 const SHADOW_CASCADE_SCALES: [f32; 4] = [8.0, 4.0, 2.0, 1.0];
+const LOCAL_SHADOW_SHADER: &str = include_str!("local_shadow.wgsl");
 
 /// GPU resources for the terrain and foliage shadow passes.
 pub struct ShadowResources {
@@ -17,6 +19,7 @@ pub struct ShadowResources {
     _depth_texture: wgpu::Texture,
     cascade_depth_views: Vec<wgpu::TextureView>,
     pub pipeline: wgpu::RenderPipeline,
+    local_shadow_pipeline: wgpu::RenderPipeline,
     light_vp_buffers: Vec<wgpu::Buffer>,
     camera_bind_groups: Vec<wgpu::BindGroup>,
     pub params_buffer: wgpu::Buffer,
@@ -267,10 +270,64 @@ fn create_shadow_pipeline(
     })
 }
 
+fn create_local_shadow_pipeline(
+    device: &wgpu::Device,
+    params_layout: &wgpu::BindGroupLayout,
+    local_shadow_layout: &wgpu::BindGroupLayout,
+    vertex_layout: &[wgpu::VertexBufferLayout<'_>],
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Terrain Local Shadow Shader"),
+        source: wgpu::ShaderSource::Wgsl(LOCAL_SHADOW_SHADER.into()),
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Terrain Local Shadow Pipeline Layout"),
+        bind_group_layouts: &[params_layout, local_shadow_layout],
+        push_constant_ranges: &[],
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Terrain Local Shadow Pipeline"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: vertex_layout,
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: LOCAL_SHADOW_FORMAT,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState {
+                constant: LOCAL_SHADOW_DEPTH_BIAS,
+                slope_scale: 1.5,
+                clamp: 0.0,
+            },
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    })
+}
+
 impl ShadowResources {
     pub fn new(
         device: &wgpu::Device,
         camera_bind_group_layout: &wgpu::BindGroupLayout,
+        local_shadow_layout: &wgpu::BindGroupLayout,
         vertex_buffer_layout: &[wgpu::VertexBufferLayout<'_>],
     ) -> Self {
         let targets = create_shadow_targets(device);
@@ -283,6 +340,12 @@ impl ShadowResources {
             &params_bind_group_layout,
             vertex_buffer_layout,
         );
+        let local_shadow_pipeline = create_local_shadow_pipeline(
+            device,
+            &params_bind_group_layout,
+            local_shadow_layout,
+            vertex_buffer_layout,
+        );
 
         Self {
             _shadow_texture: targets.color_texture,
@@ -291,6 +354,7 @@ impl ShadowResources {
             _depth_texture: targets.depth_texture,
             cascade_depth_views: targets.depth_layer_views,
             pipeline,
+            local_shadow_pipeline,
             light_vp_buffers,
             camera_bind_groups,
             params_buffer,
@@ -429,6 +493,51 @@ impl ShadowResources {
     #[must_use]
     pub fn cascade_count(&self) -> usize {
         self.cascade_shadow_views.len()
+    }
+
+    /// Draws terrain into one local spot or omni atlas pass.
+    pub fn render_local_shadow<'pass>(
+        &'pass self,
+        shadows: &'pass LocalShadowMap,
+        pass_index: usize,
+        pass: &mut wgpu::RenderPass<'pass>,
+    ) {
+        let Some(descriptor) = shadows.passes().get(pass_index).copied() else {
+            return;
+        };
+        let Some(params_bind_group) = &self.params_bind_group else {
+            return;
+        };
+        let Some(geometry) = &self.terrain_geometry else {
+            return;
+        };
+        let Ok(pass_index_u32) = u32::try_from(pass_index) else {
+            return;
+        };
+        let Some(pass_offset) = shadows.pass_offset(pass_index_u32) else {
+            return;
+        };
+        let [x, y, width, height] = descriptor.viewport();
+        pass.set_viewport(
+            f32::from(x),
+            f32::from(y),
+            f32::from(width),
+            f32::from(height),
+            0.0,
+            1.0,
+        );
+        pass.set_scissor_rect(
+            u32::from(x),
+            u32::from(y),
+            u32::from(width),
+            u32::from(height),
+        );
+        pass.set_pipeline(&self.local_shadow_pipeline);
+        pass.set_bind_group(0, params_bind_group, &[]);
+        pass.set_bind_group(1, shadows.pass_bind_group(), &[pass_offset]);
+        pass.set_vertex_buffer(0, geometry.vertex_buffer.slice(..));
+        pass.set_vertex_buffer(1, geometry.instance_buffer.slice(..));
+        pass.draw(0..geometry.vertex_count, 0..geometry.instance_count);
     }
 }
 

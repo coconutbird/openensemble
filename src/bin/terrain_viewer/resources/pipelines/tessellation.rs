@@ -1,6 +1,8 @@
 use glam::Vec3;
 use num_traits::ToPrimitive;
+use render::light_volume::LocalLightVolume;
 use render::lighting::LocalLightBuffer;
+use render::local_shadow::LocalShadowMap;
 use render::terrain::{GpuTessParams, LightingParams, NORMALIZED_TERRAIN_Y_OFFSET, TerrainParams};
 use render::wgpu;
 use wgpu::util::DeviceExt;
@@ -9,6 +11,7 @@ use super::{
     CameraResources, CompositorInputs, TerrainSamplers, create_camera_resources,
     create_terrain_samplers, create_uniform_buffer,
 };
+use crate::dynamic_alpha::DynamicTerrainAlphaTexture;
 use crate::gpu::{create_depth_texture, xtd_packed_to_world};
 use crate::types::{AlbedoData, GpuResources, RawXtdData, TerrainChunkGrid};
 use crate::viewer::TerrainViewer;
@@ -18,8 +21,7 @@ mod gpu;
 use gpu::{
     GpuTessBindings, ShadowResourceBindings, create_dynamic_alpha_texture,
     create_expanded_patch_buffer, create_gpu_pipeline, create_gpu_texture_bind_group,
-    create_gpu_texture_layout, create_light_view, create_mask_texture,
-    create_placeholder_array_view, create_placeholder_view, create_placeholder_volume_view,
+    create_gpu_texture_layout, create_light_view, create_mask_texture, create_placeholder_view,
     create_rgb10a2_texture, create_shadow_resources, log_tessellation_resources,
 };
 
@@ -120,7 +122,7 @@ struct TessellationTextures {
     terrain_array: wgpu::TextureView,
     alpha_atlas: wgpu::TextureView,
     alpha_atlas_hi: wgpu::TextureView,
-    dynamic_alpha: wgpu::TextureView,
+    dynamic_alpha: DynamicTerrainAlphaTexture,
     chunk_layers: wgpu::Buffer,
     samplers: TerrainSamplers,
 }
@@ -147,9 +149,8 @@ struct TessellationAuxiliary {
     unexplored: wgpu::TextureView,
     light: wgpu::TextureView,
     local_lights: LocalLightBuffer,
-    local_shadow: wgpu::TextureView,
-    light_volume_color: wgpu::TextureView,
-    light_volume_vector: wgpu::TextureView,
+    local_shadows: LocalShadowMap,
+    light_volume: LocalLightVolume,
 }
 
 fn create_patch_mesh(vertices_per_axis: u32) -> PatchMesh {
@@ -326,7 +327,7 @@ impl TerrainViewer {
         let ao = create_mask_texture(
             device,
             queue,
-            "AO Texture (Half Resolution)",
+            "AO Texture",
             "AO",
             num_verts,
             raw_data
@@ -337,7 +338,7 @@ impl TerrainViewer {
         let alpha = create_mask_texture(
             device,
             queue,
-            "Alpha Texture (Half Resolution)",
+            "Alpha Texture",
             "Alpha",
             num_verts,
             raw_data
@@ -350,7 +351,7 @@ impl TerrainViewer {
         let (_, terrain_array) = self.create_terrain_texture_array(device, queue, albedo);
         let (_, alpha_atlas) = self.create_alpha_atlas(device, queue, chunk_grid);
         let (_, alpha_atlas_hi) = self.create_alpha_atlas_hi(device, queue, chunk_grid);
-        let dynamic_alpha = create_dynamic_alpha_texture(device, queue, num_verts);
+        let dynamic_alpha = create_dynamic_alpha_texture(device, queue, raw_data);
         TessellationTextures {
             position,
             position_for_shadow,
@@ -524,7 +525,14 @@ impl TerrainViewer {
         raw_data: &RawXtdData,
         shadow_bindings: &ShadowResourceBindings<'_>,
     ) -> TessellationAuxiliary {
-        let shadow = create_shadow_resources(device, queue, raw_data, shadow_bindings);
+        let local_shadows = LocalShadowMap::new(device);
+        let shadow = create_shadow_resources(
+            device,
+            queue,
+            raw_data,
+            shadow_bindings,
+            local_shadows.pass_layout(),
+        );
         log::info!("Shadow resources initialized");
         let blackmap = create_placeholder_view(device, queue, "Placeholder Blackmap", [0, 0, 0, 0]);
         let unexplored =
@@ -540,25 +548,8 @@ impl TerrainViewer {
             unexplored,
             light: create_light_view(device, queue, lighting_source),
             local_lights: LocalLightBuffer::empty(device),
-            local_shadow: create_placeholder_array_view(
-                device,
-                queue,
-                "Placeholder Local Shadow Map",
-                5,
-                [255; 4],
-            ),
-            light_volume_color: create_placeholder_volume_view(
-                device,
-                queue,
-                "Placeholder Light Volume Color",
-                [0, 0, 0, 0],
-            ),
-            light_volume_vector: create_placeholder_volume_view(
-                device,
-                queue,
-                "Placeholder Light Volume Vector",
-                [128, 128, 128, 255],
-            ),
+            local_shadows,
+            light_volume: LocalLightVolume::new(device),
         }
     }
 
@@ -580,7 +571,7 @@ impl TerrainViewer {
                 position_sampler: &textures.samplers.position,
                 alpha: &textures.alpha,
                 alpha_sampler: &textures.samplers.alpha,
-                dynamic_alpha: &textures.dynamic_alpha,
+                dynamic_alpha: textures.dynamic_alpha.view(),
                 camera_layout: &second.camera.layout,
                 num_patches: config.num_patches,
             },
@@ -621,11 +612,17 @@ impl TerrainViewer {
             camera_bind_group: camera.bind_group,
             texture_bind_group,
             position_texture_view: textures.position.clone(),
+            terrain_alpha_view: textures.dynamic_alpha.view().clone(),
+            dynamic_terrain_alpha: textures.dynamic_alpha,
+            blackmap_view: auxiliary.blackmap.clone(),
+            unexplored_view: auxiliary.unexplored.clone(),
             depth_texture,
             depth_view,
             params_buffer,
             lighting_buffer: Some(lighting_buffer),
             local_lights: auxiliary.local_lights.clone(),
+            local_shadows: auxiliary.local_shadows,
+            light_volume: auxiliary.light_volume,
             terrain_size: [terrain_size.x, terrain_size.z],
             chunk_grid: config.chunk_grid,
             tile_scale: raw_data.tile_scale,
@@ -675,12 +672,12 @@ impl TerrainViewer {
                 local_lights: auxiliary.local_lights.buffer(),
                 lighting_sampler: &textures.samplers.lighting,
                 light: &auxiliary.light,
-                dynamic_alpha: &textures.dynamic_alpha,
+                dynamic_alpha: textures.dynamic_alpha.view(),
                 composited_normal,
                 composited_specular,
-                local_shadow: &auxiliary.local_shadow,
-                light_volume_color: &auxiliary.light_volume_color,
-                light_volume_vector: &auxiliary.light_volume_vector,
+                local_shadow: auxiliary.local_shadows.view(),
+                light_volume_color: auxiliary.light_volume.color_view(),
+                light_volume_vector: auxiliary.light_volume.vector_view(),
             },
         )
     }

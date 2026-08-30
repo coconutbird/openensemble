@@ -3,35 +3,62 @@
 //! Based on `BSquad` from the original source.
 //! A squad is a group of units that move and act together.
 
+mod ambient_life;
+mod capture;
+mod carpet_bomb;
+mod cloak;
 mod cryo;
 mod detonate;
 mod garrison;
+mod gather;
 mod join;
+mod jump;
+mod leash;
 pub mod marine;
 mod mines;
 mod mode;
 mod orders;
+mod pull;
 mod rage;
 mod recovery;
 mod repair;
+mod repair_other;
 mod shields;
+mod spirit_bond;
+mod trained_birth;
 mod transport;
+mod wander;
 pub mod warthog;
 
+pub use ambient_life::AmbientLifeBehavior;
+pub(crate) use ambient_life::{
+    AmbientLifePhase, DEVOUR_DURATION_MS, SquadAmbientLife, countdown_due,
+};
+pub(crate) use carpet_bomb::CarpetBombOrder;
+pub use carpet_bomb::SquadCarpetBombPhase;
+pub(crate) use cloak::{CloakModifiers, SquadCloak};
 pub use cryo::SquadCryoState;
 pub(crate) use cryo::{SquadCryo, SquadCryoConfig, SquadCryoEffect};
 pub(crate) use detonate::DetonateOrder;
 pub use detonate::SquadDetonatePhase;
 pub use garrison::{SquadContainmentState, SquadGarrison};
 pub use join::{JoinKind, JoinMergeType, SquadBoardState, SquadMergeState};
+pub(crate) use jump::SquadJumpCompletion;
+pub use jump::SquadJumpPhase;
 pub(crate) use mines::MineOrder;
 pub use mode::SquadMode;
+pub(crate) use pull::PullMemberPlan;
+pub use pull::SquadPullPhase;
 pub use recovery::{RecoveryType, SquadRecovery};
+pub use repair_other::RepairOtherPhase;
 pub use shields::SquadShields;
-pub(crate) use transport::{SquadPowerTransportPlan, SquadTransportPlan};
+pub(crate) use spirit_bond::{SpiritBondPhase, SquadSpiritBond};
+pub use trained_birth::SquadTrainedAirBirth;
 pub use transport::{
     PowerTransportPhase, SquadPowerTransport, SquadTransportFlyIn, TransportFlyInPhase,
 };
+pub(crate) use transport::{SquadPowerTransportPlan, SquadTransportPlan};
+pub(crate) use wander::{SquadWander, WanderPhase};
 
 use super::{BaseEntity, EntityIdle};
 use crate::entity::Entity;
@@ -112,10 +139,22 @@ pub struct Squad {
     pub(crate) cryo: SquadCryo,
     /// Shared regen reference count owned by active repair actions.
     pub(crate) repair: repair::SquadRepair,
+    /// Active targeted `RepairOther` order and renderer-facing effect entities.
+    pub(crate) repair_other: repair_other::SquadRepairOther,
     /// Persistent Rage controller references locking ordinary squad work.
     pub(crate) rage: rage::SquadRage,
+    /// Persistent two-member Hunter damage bond and its visual entity.
+    pub(crate) spirit_bond: SquadSpiritBond,
+    /// Persistent retail cloak request, detection, duration, and effects.
+    pub(crate) cloak: SquadCloak,
+    /// Persistent retail random movement around the connection-time origin.
+    pub(crate) wander: SquadWander,
+    /// Persistent retail ambient-creature wandering, hunting, and fleeing.
+    pub(crate) ambient_life: SquadAmbientLife,
     /// Game time of the most recent accepted member-damage event.
     pub last_damaged_time: u32,
+    /// Game time when this squad most recently remained in its attacking state.
+    pub last_attacked_time: u32,
     /// Movement speed (units per second).
     pub speed: f32,
     /// Squad locomotion acceleration; zero means immediate.
@@ -144,6 +183,10 @@ pub struct Squad {
     pub aggro_distance: f32,
     /// Maximum pursuit distance for an automatically acquired target.
     pub leash_distance: f32,
+    /// Live leash position, aircraft anchor, deadzone, and recall timing.
+    pub(crate) leash: leash::SquadLeash,
+    /// Persistent retail flag set by the legacy carpet-bomb action.
+    ignore_leash: bool,
     /// Whether movement keeps the squad facing opposite its travel direction.
     reverse_move: bool,
     /// Units in this squad, sorted by entity ID for deterministic iteration.
@@ -170,8 +213,14 @@ pub struct Squad {
     pub(crate) trailer_partner: Option<EntityId>,
     /// Logical containment order and passenger state.
     pub garrison: SquadGarrison,
+    /// Current squad gather work and its target.
+    pub(crate) gather: gather::SquadGather,
+    /// Current squad capture work and its shared target payment link.
+    pub(crate) capture: capture::SquadCapture,
     /// Trigger-created transport action owned by a synthetic transport squad.
     pub(crate) transport_fly_in: Option<SquadTransportFlyIn>,
+    /// Aircraft approach started by a trained-squad `FlyIn` birth.
+    pub(crate) trained_air_birth: Option<SquadTrainedAirBirth>,
     /// Native-power pickup/drop-off action owned by a synthetic carrier squad.
     pub(crate) power_transport: Option<SquadPowerTransport>,
     /// Members that completed the current command-ability attack cycle.
@@ -180,6 +229,11 @@ pub struct Squad {
     pub(crate) mines: mines::SquadMines,
     /// Targeted suicide action and its authored phase transitions.
     pub(crate) detonate: detonate::SquadDetonate,
+    /// Trigger-created position attack run and per-member progress.
+    pub(crate) carpet_bomb: carpet_bomb::SquadCarpetBomb,
+    pub(crate) pull: pull::SquadPull,
+    /// Uninterruptible voluntary Jump action and follow-up target.
+    pub(crate) jump: jump::SquadJump,
 }
 
 impl Default for Squad {
@@ -200,8 +254,14 @@ impl Default for Squad {
             shields: SquadShields::default(),
             cryo: SquadCryo::default(),
             repair: repair::SquadRepair::default(),
+            repair_other: repair_other::SquadRepairOther::default(),
             rage: rage::SquadRage::default(),
+            spirit_bond: SquadSpiritBond::default(),
+            cloak: SquadCloak::default(),
+            wander: SquadWander::default(),
+            ambient_life: SquadAmbientLife::default(),
             last_damaged_time: 0,
+            last_attacked_time: 0,
             speed: 10.0, // Default speed
             acceleration: 0.0,
             turn_rate_degrees: 0.0,
@@ -216,6 +276,8 @@ impl Default for Squad {
             max_turn_radius: 0.0,
             aggro_distance: 0.0,
             leash_distance: 0.0,
+            leash: leash::SquadLeash::default(),
+            ignore_leash: false,
             reverse_move: false,
             unit_ids: Vec::new(),
             population_costs: Vec::new(),
@@ -229,11 +291,17 @@ impl Default for Squad {
             towing_partner: None,
             trailer_partner: None,
             garrison: SquadGarrison::default(),
+            gather: gather::SquadGather::default(),
+            capture: capture::SquadCapture::default(),
             transport_fly_in: None,
+            trained_air_birth: None,
             power_transport: None,
             ability_used_unit_ids: Vec::new(),
             mines: mines::SquadMines::default(),
             detonate: detonate::SquadDetonate::default(),
+            carpet_bomb: carpet_bomb::SquadCarpetBomb::default(),
+            pull: pull::SquadPull::default(),
+            jump: jump::SquadJump::default(),
         }
     }
 }
@@ -350,7 +418,10 @@ impl Squad {
     }
 
     pub(crate) fn reconcile_idle_action(&mut self, elapsed_ms: u32) {
-        let should_be_idle = self.is_alive() && self.state == SquadState::Idle;
+        let should_be_idle = self.is_alive()
+            && self.state == SquadState::Idle
+            && !self.is_wandering()
+            && !self.has_ambient_life();
         self.idle.reconcile(should_be_idle, elapsed_ms);
     }
 
@@ -360,7 +431,12 @@ impl Squad {
 
     /// Issue a move order to the given position.
     pub fn move_to(&mut self, target: Vec3) {
-        if !self.base.is_mobile() || self.garrison.is_garrisoned() || self.is_raging() {
+        if !self.base.is_mobile()
+            || self.garrison.is_garrisoned()
+            || self.is_raging()
+            || self.is_being_pulled()
+            || self.is_jumping()
+        {
             return;
         }
         self.garrison.cancel_pending();
@@ -374,11 +450,16 @@ impl Squad {
     }
 
     fn move_to_internal(&mut self, target: Vec3) {
+        self.gather.cancel();
+        self.capture.cancel();
         self.start_direct_move(target);
     }
 
     /// Remove every authoritative movement, combat, and containment order.
     pub(crate) fn remove_all_orders(&mut self) {
+        if self.is_jumping() {
+            return;
+        }
         self.garrison.cancel_pending();
         self.cancel_scripted_move_orders();
         self.move_target = None;
@@ -390,6 +471,9 @@ impl Squad {
         self.join.cancel();
         self.mines.cancel();
         self.detonate.cancel();
+        self.carpet_bomb.cancel();
+        self.gather.cancel();
+        self.capture.cancel();
         self.base.velocity = Vec3::ZERO;
         if self.is_alive() {
             self.state = SquadState::Idle;
@@ -409,6 +493,8 @@ impl Squad {
             || self.garrison.is_garrisoned()
             || self.is_cryo_frozen()
             || self.is_raging()
+            || self.is_being_pulled()
+            || self.is_jumping()
             || target.is_invalid()
         {
             return false;
@@ -418,6 +504,9 @@ impl Squad {
         self.join.cancel();
         self.mines.cancel();
         self.detonate.cancel();
+        self.carpet_bomb.cancel();
+        self.gather.cancel();
+        self.capture.cancel();
         if self.attack_target != Some(target) {
             self.clear_experience_bank();
         }
@@ -459,6 +548,9 @@ impl Squad {
 
     /// Stop moving.
     pub fn stop(&mut self) {
+        if self.is_jumping() {
+            return;
+        }
         let interrupted_movement = self.state == SquadState::Moving || self.move_target.is_some();
         self.cancel_scripted_move_orders();
         self.move_target = None;
@@ -485,6 +577,10 @@ impl Squad {
         self.join.cancel();
         self.mines.cancel();
         self.detonate.cancel();
+        self.gather.cancel();
+        self.capture.cancel();
+        self.pull.cancel();
+        self.jump.cancel();
         self.base.velocity = Vec3::ZERO;
         self.cancel_idle_action();
     }
@@ -549,6 +645,12 @@ impl Squad {
     #[must_use]
     pub const fn transport_fly_in(&self) -> Option<&SquadTransportFlyIn> {
         self.transport_fly_in.as_ref()
+    }
+
+    /// Active trained aircraft approach, when `Birth=FlyIn` owns this squad.
+    #[must_use]
+    pub const fn trained_air_birth(&self) -> Option<&SquadTrainedAirBirth> {
+        self.trained_air_birth.as_ref()
     }
 
     /// Active native-power transport action when this is the carrier squad.
@@ -661,6 +763,14 @@ impl Squad {
     ///
     /// Returns true if the squad reached its destination.
     pub fn update_movement(&mut self, dt: f32) -> bool {
+        self.update_movement_with_speed_limit(dt, None)
+    }
+
+    pub(crate) fn update_movement_with_speed_limit(
+        &mut self,
+        dt: f32,
+        speed_limit: Option<f32>,
+    ) -> bool {
         const ARRIVAL_THRESHOLD: f32 = 0.5;
 
         if !self.base.is_mobile() {
@@ -671,12 +781,17 @@ impl Squad {
             return false;
         };
 
-        let to_target = target - self.base.position;
+        let to_target = Vec3::new(
+            target.x - self.base.position.x,
+            0.0,
+            target.z - self.base.position.z,
+        );
         let distance = to_target.length();
 
         if distance < ARRIVAL_THRESHOLD {
             // Arrived at destination
             self.base.position = target;
+            self.set_leash_position(target, true);
             self.finish_current_movement();
             return true;
         }
@@ -694,17 +809,17 @@ impl Squad {
             self.base.forward
         };
         let current_speed = self.base.velocity.length();
-        let desired_speed = desired_speed(
-            self.speed * self.cryo_movement_modifier(),
-            self.acceleration,
-            distance,
-        );
+        let maximum_speed =
+            self.speed * self.cryo_movement_modifier() * self.ambient_life_movement_modifier();
+        let maximum_speed = speed_limit.map_or(maximum_speed, |limit| maximum_speed.min(limit));
+        let desired_speed = desired_speed(maximum_speed, self.acceleration, distance);
         let next_speed = approach_speed(current_speed, desired_speed, self.acceleration, dt);
         let move_distance = next_speed * dt;
 
         if move_distance >= distance && movement_direction.dot(direction) > 0.999 {
             // Would overshoot, just arrive
             self.base.position = target;
+            self.set_leash_position(target, true);
             self.finish_current_movement();
             return true;
         }
@@ -712,8 +827,23 @@ impl Squad {
         // Update position and velocity
         self.base.velocity = movement_direction * next_speed;
         self.base.position += self.base.velocity * dt;
+        self.set_leash_position(self.base.position, true);
 
         false
+    }
+
+    pub(crate) fn update_with_speed_limit(&mut self, dt: f32, speed_limit: Option<f32>) {
+        if self.is_cryo_frozen() {
+            self.base.velocity = Vec3::ZERO;
+            return;
+        }
+        if self.base.is_mobile()
+            && !self.garrison.is_garrisoned()
+            && (self.state == SquadState::Moving
+                || (self.state == SquadState::Attacking && self.move_target.is_some()))
+        {
+            self.update_movement_with_speed_limit(dt, speed_limit);
+        }
     }
 }
 
@@ -788,17 +918,7 @@ impl Entity for Squad {
     }
 
     fn update(&mut self, dt: f32) {
-        if self.is_cryo_frozen() {
-            self.base.velocity = Vec3::ZERO;
-            return;
-        }
-        if self.base.is_mobile()
-            && !self.garrison.is_garrisoned()
-            && (self.state == SquadState::Moving
-                || (self.state == SquadState::Attacking && self.move_target.is_some()))
-        {
-            self.update_movement(dt);
-        }
+        self.update_with_speed_limit(dt, None);
     }
 
     fn is_alive(&self) -> bool {

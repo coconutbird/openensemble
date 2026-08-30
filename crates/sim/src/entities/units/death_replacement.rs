@@ -64,7 +64,7 @@ impl Unit {
         self.static_death_replacement.is_healing()
     }
 
-    pub(crate) fn reset_for_death_replacement(&mut self, target_kind: UnitKind, now_ms: u32) {
+    pub(crate) fn reset_for_prototype_transform(&mut self, target_kind: UnitKind, now_ms: u32) {
         let mut replacement = match target_kind {
             UnitKind::Mobile => Self::new(self.base.id, self.base.player_id),
             UnitKind::Building => Self::new_building(self.base.id, self.base.player_id),
@@ -82,6 +82,7 @@ impl Unit {
 
     fn copy_surviving_relationships(&mut self, source: &Self) {
         self.built = source.built;
+        self.authored_children.clone_from(&source.authored_children);
         self.built_by = source.built_by;
         self.build_socket_id = source.build_socket_id;
         self.build_socket_index = source.build_socket_index;
@@ -89,6 +90,7 @@ impl Unit {
         self.socket_parent_id = source.socket_parent_id;
         self.associated_socket_ids
             .clone_from(&source.associated_socket_ids);
+        self.associated_parking_lot_id = source.associated_parking_lot_id;
         self.socket_local_offset = source.socket_local_offset;
         self.socket_local_yaw_degrees = source.socket_local_yaw_degrees;
         self.population_costs.clone_from(&source.population_costs);

@@ -32,7 +32,7 @@ pub(super) fn launch_motion(
 ) -> LaunchMotion {
     let displacement = launch.target_position - launch.source_position;
     let direction = displacement.normalize_or(Vec3::Z);
-    let Some((velocity, gravity)) = ballistic_motion(launch, profile, displacement) else {
+    let Some((velocity, gravity)) = ballistic_motion(launch, profile) else {
         let speed = if profile.acceleration > MOTION_EPSILON {
             profile.starting_speed
         } else {
@@ -57,33 +57,77 @@ pub(super) fn launch_motion(
     }
 }
 
-fn ballistic_motion(
-    launch: &ProjectileLaunch,
+fn ballistic_motion(launch: &ProjectileLaunch, profile: &ProjectileProfile) -> Option<(Vec3, f32)> {
+    ballistic_solution(
+        launch.source_position,
+        launch.source_position,
+        launch.target_position,
+        launch.target_entity_position,
+        launch.target_radius,
+        launch.max_range,
+        profile,
+    )
+}
+
+pub(crate) fn ballistic_aim_direction(
+    source: Vec3,
+    attacker_position: Vec3,
+    target: Vec3,
+    target_entity_position: Vec3,
+    target_radius: f32,
+    max_range: f32,
     profile: &ProjectileProfile,
-    displacement: Vec3,
+) -> Option<Vec3> {
+    ballistic_solution(
+        source,
+        attacker_position,
+        target,
+        target_entity_position,
+        target_radius,
+        max_range,
+        profile,
+    )
+    .and_then(|(velocity, _gravity)| velocity.try_normalize())
+}
+
+fn ballistic_solution(
+    source: Vec3,
+    attacker_position: Vec3,
+    target: Vec3,
+    target_entity_position: Vec3,
+    target_radius: f32,
+    max_range: f32,
+    profile: &ProjectileProfile,
 ) -> Option<(Vec3, f32)> {
     if !profile.behavior.affected_by_gravity()
         || profile.max_projectile_height <= 0.0
-        || launch.max_range <= 0.0
+        || max_range <= 0.0
     {
         return None;
     }
+    let displacement = target - source;
     let distance = displacement.length();
     if distance <= MOTION_EPSILON || profile.speed <= MOTION_EPSILON {
         return None;
     }
-    let center_offset = launch.target_entity_position - launch.source_position;
-    let horizontal_distance = Vec3::new(center_offset.x, 0.0, center_offset.z).length();
+    let center_offset = target_entity_position - attacker_position;
+    let horizontal_offset = Vec3::new(center_offset.x, 0.0, center_offset.z);
+    let horizontal_distance = horizontal_offset.length();
+    let horizontal_direction = horizontal_offset.try_normalize().unwrap_or(Vec3::ZERO);
+    let launch_offset = source - attacker_position;
+    let horizontal_launch_offset =
+        Vec3::new(launch_offset.x, 0.0, launch_offset.z).dot(horizontal_direction);
     let horizontal_hit_distance = Vec3::new(displacement.x, 0.0, displacement.z).length();
-    let target_radius = launch.target_radius.max(0.0);
+    let target_radius = target_radius.max(0.0);
     let horizontal_target_radius = target_radius * horizontal_hit_distance / distance;
-    let range = (horizontal_distance - horizontal_target_radius).max(0.0);
+    let range =
+        (horizontal_distance - horizontal_target_radius - horizontal_launch_offset).max(0.0);
     let flight_time = distance / profile.speed;
     let half_time = 0.5 * flight_time;
     if half_time <= MOTION_EPSILON {
         return None;
     }
-    let height_scale = ((range * range) / (launch.max_range * launch.max_range)).min(1.0);
+    let height_scale = ((range * range) / (max_range * max_range)).min(1.0);
     let scaled_height = profile.max_projectile_height * height_scale;
     let acceleration = -2.0 * scaled_height / (half_time * half_time);
     let vertical_velocity = scaled_height / half_time - 0.5 * acceleration * half_time;
@@ -247,6 +291,23 @@ mod tests {
         assert!((motion.velocity.x - 10.0).abs() < 0.000_1);
         assert!((motion.velocity.y - 20.0).abs() < 0.000_1);
         assert!((motion.gravity - 40.0).abs() < 0.000_1);
+    }
+
+    #[test]
+    fn hardpoint_aim_uses_retails_attacker_relative_horizontal_range() {
+        let direction = ballistic_aim_direction(
+            Vec3::Z * 2.0,
+            Vec3::ZERO,
+            Vec3::X * 10.0,
+            Vec3::X * 10.0,
+            0.0,
+            20.0,
+            &ballistic_profile(),
+        )
+        .expect("gravity profile should produce an aim direction");
+
+        assert!((direction.y / direction.x - 0.5).abs() < 0.000_1);
+        assert!((direction.z / direction.x + 0.2).abs() < 0.000_1);
     }
 
     #[test]

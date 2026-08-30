@@ -5,7 +5,6 @@ use super::support::{
     player_at, unique_add, used_variable_id, variable_is_used, vector_at,
 };
 use super::{EffectOutcome, write_value};
-use crate::entities::squads::SquadTransportPlan;
 use crate::gameplay::GameplayCatalog;
 use crate::physics::{BoxCollider, PhysicsBody};
 use crate::scenario::placed::create_trigger_unit_squad;
@@ -14,6 +13,10 @@ use crate::trigger::{Effect, EffectType, TriggerScript, TriggerValue};
 use crate::{EntityId, World};
 use glam::Vec3;
 use pipeline::database::hw1::Database;
+
+mod transport;
+
+use transport::{TriggerFlyInRequest, trigger_fly_in};
 
 pub(super) fn execute(
     effect: &Effect,
@@ -112,7 +115,7 @@ pub(super) fn create_squad(
         return EffectOutcome::Skipped;
     };
     let facing = if effect.version == 7 {
-        vector_at(effect, script, 12)
+        optional_vector_at(effect, script, 12)
     } else {
         None
     };
@@ -120,18 +123,17 @@ pub(super) fn create_squad(
     let clear = bool_at(effect, script, 6).unwrap_or(false);
     let created = spawn_squad_at(world, database, player_id, prototype_id, position, forward).ok();
     if let Some(squad_id) = created {
-        let rally_point = vector_at(effect, script, 10);
-        let attack_move = bool_at(effect, script, 11).unwrap_or(false);
+        let rally_point = optional_vector_at(effect, script, 10);
+        let attack_move = optional_bool_at(effect, script, 11).unwrap_or(false);
         let flew_in = trigger_fly_in(
-            effect,
-            script,
             world,
             database,
-            TriggerFlyInRequest {
-                passenger_squad_id: squad_id,
+            &TriggerFlyInRequest {
+                passenger_squad_ids: vec![squad_id],
                 player_id,
                 dropoff_position: position,
-                forward,
+                fly_in_start: optional_vector_at(effect, script, 8),
+                fly_off_end: optional_vector_at(effect, script, 9),
                 facing,
                 rally_point,
                 attack_move,
@@ -152,128 +154,16 @@ pub(super) fn create_squad(
     EffectOutcome::Applied
 }
 
-fn trigger_fly_in(
-    effect: &Effect,
-    script: &TriggerScript,
-    world: &mut World,
-    database: &Database,
-    request: TriggerFlyInRequest,
-) -> bool {
-    let fly_in_start = variable_is_used(effect, script, 8)
-        .then(|| vector_at(effect, script, 8))
-        .flatten();
-    let fly_off_end = variable_is_used(effect, script, 9)
-        .then(|| vector_at(effect, script, 9))
-        .flatten();
-    if fly_in_start.is_none() && fly_off_end.is_none() {
-        return false;
-    }
-    let Some(transport_prototype_id) =
-        player_transport_prototype_id(world, database, request.player_id)
-    else {
-        return false;
-    };
-    let settings = transport_settings(database);
-    let direction = flight_direction(fly_in_start, request.dropoff_position, request.forward);
-    let start_anchor = fly_in_start.unwrap_or(request.dropoff_position);
-    let start_position =
-        start_anchor - direction * settings.incoming_offset + Vec3::Y * settings.incoming_height;
-    let incoming_target = request.dropoff_position + Vec3::Y * settings.dropoff_height;
-    let outgoing_target = fly_off_end
-        .unwrap_or(request.dropoff_position + direction * settings.outgoing_offset)
-        + Vec3::Y * settings.outgoing_height;
-    let Some((transport_squad_id, transport_unit_id)) = create_trigger_unit_squad(
-        world,
-        database,
-        request.player_id,
-        transport_prototype_id,
-        start_position,
-        direction,
-        true,
-    ) else {
-        return false;
-    };
-    if let Some(unit) = world.get_unit_mut(transport_unit_id) {
-        unit.physics = None;
-    }
-    let started = world.start_transport_fly_in(
-        transport_squad_id,
-        SquadTransportPlan {
-            passenger_squad_id: request.passenger_squad_id,
-            start_position,
-            dropoff_position: request.dropoff_position,
-            incoming_target,
-            outgoing_target,
-            rally_point: request.rally_point,
-            attack_move: request.attack_move,
-            facing: request.facing,
-        },
-    );
-    if !started {
-        let _destroyed = world.kill_squad(transport_squad_id, true);
-    }
-    started
+fn optional_vector_at(effect: &Effect, script: &TriggerScript, signature_id: u16) -> Option<Vec3> {
+    variable_is_used(effect, script, signature_id)
+        .then(|| vector_at(effect, script, signature_id))
+        .flatten()
 }
 
-#[derive(Debug, Clone, Copy)]
-struct TriggerFlyInRequest {
-    passenger_squad_id: EntityId,
-    player_id: u8,
-    dropoff_position: Vec3,
-    forward: Vec3,
-    facing: Option<Vec3>,
-    rally_point: Option<Vec3>,
-    attack_move: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct TransportSettings {
-    incoming_height: f32,
-    incoming_offset: f32,
-    outgoing_height: f32,
-    outgoing_offset: f32,
-    dropoff_height: f32,
-}
-
-fn transport_settings(database: &Database) -> TransportSettings {
-    let game_data = database.game_data.as_ref();
-    TransportSettings {
-        incoming_height: game_data
-            .and_then(|data| data.transport_incoming_height)
-            .unwrap_or(60.0),
-        incoming_offset: game_data
-            .and_then(|data| data.transport_incoming_offset)
-            .unwrap_or(40.0),
-        outgoing_height: game_data
-            .and_then(|data| data.transport_outgoing_height)
-            .unwrap_or(60.0),
-        outgoing_offset: game_data
-            .and_then(|data| data.transport_outgoing_offset)
-            .unwrap_or(40.0),
-        dropoff_height: game_data
-            .and_then(|data| data.transport_dropoff_height)
-            .unwrap_or(12.0),
-    }
-}
-
-fn player_transport_prototype_id(world: &World, database: &Database, player_id: u8) -> Option<i32> {
-    let civ_id = world.get_player(player_id)?.civ_id;
-    let civ = usize::try_from(civ_id)
-        .ok()
-        .and_then(|index| database.civs.get(index))?;
-    object_prototype_id(database, civ.transport_trigger.as_deref()?)
-}
-
-fn flight_direction(start: Option<Vec3>, dropoff: Vec3, fallback: Vec3) -> Vec3 {
-    start
-        .map(|start| dropoff - start)
-        .and_then(horizontal_direction)
-        .or_else(|| horizontal_direction(fallback))
-        .unwrap_or(Vec3::Z)
-}
-
-fn horizontal_direction(value: Vec3) -> Option<Vec3> {
-    Vec3::new(value.x, 0.0, value.z).try_normalize()
+fn optional_bool_at(effect: &Effect, script: &TriggerScript, signature_id: u16) -> Option<bool> {
+    variable_is_used(effect, script, signature_id)
+        .then(|| bool_at(effect, script, signature_id))
+        .flatten()
 }
 
 pub(super) fn create_squads(
@@ -297,23 +187,43 @@ pub(super) fn create_squads(
     let Some(position) = vector_at(effect, script, 3) else {
         return EffectOutcome::Skipped;
     };
-    let facing = vector_at(effect, script, 4).unwrap_or(Vec3::Z);
+    let facing = optional_vector_at(effect, script, 4);
+    let forward = facing.unwrap_or(Vec3::Z);
     let mut created = Vec::with_capacity(prototype_ids.len());
     for prototype_id in prototype_ids {
         if let Ok(squad_id) =
-            spawn_squad_at(world, database, player_id, prototype_id, position, facing)
+            spawn_squad_at(world, database, player_id, prototype_id, position, forward)
         {
             unique_add(&mut created, squad_id);
         }
     }
 
-    // Retail falls back to this ground order whenever transport creation or
-    // fly-in setup fails. The transport action itself is not modeled yet, so
-    // preserve that deterministic fallback while retaining exact batch/output
-    // behavior.
-    if let Some(rally_point) = vector_at(effect, script, 7) {
+    let rally_point = optional_vector_at(effect, script, 7);
+    let attack_move = optional_bool_at(effect, script, 8).unwrap_or(false);
+    let flew_in = !created.is_empty()
+        && trigger_fly_in(
+            world,
+            database,
+            &TriggerFlyInRequest {
+                passenger_squad_ids: created.clone(),
+                player_id,
+                dropoff_position: position,
+                fly_in_start: optional_vector_at(effect, script, 5),
+                fly_off_end: optional_vector_at(effect, script, 6),
+                facing,
+                rally_point,
+                attack_move,
+            },
+        );
+    if !flew_in && let Some(rally_point) = rally_point {
         for squad_id in &created {
-            let _issued = world.issue_move_order(player_id, *squad_id, rally_point);
+            let _issued = world.issue_squad_move_order_to_position(
+                player_id,
+                *squad_id,
+                rally_point,
+                attack_move,
+                false,
+            );
         }
     }
     write_squad_batch_outputs(effect, script, &created);

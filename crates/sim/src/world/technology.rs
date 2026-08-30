@@ -20,6 +20,15 @@ pub enum TechnologyError {
     /// The layered database has no technology with this name.
     #[error("technology '{0}' was not found")]
     TechnologyNotFound(String),
+    /// The live unit selected for a per-instance technology is absent.
+    #[error("unit {0:?} is not present in the world")]
+    UnitNotFound(EntityId),
+    /// The selected live unit does not belong to the researching player.
+    #[error("unit {unit_id:?} is not owned by player {player_id}")]
+    UnitNotOwned {
+        unit_id: EntityId,
+        player_id: PlayerId,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -85,6 +94,95 @@ impl World {
         }
         self.activate_dependent_shadow_technologies(player_id, database, &technology.name);
         Ok(true)
+    }
+
+    pub(crate) fn activate_unique_technology(
+        &mut self,
+        player_id: PlayerId,
+        unit_id: EntityId,
+        database: &Database,
+        technology_id: i32,
+        technology: &Tech,
+    ) -> Result<bool, TechnologyError> {
+        if self.get_player(player_id).is_none() {
+            return Err(TechnologyError::PlayerNotFound(player_id));
+        }
+        let Some(unit) = self.get_unit(unit_id) else {
+            return Err(TechnologyError::UnitNotFound(unit_id));
+        };
+        if unit.base.player_id != player_id {
+            return Err(TechnologyError::UnitNotOwned { unit_id, player_id });
+        }
+        if unit.unique_technology_is_active(technology_id) {
+            return Ok(false);
+        }
+
+        let transform_targets = technology
+            .effects
+            .iter()
+            .flat_map(|effects| &effects.entries)
+            .filter(|effect| {
+                effect
+                    .effect_type
+                    .trim()
+                    .eq_ignore_ascii_case("TransformUnit")
+            })
+            .filter_map(|effect| nonempty(effect.value.as_deref()))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        self.get_unit_mut(unit_id)
+            .expect("validated unique-technology unit exists")
+            .activate_unique_technology(technology_id);
+        for target in transform_targets {
+            self.transform_unit_instance(player_id, unit_id, database, &target);
+        }
+        Ok(true)
+    }
+
+    fn transform_unit_instance(
+        &mut self,
+        player_id: PlayerId,
+        unit_id: EntityId,
+        database: &Database,
+        logical_target: &str,
+    ) {
+        let Some((logical_index, logical_proto)) = find_object(database, logical_target) else {
+            return;
+        };
+        let Some(effective_target) = self.get_player(player_id).map(|player| {
+            player
+                .technologies
+                .resolved_unit_prototype(logical_target)
+                .to_owned()
+        }) else {
+            return;
+        };
+        let Some((_, effective_proto)) = find_object(database, &effective_target) else {
+            return;
+        };
+        let Some(snapshot) = UnitTransformSnapshot::capture(self, unit_id) else {
+            return;
+        };
+        let squad_id = snapshot.squad_id;
+        if snapshot.built {
+            self.deactivate_unit_built_economy(unit_id);
+        }
+        configure_unit_from_player_proto(
+            self,
+            unit_id,
+            logical_target,
+            database_id(logical_proto, logical_index),
+            &effective_target,
+            effective_proto,
+        );
+        snapshot.restore(self, unit_id);
+        if snapshot.built {
+            self.activate_unit_on_built(unit_id, database, effective_proto);
+        }
+        if let Some(squad_id) = squad_id {
+            self.refresh_squad_ammunition(squad_id, database);
+            refresh_squad_member_settings(self, squad_id);
+        }
     }
 
     pub(crate) fn initialize_shadow_technologies(
@@ -381,6 +479,9 @@ impl World {
             let Some(snapshot) = UnitTransformSnapshot::capture(self, unit_id) else {
                 continue;
             };
+            if snapshot.built {
+                self.deactivate_unit_built_economy(unit_id);
+            }
             configure_unit_from_player_proto(
                 self,
                 unit_id,
@@ -390,6 +491,9 @@ impl World {
                 new_proto,
             );
             snapshot.restore(self, unit_id);
+            if snapshot.built {
+                self.activate_unit_on_built(unit_id, database, new_proto);
+            }
             if let Some(squad_id) = snapshot.squad_id
                 && !squads.contains(&squad_id)
             {
@@ -409,6 +513,7 @@ struct UnitTransformSnapshot {
     ammunition_ratio: f32,
     shieldpoints: f32,
     squad_id: Option<EntityId>,
+    built: bool,
 }
 
 impl UnitTransformSnapshot {
@@ -419,6 +524,7 @@ impl UnitTransformSnapshot {
             ammunition_ratio: ratio_or_one(unit.ammunition.current(), unit.ammunition.maximum()),
             shieldpoints: unit.shields.current,
             squad_id: unit.squad_id,
+            built: unit.built,
         })
     }
 
@@ -556,4 +662,8 @@ fn database_id(prototype: &ProtoObject, index: usize) -> i32 {
     prototype
         .dbid
         .unwrap_or_else(|| i32::try_from(index).unwrap_or(-1))
+}
+
+fn nonempty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }

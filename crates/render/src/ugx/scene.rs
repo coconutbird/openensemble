@@ -9,11 +9,32 @@ use pipeline::source::{AssetSource, StdFileProvider};
 use sim::{EntityId, TeamId, World as SimWorld};
 
 use super::Unit;
-use super::unit::UnitAssetCache;
+use super::unit::{UnitAnimationRequest, UnitAssetCache, UnitIkProfile};
+use crate::terrain_effect::TerrainImpactAssets;
 
+mod combat_animations;
+mod impact_decals;
+mod impact_visuals;
+mod lights;
+mod loading;
+mod movement_animations;
+mod particles;
 mod renderer;
+mod terrain_effects;
 
-pub use renderer::UnitSceneRenderer;
+use combat_animations::{SimulationEntityState, simulation_entity_states};
+use impact_decals::ImpactDecalAssets;
+use impact_visuals::ImpactVisualAssets;
+use lights::LightAssets;
+use loading::{SceneAssets, SceneInputs, load_attachment_assets, load_placements};
+use movement_animations::{MovementAnimation, MovementAnimationProfile};
+use particles::ParticleAssets;
+use terrain_effects::TerrainEffectAssets;
+
+pub use renderer::{
+    AnimationCameraShake, AnimationTerrainAlpha, AnimationTerrainAlphaShape, UnitSceneRenderer,
+    simulation_entity_secondary_transform,
+};
 pub use sim::{
     ScenarioPositionAxes, scenario_object_direction_to_world, scenario_object_position_to_world,
 };
@@ -24,8 +45,19 @@ pub struct UnitPlacement {
     entity_id: EntityId,
     proto_name: String,
     visual_variation_index: Option<usize>,
+    animation_type: Option<String>,
+    animation_asset: Option<String>,
+    animation_uses_simulation_clock: bool,
     animation_revision: u32,
+    combat_animation_duration: Option<f32>,
+    movement_animation: Option<MovementAnimation>,
+    movement_track_animation: Option<MovementAnimation>,
+    movement_profile: Option<MovementAnimationProfile>,
+    ik_profile: UnitIkProfile,
+    visual_mesh_mask: sim::UnitVisualMeshMask,
+    visual_opacity: f32,
     transform: Mat4,
+    secondary_transform: Option<Mat4>,
     unit: Arc<Unit>,
 }
 
@@ -54,12 +86,55 @@ impl UnitPlacement {
         self.animation_revision
     }
 
+    /// Return the authoritative visual animation type captured for this placement.
+    #[must_use]
+    pub fn animation_type(&self) -> Option<&str> {
+        self.animation_type.as_deref()
+    }
+
+    /// Return the exact simulation-selected animation asset when one exists.
+    #[must_use]
+    pub fn animation_asset(&self) -> Option<&str> {
+        self.animation_asset.as_deref()
+    }
+
+    #[must_use]
+    pub const fn animation_uses_simulation_clock(&self) -> bool {
+        self.animation_uses_simulation_clock
+    }
+
+    fn movement_track_animation_type(&self) -> Option<&'static str> {
+        self.movement_track_animation.map(MovementAnimation::as_str)
+    }
+
+    fn ik_profile(&self) -> &UnitIkProfile {
+        &self.ik_profile
+    }
+
+    /// Return the authoritative per-mesh visibility captured from simulation.
+    #[must_use]
+    pub const fn visual_mesh_mask(&self) -> &sim::UnitVisualMeshMask {
+        &self.visual_mesh_mask
+    }
+
+    /// Return the authoritative whole-model opacity captured from simulation.
+    #[must_use]
+    pub const fn visual_opacity(&self) -> f32 {
+        self.visual_opacity
+    }
+
     /// Return the simulation transform captured while building the scene.
     ///
     /// [`UnitSceneRenderer`] refreshes this from the live sim world every frame.
     #[must_use]
     pub const fn transform(&self) -> Mat4 {
         self.transform
+    }
+
+    /// Return the optional sim-owned second world matrix for beam visuals.
+    #[must_use]
+    pub const fn secondary_transform(&self) -> Option<Mat4> {
+        self.secondary_transform
     }
 
     /// Return the shared decoded visual graph for this placement.
@@ -96,7 +171,15 @@ pub struct UnitScene {
     placements: Vec<UnitPlacement>,
     issues: Vec<UnitSceneIssue>,
     decoded_visuals: HashMap<String, Option<Arc<Unit>>>,
-    simulation_entity_states: Vec<(EntityId, u32, Option<usize>)>,
+    light_assets: LightAssets,
+    particle_assets: ParticleAssets,
+    terrain_effect_assets: TerrainEffectAssets,
+    terrain_impact_assets: Option<TerrainImpactAssets>,
+    terrain_impact_issues: Vec<String>,
+    impact_decal_assets: ImpactDecalAssets,
+    impact_visual_assets: ImpactVisualAssets,
+    animation_selections: HashMap<EntityId, (String, u64)>,
+    simulation_entity_states: Vec<SimulationEntityState>,
     simulation_entity_count: usize,
     unique_visual_count: usize,
     skipped_no_render_count: usize,
@@ -119,7 +202,41 @@ impl UnitScene {
         visuals: &HashMap<String, Visual>,
         proto_objects: &[ProtoObject],
     ) -> Self {
-        Self::load_world_reusing(source, world, visuals, proto_objects, HashMap::new())
+        Self::load_world_reusing(
+            source,
+            SceneInputs {
+                world,
+                gameplay: None,
+                visuals,
+                proto_objects,
+                previous_movement: None,
+                previous_animation_selections: None,
+            },
+            SceneAssets::default(),
+        )
+    }
+
+    /// Resolve visuals including simulation-owned combat animation selections.
+    #[must_use]
+    pub fn load_world_with_gameplay(
+        source: &mut AssetSource<StdFileProvider>,
+        world: &SimWorld,
+        gameplay: &sim::GameplayCatalog,
+        visuals: &HashMap<String, Visual>,
+        proto_objects: &[ProtoObject],
+    ) -> Self {
+        Self::load_world_reusing(
+            source,
+            SceneInputs {
+                world,
+                gameplay: Some(gameplay),
+                visuals,
+                proto_objects,
+                previous_movement: None,
+                previous_animation_selections: None,
+            },
+            SceneAssets::default(),
+        )
     }
 
     /// Refresh presentation assets when the authoritative entity roster changes.
@@ -134,94 +251,127 @@ impl UnitScene {
         visuals: &HashMap<String, Visual>,
         proto_objects: &[ProtoObject],
     ) -> bool {
-        if self.roster_matches(world) {
+        self.sync_world_projection(source, world, None, visuals, proto_objects)
+    }
+
+    /// Refresh visuals including simulation-owned combat animation selections.
+    pub fn sync_world_with_gameplay(
+        &mut self,
+        source: &mut AssetSource<StdFileProvider>,
+        world: &SimWorld,
+        gameplay: &sim::GameplayCatalog,
+        visuals: &HashMap<String, Visual>,
+        proto_objects: &[ProtoObject],
+    ) -> bool {
+        self.sync_world_projection(source, world, Some(gameplay), visuals, proto_objects)
+    }
+
+    fn sync_world_projection(
+        &mut self,
+        source: &mut AssetSource<StdFileProvider>,
+        world: &SimWorld,
+        gameplay: Option<&sim::GameplayCatalog>,
+        visuals: &HashMap<String, Visual>,
+        proto_objects: &[ProtoObject],
+    ) -> bool {
+        if self.roster_matches_projection(world, gameplay) {
             return false;
         }
-        let retained_units = self.decoded_visuals.clone();
-        *self = Self::load_world_reusing(source, world, visuals, proto_objects, retained_units);
+        let previous_movement = self
+            .placements
+            .iter()
+            .filter_map(|placement| {
+                placement
+                    .movement_animation
+                    .map(|animation| (placement.entity_id, animation))
+            })
+            .collect::<HashMap<_, _>>();
+        let previous_animation_selections = self.animation_selections.clone();
+        *self = Self::load_world_reusing(
+            source,
+            SceneInputs {
+                world,
+                gameplay,
+                visuals,
+                proto_objects,
+                previous_movement: Some(&previous_movement),
+                previous_animation_selections: Some(&previous_animation_selections),
+            },
+            SceneAssets {
+                units: self.decoded_visuals.clone(),
+                lights: self.light_assets.clone(),
+                particles: self.particle_assets.clone(),
+                terrain_effects: self.terrain_effect_assets.clone(),
+                terrain_impacts: self.terrain_impact_assets.clone(),
+                terrain_impact_issues: self.terrain_impact_issues.clone(),
+                impact_decals: self.impact_decal_assets.clone(),
+                impact_visuals: self.impact_visual_assets.clone(),
+            },
+        );
         true
     }
 
     /// Return whether this presentation roster matches all live sim visuals.
     #[must_use]
     pub fn roster_matches(&self, world: &SimWorld) -> bool {
+        self.roster_matches_projection(world, None)
+    }
+
+    /// Return whether visuals also match live combat animation selections.
+    #[must_use]
+    pub fn roster_matches_with_gameplay(
+        &self,
+        world: &SimWorld,
+        gameplay: &sim::GameplayCatalog,
+    ) -> bool {
+        self.roster_matches_projection(world, Some(gameplay))
+    }
+
+    fn roster_matches_projection(
+        &self,
+        world: &SimWorld,
+        gameplay: Option<&sim::GameplayCatalog>,
+    ) -> bool {
         self.simulation_entity_states
             .iter()
-            .copied()
-            .eq(simulation_entity_states(world))
+            .cloned()
+            .eq(simulation_entity_states(world, gameplay))
+            && self.placements.iter().all(|placement| {
+                let Some(profile) = placement.movement_profile else {
+                    return true;
+                };
+                let Some(unit) = world.get_unit(placement.entity_id) else {
+                    return false;
+                };
+                let previous = placement.movement_animation.unwrap_or_default();
+                profile.select(unit, previous) == previous
+            })
     }
 
     fn load_world_reusing(
         source: &mut AssetSource<StdFileProvider>,
-        world: &SimWorld,
-        visuals: &HashMap<String, Visual>,
-        proto_objects: &[ProtoObject],
-        mut units: HashMap<String, Option<Arc<Unit>>>,
+        inputs: SceneInputs<'_>,
+        mut assets: SceneAssets,
     ) -> Self {
-        let mut asset_cache = UnitAssetCache::default();
-        let simulation_entity_states = simulation_entity_states(world).collect::<Vec<_>>();
+        let simulation_entity_states =
+            simulation_entity_states(inputs.world, inputs.gameplay).collect::<Vec<_>>();
         let mut scene = Self {
             simulation_entity_count: simulation_entity_states.len(),
             simulation_entity_states,
+            light_assets: assets.lights,
+            particle_assets: assets.particles,
+            terrain_effect_assets: assets.terrain_effects,
+            terrain_impact_assets: assets.terrain_impacts,
+            terrain_impact_issues: assets.terrain_impact_issues,
+            impact_decal_assets: assets.impact_decals,
+            impact_visual_assets: assets.impact_visuals,
             ..Self::default()
         };
-        let visual_names = visual_name_lookup(visuals);
-        let no_render_objects = hidden_proto_names(proto_objects);
-        let mut used_visuals = HashSet::new();
+        load_placements(&mut scene, source, inputs, &mut assets.units);
 
-        for entity in simulation_visuals(world) {
-            let entity_id = entity.id;
-            let proto_name = entity.proto_name.trim();
-            if proto_name.is_empty() {
-                scene.missing_proto_count += 1;
-                continue;
-            }
-            let lookup_name = proto_name.to_ascii_lowercase();
-            if no_render_objects.contains(&lookup_name) {
-                scene.skipped_no_render_count += 1;
-                continue;
-            }
-            let Some(&visual_name) = visual_names.get(&lookup_name) else {
-                scene.missing_visual_count += 1;
-                continue;
-            };
-            let Some(transform) = entity.transform else {
-                scene.invalid_transform_count += 1;
-                continue;
-            };
-            let unit = match load_cached_unit(
-                source,
-                &visuals[visual_name],
-                &lookup_name,
-                entity.visual_variation_index,
-                entity.animation_asset,
-                &mut asset_cache,
-                &mut units,
-            ) {
-                Ok(unit) => unit,
-                Err(reason) => {
-                    if let Some(reason) = reason {
-                        scene.issues.push(UnitSceneIssue {
-                            proto_name: proto_name.to_owned(),
-                            reason,
-                        });
-                    }
-                    scene.load_failure_count += 1;
-                    continue;
-                }
-            };
-            scene.placements.push(UnitPlacement {
-                entity_id,
-                proto_name: proto_name.to_owned(),
-                visual_variation_index: entity.visual_variation_index,
-                animation_revision: entity.animation_revision,
-                transform,
-                unit,
-            });
-            used_visuals.insert(lookup_name);
-        }
-        scene.unique_visual_count = used_visuals.len();
-        scene.decoded_visuals = units
+        load_attachment_assets(&mut scene, source);
+        scene.decoded_visuals = assets
+            .units
             .into_iter()
             .filter(|(_, decoded)| decoded.is_some())
             .collect();
@@ -287,6 +437,26 @@ impl UnitScene {
     pub const fn load_failure_count(&self) -> usize {
         self.load_failure_count
     }
+
+    /// Return the number of global impact TFX graphs decoded for this scene.
+    #[must_use]
+    pub fn terrain_impact_effect_count(&self) -> usize {
+        self.terrain_impact_assets
+            .as_ref()
+            .map_or(0, TerrainImpactAssets::loaded_effect_count)
+    }
+
+    /// Return missing or malformed impact catalog/TFX diagnostics.
+    #[must_use]
+    pub fn terrain_impact_effect_issues(&self) -> &[String] {
+        &self.terrain_impact_issues
+    }
+
+    /// Return the number of impact catalog or TFX preload diagnostics.
+    #[must_use]
+    pub fn terrain_impact_effect_issue_count(&self) -> usize {
+        self.terrain_impact_issues.len()
+    }
 }
 
 fn visual_name_lookup(visuals: &HashMap<String, Visual>) -> HashMap<String, &str> {
@@ -309,11 +479,11 @@ fn load_cached_unit(
     visual: &Visual,
     lookup_name: &str,
     visual_variation_index: Option<usize>,
-    animation_asset: Option<&str>,
+    animation: UnitAnimationRequest<'_>,
     asset_cache: &mut UnitAssetCache,
     units: &mut HashMap<String, Option<Arc<Unit>>>,
 ) -> Result<Arc<Unit>, Option<String>> {
-    let cache_key = visual_cache_key(lookup_name, visual_variation_index, animation_asset);
+    let cache_key = visual_cache_key(lookup_name, visual_variation_index, animation);
     if let Some(cached) = units.get(&cache_key) {
         return cached.clone().ok_or(None);
     }
@@ -321,7 +491,7 @@ fn load_cached_unit(
         source,
         visual,
         visual_variation_index,
-        animation_asset,
+        animation,
         asset_cache,
     ) {
         Ok(unit) => {
@@ -339,12 +509,25 @@ fn load_cached_unit(
 fn visual_cache_key(
     lookup_name: &str,
     visual_variation_index: Option<usize>,
-    animation_asset: Option<&str>,
+    animation: UnitAnimationRequest<'_>,
 ) -> String {
     let variation =
         visual_variation_index.map_or_else(|| "random".to_owned(), |index| index.to_string());
-    let animation = animation_asset.map_or_else(String::new, str::to_ascii_lowercase);
-    format!("{lookup_name}\0variation={variation}\0animation={animation}")
+    let animation_asset = animation
+        .animation_asset
+        .map_or_else(String::new, str::to_ascii_lowercase);
+    let animation_type = animation
+        .animation_type
+        .map_or_else(String::new, str::to_ascii_lowercase);
+    let movement_animation = animation
+        .movement_animation_type
+        .map_or_else(String::new, str::to_ascii_lowercase);
+    let sim_clock = animation.uses_simulation_clock;
+    let animation_roll = animation.animation_roll;
+    let movement_roll = animation.movement_animation_roll;
+    format!(
+        "{lookup_name}\0variation={variation}\0animation_type={animation_type}\0animation={animation_asset}\0sim_clock={sim_clock}\0roll={animation_roll}\0movement={movement_animation}\0movement_roll={movement_roll}"
+    )
 }
 
 fn prototype_is_hidden(proto: &ProtoObject) -> bool {
@@ -358,22 +541,15 @@ struct SimulationVisual<'a> {
     id: EntityId,
     proto_name: &'a str,
     visual_variation_index: Option<usize>,
+    animation_type: Option<&'a str>,
     animation_asset: Option<&'a str>,
     animation_revision: u32,
+    visual_mesh_mask: Option<&'a sim::UnitVisualMeshMask>,
+    visual_opacity: f32,
     transform: Option<Mat4>,
 }
 
-fn simulation_entity_states(
-    world: &SimWorld,
-) -> impl Iterator<Item = (EntityId, u32, Option<usize>)> + '_ {
-    simulation_visuals(world).map(|visual| {
-        (
-            visual.id,
-            visual.animation_revision,
-            visual.visual_variation_index,
-        )
-    })
-}
+const AIRCRAFT_KAMIKAZE_ANIMATION_REVISION: u32 = 0x8000_0001;
 
 /// Iterate prototype names for every renderer-facing entity in the sim roster.
 ///
@@ -397,7 +573,7 @@ pub fn simulation_proto_names(world: &SimWorld) -> impl Iterator<Item = &str> {
                 .projectiles
                 .iter()
                 .filter(|(_, projectile)| projectile.object_state.is_render_enabled())
-                .map(|(_, projectile)| projectile.proto_object_name.as_str()),
+                .map(|(_, projectile)| projectile.visual_proto_object_name()),
         )
 }
 
@@ -410,6 +586,10 @@ fn simulation_visuals(world: &SimWorld) -> impl Iterator<Item = SimulationVisual
             id,
             proto_name: &object.proto_object_name,
             visual_variation_index: object.object_state.visual_variation_index(),
+            animation_type: object
+                .object_state
+                .scripted_animation()
+                .map(sim::ScriptedAnimation::animation_type),
             animation_asset: object
                 .object_state
                 .scripted_animation()
@@ -418,6 +598,8 @@ fn simulation_visuals(world: &SimWorld) -> impl Iterator<Item = SimulationVisual
                 .object_state
                 .scripted_animation()
                 .map_or(0, sim::ScriptedAnimation::revision),
+            visual_mesh_mask: None,
+            visual_opacity: 1.0,
             transform: simulation_object_transform(object),
         })
         .chain(
@@ -425,20 +607,7 @@ fn simulation_visuals(world: &SimWorld) -> impl Iterator<Item = SimulationVisual
                 .units
                 .iter()
                 .filter(|(_, unit)| unit.object_state.is_render_enabled())
-                .map(|(id, unit)| SimulationVisual {
-                    id,
-                    proto_name: &unit.proto_object_name,
-                    visual_variation_index: unit.object_state.visual_variation_index(),
-                    animation_asset: unit
-                        .object_state
-                        .scripted_animation()
-                        .and_then(sim::ScriptedAnimation::asset_path),
-                    animation_revision: unit
-                        .object_state
-                        .scripted_animation()
-                        .map_or(0, sim::ScriptedAnimation::revision),
-                    transform: simulation_unit_model_transform(unit),
-                }),
+                .map(|(id, unit)| simulation_unit_visual(id, unit)),
         )
         .chain(
             world
@@ -447,8 +616,12 @@ fn simulation_visuals(world: &SimWorld) -> impl Iterator<Item = SimulationVisual
                 .filter(|(_, projectile)| projectile.object_state.is_render_enabled())
                 .map(|(id, projectile)| SimulationVisual {
                     id,
-                    proto_name: &projectile.proto_object_name,
+                    proto_name: projectile.visual_proto_object_name(),
                     visual_variation_index: projectile.object_state.visual_variation_index(),
+                    animation_type: projectile
+                        .object_state
+                        .scripted_animation()
+                        .map(sim::ScriptedAnimation::animation_type),
                     animation_asset: projectile
                         .object_state
                         .scripted_animation()
@@ -457,9 +630,40 @@ fn simulation_visuals(world: &SimWorld) -> impl Iterator<Item = SimulationVisual
                         .object_state
                         .scripted_animation()
                         .map_or(0, sim::ScriptedAnimation::revision),
+                    visual_mesh_mask: None,
+                    visual_opacity: 1.0,
                     transform: simulation_projectile_transform(projectile),
                 }),
         )
+}
+
+fn simulation_unit_visual(id: EntityId, unit: &sim::Unit) -> SimulationVisual<'_> {
+    let scripted = unit.object_state.scripted_animation();
+    let targeted_kamikaze = unit.aircraft_crash_phase() == sim::AircraftCrashPhase::Crashing
+        && unit.kamikaze_target().is_some();
+    SimulationVisual {
+        id,
+        proto_name: &unit.proto_object_name,
+        visual_variation_index: unit.object_state.visual_variation_index(),
+        animation_type: if targeted_kamikaze {
+            Some("Kamikaze")
+        } else {
+            scripted.map(sim::ScriptedAnimation::animation_type)
+        },
+        animation_asset: if targeted_kamikaze {
+            None
+        } else {
+            scripted.and_then(sim::ScriptedAnimation::asset_path)
+        },
+        animation_revision: if targeted_kamikaze {
+            AIRCRAFT_KAMIKAZE_ANIMATION_REVISION
+        } else {
+            scripted.map_or(0, sim::ScriptedAnimation::revision)
+        },
+        visual_mesh_mask: Some(unit.visual_mesh_mask()),
+        visual_opacity: unit.visual_opacity(),
+        transform: simulation_unit_model_transform(unit),
+    }
 }
 
 /// Resolve a render transform for any sim entity represented by this scene.
@@ -480,6 +684,27 @@ pub fn simulation_entity_transform(world: &SimWorld, entity_id: EntityId) -> Opt
                 .get_projectile(entity_id)
                 .filter(|projectile| projectile.object_state.is_render_enabled())
                 .and_then(simulation_projectile_transform)
+        })
+}
+
+/// Project authoritative whole-model opacity for any live render entity.
+#[must_use]
+pub fn simulation_entity_visual_opacity(world: &SimWorld, entity_id: EntityId) -> Option<f32> {
+    world
+        .get_unit(entity_id)
+        .filter(|unit| unit.object_state.is_render_enabled())
+        .map(sim::Unit::visual_opacity)
+        .or_else(|| {
+            world
+                .get_object(entity_id)
+                .filter(|object| object.is_visual() && object.object_state.is_render_enabled())
+                .map(|_| 1.0)
+        })
+        .or_else(|| {
+            world
+                .get_projectile(entity_id)
+                .filter(|projectile| projectile.object_state.is_render_enabled())
+                .map(|_| 1.0)
         })
 }
 
@@ -525,7 +750,11 @@ pub fn simulation_unit_transform(unit: &sim::Unit) -> Option<Mat4> {
 }
 
 fn simulation_unit_model_transform(unit: &sim::Unit) -> Option<Mat4> {
-    simulation_model_transform(unit.base.position, unit.base.forward)
+    if unit.is_crashing() {
+        simulation_directional_model_transform(unit.base.position, unit.base.forward, Vec3::ZERO)
+    } else {
+        simulation_model_transform(unit.base.position, unit.base.forward)
+    }
 }
 
 fn simulation_model_transform(position: Vec3, world_forward: Vec3) -> Option<Mat4> {
@@ -547,7 +776,16 @@ fn simulation_model_transform(position: Vec3, world_forward: Vec3) -> Option<Mat
 pub fn simulation_projectile_transform(projectile: &sim::Projectile) -> Option<Mat4> {
     let position = projectile.base.position;
     let forward = projectile.base.forward;
-    if !position.is_finite() || !forward.is_finite() {
+    let visual_center_offset = projectile.visual_center_offset();
+    simulation_directional_model_transform(position, forward, visual_center_offset)
+}
+
+fn simulation_directional_model_transform(
+    position: Vec3,
+    forward: Vec3,
+    visual_center_offset: Vec3,
+) -> Option<Mat4> {
+    if !position.is_finite() || !forward.is_finite() || !visual_center_offset.is_finite() {
         return None;
     }
     let forward = forward.try_normalize()?;
@@ -558,309 +796,22 @@ pub fn simulation_projectile_transform(projectile: &sim::Projectile) -> Option<M
     };
     let right = reference_up.cross(forward).try_normalize()?;
     let up = forward.cross(right).try_normalize()?;
+    let visual_position = position
+        + right * visual_center_offset.x
+        + up * visual_center_offset.y
+        + forward * visual_center_offset.z;
     Some(Mat4::from_cols(
         right.extend(0.0),
         up.extend(0.0),
         forward.extend(0.0),
-        position.extend(1.0),
+        visual_position.extend(1.0),
     ))
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
+#[path = "scene/attachment_tests.rs"]
+mod attachment_tests;
 
-    use glam::Vec3;
-    use pipeline::database::hw1::{Database, GameData, ProtoObject};
-    use pipeline::source::{AssetSource, StdFileProvider};
-
-    use super::{
-        prototype_is_hidden, simulation_entity_flash, simulation_entity_transform,
-        simulation_entity_visible_to_team, simulation_proto_names, simulation_unit_transform,
-    };
-
-    #[test]
-    fn simulation_transform_uses_only_live_position_and_facing() {
-        let mut world = sim::World::new();
-        let entity_id = world.create_unit_at(0, Vec3::new(12.0, 3.0, 56.0));
-        let unit = world.get_unit_mut(entity_id).expect("new unit");
-        unit.base.set_forward(Vec3::X);
-
-        let transform = simulation_unit_transform(unit).expect("valid transform");
-        assert!(
-            transform
-                .transform_point3(Vec3::ZERO)
-                .abs_diff_eq(Vec3::new(12.0, 3.0, 56.0), 1.0e-6)
-        );
-        assert!(
-            transform
-                .transform_vector3(Vec3::Z)
-                .abs_diff_eq(Vec3::X, 1.0e-6)
-        );
-        assert!(transform.determinant() > 0.0);
-    }
-
-    #[test]
-    fn invalid_simulation_facing_has_no_render_transform() {
-        let mut world = sim::World::new();
-        let entity_id = world.create_unit_at(0, Vec3::ZERO);
-        let unit = world.get_unit_mut(entity_id).expect("new unit");
-        unit.base.forward = Vec3::ZERO;
-
-        assert!(simulation_unit_transform(unit).is_none());
-    }
-
-    #[test]
-    fn containment_state_alone_controls_simulation_visibility() {
-        let mut world = sim::World::new();
-        world.init_players(1);
-        let container_squad = world.create_squad_at(0, Vec3::ZERO);
-        let container_unit = world.create_building_at(0, Vec3::ZERO);
-        assert!(world.attach_unit_to_squad(container_unit, container_squad));
-        world.get_unit_mut(container_unit).unwrap().garrison =
-            sim::UnitGarrison::container(0.0, false, false, Vec::new());
-        let passenger_squad = world.create_squad_at(1, Vec3::ZERO);
-        let passenger_unit = world.create_unit_at(1, Vec3::ZERO);
-        assert!(world.attach_unit_to_squad(passenger_unit, passenger_squad));
-
-        world
-            .issue_garrison_order(1, passenger_squad, container_squad, 0.0)
-            .expect("garrison command");
-        world.advance_time(50);
-        world.update_entities(0.05);
-        assert!(world.get_unit(passenger_unit).unwrap().is_garrisoned());
-        assert!(simulation_unit_transform(world.get_unit(passenger_unit).unwrap()).is_none());
-
-        world
-            .issue_ungarrison_order(1, passenger_squad, None)
-            .expect("ungarrison command");
-        assert!(simulation_unit_transform(world.get_unit(passenger_unit).unwrap()).is_none());
-        world.advance_time(50);
-        world.update_entities(0.05);
-        assert!(simulation_unit_transform(world.get_unit(passenger_unit).unwrap()).is_some());
-    }
-
-    #[test]
-    fn prototype_no_render_flag_is_case_insensitive() {
-        let hidden = ProtoObject {
-            flags: vec!["ForceToGaiaPlayer".to_owned(), "nOrEnDeR".to_owned()],
-            ..ProtoObject::default()
-        };
-        assert!(prototype_is_hidden(&hidden));
-        assert!(!prototype_is_hidden(&ProtoObject::default()));
-    }
-
-    #[test]
-    fn roster_matching_tracks_generational_sim_entity_ids() {
-        let mut world = sim::World::new();
-        let first = world.create_unit(0);
-        let mut scene = super::UnitScene {
-            simulation_entity_states: vec![(first, 0, None)],
-            simulation_entity_count: 1,
-            ..super::UnitScene::default()
-        };
-        assert!(scene.roster_matches(&world));
-
-        world.remove_unit(first).expect("first unit");
-        let replacement = world.create_unit(0);
-        assert_ne!(first, replacement);
-        assert!(!scene.roster_matches(&world));
-
-        scene.simulation_entity_states = vec![(replacement, 0, None)];
-        assert!(scene.roster_matches(&world));
-
-        assert!(world.play_entity_animation(replacement, "Death".to_owned(), None, 1_000));
-        assert!(!scene.roster_matches(&world));
-        scene.simulation_entity_states = vec![(replacement, 1, None)];
-        assert!(scene.roster_matches(&world));
-    }
-
-    #[test]
-    fn runtime_no_render_state_removes_and_restores_the_sim_projection() {
-        let mut world = sim::World::new();
-        let unit_id = world.create_unit(0);
-        world.get_unit_mut(unit_id).unwrap().proto_object_name = "drop_unit".to_owned();
-        assert_eq!(
-            simulation_proto_names(&world).collect::<Vec<_>>(),
-            ["drop_unit"]
-        );
-        assert!(simulation_entity_transform(&world, unit_id).is_some());
-
-        assert!(world.set_entity_render_enabled(unit_id, false));
-        assert!(simulation_proto_names(&world).next().is_none());
-        assert!(simulation_entity_transform(&world, unit_id).is_none());
-
-        assert!(world.set_entity_render_enabled(unit_id, true));
-        assert_eq!(
-            simulation_proto_names(&world).collect::<Vec<_>>(),
-            ["drop_unit"]
-        );
-        assert!(simulation_entity_transform(&world, unit_id).is_some());
-    }
-
-    #[test]
-    fn visual_cache_distinguishes_random_explicit_and_animated_variants() {
-        let random = super::visual_cache_key("marine", None, None);
-        let first = super::visual_cache_key("marine", Some(0), None);
-        let second = super::visual_cache_key("marine", Some(1), None);
-        let animated = super::visual_cache_key("marine", Some(1), Some("Art\\Attack.UAX"));
-
-        assert_ne!(random, first);
-        assert_ne!(first, second);
-        assert_ne!(second, animated);
-    }
-
-    #[test]
-    fn scenario_visual_variation_is_projected_only_from_sim_state() {
-        let scenario = sim::ScenarioData::from_xml_str(
-            r#"<Scenario><Objects>
-                <Object ID="7" VisualVariationIndex="2">variation_crate</Object>
-            </Objects></Scenario>"#,
-        )
-        .expect("valid scenario");
-        let database = Database {
-            objects: vec![ProtoObject {
-                name: "variation_crate".to_owned(),
-                visual: Some("variation_crate".to_owned()),
-                ..ProtoObject::default()
-            }],
-            ..Database::default()
-        };
-        let loaded = sim::load_scenario_into_world(&scenario, &database);
-        let entity_id = loaded.get_entity_id(7).unwrap();
-        let projected = super::simulation_visuals(&loaded.world)
-            .find(|visual| visual.id == entity_id)
-            .expect("class-zero visual should enter the sim projection");
-
-        assert_eq!(projected.visual_variation_index, Some(2));
-        assert_eq!(
-            super::simulation_entity_states(&loaded.world).collect::<Vec<_>>(),
-            vec![(entity_id, 0, Some(2))]
-        );
-    }
-
-    #[test]
-    fn scene_sync_refreshes_roster_once_per_sim_change() {
-        let mut source = AssetSource::with_provider(StdFileProvider);
-        let mut world = sim::World::new();
-        let visuals = HashMap::new();
-        let proto_objects = Vec::new();
-        let mut scene = super::UnitScene::load_world(&mut source, &world, &visuals, &proto_objects);
-        assert!(!scene.sync_world(&mut source, &world, &visuals, &proto_objects));
-
-        let entity_id = world.create_unit(0);
-        world
-            .get_unit_mut(entity_id)
-            .expect("unit")
-            .proto_object_name = "missing_visual".to_owned();
-        assert!(scene.sync_world(&mut source, &world, &visuals, &proto_objects));
-        assert_eq!(scene.simulation_entity_count(), 1);
-        assert_eq!(scene.placement_count(), 0);
-        assert!(!scene.sync_world(&mut source, &world, &visuals, &proto_objects));
-    }
-
-    #[test]
-    fn attached_class_zero_visual_is_projected_only_from_live_sim_state() {
-        let mut source = AssetSource::with_provider(StdFileProvider);
-        let mut world = sim::World::new();
-        world.init_players(1);
-        let unit_id = world.create_unit_at(1, Vec3::new(2.0, 3.0, 4.0));
-        world.get_unit_mut(unit_id).unwrap().proto_object_name = "vehicle".to_owned();
-        let database = Database {
-            objects: vec![ProtoObject {
-                name: "fx_hijacked".to_owned(),
-                dbid: Some(3883),
-                ..ProtoObject::default()
-            }],
-            ..Database::default()
-        };
-        let visuals = HashMap::new();
-        let mut scene =
-            super::UnitScene::load_world(&mut source, &world, &visuals, &database.objects);
-        let attachment_id = world
-            .add_prototype_attachment_to_unit(&database, unit_id, 3883)
-            .expect("retail's omitted ObjectClass default creates a class-zero visual");
-
-        assert!(!scene.roster_matches(&world));
-        assert!(scene.sync_world(&mut source, &world, &visuals, &database.objects));
-        assert!(scene.roster_matches(&world));
-        assert_eq!(scene.simulation_entity_count(), 2);
-        assert!(simulation_proto_names(&world).any(|name| name == "fx_hijacked"));
-        let transform = simulation_entity_transform(&world, attachment_id).unwrap();
-        assert!(
-            transform
-                .transform_point3(Vec3::ZERO)
-                .abs_diff_eq(Vec3::new(2.0, 3.0, 4.0), 1.0e-6)
-        );
-
-        assert!(world.teleport_object(unit_id, Vec3::new(9.0, 8.0, 7.0)));
-        world.update_entities(0.05);
-        let transform = simulation_entity_transform(&world, attachment_id).unwrap();
-        assert!(
-            transform
-                .transform_point3(Vec3::ZERO)
-                .abs_diff_eq(Vec3::new(9.0, 8.0, 7.0), 1.0e-6)
-        );
-    }
-
-    #[test]
-    fn invisible_sim_control_objects_do_not_pollute_the_visual_roster() {
-        let mut source = AssetSource::with_provider(StdFileProvider);
-        let mut world = sim::World::new();
-        world.init_players(1);
-        world.get_player_mut(1).unwrap().team_id = 1;
-        let database = Database {
-            objects: vec![ProtoObject {
-                name: "sys_revealer".to_owned(),
-                dbid: Some(13),
-                los: Some(1.0),
-                ..ProtoObject::default()
-            }],
-            game_data: Some(GameData {
-                minimum_revealer_size: Some(4.0),
-                ..GameData::default()
-            }),
-            ..Database::default()
-        };
-        let visuals = HashMap::new();
-        let scene = super::UnitScene::load_world(&mut source, &world, &visuals, &database.objects);
-        let revealer = world
-            .create_revealer(&database, 1, Vec3::ZERO, 10.0, None)
-            .expect("revealer");
-
-        assert!(world.get_revealer(revealer).is_some());
-        assert!(world.is_position_revealed_to_team(1, Vec3::new(9.0, 0.0, 0.0)));
-        assert!(scene.roster_matches(&world));
-        assert_eq!(scene.simulation_entity_count(), 0);
-        assert_eq!(scene.placement_count(), 0);
-    }
-
-    #[test]
-    fn team_visibility_projection_reads_only_authoritative_sim_state() {
-        let mut world = sim::World::new();
-        world.init_players(2);
-        world.get_player_mut(1).unwrap().team_id = 1;
-        world.get_player_mut(2).unwrap().team_id = 2;
-        let friendly = world.create_unit_at(1, Vec3::ZERO);
-        let enemy = world.create_unit_at(2, Vec3::new(100.0, 0.0, 100.0));
-
-        assert!(simulation_entity_visible_to_team(&world, 1, friendly));
-        assert!(!simulation_entity_visible_to_team(&world, 1, enemy));
-        world.set_fog_of_war_enabled(false);
-        assert!(simulation_entity_visible_to_team(&world, 1, enemy));
-    }
-
-    #[test]
-    fn flash_projection_reads_only_authoritative_sim_state() {
-        let mut world = sim::World::new();
-        let entity_id = world.create_unit(1);
-        assert!(simulation_entity_flash(&world, entity_id).is_none());
-
-        assert!(world.flash_entity(entity_id, 500, 3_000, [255, 255, 0, 255], 80.0));
-        let flash = simulation_entity_flash(&world, entity_id).expect("sim flash request");
-        assert_eq!(flash.color(), [255, 255, 0, 255]);
-        assert_eq!(flash.expires_at_ms(), Some(3_000));
-        assert_eq!(flash.scroll_speed().to_bits(), (-4.0_f32).to_bits());
-        assert_eq!(flash.intensity().to_bits(), 80.0_f32.to_bits());
-    }
-}
+#[cfg(test)]
+#[path = "scene/tests.rs"]
+mod tests;

@@ -66,21 +66,34 @@ impl World {
         else {
             return false;
         };
-        self.squads.get_mut(squad_id).is_some_and(|squad| {
-            squad.base.player_id == player_id
-                && squad.begin_detonate_order(
-                    DetonateOrder {
-                        target_id,
-                        requested_ability_id,
-                    },
-                    target_position,
-                )
-        })
+        if self
+            .squads
+            .get(squad_id)
+            .is_none_or(|squad| squad.base.player_id != player_id)
+        {
+            return false;
+        }
+        let _cancelled = self.cancel_capture_order(squad_id);
+        let _repair_cancelled = self.cancel_repair_other_order(squad_id);
+        let accepted = self.squads.get_mut(squad_id).is_some_and(|squad| {
+            squad.begin_detonate_order(
+                DetonateOrder {
+                    target_id,
+                    requested_ability_id,
+                },
+                target_position,
+            )
+        });
+        if accepted {
+            self.cancel_incoming_power_transport(squad_id);
+        }
+        accepted
     }
 
     pub(super) fn update_detonations(&mut self, dt: f32, gameplay: &GameplayCatalog) {
         self.resolve_dead_unit_detonations(gameplay);
         self.reconcile_unit_detonate_state();
+        self.activate_persistent_unit_detonations(gameplay);
         let squad_ids = self
             .squads
             .iter()

@@ -3,8 +3,8 @@
 use super::World;
 use crate::entities::{Object, Revealer};
 use crate::entity::Entity;
-use crate::entity_id::EntityId;
-use crate::player::{PlayerId, TeamId};
+use crate::entity_id::{EntityClass, EntityId};
+use crate::player::{PlayerId, TeamId, TeamRelation};
 use glam::Vec3;
 use pipeline::database::hw1::{Database, ProtoObject};
 
@@ -110,6 +110,7 @@ impl World {
     /// Remove a class-0 object and invalidate its ID.
     pub fn remove_object(&mut self, id: EntityId) -> Option<Object> {
         self.objects.get(id)?;
+        self.prepare_remove_object_authored_relationships(id);
         self.remove_owned_attachments(id);
         self.detach_attachment_from_parent(id);
         let removed = self.objects.remove(id);
@@ -165,6 +166,9 @@ impl World {
         let Some(position) = self.entity_position(entity_id) else {
             return false;
         };
+        if self.is_entity_hidden_by_cloak_to_team(team_id, entity_id) {
+            return false;
+        }
         if !self.fog_of_war_enabled {
             return true;
         }
@@ -172,7 +176,43 @@ impl World {
             .entity_owner(entity_id)
             .and_then(|player_id| self.get_player(player_id))
             .is_some_and(|player| player.team_id == team_id);
-        owned_by_team || self.is_position_revealed_to_team(team_id, position)
+        owned_by_team
+            || self.is_position_revealed_to_team(team_id, position)
+            || self.cleansing_forces_entity_visibility(team_id, entity_id)
+            || self.wave_forces_entity_visibility(team_id, entity_id)
+    }
+
+    /// Return whether an undetected enemy cloak suppresses an entity for a team.
+    ///
+    /// Attachments inherit their parent unit's cloak so presentation effects do
+    /// not reveal a hidden squad independently of the unit model.
+    #[must_use]
+    pub fn is_entity_hidden_by_cloak_to_team(&self, team_id: TeamId, entity_id: EntityId) -> bool {
+        let Some(squad_id) = self.cloak_squad_for_entity(entity_id) else {
+            return false;
+        };
+        let Some(squad) = self.squads.get(squad_id) else {
+            return false;
+        };
+        if !squad.is_cloaked() || squad.is_cloak_detected() {
+            return false;
+        }
+        let Some(owner_team) = self
+            .get_player(squad.base.player_id)
+            .map(|player| player.team_id)
+        else {
+            return false;
+        };
+        self.team_relation(team_id, owner_team) == TeamRelation::Enemy
+    }
+
+    pub(super) fn entity_hidden_by_cloak_from_player(
+        &self,
+        player_id: PlayerId,
+        entity_id: EntityId,
+    ) -> bool {
+        self.get_player(player_id)
+            .is_some_and(|player| self.is_entity_hidden_by_cloak_to_team(player.team_id, entity_id))
     }
 
     pub(super) fn update_revealers(&mut self, dt: f32) {
@@ -198,6 +238,20 @@ impl World {
         self.players()
             .find(|player| player.team_id == team_id)
             .map(|player| player.id)
+    }
+
+    fn cloak_squad_for_entity(&self, mut entity_id: EntityId) -> Option<EntityId> {
+        for _ in 0..8 {
+            match entity_id.class()? {
+                EntityClass::Squad => return Some(entity_id),
+                EntityClass::Unit => return self.units.get(entity_id)?.squad_id,
+                EntityClass::Object | EntityClass::Projectile => {
+                    entity_id = self.entity_object_state(entity_id)?.attached_to()?;
+                }
+                _ => return None,
+            }
+        }
+        None
     }
 }
 

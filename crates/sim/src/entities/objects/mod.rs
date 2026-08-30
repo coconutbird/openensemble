@@ -5,12 +5,15 @@
 //! that pool distinct preserves trigger-visible object IDs without adding
 //! presentation-only entities to the unit roster.
 
+mod ambient_life_spawner;
 mod icon;
 mod revealer;
 
 pub use icon::IconObject;
 pub(crate) use icon::is_icon_prototype;
 pub use revealer::Revealer;
+
+pub(crate) use ambient_life_spawner::ObjectAmbientLifeSpawner;
 
 use super::{BaseEntity, ObjectState};
 use crate::entity::Entity;
@@ -40,6 +43,12 @@ pub struct Object {
     pub proto_object_id: i32,
     /// Proto-object name retained for diagnostics and checksums.
     pub proto_object_name: String,
+    /// Unit whose authored child list created this object.
+    pub built_by: Option<EntityId>,
+    /// Optional second world-space endpoint for a beam-like visual.
+    visual_secondary_position: Option<Vec3>,
+    /// Persistent ambient-life spawn action state.
+    pub(crate) ambient_life_spawner: ObjectAmbientLifeSpawner,
     /// Specialized object behavior.
     pub kind: ObjectKind,
 }
@@ -65,6 +74,9 @@ impl Object {
             object_state: ObjectState::default(),
             proto_object_id,
             proto_object_name,
+            built_by: None,
+            visual_secondary_position: None,
+            ambient_life_spawner: ObjectAmbientLifeSpawner::default(),
             kind: ObjectKind::Visual,
         }
     }
@@ -90,6 +102,9 @@ impl Object {
             object_state: ObjectState::default(),
             proto_object_id,
             proto_object_name,
+            built_by: None,
+            visual_secondary_position: None,
+            ambient_life_spawner: ObjectAmbientLifeSpawner::default(),
             kind: ObjectKind::Icon(icon),
         }
     }
@@ -113,6 +128,9 @@ impl Object {
             object_state: ObjectState::default(),
             proto_object_id,
             proto_object_name,
+            built_by: None,
+            visual_secondary_position: None,
+            ambient_life_spawner: ObjectAmbientLifeSpawner::default(),
             kind: ObjectKind::Revealer(revealer),
         }
     }
@@ -139,6 +157,16 @@ impl Object {
     #[must_use]
     pub const fn is_visual(&self) -> bool {
         matches!(self.kind, ObjectKind::Visual)
+    }
+
+    /// Return the authoritative second endpoint of a beam-like visual.
+    #[must_use]
+    pub const fn visual_secondary_position(&self) -> Option<Vec3> {
+        self.visual_secondary_position
+    }
+
+    pub(crate) fn set_visual_secondary_position(&mut self, position: Option<Vec3>) {
+        self.visual_secondary_position = position;
     }
 }
 

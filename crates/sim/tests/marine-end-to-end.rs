@@ -7,8 +7,9 @@ use sim::entities::units::marine::{
     MarineUnitSpec,
 };
 use sim::{
-    Command, CommandEntry, CommandExecutor, OrderType, QueuedCommand, ScenarioData, SquadArchetype,
-    SquadFormation, SquadState, UnitArchetype, WorkCommand, World, load_scenario_into_world,
+    Command, CommandEntry, CommandExecutor, GroundMovePhase, OrderType, QueuedCommand,
+    ScenarioData, SquadArchetype, SquadFormation, SquadState, UnitArchetype, WorkCommand, World,
+    load_scenario_into_world,
 };
 
 const MARINE_SCENARIO: &str = r#"<Scenario>
@@ -144,6 +145,13 @@ fn move_command_advances_one_squad_and_four_formation_members_deterministically(
         .iter()
         .map(|&id| first.world.get_unit(id).unwrap().formation_offset)
         .collect::<Vec<_>>();
+    for &unit_id in &squad.unit_ids {
+        let unit = first.world.get_unit(unit_id).unwrap();
+        assert_eq!(unit.ground_move_phase(), GroundMovePhase::Working);
+        assert!(unit.ground_move_target().is_some());
+        assert!(unit.has_active_move_action());
+        assert!(unit.base.velocity.length() > 0.0);
+    }
 
     for _ in 0..159 {
         first.world.update_entities(0.05);
@@ -158,6 +166,7 @@ fn move_command_advances_one_squad_and_four_formation_members_deterministically(
         assert_eq!(unit.formation_offset, initial_offsets[slot]);
         assert_ne!(unit.base.position, squad.position());
         assert_eq!(unit.base.forward, squad.base.forward);
+        assert_eq!(unit.ground_move_phase(), GroundMovePhase::Inactive);
     }
     assert_eq!(first.world.checksum(), second.world.checksum());
 }

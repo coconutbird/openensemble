@@ -10,6 +10,7 @@ use crate::trigger::{Effect, TriggerScript, TriggerValue};
 use crate::{EntityId, World};
 use glam::Vec3;
 use num_traits::ToPrimitive;
+use pipeline::database::hw1::Database;
 
 pub(super) fn unload(effect: &Effect, script: &TriggerScript, world: &mut World) -> EffectOutcome {
     if !matches!(effect.version, 3 | 4) {
@@ -120,6 +121,7 @@ pub(super) fn work(
     effect: &Effect,
     script: &TriggerScript,
     world: &mut World,
+    database: Option<&Database>,
     gameplay: Option<&GameplayCatalog>,
 ) -> EffectOutcome {
     if !matches!(effect.version, 3 | 4) {
@@ -176,10 +178,18 @@ pub(super) fn work(
         orders.push((player_id, squad_id, order));
     }
 
+    let assets = WorkAssets { database, gameplay };
     let mut issued = false;
     for (player_id, squad_id, order) in orders {
-        issued |=
-            issue_contextual_work(world, player_id, squad_id, order, attack_move, queue_order);
+        issued |= issue_contextual_work(
+            world,
+            player_id,
+            squad_id,
+            order,
+            attack_move,
+            queue_order,
+            assets,
+        );
     }
     if issued {
         EffectOutcome::Applied
@@ -203,6 +213,12 @@ enum ContextualWorkOrder {
         target: EntityId,
         ability_id: Option<u8>,
     },
+    Gather(EntityId),
+    Capture(EntityId),
+    RepairOther {
+        target: EntityId,
+        ability_id: Option<u8>,
+    },
     Hitch(EntityId),
     Unhitch(EntityId),
     Mines {
@@ -210,6 +226,12 @@ enum ContextualWorkOrder {
         ability_id: u8,
     },
     Unsupported,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WorkAssets<'assets> {
+    database: Option<&'assets Database>,
+    gameplay: Option<&'assets GameplayCatalog>,
 }
 
 fn resolve_contextual_location_work(
@@ -314,17 +336,57 @@ fn resolve_contextual_work(
         return ContextualWorkOrder::Unsupported;
     };
     let ability_id = do_ability.then(|| gameplay.command_ability_id()).flatten();
+    let query = contextual_work_query(world, squad_id, target_id, source, target, ability_id);
+    let selected = gameplay.select_work_action(&source.proto_object_name, &query, |action| {
+        work_action_enabled(world, source, action)
+    });
+    if let Some(action) = selected {
+        return contextual_action_order(action, target_id, target_position, ability_id);
+    }
+    ruleless_contextual_work(
+        world,
+        gameplay,
+        source,
+        target,
+        target_id,
+        target_position,
+        &query,
+    )
+}
+
+fn contextual_work_query<'target>(
+    world: &World,
+    squad_id: EntityId,
+    target_id: EntityId,
+    source: &crate::entities::Unit,
+    target: &'target crate::entities::Unit,
+    ability_id: Option<u8>,
+) -> AttackQuery<'target> {
     let mut flags = AttackQueryFlags::empty();
     if target.base.player_id == 0 {
         flags.insert(AttackQueryFlags::TARGET_GAIA);
     }
-    if target.hitpoints < target.max_hitpoints {
+    if target.hitpoints < target.max_hitpoints
+        || world
+            .repair_other_target_squad_id(target_id)
+            .and_then(|target_squad_id| world.get_squad(target_squad_id))
+            .is_some_and(|squad| {
+                squad.unit_ids.iter().any(|unit_id| {
+                    world
+                        .get_unit(*unit_id)
+                        .is_some_and(|unit| unit.hitpoints < unit.max_hitpoints)
+                })
+            })
+    {
         flags.insert(AttackQueryFlags::TARGET_DAMAGED);
     }
     if target.is_building() && !target.built {
         flags.insert(AttackQueryFlags::TARGET_UNBUILT);
     }
-    let query = AttackQuery {
+    if world.can_squad_capture_target(source.base.player_id, squad_id, target_id) {
+        flags.insert(AttackQueryFlags::TARGET_CAPTURABLE);
+    }
+    AttackQuery {
         relation: work_relation(world, source.base.player_id, target.base.player_id),
         squad_mode: world
             .get_squad(squad_id)
@@ -333,24 +395,66 @@ fn resolve_contextual_work(
         target_proto_object_name: Some(&target.proto_object_name),
         tactic_state: source.tactic_state(),
         flags,
-    };
-    let selected = gameplay.select_work_action(&source.proto_object_name, &query, |action| {
-        let authored_enabled = action.start_disabled != Some(true);
-        let player_enabled =
-            world
-                .get_player(source.base.player_id)
-                .map_or(authored_enabled, |player| {
-                    player.technologies.action_enabled(
-                        &source.proto_object_name,
-                        &action.name,
-                        authored_enabled,
-                    )
-                });
-        source.actions.is_enabled(&action.name, !player_enabled)
-    });
-    let Some(action) = selected else {
-        return ContextualWorkOrder::Move(target_position);
-    };
+    }
+}
+
+fn ruleless_contextual_work(
+    world: &World,
+    gameplay: &GameplayCatalog,
+    source: &crate::entities::Unit,
+    target: &crate::entities::Unit,
+    target_id: EntityId,
+    target_position: Vec3,
+    query: &AttackQuery<'_>,
+) -> ContextualWorkOrder {
+    if query.flags.contains(AttackQueryFlags::TARGET_DAMAGED)
+        && matches!(
+            query.relation,
+            TacticRelation::SelfPlayer | TacticRelation::Ally
+        )
+        && gameplay
+            .select_repair_other_action(&source.proto_object_name, query, |action| {
+                work_action_enabled(world, source, action)
+            })
+            .is_some()
+    {
+        return ContextualWorkOrder::RepairOther {
+            target: target_id,
+            ability_id: query.ability_id,
+        };
+    }
+    if query.flags.contains(AttackQueryFlags::TARGET_CAPTURABLE)
+        && gameplay
+            .select_capture_action(&source.proto_object_name, query, |action| {
+                work_action_enabled(world, source, action)
+            })
+            .is_some()
+    {
+        return ContextualWorkOrder::Capture(target_id);
+    }
+    if let Some(resource_name) = target.resource_name()
+        && let Some(profile) = gameplay.gather_action(&source.proto_object_name, resource_name)
+        && gameplay
+            .object(&source.proto_object_name)
+            .and_then(|object| {
+                object.tactics().actions.iter().find(|action| {
+                    action.name.eq_ignore_ascii_case(profile.action_name())
+                        && work_action_enabled(world, source, action)
+                })
+            })
+            .is_some()
+    {
+        return ContextualWorkOrder::Gather(target_id);
+    }
+    ContextualWorkOrder::Move(target_position)
+}
+
+fn contextual_action_order(
+    action: &pipeline::database::hw1::tactics::Action,
+    target_id: EntityId,
+    target_position: Vec3,
+    ability_id: Option<u8>,
+) -> ContextualWorkOrder {
     let range = action
         .work_range
         .filter(|range| range.is_finite() && *range >= 0.0)
@@ -374,6 +478,16 @@ fn resolve_contextual_work(
             target: target_id,
             ability_id,
         },
+        Some(kind) if kind.eq_ignore_ascii_case("Gather") => ContextualWorkOrder::Gather(target_id),
+        Some(kind) if kind.eq_ignore_ascii_case("Capture") => {
+            ContextualWorkOrder::Capture(target_id)
+        }
+        Some(kind) if kind.eq_ignore_ascii_case("RepairOther") => {
+            ContextualWorkOrder::RepairOther {
+                target: target_id,
+                ability_id,
+            }
+        }
         Some(kind)
             if kind.eq_ignore_ascii_case("Move") || kind.eq_ignore_ascii_case("GaggleMove") =>
         {
@@ -461,6 +575,7 @@ fn issue_contextual_work(
     order: ContextualWorkOrder,
     attack_move: bool,
     queue_order: bool,
+    assets: WorkAssets<'_>,
 ) -> bool {
     match order {
         ContextualWorkOrder::Move(target) => world.issue_squad_move_order_to_position(
@@ -478,6 +593,25 @@ fn issue_contextual_work(
         ContextualWorkOrder::Join { target, ability_id } => {
             world.issue_join_order(player_id, squad_id, target, ability_id)
         }
+        ContextualWorkOrder::Gather(target) => assets.gameplay.is_some_and(|gameplay| {
+            world.issue_gather_order(player_id, squad_id, target, gameplay)
+        }),
+        ContextualWorkOrder::Capture(target) => {
+            assets
+                .database
+                .zip(assets.gameplay)
+                .is_some_and(|(database, gameplay)| {
+                    world.issue_capture_order(player_id, squad_id, target, database, gameplay)
+                })
+        }
+        ContextualWorkOrder::RepairOther { target, ability_id } => assets
+            .database
+            .zip(assets.gameplay)
+            .is_some_and(|(database, gameplay)| {
+                world.issue_repair_other_order(
+                    player_id, squad_id, target, ability_id, database, gameplay,
+                )
+            }),
         ContextualWorkOrder::Hitch(target) => {
             world.issue_hitch_order(player_id, squad_id, target).is_ok()
         }
@@ -500,6 +634,25 @@ fn issue_contextual_work(
         }
         ContextualWorkOrder::Unsupported => false,
     }
+}
+
+fn work_action_enabled(
+    world: &World,
+    source: &crate::entities::Unit,
+    action: &pipeline::database::hw1::tactics::Action,
+) -> bool {
+    let authored_enabled = action.start_disabled != Some(true);
+    let player_enabled =
+        world
+            .get_player(source.base.player_id)
+            .map_or(authored_enabled, |player| {
+                player.technologies.action_enabled(
+                    &source.proto_object_name,
+                    &action.name,
+                    authored_enabled,
+                )
+            });
+    source.actions.is_enabled(&action.name, !player_enabled)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -757,65 +910,4 @@ fn list_at<'a>(
 }
 
 #[cfg(test)]
-mod mines_tests {
-    use super::*;
-    use crate::gameplay::GameplayCatalog;
-    use pipeline::database::hw1::tactics::{Action, TacticData, TacticRules, TargetRule};
-    use pipeline::database::hw1::{Ability, Database, ProtoObject};
-
-    #[test]
-    fn contextual_location_ability_issues_mines_instead_of_renderer_side_work() {
-        let mut database = Database::new();
-        database.abilities.extend([
-            Ability {
-                name: "Command".to_owned(),
-                ..Ability::default()
-            },
-            Ability {
-                name: "LayMines".to_owned(),
-                objects: vec!["mine".to_owned()],
-                ammo_cost: Some(1.0),
-                ..Ability::default()
-            },
-        ]);
-        database.objects.push(ProtoObject {
-            name: "minelayer".to_owned(),
-            tactics: Some("minelayer.tactics".to_owned()),
-            ability_command: Some("LayMines".to_owned()),
-            ..ProtoObject::default()
-        });
-        let tactics = TacticData {
-            actions: vec![Action {
-                name: "PlaceMine".to_owned(),
-                action_type: Some("Mines".to_owned()),
-                work_range: Some(4.0),
-                ..Action::default()
-            }],
-            tactic: Some(TacticRules {
-                target_rules: vec![TargetRule {
-                    relation: Some("Any".to_owned()),
-                    action: Some("PlaceMine".to_owned()),
-                    ability: Some("Command".to_owned()),
-                    ..TargetRule::default()
-                }],
-                ..TacticRules::default()
-            }),
-            ..TacticData::default()
-        };
-        let gameplay =
-            GameplayCatalog::from_tactics(&database, [("minelayer".to_owned(), tactics)]);
-        let mut world = World::new();
-        world.init_players(1);
-        let squad_id = world.create_squad_at(1, Vec3::ZERO);
-        let unit_id = world.create_unit_at(1, Vec3::ZERO);
-        world.get_unit_mut(unit_id).unwrap().proto_object_name = "minelayer".to_owned();
-        assert!(world.attach_unit_to_squad(unit_id, squad_id));
-
-        let order =
-            resolve_contextual_location_work(&world, squad_id, Vec3::ZERO, true, Some(&gameplay));
-        assert!(issue_contextual_work(
-            &mut world, 1, squad_id, order, false, false
-        ));
-        assert!(world.get_squad(squad_id).unwrap().is_placing_mines());
-    }
-}
+mod tests;

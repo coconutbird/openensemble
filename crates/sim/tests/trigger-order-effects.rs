@@ -2,7 +2,46 @@ use sim::trigger::{
     Condition, ConditionType, Effect, EffectType, Trigger, TriggerScript, TriggerValue, TriggerVar,
     VarType,
 };
-use sim::{EntityId, GameplayCatalog, SquadContainmentState, TriggerVec3, UnitGarrison, World};
+use sim::{
+    EntityId, GameplayCatalog, SquadCarpetBombPhase, SquadContainmentState, TriggerVec3,
+    UnitGarrison, World,
+};
+
+#[test]
+fn carpet_bomb_v3_dispatches_through_the_scenario_layered_database() {
+    use pipeline::database::hw1::{Database, ProtoObject};
+
+    let mut world = trigger_world(1);
+    let (squad_id, unit_id) = squad_with_unit(&mut world, 1, glam::Vec3::ZERO);
+    world.get_unit_mut(unit_id).unwrap().proto_object_name = "scenario_bomber".to_owned();
+    let mut database = Database::new();
+    database.objects.push(ProtoObject {
+        name: "scenario_bomber".to_owned(),
+        movement_type: Some("Air".to_owned()),
+        object_types: vec!["Flying".to_owned()],
+        ..ProtoObject::default()
+    });
+    let target = glam::Vec3::new(30.0, 4.0, 10.0);
+    let mut script = TriggerScript::default();
+    script.add_variable(location(0, target));
+    script.add_variable(unit(1, unit_id));
+    add_guard_variables(&mut script);
+    let mut effect = Effect::new(0, EffectType::CarpetBomb)
+        .with_input_at(2, 0)
+        .with_input_at(3, 1);
+    effect.version = 3;
+    script.add_trigger(Trigger::new(0).starts_active().with_effect_on_true(effect));
+    add_guard(&mut script);
+    install_script(&mut world, script);
+
+    let update = world.update_triggers_with_database(&database);
+
+    assert_eq!(update.effects_applied, 1);
+    assert!(update.unsupported_effect_types.is_empty());
+    let squad = world.get_squad(squad_id).unwrap();
+    assert_eq!(squad.carpet_bomb_phase(), SquadCarpetBombPhase::Preparing);
+    assert_eq!(squad.carpet_bomb_target(), Some(target));
+}
 
 #[test]
 fn move_and_work_location_paths_update_authoritative_squad_orders() {

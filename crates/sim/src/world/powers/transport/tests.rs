@@ -161,6 +161,53 @@ fn shutdown_rolls_back_pickup_before_destroying_the_targeting_session() {
 }
 
 #[test]
+fn commanding_a_reserved_squad_cancels_its_incoming_pickup() {
+    let database = database();
+    let mut world = test_world(&database);
+    let passenger = spawn(&mut world, &database, "infantry_squad", Vec3::ZERO);
+    let execution_id = world
+        .invoke_transport_power(&database, invocation(true, PowerUserId::INVALID))
+        .unwrap();
+    assert!(world.submit_transport_power_input(
+        &database,
+        execution_id,
+        NativePowerInput::Confirm(Vec3::ZERO),
+        false,
+    ));
+    assert!(world.submit_transport_power_input(
+        &database,
+        execution_id,
+        NativePowerInput::Confirm(Vec3::X * 60.0),
+        false,
+    ));
+    let carrier_id = power_carriers(&world)[0];
+    assert_eq!(
+        world
+            .get_squad(carrier_id)
+            .unwrap()
+            .power_transport()
+            .unwrap()
+            .passenger_squad_ids(),
+        &[passenger]
+    );
+
+    assert!(world.issue_squad_move_order_to_position(1, passenger, Vec3::Z * 10.0, false, false,));
+    assert!(
+        world
+            .get_squad(carrier_id)
+            .unwrap()
+            .power_transport()
+            .unwrap()
+            .passenger_squad_ids()
+            .is_empty()
+    );
+    advance_until(&mut world, &database, 360, |world| {
+        world.get_squad(carrier_id).is_none()
+    });
+    assert!(!world.get_squad(passenger).unwrap().garrison.is_garrisoned());
+}
+
+#[test]
 fn invoke_power_two_and_confirm_vectors_route_by_transport_user_id() {
     let database = database();
     let mut world = test_world(&database);
@@ -216,22 +263,82 @@ fn profile_and_packed_transport_type_stay_strict_even_without_costs() {
     let database = database();
     let mut world = test_world(&database);
     assert_eq!(
-        world.invoke_transport_power(
-            &database,
-            invocation(true, PowerUserId::new(1, 9, 3)),
-        ),
+        world.invoke_transport_power(&database, invocation(true, PowerUserId::new(1, 9, 3)),),
         Err(NativePowerError::InvalidData("PowerUserID"))
     );
 
     let mut malformed = database;
     malformed.civs[0].transport = None;
     assert_eq!(
-        world.invoke_transport_power(
-            &malformed,
-            invocation(true, PowerUserId::INVALID),
-        ),
+        world.invoke_transport_power(&malformed, invocation(true, PowerUserId::INVALID),),
         Err(NativePowerError::MissingData("TransportPrototype"))
     );
+}
+
+#[test]
+fn missing_game_data_transport_values_use_retail_constructor_defaults() {
+    let mut database = database();
+    let game_data = database.game_data.as_mut().unwrap();
+    game_data.transport_max = None;
+    game_data.transport_incoming_height = None;
+    game_data.transport_incoming_offset = None;
+    game_data.transport_outgoing_height = None;
+    game_data.transport_outgoing_offset = None;
+    game_data.transport_pickup_height = None;
+    game_data.transport_dropoff_height = None;
+    let mut world = test_world(&database);
+    world
+        .invoke_transport_power(&database, invocation(true, PowerUserId::INVALID))
+        .unwrap();
+    let execution = &world.active_transport_powers()[0];
+    assert_eq!(execution.maximum_transports, 3);
+    assert_close(execution.incoming_height, 60.0);
+    assert_close(execution.incoming_offset, 40.0);
+    assert_close(execution.outgoing_height, 60.0);
+    assert_close(execution.outgoing_offset, 40.0);
+    assert_close(execution.pickup_height, 12.0);
+    assert_close(execution.dropoff_height, 12.0);
+}
+
+#[test]
+fn carrier_count_rounds_population_but_assignment_uses_actual_capacity() {
+    let mut database = database();
+    database
+        .objects
+        .iter_mut()
+        .find(|prototype| prototype.name == "infantry")
+        .unwrap()
+        .population[0]
+        .amount = 1.4;
+    let mut world = test_world(&database);
+    let first = spawn(&mut world, &database, "infantry_squad", Vec3::ZERO);
+    let second = spawn(&mut world, &database, "infantry_squad", Vec3::X);
+    let execution_id = world
+        .invoke_transport_power(&database, invocation(true, PowerUserId::INVALID))
+        .unwrap();
+    assert!(world.submit_transport_power_input(
+        &database,
+        execution_id,
+        NativePowerInput::Confirm(Vec3::ZERO),
+        false,
+    ));
+    assert!(world.submit_transport_power_input(
+        &database,
+        execution_id,
+        NativePowerInput::Confirm(Vec3::X * 60.0),
+        false,
+    ));
+
+    let carriers = power_carriers(&world);
+    assert_eq!(carriers.len(), 1);
+    let passengers = world
+        .get_squad(carriers[0])
+        .unwrap()
+        .power_transport()
+        .unwrap()
+        .passenger_squad_ids();
+    assert_eq!(passengers.len(), 1);
+    assert!(passengers[0] == first || passengers[0] == second);
 }
 
 fn advance_until(
@@ -263,12 +370,11 @@ fn assert_passenger_garrisoned(world: &World, squad_id: EntityId) {
 fn assert_passenger_released_near(world: &World, squad_id: EntityId, expected: Vec3) {
     let squad = world.get_squad(squad_id).unwrap();
     assert!(!squad.garrison.is_garrisoned());
-    assert!(
-        squad
-            .unit_ids
-            .iter()
-            .all(|unit_id| world.get_unit(*unit_id).is_some_and(|unit| !unit.is_garrisoned()))
-    );
+    assert!(squad.unit_ids.iter().all(|unit_id| {
+        world
+            .get_unit(*unit_id)
+            .is_some_and(|unit| !unit.is_garrisoned())
+    }));
     let delta = squad.base.position - expected;
     assert!(delta.x.abs() < 0.001);
     assert!(delta.z.abs() <= 8.001);
@@ -338,6 +444,13 @@ fn assert_payment_state(world: &World, supplies: f32, uses: i32) {
             .unwrap()
             .finite_uses_remaining(),
         uses
+    );
+}
+
+fn assert_close(actual: f32, expected: f32) {
+    assert!(
+        (actual - expected).abs() < 0.000_1,
+        "expected {expected}, got {actual}"
     );
 }
 

@@ -128,6 +128,41 @@ fn join_waits_for_work_range_before_connecting() {
 }
 
 #[test]
+fn join_work_range_is_measured_between_obstruction_surfaces() {
+    let (database, gameplay) = bubble_gameplay();
+    let mut world = World::new();
+    world.init_players(1);
+    let target_id = create_squad_from_prototype(
+        &mut world,
+        1,
+        Vec3::new(10.0, 0.0, 0.0),
+        Vec3::Z,
+        "target_squad",
+        &database,
+    );
+    let source_id = create_squad_from_prototype(
+        &mut world,
+        1,
+        Vec3::ZERO,
+        Vec3::Z,
+        "monitor_squad",
+        &database,
+    );
+    for squad_id in [source_id, target_id] {
+        let unit_id = world.get_squad(squad_id).unwrap().unit_ids[0];
+        world
+            .get_unit_mut(unit_id)
+            .unwrap()
+            .obstruction_half_extents = Vec3::splat(3.0);
+    }
+
+    assert!(world.issue_join_order(1, source_id, target_id, None));
+    world.update_entities_with_gameplay(0.05, &gameplay);
+
+    assert!(world.get_squad(source_id).unwrap().join_is_connected());
+}
+
+#[test]
 fn initial_bubble_ignores_target_damage_that_predates_the_join() {
     let (database, gameplay) = bubble_gameplay();
     let mut world = World::new();

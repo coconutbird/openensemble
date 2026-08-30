@@ -1,8 +1,8 @@
 use glam::Vec3;
-use pipeline::database::hw1::gamedata::{PopsWrapper, ResourceDef, ResourcesWrapper};
+use pipeline::database::hw1::gamedata::{PopsWrapper, RatesWrapper, ResourceDef, ResourcesWrapper};
 use pipeline::database::hw1::objects::{
-    ChildObject, ChildObjectType, ChildObjects, ObjectCommand, PopulationAmount, ResourceCost,
-    Socket,
+    AddedResource, AutoParkingLot, ChildObject, ChildObjectType, ChildObjects, ObjectCommand,
+    ObjectRate, PopulationAmount, ResourceCost, Socket,
 };
 use pipeline::database::hw1::{Database, GameData, ProtoObject, Vector3};
 use sim::{
@@ -15,6 +15,7 @@ const DIRECT: &str = "test_direct_building";
 const SOCKET_BUILDING: &str = "test_socket_building";
 const MANUAL: &str = "test_manual_building";
 const SOCKET: &str = "test_hardpoint_socket";
+const PARKING: &str = "test_parking_lot";
 
 #[test]
 fn direct_build_command_pays_constructs_and_defers_cap_addition() {
@@ -39,6 +40,8 @@ fn direct_build_command_pays_constructs_and_defers_cap_addition() {
     let building_id = constructed_by(&world, builder_id, DIRECT);
     let building = world.get_building(building_id).unwrap();
     assert!(!building.built);
+    assert!(building.associated_sockets().is_empty());
+    assert_eq!(world.unit_rally_point(building_id, 1), None);
     assert_eq!(building.base.position, Vec3::new(12.0, 0.0, 8.0));
     assert_close(world.get_player(1).unwrap().resources.get(0), 900.0);
     assert_close(world.get_player(1).unwrap().population[0].count, 1.0);
@@ -53,7 +56,16 @@ fn direct_build_command_pays_constructs_and_defers_cap_addition() {
     );
 
     clock.tick_with_world_and_database(&mut world, &database);
-    assert!(world.get_building(building_id).unwrap().built);
+    let building = world.get_building(building_id).unwrap();
+    assert!(building.built);
+    assert_eq!(building.associated_sockets().len(), 1);
+    assert!(
+        world
+            .get_building(building.associated_sockets()[0])
+            .unwrap()
+            .built
+    );
+    assert!(world.unit_rally_point(building_id, 1).is_some());
     assert_close(world.get_player(1).unwrap().population[0].cap, 12.0);
     assert_eq!(
         clock
@@ -61,6 +73,52 @@ fn direct_build_command_pays_constructs_and_defers_cap_addition() {
             .len(),
         0
     );
+}
+
+#[test]
+fn built_resource_and_rate_contributions_start_at_completion_and_end_on_removal() {
+    let mut database = construction_database();
+    let direct = database
+        .objects
+        .iter_mut()
+        .find(|object| object.name == DIRECT)
+        .unwrap();
+    direct.add_resource = Some(AddedResource {
+        resource_type: "Supplies".to_owned(),
+        amount: Some(40.0),
+    });
+    direct.rate = Some(ObjectRate {
+        rate_type: Some("Supplies".to_owned()),
+        value: 5.0,
+    });
+    let (mut world, builder_id) = construction_world(&database);
+    let target_id = object_runtime_id(&database, DIRECT).unwrap();
+    let building_id = world
+        .start_build(
+            1,
+            builder_id,
+            &database,
+            target_id,
+            Vec3::new(12.0, 0.0, 8.0),
+            EntityId::INVALID,
+        )
+        .unwrap();
+
+    assert_close(world.get_player(1).unwrap().resources.get(0), 900.0);
+    assert_close(world.get_player(1).unwrap().get_rate(0), 0.0);
+    let first = world.update_production(0.05, &database);
+    assert_eq!(first.completed_construction, 0);
+    assert_close(world.get_player(1).unwrap().resources.get(0), 900.0);
+    assert_close(world.get_player(1).unwrap().get_rate(0), 0.0);
+
+    let completed = world.update_production(0.05, &database);
+    assert_eq!(completed.completed_construction, 1);
+    assert_close(world.get_player(1).unwrap().resources.get(0), 940.0);
+    assert_close(world.get_player(1).unwrap().get_rate(0), 5.0);
+
+    world.remove_unit(building_id).unwrap();
+    assert_close(world.get_player(1).unwrap().resources.get(0), 900.0);
+    assert_close(world.get_player(1).unwrap().get_rate(0), 0.0);
 }
 
 #[test]
@@ -85,6 +143,88 @@ fn direct_build_cancel_refunds_and_removes_the_unfinished_target() {
     assert_close(world.get_player(1).unwrap().resources.get(0), 1_000.0);
     assert_close(world.get_player(1).unwrap().population[0].count, 0.0);
     assert_close(world.get_player(1).unwrap().population[0].cap, 10.0);
+}
+
+#[test]
+fn direct_build_uses_live_escalation_and_refunds_the_paid_quote() {
+    let mut database = construction_database();
+    let direct = database
+        .objects
+        .iter_mut()
+        .find(|object| object.name == DIRECT)
+        .unwrap();
+    direct.cost_escalation = Some(50.0);
+    direct.cost_escalation_object = vec![DIRECT.to_owned()];
+    direct.flags.push("LinearCostEscalation".to_owned());
+    let (mut world, builder_id) = construction_world(&database);
+    let target_id = object_runtime_id(&database, DIRECT).unwrap();
+
+    let first = world
+        .start_build(
+            1,
+            builder_id,
+            &database,
+            target_id,
+            Vec3::new(20.0, 0.0, 0.0),
+            EntityId::INVALID,
+        )
+        .unwrap();
+    assert_close(world.get_player(1).unwrap().resources.get(0), 900.0);
+    assert_close(
+        world.object_cost(&database, 1, target_id).unwrap().get(0),
+        150.0,
+    );
+
+    let second = world
+        .start_build(
+            1,
+            builder_id,
+            &database,
+            target_id,
+            Vec3::new(-20.0, 0.0, 0.0),
+            EntityId::INVALID,
+        )
+        .unwrap();
+    assert_close(world.get_player(1).unwrap().resources.get(0), 750.0);
+
+    assert!(world.cancel_build(1, second, target_id).unwrap());
+    assert_close(world.get_player(1).unwrap().resources.get(0), 900.0);
+    assert!(world.cancel_build(1, first, target_id).unwrap());
+    assert_close(world.get_player(1).unwrap().resources.get(0), 1_000.0);
+}
+
+#[test]
+fn coop_building_quote_includes_the_configured_partners_live_group() {
+    let mut database = construction_database();
+    let direct = database
+        .objects
+        .iter_mut()
+        .find(|object| object.name == DIRECT)
+        .unwrap();
+    direct.cost_escalation = Some(50.0);
+    direct.cost_escalation_object = vec![DIRECT.to_owned()];
+    direct.flags.push("LinearCostEscalation".to_owned());
+    let runtime_id = object_runtime_id(&database, DIRECT).unwrap();
+    let prototype_id = object_prototype_id(&database, DIRECT).unwrap();
+    let mut world = World::new();
+    world.init_players(2);
+    for player_id in [1, 2] {
+        let player = world.get_player_mut(player_id).unwrap();
+        player.configure_population_slots(1);
+        assert!(player.set_population_limits(0, 10.0, 20.0));
+    }
+    spawn_object_at(&mut world, &database, 2, prototype_id, Vec3::ZERO, Vec3::Z).unwrap();
+
+    assert_close(
+        world.object_cost(&database, 1, runtime_id).unwrap().get(0),
+        100.0,
+    );
+    world.set_coop(true);
+    world.get_player_mut(1).unwrap().set_coop_player_id(Some(2));
+    assert_close(
+        world.object_cost(&database, 1, runtime_id).unwrap().get(0),
+        150.0,
+    );
 }
 
 #[test]
@@ -127,6 +267,61 @@ fn build_other_uses_socket_transform_and_releases_future_pop_on_completion() {
         world.queue_build_other(1, builder_id, &database, target_id),
         Err(ConstructionError::SocketUnavailable { .. })
     ));
+}
+
+#[test]
+fn only_promoted_build_other_materializes_its_auto_parking_lot() {
+    let database = auto_parking_database();
+    let target_id = object_runtime_id(&database, SOCKET_BUILDING).unwrap();
+    let (mut world, builder_id) = construction_world(&database);
+
+    world
+        .queue_build_other(1, builder_id, &database, target_id)
+        .unwrap();
+    let update = world.update_production(0.05, &database);
+    assert_eq!(update.completed_construction, 0);
+
+    let building_id = constructed_by(&world, builder_id, SOCKET_BUILDING);
+    let parking_id = world
+        .get_building(building_id)
+        .unwrap()
+        .associated_parking_lot()
+        .expect("promoted BuildOther should create its auto parking lot");
+    let parking = world.get_building(parking_id).unwrap();
+    assert_eq!(parking.proto_object_name, PARKING);
+    assert!(
+        parking
+            .base
+            .position
+            .abs_diff_eq(Vec3::new(7.0, 0.0, 4.0), 1.0e-6)
+    );
+    assert!(parking.base.forward.abs_diff_eq(-Vec3::Z, 1.0e-6));
+
+    let (mut direct_world, direct_builder_id) = construction_world(&database);
+    let direct_id = object_runtime_id(&database, DIRECT).unwrap();
+    let direct_building_id = direct_world
+        .start_build(
+            1,
+            direct_builder_id,
+            &database,
+            direct_id,
+            Vec3::new(20.0, 0.0, 20.0),
+            EntityId::INVALID,
+        )
+        .unwrap();
+    assert_eq!(
+        direct_world
+            .get_building(direct_building_id)
+            .unwrap()
+            .associated_parking_lot(),
+        None
+    );
+    assert!(
+        direct_world
+            .units
+            .iter()
+            .all(|(_, unit)| unit.proto_object_name != PARKING)
+    );
 }
 
 #[test]
@@ -302,6 +497,7 @@ fn construction_world(database: &Database) -> (World, EntityId) {
     world.init_players(1);
     let player = world.get_player_mut(1).unwrap();
     player.configure_population_slots(1);
+    player.configure_rate_slots(1);
     assert!(player.set_population_limits(0, 10.0, 20.0));
     player.resources.set(0, 1_000.0);
     let builder_id = spawn_object_at(
@@ -342,7 +538,33 @@ fn construction_database() -> Database {
                 }),
                 ..ProtoObject::default()
             },
-            building(DIRECT, 101, 100.0, 0.1, 1.0, 2.0),
+            ProtoObject {
+                child_objects: Some(ChildObjects {
+                    objects: vec![
+                        ChildObject {
+                            proto_object: SOCKET.to_owned(),
+                            child_type: Some(ChildObjectType::Socket),
+                            offset: Some(Vector3 {
+                                x: 1.0,
+                                y: 0.0,
+                                z: 0.0,
+                            }),
+                            ..ChildObject::default()
+                        },
+                        ChildObject {
+                            proto_object: "test_rally_marker".to_owned(),
+                            child_type: Some(ChildObjectType::Rally),
+                            offset: Some(Vector3 {
+                                x: 0.0,
+                                y: 0.0,
+                                z: 5.0,
+                            }),
+                            ..ChildObject::default()
+                        },
+                    ],
+                }),
+                ..building(DIRECT, 101, 100.0, 0.1, 1.0, 2.0)
+            },
             ProtoObject {
                 socket: Some(Socket {
                     object_type: "Hardpoint".to_owned(),
@@ -379,10 +601,47 @@ fn construction_database() -> Database {
             pops: Some(PopsWrapper {
                 entries: vec!["Unit".to_owned()],
             }),
+            rates: Some(RatesWrapper {
+                entries: vec!["Supplies".to_owned()],
+            }),
             ..GameData::default()
         }),
         ..Database::default()
     }
+}
+
+fn auto_parking_database() -> Database {
+    let mut database = construction_database();
+    database
+        .objects
+        .iter_mut()
+        .find(|object| object.name == BUILDER)
+        .unwrap()
+        .flags
+        .push("UseAutoParkingLot".to_owned());
+    for name in [DIRECT, SOCKET_BUILDING] {
+        database
+            .objects
+            .iter_mut()
+            .find(|object| object.name == name)
+            .unwrap()
+            .auto_parking_lot = Some(AutoParkingLot {
+            proto_object: PARKING.to_owned(),
+            offset: Some(Vector3 {
+                x: 2.0,
+                y: 0.0,
+                z: 3.0,
+            }),
+            rotation: Some(90.0),
+        });
+    }
+    database.objects.push(ProtoObject {
+        name: PARKING.to_owned(),
+        dbid: Some(105),
+        object_class: Some("Building".to_owned()),
+        ..ProtoObject::default()
+    });
+    database
 }
 
 fn building(

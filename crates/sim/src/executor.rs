@@ -9,7 +9,7 @@ use crate::commands::{
     power_command_flags, power_input_command_flags, work_command_flags,
 };
 use crate::entities::{RecoveryType, SquadMode, TrainingKind};
-use crate::gameplay::resolve_database_ability;
+use crate::gameplay::{GameplayCatalog, resolve_database_ability};
 use crate::order::OrderType;
 use crate::player::PowerGrant;
 use crate::spawn::{MAX_SPAWN_BATCH, spawn_object_at, spawn_squads_at};
@@ -17,6 +17,7 @@ use crate::world::{NativePowerInvocation, World};
 use pipeline::database::hw1::Database;
 
 mod detonate;
+mod jump;
 mod mines;
 
 #[cfg(test)]
@@ -26,7 +27,11 @@ use glam::Vec3;
 #[derive(Debug, Default)]
 pub struct CommandExecutor<'database> {
     database: Option<&'database Database>,
+    gameplay: Option<&'database GameplayCatalog>,
 }
+
+#[derive(Debug, Clone, Copy)]
+struct InvalidWorkAbility;
 
 impl<'database> CommandExecutor<'database> {
     /// Create a new command executor.
@@ -40,6 +45,19 @@ impl<'database> CommandExecutor<'database> {
     pub const fn with_database(database: &'database Database) -> Self {
         Self {
             database: Some(database),
+            gameplay: None,
+        }
+    }
+
+    /// Create an executor with the active scenario database and tactic catalog.
+    #[must_use]
+    pub const fn with_database_and_gameplay(
+        database: &'database Database,
+        gameplay: &'database GameplayCatalog,
+    ) -> Self {
+        Self {
+            database: Some(database),
+            gameplay: Some(gameplay),
         }
     }
 
@@ -68,6 +86,10 @@ impl<'database> CommandExecutor<'database> {
         match order_type {
             Some(OrderType::Move) => Self::execute_move(world, cmd),
             Some(OrderType::Attack) => self.execute_attack(world, cmd),
+            Some(OrderType::Gather) => self.execute_gather(world, cmd),
+            Some(OrderType::Capture) => self.execute_capture(world, cmd),
+            Some(OrderType::RepairOther) => self.execute_repair_other(world, cmd),
+            Some(OrderType::Cloak) => self.execute_cloak(world, cmd),
             Some(OrderType::Detonate) => self.execute_detonate(world, cmd),
             Some(OrderType::Join) => self.execute_join(world, cmd),
             Some(OrderType::Garrison) => Self::execute_garrison(world, cmd),
@@ -75,7 +97,72 @@ impl<'database> CommandExecutor<'database> {
             Some(OrderType::Hitch) => Self::execute_hitch(world, cmd),
             Some(OrderType::Unhitch) => Self::execute_unhitch(world, cmd),
             Some(OrderType::Mines) => self.execute_mines(world, cmd),
+            Some(OrderType::Jump) => self.execute_jump(world, cmd, crate::JumpOrderType::Jump),
+            Some(OrderType::JumpGather) => {
+                self.execute_jump(world, cmd, crate::JumpOrderType::Gather);
+            }
+            Some(OrderType::JumpGarrison) => {
+                self.execute_jump(world, cmd, crate::JumpOrderType::Garrison);
+            }
+            Some(OrderType::JumpAttack) => {
+                self.execute_jump(world, cmd, crate::JumpOrderType::Attack);
+            }
             _ => {}
+        }
+    }
+
+    fn execute_gather(&self, world: &mut World, cmd: &WorkCommand) {
+        let (Some(gameplay), Ok(player_id)) = (self.gameplay, u8::try_from(cmd.base.player_id))
+        else {
+            return;
+        };
+        if cmd.unit_id.is_invalid() {
+            return;
+        }
+        for &recipient_id in &cmd.base.recipients {
+            let _accepted =
+                world.issue_gather_order(player_id, recipient_id, cmd.unit_id, gameplay);
+        }
+    }
+
+    fn execute_capture(&self, world: &mut World, cmd: &WorkCommand) {
+        let (Some(database), Some(gameplay), Ok(player_id)) = (
+            self.database,
+            self.gameplay,
+            u8::try_from(cmd.base.player_id),
+        ) else {
+            return;
+        };
+        if cmd.unit_id.is_invalid() {
+            return;
+        }
+        for &recipient_id in &cmd.base.recipients {
+            let _accepted =
+                world.issue_capture_order(player_id, recipient_id, cmd.unit_id, database, gameplay);
+        }
+    }
+
+    fn execute_repair_other(&self, world: &mut World, cmd: &WorkCommand) {
+        let (Some(database), Some(gameplay), Ok(player_id), Ok(ability_id)) = (
+            self.database,
+            self.gameplay,
+            u8::try_from(cmd.base.player_id),
+            self.work_ability_id(cmd.ability_id),
+        ) else {
+            return;
+        };
+        if cmd.unit_id.is_invalid() {
+            return;
+        }
+        for &recipient_id in &cmd.base.recipients {
+            let _accepted = world.issue_repair_other_order(
+                player_id,
+                recipient_id,
+                cmd.unit_id,
+                ability_id,
+                database,
+                gameplay,
+            );
         }
     }
 
@@ -106,19 +193,8 @@ impl<'database> CommandExecutor<'database> {
             };
             Some(mode)
         };
-        let ability_id = if cmd.ability_id == -1 {
-            None
-        } else {
-            let Ok(id) = u8::try_from(cmd.ability_id) else {
-                return;
-            };
-            if self
-                .database
-                .is_some_and(|database| usize::from(id) >= database.abilities.len())
-            {
-                return;
-            }
-            Some(id)
+        let Ok(ability_id) = self.work_ability_id(cmd.ability_id) else {
+            return;
         };
         for &recipient_id in &cmd.base.recipients {
             if ability_id.is_some_and(|ability_id| {
@@ -159,23 +235,24 @@ impl<'database> CommandExecutor<'database> {
         if cmd.unit_id.is_invalid() {
             return;
         }
-        let ability_id = if cmd.ability_id == -1 {
-            None
-        } else {
-            let Ok(id) = u8::try_from(cmd.ability_id) else {
-                return;
-            };
-            if self
-                .database
-                .is_some_and(|database| usize::from(id) >= database.abilities.len())
-            {
-                return;
-            }
-            Some(id)
+        let Ok(ability_id) = self.work_ability_id(cmd.ability_id) else {
+            return;
         };
         for &recipient_id in &cmd.base.recipients {
             let _accepted =
                 world.issue_join_order(player_id, recipient_id, cmd.unit_id, ability_id);
+        }
+    }
+
+    fn execute_cloak(&self, world: &mut World, cmd: &WorkCommand) {
+        let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
+            return;
+        };
+        let Ok(ability_id) = self.work_ability_id(cmd.ability_id) else {
+            return;
+        };
+        for &recipient_id in &cmd.base.recipients {
+            let _accepted = world.issue_cloak_order(player_id, recipient_id, ability_id);
         }
     }
 
@@ -207,6 +284,20 @@ impl<'database> CommandExecutor<'database> {
         for &recipient_id in &cmd.base.recipients {
             let _result = world.issue_unhitch_order(player_id, recipient_id, cmd.unit_id);
         }
+    }
+
+    fn work_ability_id(&self, raw: i32) -> Result<Option<u8>, InvalidWorkAbility> {
+        if raw == -1 {
+            return Ok(None);
+        }
+        let id = u8::try_from(raw).map_err(|_| InvalidWorkAbility)?;
+        if self
+            .database
+            .is_some_and(|database| usize::from(id) >= database.abilities.len())
+        {
+            return Err(InvalidWorkAbility);
+        }
+        Ok(Some(id))
     }
 
     fn ability_order_is_recovering(
@@ -642,6 +733,25 @@ mod tests {
             world.get_squad(source_id).unwrap().join_target(),
             Some(target_id)
         );
+    }
+
+    #[test]
+    fn cloak_command_reaches_authoritative_squad_state() {
+        let mut world = World::new();
+        world.init_players(1);
+        let squad_id = world.create_squad(1);
+        let unit_id = world.create_unit(1);
+        assert!(world.attach_unit_to_squad(unit_id, squad_id));
+        let entry = CommandEntry {
+            command: QueuedCommand::Work(WorkCommand::cloak_squads(1, vec![squad_id], None)),
+            exec_time: 0,
+            sequence: 0,
+            source_client: 1,
+        };
+
+        CommandExecutor::new().execute(&mut world, &entry);
+
+        assert!(world.get_squad(squad_id).unwrap().wants_to_cloak());
     }
 
     #[test]

@@ -5,9 +5,10 @@ use pipeline::database::hw1::visual::{
 };
 use pipeline::source::{AssetSource, StdFileProvider};
 
+use super::instance_attachment::attachment_transform;
+use super::paths::{canonical_model_path, model_asset_path};
 use super::{
-    Unit, UnitAttachmentKind, UnitAttachmentTrigger, UnitLoadError, attachment_transform,
-    canonical_animation_path, canonical_model_path, model_asset_path,
+    Unit, UnitAttachmentKind, UnitAttachmentTrigger, UnitLoadError, canonical_animation_path,
 };
 
 #[test]
@@ -40,6 +41,13 @@ fn animation_attachments_preserve_authored_trigger_lifetime() {
     assert!(trigger.matches_animation(Some("death")));
     assert!(!trigger.matches_animation(Some("Idle")));
     assert!(!trigger.matches_animation(None));
+
+    let idle = UnitAttachmentTrigger::Animation("Idle".to_owned());
+    assert!(idle.matches_animation(None));
+
+    let walk = UnitAttachmentTrigger::Animation("Walk".to_owned());
+    assert!(walk.matches_animations(Some("Attack"), Some("Walk")));
+    assert!(!walk.matches_animations(Some("Attack"), Some("Run")));
 }
 
 #[test]
@@ -62,7 +70,7 @@ fn model_paths_are_resolved_from_art() {
 fn attachment_aligns_child_from_bone_to_parent_to_bone() {
     let to_bone = Mat4::from_translation(Vec3::new(10.0, 2.0, -3.0));
     let from_bone = Mat4::from_translation(Vec3::new(4.0, 1.0, -1.0));
-    let transform = attachment_transform(Some(to_bone), Some(from_bone));
+    let transform = attachment_transform(Some(to_bone), Some(from_bone), false);
     let aligned = transform.transform_point3(from_bone.transform_point3(Vec3::ZERO));
     let expected = to_bone.transform_point3(Vec3::ZERO);
     assert!(aligned.abs_diff_eq(expected, 1.0e-5));

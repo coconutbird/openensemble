@@ -8,12 +8,14 @@ workspace = true
 
 [dependencies]
 pipeline = { workspace = true }
+motion = { workspace = true }
 sim = { workspace = true }
 xcore = { workspace = true }
 winit = { workspace = true }
 wgpu = { workspace = true }
 pollster = { workspace = true }
 glam.workspace = true
+half.workspace = true
 num-traits = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }

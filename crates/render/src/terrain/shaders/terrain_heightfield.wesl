@@ -73,7 +73,7 @@ var t_heightfield: texture_2d<f32>;
 @group(0) @binding(4)
 var s_heightfield: sampler;
 @group(0) @binding(5)
-var t_terrain_alpha: texture_2d<f32>;
+var t_terrain_alpha: texture_2d<u32>;
 @group(0) @binding(6)
 var t_shadow_map: texture_2d_array<f32>;
 @group(0) @binding(7)
@@ -85,7 +85,7 @@ var<storage, read> local_lights: array<vec4<f32>>;
 @group(0) @binding(10)
 var s_lighting: sampler;
 @group(0) @binding(11)
-var t_local_shadow_map: texture_2d_array<f32>;
+var t_local_shadow_map: texture_depth_2d_array;
 @group(0) @binding(12)
 var t_light_volume_color: texture_3d<f32>;
 @group(0) @binding(13)
@@ -131,6 +131,26 @@ fn heightfield_uv(world_pos: vec3<f32>) -> vec2<f32> {
     return grid / patch_params.terrain_info.x;
 }
 
+fn dynamic_alpha_uv(world_pos: vec3<f32>) -> vec2<f32> {
+    let grid = vec2<f32>(
+        (world_pos.x - patch_params.terrain_origin.y) * patch_params.terrain_info.y,
+        (world_pos.z - patch_params.terrain_origin.z) * patch_params.terrain_info.y,
+    );
+    return grid / patch_params.terrain_info.x;
+}
+
+fn dynamic_alpha_enabled(uv: vec2<f32>) -> bool {
+    let dimensions = textureDimensions(t_terrain_alpha);
+    let maximum_pixel = dimensions.y - 1u;
+    let pixel = vec2<u32>(
+        min(u32(clamp(uv.x, 0.0, 1.0) * f32(maximum_pixel)), maximum_pixel),
+        min(u32(clamp(uv.y, 0.0, 1.0) * f32(maximum_pixel)), maximum_pixel),
+    );
+    let word_x = min(pixel.x >> 5u, dimensions.x - 1u);
+    let word = textureLoad(t_terrain_alpha, vec2<u32>(word_x, pixel.y), 0).r;
+    return (word & (1u << (pixel.x & 31u))) != 0u;
+}
+
 fn terrain_height(world_pos: vec3<f32>) -> f32 {
     let normalized_y = textureSampleLevel(
         t_heightfield,
@@ -165,12 +185,11 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     if patch_params.terrain_origin.w > 0.5 {
         world_pos.y = terrain_height(world_pos);
         if patch_params.material_params.y > 0.5 {
-            terrain_alpha = textureSampleLevel(
-                t_terrain_alpha,
-                s_heightfield,
-                heightfield_uv(world_pos),
+            terrain_alpha = select(
                 0.0,
-            ).r;
+                1.0,
+                dynamic_alpha_enabled(dynamic_alpha_uv(world_pos)),
+            );
         }
     }
     world_pos.y += in.axis_u_yz_offset_intensity.z;

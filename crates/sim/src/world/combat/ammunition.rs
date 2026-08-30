@@ -34,7 +34,7 @@ pub(super) fn effective_damage(
 ) -> f32 {
     technologies.map_or(profile.damage_per_attack, |state| {
         state.weapon_damage(
-            &unit.proto_object_name,
+            unit.logical_proto_object_name(),
             &profile.weapon_name,
             profile.damage_per_attack,
         )

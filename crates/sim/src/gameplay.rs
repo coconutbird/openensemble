@@ -14,28 +14,63 @@ use pipeline::source::{AssetSource, StdFileProvider};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod abilities;
+mod air_avoidance;
+mod air_traffic_control;
+mod ambient_life;
 mod analysis;
+mod avoidance;
+mod bomb;
+mod capture;
+mod charge;
+mod cloak;
 mod collision_attacks;
+mod damage_parts;
 mod damage_types;
 mod detonate;
+mod energy_shields;
+mod gather;
+mod heal;
+mod impact_effects;
+mod infect;
 mod join;
+mod jump;
 mod mines;
 pub(crate) mod projectiles;
 mod protection;
+mod reflect_damage;
+mod repair_other;
 mod revival;
 mod scripted_animations;
 mod selection;
+mod spawn_squads;
+mod spirit_bond;
 mod tactic_states;
 mod timing;
 mod unit_attacks;
 mod vehicle_physics;
 mod veterancy;
+mod wander;
 
 pub(crate) use abilities::resolve_database_ability;
 pub use abilities::{AbilityGameplay, AbilityRecoveryStart};
+pub use air_avoidance::{AirAvoidanceActionProfile, KamikazeWeaponProfile};
+pub use air_traffic_control::AirTrafficControlActionProfile;
+pub use ambient_life::{AmbientLifeProfile, AmbientLifeSpawnerProfile};
+pub use avoidance::{DeflectActionProfile, DodgeActionProfile, ProjectileDefenseProfile};
+pub use bomb::BombActionProfile;
+pub use capture::CaptureActionProfile;
+pub use charge::{ChargeActionProfile, ChargeEffectProfile};
+pub use cloak::CloakProfile;
 pub use collision_attacks::CollisionAttackProfile;
+pub use damage_parts::{DamagePartProfile, ThrownDamagePart};
 pub use detonate::{DetonateActionProfile, DetonateDurationProfile, DetonateThrowProfile};
+pub use energy_shields::{EnergyShieldActionProfile, EnergyShieldVisualProfile};
+pub use gather::GatherActionProfile;
+pub use heal::HealActionProfile;
+pub use impact_effects::{ImpactEffectProfile, ImpactEffectSize};
+pub use infect::InfectActionProfile;
 pub use join::{JoinActionProfile, JoinKind, JoinMergeType, MergedSquadProfile};
+pub use jump::JumpActionProfile;
 pub use mines::MineActionProfile;
 pub use projectiles::{
     ProjectileInitialPerturbance, ProjectilePerturbanceProfile, ProjectileProfile,
@@ -44,17 +79,26 @@ pub(crate) use protection::PlasmaSubshieldProfile;
 pub use protection::{
     BubbleShieldActionProfile, BubbleShieldSquadProfile, PlasmaShieldGeneratorProfile,
 };
+pub use reflect_damage::ReflectDamageProfile;
+pub use repair_other::{AutoRepairProfile, RepairOtherActionProfile};
 pub use revival::{HeroRevivalProfile, ReviveActionProfile, UnitRevivalProfile};
 pub(crate) use selection::ProjectileCollisionTraits;
 pub use selection::{AttackQuery, AttackQueryFlags, TacticRelation};
+pub use spawn_squads::PersistentSpawnSquadProfile;
+pub use spirit_bond::SpiritBondProfile;
 pub use tactic_states::{TacticStateId, TacticStateProfile};
 pub use timing::{
-    AreaDamageProfile, AttackAccuracyProfile, AttackAmmunition, AttackAnimation, AttackProfile,
+    AreaDamageProfile, AttackAccuracyProfile, AttackAmmunition, AttackAnimation,
+    AttackAnimationAnchor, AttackAnimationEvent, AttackAnimationEventKind, AttackAttachmentPose,
+    AttackHardpointProfile, AttackOrientationProfile, AttackProfile, AttackSingleBonePose,
+    ChargedAttackAnimation, PhysicsImpulseEvent, ProjectileReactionFlags, PullAttackProfile,
 };
+pub(crate) use vehicle_physics::FlightControllerProfile;
 pub use vehicle_physics::{
     GroundVehicleKind, GroundVehiclePhysicsProfile, PhysicsReplacementLoadIssue,
     PhysicsReplacementProfile, VehiclePhysicsLoadIssue,
 };
+pub use wander::WanderProfile;
 
 /// Gameplay definitions for every proto object with a resolvable tactic file.
 #[derive(Debug, Clone, Default)]
@@ -74,11 +118,32 @@ pub struct GameplayCatalog {
     neutral_objects: BTreeSet<String>,
     vehicle_physics: vehicle_physics::GroundVehiclePhysicsCatalog,
     physics_replacements: vehicle_physics::PhysicsReplacementCatalog,
+    damage_parts: damage_parts::DamagePartCatalog,
     projectile_profiles: BTreeMap<String, ProjectileProfile>,
+    projectile_defenses: BTreeMap<String, ProjectileDefenseProfile>,
+    air_avoidance_actions: BTreeMap<String, Vec<AirAvoidanceActionProfile>>,
+    cloak_actions: BTreeMap<String, CloakProfile>,
+    reflect_damage_actions: BTreeMap<String, ReflectDamageProfile>,
+    repair_other_actions: BTreeMap<String, Vec<RepairOtherActionProfile>>,
+    capture_actions: BTreeMap<String, Vec<CaptureActionProfile>>,
+    charge_actions: BTreeMap<String, Vec<ChargeActionProfile>>,
+    gather_actions: BTreeMap<String, Vec<GatherActionProfile>>,
+    jump_actions: BTreeMap<String, Vec<JumpActionProfile>>,
+    heal_actions: BTreeMap<String, Vec<HealActionProfile>>,
+    infect_actions: BTreeMap<String, Vec<InfectActionProfile>>,
+    energy_shield_actions: BTreeMap<String, Vec<EnergyShieldActionProfile>>,
+    air_traffic_control_actions: BTreeMap<String, Vec<AirTrafficControlActionProfile>>,
+    bomb_actions: BTreeMap<String, Vec<BombActionProfile>>,
+    persistent_squad_spawns: BTreeMap<String, Vec<PersistentSpawnSquadProfile>>,
+    spirit_bonds: BTreeMap<String, SpiritBondProfile>,
+    wander_actions: BTreeMap<String, WanderProfile>,
+    ambient_life_actions: BTreeMap<String, AmbientLifeProfile>,
+    ambient_life_spawners: BTreeMap<String, AmbientLifeSpawnerProfile>,
     scripted_animation_clips:
         BTreeMap<(String, String), scripted_animations::ScriptedAnimationClip>,
     projectile_gravity: f32,
     track_intercept_distance: f32,
+    attack_orientation_tolerances: timing::AttackOrientationTolerances,
     height_bonus_damage: f32,
     shield_regen_delay: f32,
     shield_regen_time: f32,
@@ -175,6 +240,7 @@ impl GameplayCatalog {
             physics_replacements: vehicle_physics::PhysicsReplacementCatalog::load(
                 database, source,
             ),
+            damage_parts: damage_parts::DamagePartCatalog::load(database, source),
             projectile_profiles: projectiles::collect_projectile_profiles(database),
             projectile_gravity: database
                 .game_data
@@ -185,6 +251,9 @@ impl GameplayCatalog {
             track_intercept_distance: game_data_nonnegative(database, |data| {
                 data.track_intercept_distance
             }),
+            attack_orientation_tolerances: timing::AttackOrientationTolerances::from_database(
+                database,
+            ),
             height_bonus_damage: database
                 .game_data
                 .as_ref()
@@ -241,9 +310,8 @@ impl GameplayCatalog {
                 }),
             }
         }
-        catalog.plasma_shield_generators =
-            protection::collect_plasma_shield_generators(database, &catalog.objects);
-        catalog.bubble_shield_actions = protection::collect_bubble_shield_actions(&catalog.objects);
+        collect_tactic_action_profiles(&mut catalog, database);
+        bomb::load_bomb_physics(&mut catalog.bomb_actions, source);
 
         catalog
     }
@@ -293,6 +361,9 @@ impl GameplayCatalog {
             track_intercept_distance: game_data_nonnegative(database, |data| {
                 data.track_intercept_distance
             }),
+            attack_orientation_tolerances: timing::AttackOrientationTolerances::from_database(
+                database,
+            ),
             height_bonus_damage: database
                 .game_data
                 .as_ref()
@@ -323,9 +394,7 @@ impl GameplayCatalog {
                 revival::is_hero_death_object(database, object),
             );
         }
-        catalog.plasma_shield_generators =
-            protection::collect_plasma_shield_generators(database, &catalog.objects);
-        catalog.bubble_shield_actions = protection::collect_bubble_shield_actions(&catalog.objects);
+        collect_tactic_action_profiles(&mut catalog, database);
         catalog
     }
 
@@ -587,6 +656,12 @@ impl GameplayCatalog {
         self.abilities.get(usize::from(actual_id))
     }
 
+    /// Return one concrete ability by its wire/database index.
+    #[must_use]
+    pub fn ability(&self, database_id: u8) -> Option<&AbilityGameplay> {
+        self.abilities.get(usize::from(database_id))
+    }
+
     /// Database index of the generic retail `Command` ability.
     ///
     /// Trigger Work V4 writes this ID when `DoAbility` is enabled so tactic
@@ -606,6 +681,16 @@ impl GameplayCatalog {
     #[must_use]
     pub const fn track_intercept_distance(&self) -> f32 {
         self.track_intercept_distance
+    }
+
+    pub(crate) fn attack_orientation_tolerance(
+        &self,
+        profile: &AttackProfile,
+        target_is_moving: bool,
+        ability_target: bool,
+    ) -> f32 {
+        self.attack_orientation_tolerances
+            .dot_tolerance(profile, target_is_moving, ability_target)
     }
 
     /// Return the global height-bonus damage factor from layered game data.
@@ -645,6 +730,34 @@ impl GameplayCatalog {
         }
         revival::revive_action_profile(&object.tactics.actions).map(UnitRevivalProfile::Revive)
     }
+}
+
+fn collect_tactic_action_profiles(catalog: &mut GameplayCatalog, database: &Database) {
+    catalog.plasma_shield_generators =
+        protection::collect_plasma_shield_generators(database, &catalog.objects);
+    catalog.bubble_shield_actions = protection::collect_bubble_shield_actions(&catalog.objects);
+    catalog.projectile_defenses = avoidance::collect_projectile_defenses(&catalog.objects);
+    catalog.air_avoidance_actions = air_avoidance::collect_air_avoidance_actions(&catalog.objects);
+    catalog.cloak_actions = cloak::collect_cloaks(database, &catalog.objects);
+    catalog.reflect_damage_actions = reflect_damage::collect_reflect_damage(&catalog.objects);
+    catalog.repair_other_actions = repair_other::collect_repair_other_actions(&catalog.objects);
+    catalog.capture_actions = capture::collect_capture_actions(&catalog.objects);
+    catalog.charge_actions = charge::collect_charge_actions(database, &catalog.objects);
+    catalog.gather_actions = gather::collect_gather_actions(database, &catalog.objects);
+    catalog.jump_actions = jump::collect_jump_actions(database, &catalog.objects);
+    catalog.heal_actions = heal::collect_heal_actions(&catalog.objects);
+    catalog.infect_actions = infect::collect_infect_actions(&catalog.objects);
+    catalog.energy_shield_actions =
+        energy_shields::collect_energy_shield_actions(database, &catalog.objects);
+    catalog.air_traffic_control_actions =
+        air_traffic_control::collect_air_traffic_control_actions(&catalog.objects);
+    catalog.bomb_actions = bomb::collect_bomb_actions(database, &catalog.objects);
+    catalog.persistent_squad_spawns = spawn_squads::collect_persistent_spawns(&catalog.objects);
+    catalog.spirit_bonds = spirit_bond::collect_spirit_bonds(&catalog.objects);
+    catalog.wander_actions = wander::collect_wanders(&catalog.objects);
+    catalog.ambient_life_actions = ambient_life::collect_ambient_life(database, &catalog.objects);
+    catalog.ambient_life_spawners =
+        ambient_life::collect_ambient_life_spawners(database, &catalog.objects);
 }
 
 fn load_squad_gameplay(

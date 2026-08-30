@@ -340,6 +340,41 @@ impl Player {
         true
     }
 
+    pub(crate) fn restart_power_recharge(
+        &mut self,
+        proto_power_id: ProtoPowerId,
+        squad_id: EntityId,
+        rules: PowerRules,
+        auto_recharge_ms: u32,
+        game_time_ms: u32,
+    ) -> bool {
+        let Some(entry) = self
+            .powers
+            .entries
+            .iter_mut()
+            .find(|entry| entry.proto_power_id == proto_power_id)
+        else {
+            return false;
+        };
+        let item = if rules.multi_recharge {
+            entry.items.iter_mut().find(|item| item.uses_remaining > 0)
+        } else {
+            entry
+                .items
+                .iter_mut()
+                .find(|item| item.squad_id == squad_id)
+        };
+        let Some(item) = item else {
+            return false;
+        };
+        if !item.infinite_uses && auto_recharge_ms > 0 {
+            item.uses_remaining = item.uses_remaining.min(item.charge_cap.saturating_sub(1));
+            item.next_grant_time = game_time_ms.wrapping_add(auto_recharge_ms);
+            item.recharging = true;
+        }
+        true
+    }
+
     pub(crate) fn update_power_recharges(
         &mut self,
         game_time_ms: u32,

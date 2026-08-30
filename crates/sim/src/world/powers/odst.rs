@@ -621,6 +621,7 @@ fn launch_drop_projectile(
             .unwrap_or_default(),
         weapon_type: weapon.and_then(|weapon| weapon.weapon_type.clone()),
         area_damage: weapon.and_then(area_damage_profile),
+        impact_effect: weapon.and_then(crate::gameplay::ImpactEffectProfile::from_weapon),
         friendly_fire: weapon.is_some_and(|weapon| weapon.allow_friendly_fire == Some(true)),
         collides_with_all_units: true,
     };

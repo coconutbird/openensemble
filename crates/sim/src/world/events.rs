@@ -2,6 +2,11 @@
 
 use std::collections::BTreeMap;
 
+mod visual_effects;
+
+pub(in crate::world) use visual_effects::ImpactEffectRequestData;
+pub use visual_effects::{ImpactEffectRequest, ImpactSurface};
+
 use glam::Vec3;
 
 use super::World;
@@ -349,6 +354,7 @@ pub(super) struct PresentationState {
     next_request_id: u32,
     requests: BTreeMap<u32, PresentationRequest>,
     active_cinematic: Option<u32>,
+    visual_effects: visual_effects::VisualEffectJournal,
 }
 
 impl World {

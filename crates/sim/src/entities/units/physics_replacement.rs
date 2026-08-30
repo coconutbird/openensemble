@@ -71,8 +71,16 @@ impl Unit {
             .proto_object_name
             .clone_from(&self.proto_object_name);
         replacement.object_types.clone_from(&self.object_types);
-        replacement.hitpoints = 1.0;
-        replacement.max_hitpoints = 1.0;
+        // Retail creates a fresh entity from the same prototype, so debris
+        // starts at the prototype's full health rather than inheriting the
+        // dying source's current health.
+        let max_hitpoints = if self.max_hitpoints.is_finite() && self.max_hitpoints > 0.0 {
+            self.max_hitpoints
+        } else {
+            1.0
+        };
+        replacement.hitpoints = max_hitpoints;
+        replacement.max_hitpoints = max_hitpoints;
         replacement.damage_multiplier = self.damage_multiplier;
         replacement.damage_taken_multiplier = self.damage_taken_multiplier;
         replacement.accuracy_scalar = self.accuracy_scalar;
@@ -150,6 +158,8 @@ mod tests {
         let mut source = Unit::new(source_id, 3);
         source.proto_object_id = 42;
         source.proto_object_name = "tank".to_owned();
+        source.set_max_hitpoints(250.0);
+        source.hitpoints = 5.0;
         source.base.position = Vec3::new(1.0, 2.0, 3.0);
         source.base.velocity = Vec3::X * 4.0;
         source.squad_id = Some(EntityId::new(EntityClass::Squad, 1));
@@ -169,7 +179,8 @@ mod tests {
         assert_eq!(replacement.proto_object_name, "tank");
         assert_eq!(replacement.base.position, source.base.position);
         assert_eq!(replacement.base.velocity, source.base.velocity);
-        assert_eq!(replacement.hitpoints.to_bits(), 1.0_f32.to_bits());
+        assert_eq!(replacement.hitpoints.to_bits(), 250.0_f32.to_bits());
+        assert_eq!(replacement.max_hitpoints.to_bits(), 250.0_f32.to_bits());
         assert!(replacement.squad_id.is_none());
         assert!(replacement.population_costs.is_empty());
         assert!(replacement.is_physics_replacement());

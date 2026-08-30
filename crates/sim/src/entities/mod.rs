@@ -29,15 +29,20 @@ pub use object_state::{DopplePolicy, ObjectState, ScriptedAnimation, TargetingSe
 pub use objects::{IconObject, Object, ObjectKind, Revealer};
 pub use projectiles::Projectile;
 pub use squads::{
-    JoinKind, JoinMergeType, PowerTransportPhase, RecoveryType, Squad, SquadArchetype,
-    SquadBoardState, SquadContainmentState, SquadCryoState, SquadDetonatePhase, SquadFormation,
-    SquadGarrison, SquadMergeState, SquadMode, SquadPowerTransport, SquadRecovery, SquadShields,
-    SquadState, SquadTransportFlyIn, TransportFlyInPhase,
+    AmbientLifeBehavior, JoinKind, JoinMergeType, PowerTransportPhase, RecoveryType,
+    RepairOtherPhase, Squad, SquadArchetype, SquadBoardState, SquadCarpetBombPhase,
+    SquadContainmentState, SquadCryoState, SquadDetonatePhase, SquadFormation, SquadGarrison,
+    SquadMergeState, SquadMode, SquadPowerTransport, SquadPullPhase, SquadRecovery, SquadShields,
+    SquadState, SquadTrainedAirBirth, SquadTransportFlyIn, TransportFlyInPhase,
 };
-pub(crate) use units::UnitScalarModifiers;
 pub use units::{
-    BuildingProduction, ConstructionKind, ConstructionProgress, ConstructionTask, RallyPoint,
-    ResearchProgress, ResearchTask, ShieldCoverage, TowerWallAction, TrainingKind,
-    TrainingProgress, TrainingTask, Unit, UnitActions, UnitAmmunition, UnitArchetype,
-    UnitDataScalar, UnitDetonatePhase, UnitGarrison, UnitKind, UnitShields, UnitState,
+    AIR_TRAFFIC_LANDING_SPOT_COUNT, AirTrafficControl, AirTrafficLandingSpot, AircraftCrashPhase,
+    BombPhase, BuildingProduction, CapturePhase, ConstructionKind, ConstructionProgress,
+    ConstructionTask, EnergyShieldPhase, EnergyShieldPresentationKind, FlightControllerKind,
+    GatherPhase, GroundMovePhase, HealPhase, InfectionExposure, InfectionPhase, RallyPoint,
+    ResearchProgress, ResearchTask, ShieldCoverage, TowerWallAction, TrainedSquadBirth,
+    TrainingKind, TrainingProgress, TrainingRecharge, TrainingTask, Unit, UnitActions,
+    UnitAmmunition, UnitArchetype, UnitDataScalar, UnitDetonatePhase, UnitEnergyShieldAction,
+    UnitGarrison, UnitKind, UnitShields, UnitState, UnitVisualMeshMask,
 };
+pub(crate) use units::{AttackAdvance, UnitScalarModifiers};

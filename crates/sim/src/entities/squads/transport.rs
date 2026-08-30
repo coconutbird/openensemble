@@ -21,7 +21,7 @@ pub enum TransportFlyInPhase {
 /// Sim-owned transport action attached to the synthetic carrier squad.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SquadTransportFlyIn {
-    passenger_squad_id: EntityId,
+    passenger_squad_ids: Vec<EntityId>,
     dropoff_position: Vec3,
     incoming_target: Vec3,
     outgoing_target: Vec3,
@@ -33,9 +33,9 @@ pub struct SquadTransportFlyIn {
 }
 
 /// Validated setup supplied by the trigger effect after creating a carrier.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SquadTransportPlan {
-    pub(crate) passenger_squad_id: EntityId,
+    pub(crate) passenger_squad_ids: Vec<EntityId>,
     pub(crate) start_position: Vec3,
     pub(crate) dropoff_position: Vec3,
     pub(crate) incoming_target: Vec3,
@@ -48,7 +48,7 @@ pub(crate) struct SquadTransportPlan {
 impl SquadTransportFlyIn {
     pub(crate) fn new(plan: SquadTransportPlan, speed: f32) -> Self {
         Self {
-            passenger_squad_id: plan.passenger_squad_id,
+            passenger_squad_ids: plan.passenger_squad_ids,
             dropoff_position: plan.dropoff_position,
             incoming_target: plan.incoming_target,
             outgoing_target: plan.outgoing_target,
@@ -62,8 +62,14 @@ impl SquadTransportFlyIn {
 
     /// Logical squad currently carried by this transport.
     #[must_use]
-    pub const fn passenger_squad_id(&self) -> EntityId {
-        self.passenger_squad_id
+    pub fn passenger_squad_id(&self) -> EntityId {
+        self.passenger_squad_ids[0]
+    }
+
+    /// Logical squads currently carried by this transport in assignment order.
+    #[must_use]
+    pub fn passenger_squad_ids(&self) -> &[EntityId] {
+        &self.passenger_squad_ids
     }
 
     /// Current carrier action phase.
@@ -106,7 +112,10 @@ impl SquadTransportFlyIn {
     }
 
     pub(crate) fn hash_state(&self, checksum: &mut SyncChecksum) {
-        checksum.hash_u32(self.passenger_squad_id.as_u32());
+        checksum.hash_u32(u32::try_from(self.passenger_squad_ids.len()).unwrap_or(u32::MAX));
+        for passenger_id in &self.passenger_squad_ids {
+            checksum.hash_u32(passenger_id.as_u32());
+        }
         checksum.hash_vec3(
             self.dropoff_position.x,
             self.dropoff_position.y,

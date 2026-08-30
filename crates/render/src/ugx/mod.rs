@@ -5,7 +5,6 @@
 //! legacy material maps, reciprocal specular response, SH fill lighting, and
 //! the four material blend modes.
 
-mod animation;
 mod model;
 mod renderer;
 mod scene;
@@ -15,9 +14,11 @@ pub use crate::terrain::TerrainHeightfield;
 pub use model::{BlendMode, LoadError, Model};
 pub use renderer::{Renderer, RendererResources, WorldBindings};
 pub use scene::{
-    ScenarioPositionAxes, UnitPlacement, UnitScene, UnitSceneIssue, UnitSceneRenderer,
+    AnimationCameraShake, AnimationTerrainAlpha, AnimationTerrainAlphaShape, ScenarioPositionAxes,
+    UnitPlacement, UnitScene, UnitSceneIssue, UnitSceneRenderer,
     scenario_object_direction_to_world, scenario_object_position_to_world,
-    simulation_entity_animation, simulation_entity_flash, simulation_proto_names,
+    simulation_entity_animation, simulation_entity_flash, simulation_entity_secondary_transform,
+    simulation_entity_transform, simulation_entity_visual_opacity, simulation_proto_names,
     simulation_unit_transform,
 };
 pub use unit::{

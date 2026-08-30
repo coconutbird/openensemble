@@ -28,6 +28,19 @@ pub(crate) fn squad_population_costs(
     database: &Database,
     prototype: &ProtoSquad,
 ) -> Vec<PopulationCost> {
+    squad_population_amounts(database, prototype)
+        .into_iter()
+        .filter_map(|cost| {
+            let rounded = (cost.amount + 0.5).floor();
+            (rounded > 0.0).then_some(PopulationCost::new(cost.population_type, rounded))
+        })
+        .collect()
+}
+
+pub(crate) fn squad_population_amounts(
+    database: &Database,
+    prototype: &ProtoSquad,
+) -> Vec<PopulationCost> {
     let slot_count = population_names(database).len();
     let mut totals = vec![0.0; slot_count];
     for member in prototype
@@ -54,8 +67,7 @@ pub(crate) fn squad_population_costs(
         .into_iter()
         .enumerate()
         .filter_map(|(population_type, amount)| {
-            let rounded = (amount + 0.5).floor();
-            (rounded > 0.0).then_some(PopulationCost::new(population_type, rounded))
+            (amount > 0.0).then_some(PopulationCost::new(population_type, amount))
         })
         .collect()
 }
@@ -67,6 +79,7 @@ pub(crate) fn apply_object_population(
     prototype: &ProtoObject,
 ) {
     initialize_object_population(world, unit_id, database, prototype, true);
+    world.activate_unit_on_built(unit_id, database, prototype);
 }
 
 pub(crate) fn initialize_object_population(

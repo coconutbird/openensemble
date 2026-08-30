@@ -84,9 +84,13 @@ impl World {
         }
         for unit_id in member_ids {
             self.remove_owned_attachments(unit_id);
+            let base_id = self.units.get(unit_id).and_then(|unit| unit.base_id);
             if let Some(unit) = self.units.get_mut(unit_id) {
                 // Retail's cryo kill bypasses normal HeroDeath incapacitation.
                 unit.kill();
+            }
+            if let Some(base_id) = base_id {
+                self.recompute_base_child_damage(base_id);
             }
         }
         true

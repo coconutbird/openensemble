@@ -89,12 +89,24 @@ pub struct GpuResources {
     pub texture_bind_group: wgpu::BindGroup,
     /// Accepted-axis packed position texture shared with terrain-conform UGX.
     pub position_texture_view: wgpu::TextureView,
+    /// Dynamic packed terrain visibility mask shared with conforming visuals.
+    pub terrain_alpha_view: wgpu::TextureView,
+    /// CPU-backed GPU mask updated by crossed `TerrainAlpha` animation tags.
+    pub(crate) dynamic_terrain_alpha: crate::dynamic_alpha::DynamicTerrainAlphaTexture,
+    /// Fog-of-war visibility texture shared with lit decals.
+    pub blackmap_view: wgpu::TextureView,
+    /// Unexplored-color texture shared with lit decals.
+    pub unexplored_view: wgpu::TextureView,
     pub depth_texture: wgpu::Texture,
     pub depth_view: wgpu::TextureView,
     pub params_buffer: wgpu::Buffer,
     pub lighting_buffer: Option<wgpu::Buffer>,
     /// Shared oracle-packed local-light storage used by every world renderer.
     pub local_lights: render::lighting::LocalLightBuffer,
+    /// Renderer-owned local spot/omni shadow atlas.
+    pub local_shadows: render::local_shadow::LocalShadowMap,
+    /// Shared retail-style 3D field for non-shadowed buffered local lights.
+    pub light_volume: render::light_volume::LocalLightVolume,
     pub terrain_size: [f32; 2],
     pub(crate) chunk_grid: TerrainChunkGrid,
     pub tile_scale: f32,

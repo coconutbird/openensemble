@@ -3,6 +3,9 @@ use sim::{
     load_scenario_from_game_dir,
 };
 
+#[path = "scenario_campaign_trigger_loading/assertions.rs"]
+mod assertions;
+
 const CAMPAIGN_SCENARIOS: [&str; 17] = [
     "PHXscn01",
     "PHXscn02",
@@ -23,7 +26,6 @@ const CAMPAIGN_SCENARIOS: [&str; 17] = [
     "campaignTutorialAdvanced",
 ];
 
-/// Run with:
 /// `OPENENSEMBLE_GAME_DIR=<HaloWarsDE> cargo test -p sim --test scenario-campaign-trigger-loading -- --ignored`
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
@@ -56,7 +58,7 @@ fn every_campaign_trigger_catalog_loads_with_retail_variable_aliases() {
         assert_objective_state(scenario, &loaded);
         assert_entity_visual_state(scenario, &loaded);
         assert_icon_state(scenario, &loaded);
-        assert_tower_wall_state(scenario, &loaded);
+        assertions::assert_tower_wall_state(scenario, &loaded);
         assert_timer_state(scenario, &loaded);
         assert_trigger_created_squads(scenario, &loaded);
         coverage.include_state(&loaded);
@@ -119,9 +121,68 @@ fn assert_update_frontier(scenario: &str, update: &TriggerUpdate) {
 
 fn assert_trigger_created_squads(scenario: &str, loaded: &LoadedGameScenario) {
     match scenario {
+        "PHXscn04" => assert_phx04_group_transports(loaded),
         "PHXscn07" => assert_phx07_trigger_transports(loaded),
         "PHXscn08" => assert_phx08_attack_move_spawns(loaded),
         _ => {}
+    }
+}
+
+fn assert_phx04_group_transports(loaded: &LoadedGameScenario) {
+    let world = &loaded.simulation.world;
+    let script = world
+        .trigger_engine()
+        .get_script(1)
+        .expect("PHXscn04 scenario script");
+    let created = match &script
+        .get_variable(21_977)
+        .expect("PHXscn04 CreateSquads output")
+        .value
+    {
+        TriggerValue::SquadList(squads) => squads,
+        value => panic!("expected PHXscn04 squad-list output, got {value:?}"),
+    };
+    assert_eq!(created.len(), 2);
+    let group_carriers = world
+        .squads
+        .iter()
+        .filter_map(|(_, squad)| {
+            let action = squad.transport_fly_in()?;
+            action
+                .passenger_squad_ids()
+                .iter()
+                .any(|passenger_id| created.contains(passenger_id))
+                .then_some((squad, action))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !group_carriers.is_empty(),
+        "PHXscn04's initial Covenant waves should use group Spirit fly-ins"
+    );
+    for passenger_id in created {
+        assert_eq!(
+            group_carriers
+                .iter()
+                .filter(|(_, action)| action.passenger_squad_ids().contains(passenger_id))
+                .count(),
+            1,
+            "each PHXscn04 CreateSquads passenger needs exactly one carrier"
+        );
+    }
+    for (carrier, action) in group_carriers {
+        assert_eq!(carrier.proto_squad_name, "cov_air_spirit_trigger_01");
+        assert_eq!(action.phase(), sim::TransportFlyInPhase::Incoming);
+        for passenger_id in action.passenger_squad_ids() {
+            let passenger = world
+                .get_squad(*passenger_id)
+                .expect("PHXscn04 group transport passenger");
+            assert!(passenger.garrison.is_garrisoned());
+            assert!(passenger.unit_ids.iter().all(|unit_id| {
+                world
+                    .get_unit(*unit_id)
+                    .is_some_and(sim::Unit::is_garrisoned)
+            }));
+        }
     }
 }
 
@@ -464,12 +525,12 @@ fn assert_phx06_presentation(loaded: &LoadedGameScenario) {
         let directive = state
             .camera_directive
             .unwrap_or_else(|| panic!("PHXscn06 player {player_id} camera directive"));
-        assert_vec3_close(
+        assertions::assert_vec3_close(
             directive.location.expect("PHXscn06 camera location"),
             glam::Vec3::new(266.0444, 69.3125, 235.5218),
             0.001,
         );
-        assert_vec3_close(
+        assertions::assert_vec3_close(
             directive.direction.expect("PHXscn06 camera direction"),
             glam::Vec3::new(0.6442, 0.0, 0.7648),
             0.0001,
@@ -498,7 +559,7 @@ fn assert_hint_callout_state(scenario: &str, loaded: &LoadedGameScenario) {
     let sim::HintCalloutAnchor::Location(actual) = callout.anchor() else {
         panic!("{scenario} callout should use its authored location");
     };
-    assert_vec3_close(actual, location, 0.0001);
+    assertions::assert_vec3_close(actual, location, 0.0001);
 
     if scenario == "PHXscn03" {
         let output = loaded
@@ -694,54 +755,6 @@ fn assert_phx14_attached_icons(loaded: &LoadedGameScenario) {
             world.get_unit(*unit_id).unwrap().base.position
         );
     }
-}
-
-fn assert_tower_wall_state(scenario: &str, loaded: &LoadedGameScenario) {
-    if scenario != "PHXscn15" {
-        return;
-    }
-    let world = &loaded.simulation.world;
-    let walls = world
-        .squads
-        .iter()
-        .filter(|(_, squad)| !squad.associated_wall_towers().is_empty())
-        .collect::<Vec<_>>();
-    assert_eq!(walls.len(), 2, "PHXscn15 should link both wall pairs");
-    for (_, source_squad) in walls {
-        assert_eq!(source_squad.proto_squad_name, "hook_bldg_wall_01");
-        let source_unit = world
-            .get_unit(source_squad.unit_ids[0])
-            .expect("PHXscn15 wall source leader");
-        let action = source_unit.tower_wall.expect("PHXscn15 tower-wall action");
-        let [target_squad_id] = source_squad.associated_wall_towers() else {
-            panic!("PHXscn15 wall source should have one endpoint");
-        };
-        assert_eq!(action.target_squad_id(), *target_squad_id);
-        let target_squad = world
-            .get_squad(*target_squad_id)
-            .expect("PHXscn15 wall target squad");
-        assert_eq!(target_squad.proto_squad_name, "hook_bldg_wall_02");
-        let target_unit = world
-            .get_unit(target_squad.unit_ids[0])
-            .expect("PHXscn15 wall target leader");
-        let direction = glam::Vec3::new(
-            target_unit.base.position.x - source_unit.base.position.x,
-            0.0,
-            target_unit.base.position.z - source_unit.base.position.z,
-        )
-        .normalize();
-        assert_vec3_close(source_unit.base.forward, -direction, 0.000_001);
-        assert_vec3_close(target_unit.base.forward, direction, 0.000_001);
-        assert_eq!(action.beam_start_position(), source_unit.base.position);
-        assert_eq!(action.beam_end_position(), target_unit.base.position);
-    }
-}
-
-fn assert_vec3_close(actual: glam::Vec3, expected: glam::Vec3, tolerance: f32) {
-    assert!(
-        (actual - expected).abs().max_element() <= tolerance,
-        "expected {expected:?}, got {actual:?}"
-    );
 }
 
 #[derive(Default)]

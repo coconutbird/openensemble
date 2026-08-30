@@ -129,7 +129,7 @@ mod tests {
             .find_map(|(unit_id, unit)| unit.is_physics_replacement().then_some(unit_id))
             .expect("physics replacement");
         let replacement = world.get_unit(replacement_id).unwrap();
-        assert_eq!(replacement.hitpoints.to_bits(), 1.0_f32.to_bits());
+        assert_eq!(replacement.hitpoints.to_bits(), 10.0_f32.to_bits());
         assert_eq!(
             replacement.detonate_phase(),
             crate::UnitDetonatePhase::Pending

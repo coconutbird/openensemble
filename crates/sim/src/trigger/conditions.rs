@@ -5,7 +5,7 @@ use super::{
 };
 use crate::entities::SquadState;
 use crate::entity_id::{EntityClass, EntityId};
-use crate::player::{GAIA_PLAYER, PlayerType};
+use crate::player::{GAIA_PLAYER, PlayerType, TechStatus};
 use crate::world::World;
 use num_traits::ToPrimitive;
 use pipeline::database::hw1::Database;
@@ -274,20 +274,20 @@ fn tech_status(
     let technology = usize::try_from(technology_id)
         .ok()
         .and_then(|index| database.techs.get(index));
-    if condition.version == 2
-        && entity_at(condition, script, 4).is_some_and(|unit_id| world.get_unit(unit_id).is_some())
-        && technology.is_some_and(|technology| {
-            technology
-                .flags
-                .iter()
-                .any(|flag| flag.trim().eq_ignore_ascii_case("UniqueProtoUnitInstance"))
+    let unique = technology.is_some_and(|technology| {
+        technology
+            .flags
+            .iter()
+            .any(|flag| flag.trim().eq_ignore_ascii_case("UniqueProtoUnitInstance"))
+    });
+    let status = if condition.version == 2 && unique {
+        entity_at(condition, script, 4).map_or(Ok(TechStatus::Unobtainable), |building_id| {
+            world.building_technology_status(player_id, building_id, database, technology_id)
         })
-    {
-        return false;
-    }
-    let actual = world
-        .technology_status(player_id, database, technology_id)
-        .map_or(0, |status| i32::from(status as u8));
+    } else {
+        world.technology_status(player_id, database, technology_id)
+    };
+    let actual = status.map_or(0, |status| i32::from(status as u8));
     actual == expected
 }
 

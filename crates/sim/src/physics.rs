@@ -12,7 +12,7 @@ use crate::entity_id::EntityId;
 use crate::sync::SyncChecksum;
 use glam::Vec3;
 use num_traits::ToPrimitive;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Largest integration step used by the deterministic physics loop.
 pub const MAX_PHYSICS_STEP_SECONDS: f32 = 0.05;
@@ -23,7 +23,7 @@ const MIN_ACCELERATION: f32 = 0.001;
 const MIN_VECTOR_LENGTH_SQUARED: f32 = 0.000_001;
 const ARRIVAL_THRESHOLD: f32 = 0.5;
 const GROUND_SNAP_SPEED: f32 = 0.5;
-const GRAVITY: f32 = 9.81;
+pub(crate) const PHYSICS_GRAVITY: f32 = 9.81;
 const COLLISION_SLOP: f32 = 0.000_1;
 const SOLVER_ITERATIONS: usize = 4;
 
@@ -206,6 +206,16 @@ impl PhysicsBody {
         self.material
     }
 
+    /// Override angular damping for a live dynamic body.
+    pub(crate) fn set_angular_damping(&mut self, angular_damping: f32) {
+        self.material.angular_damping = finite_nonnegative(angular_damping);
+    }
+
+    /// Override linear damping for a live dynamic body.
+    pub(crate) fn set_linear_damping(&mut self, linear_damping: f32) {
+        self.material.linear_damping = finite_nonnegative(linear_damping);
+    }
+
     /// Get the body's collider configuration.
     #[must_use]
     pub const fn collider(&self) -> BoxCollider {
@@ -279,6 +289,32 @@ impl PhysicsBody {
         if entity.velocity.y > 0.0 {
             self.grounded = false;
         }
+    }
+
+    /// Apply an immediate world-space angular impulse through the body's inertia.
+    pub fn apply_angular_impulse(&mut self, impulse: Vec3) {
+        if self.motion_type == MotionType::Dynamic && impulse.is_finite() {
+            self.angular_velocity += impulse * self.inverse_inertia();
+        }
+    }
+
+    pub(crate) fn set_linear_velocity(&mut self, entity: &mut BaseEntity, velocity: Vec3) -> bool {
+        if self.motion_type != MotionType::Dynamic || !velocity.is_finite() {
+            return false;
+        }
+        entity.velocity = velocity;
+        if velocity.y > 0.0 {
+            self.grounded = false;
+        }
+        true
+    }
+
+    pub(crate) fn set_angular_velocity(&mut self, velocity: Vec3) -> bool {
+        if self.motion_type != MotionType::Dynamic || !velocity.is_finite() {
+            return false;
+        }
+        self.angular_velocity = velocity;
+        true
     }
 
     /// Apply an immediate impulse at a world-space point.
@@ -360,7 +396,7 @@ impl PhysicsBody {
         self.angular_velocity += self.accumulated_torque * self.inverse_inertia() * dt;
         if !self.grounded || entity.velocity.y > 0.0 {
             self.grounded = false;
-            entity.velocity.y -= GRAVITY * dt;
+            entity.velocity.y -= PHYSICS_GRAVITY * dt;
         }
         entity.velocity *= damping_factor(self.material.linear_damping, dt);
     }
@@ -493,6 +529,9 @@ pub(crate) fn prepare_squad_movement(
     }
     let mut anchors = BTreeMap::new();
     for (squad_id, squad) in squads.iter() {
+        if squad.is_being_pulled() || squad.is_jumping() {
+            continue;
+        }
         if squad.garrison.is_garrisoned() || squad.is_cryo_frozen() || !squad.base.is_mobile() {
             for &unit_id in &squad.unit_ids {
                 if let Some(unit) = units.get_mut(unit_id)
@@ -541,6 +580,7 @@ pub(crate) struct UnitCollisionContact {
 /// Resolve deterministic unit/building obstruction contacts.
 pub(crate) fn resolve_unit_collisions(
     units: &mut EntityManager<Unit>,
+    excluded_squads: &BTreeSet<EntityId>,
 ) -> Vec<UnitCollisionContact> {
     for (_, unit) in units.iter_mut() {
         if let Some(body) = &mut unit.physics {
@@ -549,7 +589,7 @@ pub(crate) fn resolve_unit_collisions(
     }
     let mut contacts = BTreeMap::<(EntityId, EntityId), f32>::new();
     for _ in 0..SOLVER_ITERATIONS {
-        let snapshots = collision_snapshots(units);
+        let snapshots = collision_snapshots(units, excluded_squads);
         let mut deltas = BTreeMap::new();
         let mut found_overlap = false;
         for first_index in 0..snapshots.len() {
@@ -604,11 +644,16 @@ pub(crate) fn sync_squad_members(
                 squad.base.position,
                 squad.base.forward,
                 squad.base.velocity,
+                squad.is_being_pulled(),
+                squad.is_jumping(),
                 squad.unit_ids.clone(),
             )
         })
         .collect();
-    for (squad_id, position, forward, velocity, unit_ids) in snapshots {
+    for (squad_id, position, forward, velocity, pulled, jumping, unit_ids) in snapshots {
+        if pulled || jumping {
+            continue;
+        }
         for unit_id in unit_ids {
             if anchors.get(&squad_id) == Some(&unit_id) {
                 continue;
@@ -616,7 +661,12 @@ pub(crate) fn sync_squad_members(
             let Some(unit) = units.get_mut(unit_id) else {
                 continue;
             };
-            if unit.squad_id != Some(squad_id) || unit.is_physics_driven() {
+            if unit.squad_id != Some(squad_id)
+                || unit.is_physics_driven()
+                || unit.uses_move_air()
+                || unit.ground_move_owns_squad_transform()
+                || unit.is_jumping()
+            {
                 continue;
             }
             unit.base.position =
@@ -650,11 +700,19 @@ struct CollisionDelta {
     velocity: Vec3,
 }
 
-fn collision_snapshots(units: &EntityManager<Unit>) -> Vec<BodySnapshot> {
+fn collision_snapshots(
+    units: &EntityManager<Unit>,
+    excluded_squads: &BTreeSet<EntityId>,
+) -> Vec<BodySnapshot> {
     units
         .iter()
         .filter_map(|(id, unit)| {
-            if !unit.is_alive() || unit.is_garrisoned() {
+            if !unit.is_alive()
+                || unit.is_garrisoned()
+                || unit
+                    .squad_id
+                    .is_some_and(|squad_id| excluded_squads.contains(&squad_id))
+            {
                 return None;
             }
             let (collider, inverse_mass, material) = unit.physics.as_ref().map_or_else(
@@ -823,6 +881,9 @@ fn sync_physical_squad_origins(
             - formation_offset_to_world(anchor.base.forward, anchor.formation_offset);
         squad.base.forward = anchor.base.forward;
         squad.base.velocity = anchor.base.velocity;
+        if squad.move_target.is_some() {
+            squad.set_leash_position(squad.base.position, true);
+        }
         if squad.state == SquadState::Moving && anchor.state != UnitState::Moving {
             squad.finish_current_movement();
         }

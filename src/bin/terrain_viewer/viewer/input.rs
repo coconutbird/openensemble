@@ -10,14 +10,14 @@ use crate::camera::CameraInput;
 
 fn debug_mode_name(mode: u32) -> &'static str {
     match mode {
-        0 => "0: Lit Debug",
+        0 => "0: Retail Lit",
         1 => "1: Patch Edges",
         7 => "7: Unique Normal",
         8 => "8: Ambient Occlusion",
         9 => "9: Specular",
         10 => "10: Solid Test",
         11 => "11: Terrain UV Viz",
-        12 => "12: GPU Composited (Canonical)",
+        12 => "12: GPU Composited Albedo",
         13 => "13: Chunk Orientation",
         14 => "14: GPU Height Map",
         15 => "15: Height/Albedo Alignment",
@@ -51,8 +51,12 @@ impl TerrainViewer {
         let Some(simulation) = &self.simulation else {
             return sim::PlayerPresentationState::default();
         };
-        self.camera_adapter
-            .synchronize(&mut self.camera, &simulation.world, 1)
+        self.camera_adapter.synchronize_at_time(
+            &mut self.camera,
+            &simulation.world,
+            1,
+            self.render_time_seconds,
+        )
     }
 
     fn update_simulation_controls(&mut self, input: &Input) {
@@ -141,7 +145,7 @@ impl TerrainViewer {
             return;
         };
         simulation_clock.update_with_scenario(dt_seconds, simulation, &content.database);
-        if scene.roster_matches(&simulation.world) {
+        if scene.roster_matches_with_gameplay(&simulation.world, &simulation.gameplay) {
             return;
         }
         let active_proto_names =
@@ -150,9 +154,10 @@ impl TerrainViewer {
         if loaded_visuals > 0 {
             log::info!("Loaded {loaded_visuals} visuals for the updated sim roster");
         }
-        *ugx_roster_dirty |= scene.sync_world(
+        *ugx_roster_dirty |= scene.sync_world_with_gameplay(
             source,
             &simulation.world,
+            &simulation.gameplay,
             &content.visuals,
             &content.database.objects,
         );
@@ -169,13 +174,13 @@ impl TerrainViewer {
 
     fn update_debug_keys(&mut self, input: &Input) {
         let bindings = [
-            (KeyCode::Q, 0, "lit debug path"),
+            (KeyCode::Q, 0, "retail-style lit terrain"),
             (KeyCode::Key1, 1, "patch edges"),
             (KeyCode::Key7, 7, "unique-map normal"),
             (KeyCode::Key8, 8, "ambient occlusion"),
             (KeyCode::Key9, 9, "specular map"),
             (KeyCode::Backspace, 10, "solid-color pipeline test"),
-            (KeyCode::Key0, 12, "GPU composited - canonical default"),
+            (KeyCode::Key0, 12, "GPU-composited albedo diagnostic"),
         ];
         for (key, mode, description) in bindings {
             if input.is_key_pressed(key) {
@@ -495,7 +500,7 @@ impl TerrainViewer {
         debug_button_row(
             ui,
             &mut self.debug_mode,
-            &[("12: GPUComp (Default)", 12), ("0: Lit Debug", 0)],
+            &[("0: Retail Lit (Default)", 0), ("12: GPUComp Albedo", 12)],
         );
         debug_button_row(
             ui,

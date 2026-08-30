@@ -65,6 +65,10 @@ impl World {
             return Err(HitchError::AlreadyHitched);
         }
 
+        let _towing_cancelled = self.cancel_capture_order(towing_squad_id);
+        let _trailer_cancelled = self.cancel_capture_order(trailer_squad_id);
+        let _towing_repair_cancelled = self.cancel_repair_other_order(towing_squad_id);
+        let _trailer_repair_cancelled = self.cancel_repair_other_order(trailer_squad_id);
         let towing = self
             .squads
             .get_mut(towing_squad_id)
@@ -80,6 +84,7 @@ impl World {
         trailer.clear_attack_order();
         trailer.stop();
         trailer.towing_partner = Some(towing_squad_id);
+        self.cancel_incoming_power_transport(towing_squad_id);
         Ok(trailer_squad_id)
     }
 
@@ -108,6 +113,7 @@ impl World {
             return Err(HitchError::InvalidTarget);
         }
         self.detach_squad_hitch(towing_squad_id);
+        self.cancel_incoming_power_transport(towing_squad_id);
         Ok(trailer_squad_id)
     }
 

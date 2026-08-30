@@ -45,15 +45,27 @@ impl World {
         {
             return false;
         }
-        self.squads.get_mut(squad_id).is_some_and(|squad| {
-            squad.base.player_id == player_id
-                && squad.begin_mines_order(MineOrder {
-                    target_entity,
-                    target_position,
-                    explicit_range,
-                    requested_ability_id,
-                })
-        })
+        if self
+            .squads
+            .get(squad_id)
+            .is_none_or(|squad| squad.base.player_id != player_id)
+        {
+            return false;
+        }
+        let _cancelled = self.cancel_capture_order(squad_id);
+        let _repair_cancelled = self.cancel_repair_other_order(squad_id);
+        let accepted = self.squads.get_mut(squad_id).is_some_and(|squad| {
+            squad.begin_mines_order(MineOrder {
+                target_entity,
+                target_position,
+                explicit_range,
+                requested_ability_id,
+            })
+        });
+        if accepted {
+            self.cancel_incoming_power_transport(squad_id);
+        }
+        accepted
     }
 
     pub(super) fn update_mines(&mut self, database: &Database, gameplay: &GameplayCatalog) {

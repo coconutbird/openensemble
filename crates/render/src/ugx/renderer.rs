@@ -8,28 +8,33 @@ use super::model::{BlendMode, Image, Material, MaterialFeature, Model};
 use crate::environment::EnvironmentMap;
 use crate::gpu::texture_entry;
 use crate::lighting::LocalLightBuffer;
+use crate::local_shadow::{LOCAL_SHADOW_PASS_UNIFORM_SIZE, LocalShadowMap};
 use crate::terrain::{LightingParams, TerrainHeightfield};
-use crate::{RenderPhase, WorldRenderer};
 
+mod draw;
 mod pipelines;
 mod texture;
 mod uniforms;
+mod visibility;
 
 #[cfg(test)]
 mod tests;
 
 use pipelines::{
-    create_distortion_pipelines, create_material_layout, create_pipelines, create_scene_layout,
-    create_shadow_layout, create_shadow_pipelines, create_sky_pipelines, pipeline_index,
+    create_distortion_pipelines, create_fade_pipelines, create_local_shadow_pipelines,
+    create_material_layout, create_pipelines, create_scene_layout, create_shadow_layout,
+    create_shadow_pipelines, create_sky_pipelines, pipeline_index,
 };
 use texture::{
-    create_fallback_shadow_view, create_fallback_terrain_heightfield_view,
-    create_fallback_volume_view, create_texture_view,
+    create_fallback_local_shadow_view, create_fallback_shadow_view,
+    create_fallback_terrain_heightfield_view, create_fallback_volume_view, create_texture_view,
 };
-pub(super) use uniforms::SelectionOverlay;
 use uniforms::{MaterialUniform, SceneUniform};
+pub(super) use uniforms::{SelectionOverlay, VisualState};
+pub(super) use visibility::MeshVisibility;
 
 const SHADER: &str = include_str!("shader.wgsl");
+const LOCAL_SHADOW_SHADER: &str = include_str!("local_shadow.wgsl");
 
 struct GpuMaterial {
     bind_group: wgpu::BindGroup,
@@ -194,6 +199,7 @@ struct GpuSection {
     index_buffer: wgpu::Buffer,
     index_count: u32,
     material_index: usize,
+    mesh_name: Option<String>,
 }
 
 pub(super) struct SharedResources {
@@ -211,9 +217,12 @@ pub(super) struct SharedResources {
     texture_views: Mutex<HashMap<TextureCacheKey, wgpu::TextureView>>,
     models: Mutex<HashMap<String, Arc<GpuModel>>>,
     pipelines: Vec<wgpu::RenderPipeline>,
+    fade_pipelines: Vec<wgpu::RenderPipeline>,
     sky_pipelines: Vec<wgpu::RenderPipeline>,
     distortion_pipelines: [wgpu::RenderPipeline; 2],
     shadow_pipelines: Vec<wgpu::RenderPipeline>,
+    local_shadow_pipelines: [wgpu::RenderPipeline; 2],
+    local_shadow_stride: u32,
 }
 
 /// Scenario-global resources shared by all UGX models in one renderer.
@@ -227,8 +236,8 @@ pub struct WorldBindings<'a> {
     pub terrain_heightfield: Option<TerrainHeightfield<'a>>,
     /// Oracle-packed local-light storage shared with terrain and foliage.
     pub local_lights: Option<&'a LocalLightBuffer>,
-    /// Local spot/omni shadow texture array.
-    pub local_shadow: Option<&'a wgpu::TextureView>,
+    /// Renderer-owned local spot/omni shadow atlas and caster-pass uniforms.
+    pub local_shadows: Option<&'a LocalShadowMap>,
     /// Optional light-volume color field.
     pub light_volume_color: Option<&'a wgpu::TextureView>,
     /// Optional light-volume direction field.
@@ -333,14 +342,39 @@ fn create_world_bind_group(
     queue: &wgpu::Queue,
     layout: &wgpu::BindGroupLayout,
     world: WorldBindings<'_>,
-) -> wgpu::BindGroup {
+) -> (wgpu::BindGroup, u32) {
     let fallback_directional = create_fallback_shadow_view(device, queue, 4, "UGX Fallback CSM");
     let directional_shadow = world.directional_shadow.unwrap_or(&fallback_directional);
     let fallback_local_lights = LocalLightBuffer::empty(device);
     let local_lights = world.local_lights.unwrap_or(&fallback_local_lights);
     let fallback_local_shadow =
-        create_fallback_shadow_view(device, queue, 8, "UGX Fallback Local Shadows");
-    let local_shadow = world.local_shadow.unwrap_or(&fallback_local_shadow);
+        create_fallback_local_shadow_view(device, "UGX Fallback Local Shadows", 8);
+    let fallback_pass_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("UGX Fallback Local Shadow Pass"),
+        size: LOCAL_SHADOW_PASS_UNIFORM_SIZE,
+        usage: wgpu::BufferUsages::UNIFORM,
+        mapped_at_creation: false,
+    });
+    let (local_shadow, local_shadow_pass, pass_size, pass_stride) =
+        world.local_shadows.map_or_else(
+            || {
+                (
+                    &fallback_local_shadow,
+                    &fallback_pass_buffer,
+                    std::num::NonZeroU64::new(LOCAL_SHADOW_PASS_UNIFORM_SIZE)
+                        .expect("local-shadow pass uniform is non-empty"),
+                    0,
+                )
+            },
+            |shadows| {
+                (
+                    shadows.view(),
+                    shadows.pass_buffer(),
+                    shadows.pass_binding_size(),
+                    shadows.pass_stride(),
+                )
+            },
+        );
     let fallback_volume_color = create_fallback_volume_view(
         device,
         queue,
@@ -364,7 +398,7 @@ fn create_world_bind_group(
         min_filter: wgpu::FilterMode::Linear,
         ..Default::default()
     });
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("UGX World Lighting Bind Group"),
         layout,
         entries: &[
@@ -388,8 +422,17 @@ fn create_world_bind_group(
                 binding: 7,
                 resource: wgpu::BindingResource::Sampler(&sampler),
             },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: local_shadow_pass,
+                    offset: 0,
+                    size: Some(pass_size),
+                }),
+            },
         ],
-    })
+    });
+    (bind_group, pass_stride)
 }
 
 impl SharedResources {
@@ -413,7 +456,8 @@ impl SharedResources {
             ..Default::default()
         });
         let environment = create_environment_resources(device, queue, world.environment);
-        let shadow_bind_group = create_world_bind_group(device, queue, &shadow_layout, world);
+        let (shadow_bind_group, local_shadow_stride) =
+            create_world_bind_group(device, queue, &shadow_layout, world);
         let terrain_heightfield_view = world.terrain_heightfield.map_or_else(
             || create_fallback_terrain_heightfield_view(device, queue),
             |heightfield| heightfield.view.clone(),
@@ -426,7 +470,19 @@ impl SharedResources {
             label: Some("UGX Parametric Shader Translation"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
         });
+        let local_shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("UGX Local Shadow Caster Shader"),
+            source: wgpu::ShaderSource::Wgsl(LOCAL_SHADOW_SHADER.into()),
+        });
         let pipelines = create_pipelines(
+            device,
+            surface_format,
+            &shader,
+            &scene_layout,
+            &material_layout,
+            &shadow_layout,
+        );
+        let fade_pipelines = create_fade_pipelines(
             device,
             surface_format,
             &shader,
@@ -446,6 +502,13 @@ impl SharedResources {
             create_distortion_pipelines(device, &shader, &scene_layout, &material_layout);
         let shadow_pipelines =
             create_shadow_pipelines(device, &shader, &scene_layout, &material_layout);
+        let local_shadow_pipelines = create_local_shadow_pipelines(
+            device,
+            &local_shadow_shader,
+            &scene_layout,
+            &material_layout,
+            &shadow_layout,
+        );
         Self {
             scene_layout,
             material_layout,
@@ -461,9 +524,12 @@ impl SharedResources {
             texture_views: Mutex::new(HashMap::new()),
             models: Mutex::new(HashMap::new()),
             pipelines,
+            fade_pipelines,
             sky_pipelines,
             distortion_pipelines,
             shadow_pipelines,
+            local_shadow_pipelines,
+            local_shadow_stride,
         }
     }
 
@@ -631,6 +697,7 @@ impl SharedResources {
                 }),
                 index_count: section.index_count,
                 material_index: section.material_index,
+                mesh_name: section.mesh_name.clone(),
             })
             .collect::<Vec<_>>();
         sections.sort_by_key(|section| materials[section.material_index].blend.rank());
@@ -650,7 +717,9 @@ pub struct Renderer {
     scene_bind_group: wgpu::BindGroup,
     joint_buffer: wgpu::Buffer,
     gpu_model: Arc<GpuModel>,
+    visible_sections: Vec<bool>,
     model_transform: Mat4,
+    opacity: f32,
     joint_count: usize,
 }
 
@@ -761,6 +830,24 @@ impl Renderer {
         model_transform: Mat4,
         shared: Arc<SharedResources>,
     ) -> Self {
+        Self::new_with_shared_visibility(
+            device,
+            queue,
+            model,
+            model_transform,
+            shared,
+            MeshVisibility::default(),
+        )
+    }
+
+    pub(super) fn new_with_shared_visibility(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        model: &Model,
+        model_transform: Mat4,
+        shared: Arc<SharedResources>,
+        visibility: MeshVisibility<'_>,
+    ) -> Self {
         let scene_uniform = SceneUniform::new(model_transform, shared.terrain_heightfield_info);
         let scene_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("UGX Scene Uniform"),
@@ -790,6 +877,12 @@ impl Renderer {
         });
 
         let gpu_model = shared.gpu_model(device, queue, model);
+        let visible_sections = gpu_model
+            .sections
+            .iter()
+            .enumerate()
+            .map(|(index, section)| visibility.allows(index, section.mesh_name.as_deref()))
+            .collect();
 
         Self {
             shared,
@@ -797,7 +890,9 @@ impl Renderer {
             scene_bind_group,
             joint_buffer,
             gpu_model,
+            visible_sections,
             model_transform,
+            opacity: 1.0,
             joint_count: model.joint_count,
         }
     }
@@ -822,33 +917,34 @@ impl Renderer {
         lighting: &LightingParams,
         time_seconds: f32,
     ) {
-        self.update_frame_with_selection_at_time(
+        self.update_frame_with_visual_state_at_time(
             queue,
             view_projection,
             model_transform,
             lighting,
             time_seconds,
-            SelectionOverlay::default(),
+            VisualState::default(),
         );
     }
 
-    pub(super) fn update_frame_with_selection_at_time(
+    pub(super) fn update_frame_with_visual_state_at_time(
         &mut self,
         queue: &wgpu::Queue,
         view_projection: Mat4,
         model_transform: Mat4,
         lighting: &LightingParams,
         time_seconds: f32,
-        selection: SelectionOverlay,
+        visual_state: VisualState,
     ) {
         self.model_transform = model_transform;
+        self.opacity = visual_state.opacity();
         let uniform = SceneUniform::from_frame(
             view_projection,
             model_transform,
             lighting,
             time_seconds,
             self.shared.terrain_heightfield_info,
-            selection,
+            visual_state,
         );
         queue.write_buffer(&self.scene_buffer, 0, bytemuck::bytes_of(&uniform));
     }
@@ -873,108 +969,5 @@ impl Renderer {
             .map(Mat4::to_cols_array_2d)
             .collect::<Vec<_>>();
         queue.write_buffer(&self.joint_buffer, 0, bytemuck::cast_slice(&columns));
-    }
-
-    /// Draws all sections using the oracle blend order.
-    pub fn render<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {
-        pass.set_bind_group(0, &self.scene_bind_group, &[]);
-        pass.set_bind_group(2, &self.shared.shadow_bind_group, &[]);
-        for blend in BlendMode::DRAW_ORDER {
-            for section in &self.gpu_model.sections {
-                let material = &self.gpu_model.materials[section.material_index];
-                if material.blend != blend {
-                    continue;
-                }
-                pass.set_pipeline(&self.shared.pipelines[material.pipeline_index]);
-                pass.set_bind_group(1, &material.bind_group, &[]);
-                pass.set_vertex_buffer(0, section.vertex_buffer.slice(..));
-                pass.set_index_buffer(section.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-                pass.draw_indexed(0..section.index_count, 0, 0..1);
-            }
-        }
-    }
-
-    /// Draws this model as a camera-relative sky background.
-    ///
-    /// Sky visuals retain their authored UGX materials, but use a far-plane,
-    /// depth-read-only pipeline so they cannot occlude world geometry.
-    pub fn render_sky<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {
-        pass.set_bind_group(0, &self.scene_bind_group, &[]);
-        pass.set_bind_group(2, &self.shared.shadow_bind_group, &[]);
-        for blend in BlendMode::DRAW_ORDER {
-            for section in &self.gpu_model.sections {
-                let material = &self.gpu_model.materials[section.material_index];
-                if material.blend != blend {
-                    continue;
-                }
-                pass.set_pipeline(&self.shared.sky_pipelines[material.pipeline_index]);
-                pass.set_bind_group(1, &material.bind_group, &[]);
-                pass.set_vertex_buffer(0, section.vertex_buffer.slice(..));
-                pass.set_index_buffer(section.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-                pass.draw_indexed(0..section.index_count, 0, 0..1);
-            }
-        }
-    }
-
-    /// Draws sections with authored distortion maps into the signed
-    /// screen-space offset target.
-    pub fn render_distortion<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {
-        pass.set_bind_group(0, &self.scene_bind_group, &[]);
-        for section in &self.gpu_model.sections {
-            let material = &self.gpu_model.materials[section.material_index];
-            if !material.has_distortion {
-                continue;
-            }
-            pass.set_pipeline(&self.shared.distortion_pipelines[material.two_sided_pipeline_index]);
-            pass.set_bind_group(1, &material.bind_group, &[]);
-            pass.set_vertex_buffer(0, section.vertex_buffer.slice(..));
-            pass.set_index_buffer(section.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            pass.draw_indexed(0..section.index_count, 0, 0..1);
-        }
-    }
-
-    /// Draws shadow-casting sections into one directional cascade.
-    ///
-    /// The cascade index follows the oracle's 8x, 4x, 2x, and 1x projection
-    /// scale order. Out-of-range indices are ignored.
-    pub fn render_shadow<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>, cascade: usize) {
-        let Some(pipeline_base) = cascade.checked_mul(2) else {
-            return;
-        };
-        if pipeline_base + 1 >= self.shared.shadow_pipelines.len() {
-            return;
-        }
-
-        pass.set_bind_group(0, &self.scene_bind_group, &[]);
-        for section in &self.gpu_model.sections {
-            let material = &self.gpu_model.materials[section.material_index];
-            if !material.casts_shadows {
-                continue;
-            }
-            pass.set_pipeline(
-                &self.shared.shadow_pipelines[pipeline_base + material.two_sided_pipeline_index],
-            );
-            pass.set_bind_group(1, &material.bind_group, &[]);
-            pass.set_vertex_buffer(0, section.vertex_buffer.slice(..));
-            pass.set_index_buffer(section.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            pass.draw_indexed(0..section.index_count, 0, 0..1);
-        }
-    }
-
-    /// Returns the current model-to-world transform.
-    #[must_use]
-    pub fn model_transform(&self) -> Mat4 {
-        self.model_transform
-    }
-}
-
-impl WorldRenderer for Renderer {
-    fn render_phase<'pass>(&'pass self, phase: RenderPhase, pass: &mut wgpu::RenderPass<'pass>) {
-        match phase {
-            RenderPhase::Sky => self.render_sky(pass),
-            RenderPhase::World => self.render(pass),
-            RenderPhase::Distortion => self.render_distortion(pass),
-            RenderPhase::Shadow { cascade } => self.render_shadow(pass, cascade),
-        }
     }
 }

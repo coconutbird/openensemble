@@ -40,8 +40,8 @@ pub enum ResearchError {
         technology: String,
         status: TechStatus,
     },
-    #[error("technology '{0}' uses per-unit unique effects that are not modeled yet")]
-    UniqueTechnologyUnsupported(String),
+    #[error("building {0:?} already has a unique technology in its shared worker")]
+    UniqueResearchInProgress(EntityId),
     #[error("shadow technology '{0}' must be activated by the tech tree, not researched manually")]
     ShadowTechnologyUnsupported(String),
     #[error("technology '{technology}' references unknown resource '{resource}'")]
@@ -78,7 +78,7 @@ struct ResearchQueueRequest<'database> {
 }
 
 impl World {
-    /// Derive one player's current retail status for a non-unique technology.
+    /// Derive one player's current retail status without a unit-instance key.
     ///
     /// # Errors
     ///
@@ -94,6 +94,53 @@ impl World {
             .ok_or(ResearchError::PlayerNotFound(player_id))?;
         let technology = technology_by_id(database, technology_id)
             .ok_or(ResearchError::TechnologyNotFound(technology_id))?;
+        if has_flag(technology, "UniqueProtoUnitInstance") {
+            return Ok(if authored_unobtainable(technology) {
+                TechStatus::Unobtainable
+            } else {
+                TechStatus::Obtainable
+            });
+        }
+        Ok(self.derive_technology_status(player, database, technology_id, technology))
+    }
+
+    /// Derive retail technology status using one building's unique tech node.
+    ///
+    /// Non-unique technologies still report their player-global status.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the player, building, ownership, or technology ID is invalid.
+    pub fn building_technology_status(
+        &self,
+        player_id: PlayerId,
+        building_id: EntityId,
+        database: &Database,
+        technology_id: i32,
+    ) -> Result<TechStatus, ResearchError> {
+        let player = self
+            .get_player(player_id)
+            .ok_or(ResearchError::PlayerNotFound(player_id))?;
+        let building = self
+            .get_building(building_id)
+            .ok_or(ResearchError::BuildingNotFound(building_id))?;
+        if building.base.player_id != player_id {
+            return Err(ResearchError::BuildingNotOwned {
+                building_id,
+                player_id,
+            });
+        }
+        let technology = technology_by_id(database, technology_id)
+            .ok_or(ResearchError::TechnologyNotFound(technology_id))?;
+        if has_flag(technology, "UniqueProtoUnitInstance") {
+            return Ok(self.derive_unique_technology_status(
+                player,
+                building,
+                database,
+                technology_id,
+                technology,
+            ));
+        }
         Ok(self.derive_technology_status(player, database, technology_id, technology))
     }
 
@@ -126,6 +173,45 @@ impl World {
                 queued,
             });
         Ok(progress)
+    }
+
+    /// Read research progress from one building's shared worker.
+    ///
+    /// This is the instance-keyed progress API required by unique technologies.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the player, building, ownership, or technology ID is invalid.
+    pub fn building_research_progress(
+        &self,
+        player_id: PlayerId,
+        building_id: EntityId,
+        database: &Database,
+        technology_id: i32,
+    ) -> Result<Option<ResearchProgress>, ResearchError> {
+        let _player = self
+            .get_player(player_id)
+            .ok_or(ResearchError::PlayerNotFound(player_id))?;
+        let building = self
+            .get_building(building_id)
+            .ok_or(ResearchError::BuildingNotFound(building_id))?;
+        if building.base.player_id != player_id {
+            return Err(ResearchError::BuildingNotOwned {
+                building_id,
+                player_id,
+            });
+        }
+        let _technology = technology_by_id(database, technology_id)
+            .ok_or(ResearchError::TechnologyNotFound(technology_id))?;
+        Ok(building
+            .production
+            .research_task(player_id, technology_id)
+            .map(|(task, queued)| ResearchProgress {
+                building_id,
+                current_points: task.current_points,
+                total_points: task.total_points,
+                queued,
+            }))
     }
 
     /// Validate, pay for, and enqueue exactly one technology item.
@@ -188,27 +274,39 @@ impl World {
             .ok_or(ResearchError::TechnologyNotFound(technology_id))?;
         self.validate_research_command(player_id, building_id, database, technology)?;
         Self::validate_research_flags(technology)?;
-        let status = self.technology_status(player_id, database, technology_id)?;
+        let unique = has_flag(technology, "UniqueProtoUnitInstance");
+        let status = if unique {
+            self.building_technology_status(player_id, building_id, database, technology_id)?
+        } else {
+            self.technology_status(player_id, database, technology_id)?
+        };
         if status != TechStatus::Available {
             return Err(ResearchError::TechnologyUnavailable {
                 technology: technology.name.clone(),
                 status,
             });
         }
+        if unique
+            && self
+                .get_building(building_id)
+                .is_some_and(|building| building_has_unique_research(building, database))
+        {
+            return Err(ResearchError::UniqueResearchInProgress(building_id));
+        }
         let total_points = research_points(technology)?;
         let cost = technology_cost(database, technology)?;
-        self.pay_and_mark_research(
-            player_id,
-            building_id,
-            technology_id,
-            technology,
-            &cost,
-            no_cost,
-        )?;
+        self.pay_and_mark_research(request, technology, &cost, unique)?;
         let charged_cost = if no_cost { Resources::new() } else { cost };
 
-        if has_flag(technology, "Instant") {
-            let activation = self.activate_technology(player_id, database, &technology.name);
+        if no_cost || has_flag(technology, "Instant") {
+            let activation = self.activate_research_technology(
+                player_id,
+                building_id,
+                database,
+                technology_id,
+                technology,
+                unique,
+            );
             self.finish_research_assignment(player_id, building_id, technology_id);
             if let Err(error) = activation {
                 self.refund_cost(player_id, &charged_cost);
@@ -253,10 +351,20 @@ impl World {
         let technology = technology_by_id(database, technology_id)
             .ok_or(ResearchError::TechnologyNotFound(technology_id))?;
         self.validate_research_command(player_id, command_building_id, database, technology)?;
-        let Some(research_building_id) = self
-            .get_player(player_id)
-            .and_then(|player| player.research.research_building(technology_id))
-        else {
+        let research_building_id = if has_flag(technology, "UniqueProtoUnitInstance") {
+            self.get_building(command_building_id)
+                .filter(|building| {
+                    building
+                        .production
+                        .research_task(player_id, technology_id)
+                        .is_some()
+                })
+                .map(|_| command_building_id)
+        } else {
+            self.get_player(player_id)
+                .and_then(|player| player.research.research_building(technology_id))
+        };
+        let Some(research_building_id) = research_building_id else {
             return Ok(false);
         };
         let task = self
@@ -303,6 +411,40 @@ impl World {
         }
     }
 
+    fn derive_unique_technology_status(
+        &self,
+        player: &Player,
+        building: &crate::entities::Unit,
+        database: &Database,
+        technology_id: i32,
+        technology: &Tech,
+    ) -> TechStatus {
+        if building.unique_technology_is_active(technology_id) {
+            return TechStatus::Active;
+        }
+        if building
+            .production
+            .research_task(player.id, technology_id)
+            .is_some()
+        {
+            return TechStatus::Researching;
+        }
+        if authored_unobtainable(technology) {
+            return TechStatus::Unobtainable;
+        }
+        if !building_offers_research(database, building, technology, player) {
+            return TechStatus::Unobtainable;
+        }
+        if player.is_technology_forbidden(database, technology_id) || technology.alpha == Some(1) {
+            return TechStatus::Obtainable;
+        }
+        if unique_prerequisites_met(self, player, building, database, technology) {
+            TechStatus::Available
+        } else {
+            TechStatus::Obtainable
+        }
+    }
+
     fn validate_research_command(
         &self,
         player_id: PlayerId,
@@ -338,11 +480,6 @@ impl World {
     }
 
     fn validate_research_flags(technology: &Tech) -> Result<(), ResearchError> {
-        if has_flag(technology, "UniqueProtoUnitInstance") {
-            return Err(ResearchError::UniqueTechnologyUnsupported(
-                technology.name.clone(),
-            ));
-        }
         if has_flag(technology, "Shadow") {
             return Err(ResearchError::ShadowTechnologyUnsupported(
                 technology.name.clone(),
@@ -353,13 +490,18 @@ impl World {
 
     fn pay_and_mark_research(
         &mut self,
-        player_id: PlayerId,
-        building_id: EntityId,
-        technology_id: i32,
+        request: ResearchQueueRequest<'_>,
         technology: &Tech,
         cost: &Resources,
-        no_cost: bool,
+        unique: bool,
     ) -> Result<(), ResearchError> {
+        let ResearchQueueRequest {
+            player_id,
+            building_id,
+            technology_id,
+            no_cost,
+            ..
+        } = request;
         let player = self
             .get_player_mut(player_id)
             .ok_or(ResearchError::PlayerNotFound(player_id))?;
@@ -372,9 +514,33 @@ impl World {
         if !no_cost {
             player.resources.pay(cost);
         }
-        let inserted = player.research.start(technology_id, building_id);
-        debug_assert!(inserted, "status validation rejected duplicate research");
+        if !unique {
+            let inserted = player.research.start(technology_id, building_id);
+            debug_assert!(inserted, "status validation rejected duplicate research");
+        }
         Ok(())
+    }
+
+    fn activate_research_technology(
+        &mut self,
+        player_id: PlayerId,
+        building_id: EntityId,
+        database: &Database,
+        technology_id: i32,
+        technology: &Tech,
+        unique: bool,
+    ) -> Result<bool, TechnologyError> {
+        if unique {
+            self.activate_unique_technology(
+                player_id,
+                building_id,
+                database,
+                technology_id,
+                technology,
+            )
+        } else {
+            self.activate_technology(player_id, database, &technology.name)
+        }
     }
 
     pub(super) fn set_research_points(
@@ -398,9 +564,17 @@ impl World {
         database: &Database,
     ) {
         self.finish_research_assignment(task.player_id, building_id, task.technology_id);
-        let activated = self
-            .activate_technology(task.player_id, database, &task.technology_name)
-            .unwrap_or(false);
+        let activated = technology_by_id(database, task.technology_id).is_some_and(|technology| {
+            self.activate_research_technology(
+                task.player_id,
+                building_id,
+                database,
+                task.technology_id,
+                technology,
+                has_flag(technology, "UniqueProtoUnitInstance"),
+            )
+            .unwrap_or(false)
+        });
         if !activated {
             self.refund_cost(task.player_id, &task.cost);
         }
@@ -571,22 +745,23 @@ fn type_count_met(
     prerequisite: &TypeCountEntry,
 ) -> bool {
     let unit_name = prerequisite.unit.trim();
-    if !database
+    let Some(prototype) = database
         .objects
         .iter()
-        .any(|object| object.name.eq_ignore_ascii_case(unit_name))
-    {
+        .find(|object| object.name.eq_ignore_ascii_case(unit_name))
+    else {
         return false;
+    };
+    let mut actual = unit_type_count(world, player_id, unit_name);
+    let is_building = prototype
+        .object_class
+        .as_deref()
+        .is_some_and(|class| class.trim().eq_ignore_ascii_case("Building"));
+    if is_building
+        && let Some(partner_id) = world.get_player(player_id).and_then(Player::coop_player_id)
+    {
+        actual = actual.saturating_add(unit_type_count(world, partner_id, unit_name));
     }
-    let actual = world
-        .units
-        .iter()
-        .filter(|(_, unit)| {
-            unit.base.player_id == player_id
-                && unit.is_alive()
-                && unit.proto_object_name.eq_ignore_ascii_case(unit_name)
-        })
-        .count();
     let actual = i32::try_from(actual).unwrap_or(i32::MAX);
     let expected = prerequisite.count.unwrap_or(0);
     match prerequisite.operator.as_deref().map(str::trim) {
@@ -594,6 +769,106 @@ fn type_count_met(
         Some(operator) if operator.eq_ignore_ascii_case("lt") => actual < expected,
         _ => actual == expected,
     }
+}
+
+fn unit_type_count(world: &World, player_id: PlayerId, unit_name: &str) -> usize {
+    world
+        .units
+        .iter()
+        .filter(|(_, unit)| {
+            unit.base.player_id == player_id
+                && unit.is_alive()
+                && if unit.logical_proto_object_name().is_empty() {
+                    unit.proto_object_name.eq_ignore_ascii_case(unit_name)
+                } else {
+                    unit.logical_proto_object_name()
+                        .eq_ignore_ascii_case(unit_name)
+                }
+        })
+        .count()
+}
+
+fn unique_prerequisites_met(
+    world: &World,
+    player: &Player,
+    building: &crate::entities::Unit,
+    database: &Database,
+    technology: &Tech,
+) -> bool {
+    let use_or = has_flag(technology, "OrPrereqs");
+    match (&technology.prereqs, &technology.or_prereqs) {
+        (None, None) => !use_or,
+        (Some(primary), None) => {
+            unique_prerequisite_group_met(world, player, building, database, primary, use_or)
+        }
+        (None, Some(alternate)) => {
+            unique_prerequisite_group_met(world, player, building, database, alternate, true)
+        }
+        (Some(primary), Some(alternate)) => {
+            unique_prerequisite_group_met(world, player, building, database, primary, use_or)
+                || unique_prerequisite_group_met(world, player, building, database, alternate, true)
+        }
+    }
+}
+
+fn unique_prerequisite_group_met(
+    world: &World,
+    player: &Player,
+    building: &crate::entities::Unit,
+    database: &Database,
+    prerequisites: &PrereqsWrapper,
+    use_or: bool,
+) -> bool {
+    let tech_results = prerequisites.entries.iter().map(|entry| {
+        let name = entry
+            .text
+            .as_deref()
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or(&entry.tech);
+        entry.status.trim().eq_ignore_ascii_case("Active")
+            && technology_prerequisite_is_active(player, building, database, name)
+    });
+    let count_results = prerequisites
+        .type_counts
+        .iter()
+        .map(|entry| type_count_met(world, player.id, database, entry));
+    if use_or {
+        tech_results.chain(count_results).any(|met| met)
+    } else {
+        tech_results.chain(count_results).all(|met| met)
+    }
+}
+
+fn technology_prerequisite_is_active(
+    player: &Player,
+    building: &crate::entities::Unit,
+    database: &Database,
+    name: &str,
+) -> bool {
+    let unique_id = database
+        .techs
+        .iter()
+        .position(|technology| {
+            technology.name.eq_ignore_ascii_case(name.trim())
+                && has_flag(technology, "UniqueProtoUnitInstance")
+        })
+        .and_then(|index| i32::try_from(index).ok());
+    unique_id.map_or_else(
+        || player.technologies.is_active(name),
+        |technology_id| building.unique_technology_is_active(technology_id),
+    )
+}
+
+fn building_has_unique_research(building: &crate::entities::Unit, database: &Database) -> bool {
+    building
+        .production
+        .current_research()
+        .into_iter()
+        .chain(building.production.queued_research())
+        .any(|task| {
+            technology_by_id(database, task.technology_id())
+                .is_some_and(|technology| has_flag(technology, "UniqueProtoUnitInstance"))
+        })
 }
 
 fn building_offers_research(

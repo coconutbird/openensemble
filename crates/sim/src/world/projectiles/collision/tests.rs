@@ -3,8 +3,8 @@ use crate::entities::projectiles::ProjectileLaunch;
 use crate::entity_id::EntityClass;
 use crate::gameplay::projectiles::ProjectileBehavior;
 use crate::gameplay::{
-    AreaDamageProfile, AttackAccuracyProfile, AttackAnimation, AttackProfile,
-    ProjectilePerturbanceProfile, ProjectileProfile,
+    AreaDamageProfile, AttackAccuracyProfile, AttackAnimation, AttackProfile, ImpactEffectProfile,
+    ImpactEffectSize, ProjectilePerturbanceProfile, ProjectileProfile,
 };
 use byteorder::{BigEndian, ByteOrder};
 use half::f16;
@@ -70,12 +70,19 @@ fn collision_catalog(
     };
     let profile = AttackProfile {
         action_name: "Attack".to_owned(),
+        animation_type: "Attack".to_owned(),
         weapon_name: "Weapon".to_owned(),
         weapon_type: None,
         projectile: Some("bullet".to_owned()),
+        impact_effect: None,
         area_damage,
+        pull: None,
+        hardpoint: None,
+        orientation: crate::gameplay::AttackOrientationProfile::default(),
+        charged_animation: None,
         friendly_fire: false,
         targets_foot_of_unit: targets_foot,
+        projectile_reactions: crate::gameplay::ProjectileReactionFlags::default(),
         max_range: 20.0,
         max_velocity_lead: 0.0,
         accuracy: AttackAccuracyProfile::default(),
@@ -86,6 +93,8 @@ fn collision_catalog(
             weight: 1,
             duration: 100.0,
             attack_positions: vec![0.0],
+            events: Vec::new(),
+            hardpoint_track: None,
         }],
         pre_attack_cooldown: [0.0, 0.0],
         post_attack_cooldown: [0.0, 0.0],
@@ -150,6 +159,36 @@ fn projectile_obstruction_redirects_damage_to_the_first_interceptor() {
 
     assert_close(world.get_unit(blocker_id).unwrap().hitpoints, 95.0);
     assert_close(world.get_unit(target_id).unwrap().hitpoints, 100.0);
+}
+
+#[test]
+fn source_visual_player_does_not_replace_projectile_damage_attribution() {
+    let gameplay = collision_catalog(false, false, false, None);
+    let (mut world, _, _, target_id) = combat_world(2);
+    world.update_entities_with_gameplay(0.05, &gameplay);
+    let projectile_id = world.projectiles.iter().next().unwrap().0;
+    world
+        .get_projectile_mut(projectile_id)
+        .unwrap()
+        .inherit_source_visual("captured_enemy", None, 2, Vec3::ZERO);
+    assert_eq!(world.entity_owner(projectile_id), Some(2));
+    assert_eq!(
+        world
+            .get_projectile(projectile_id)
+            .unwrap()
+            .created_by_player_id(),
+        1
+    );
+
+    for _ in 0..20 {
+        world.update_entities_with_gameplay(0.05, &gameplay);
+        if world.get_projectile(projectile_id).is_none() {
+            break;
+        }
+    }
+
+    assert!(world.get_projectile(projectile_id).is_none());
+    assert_close(world.get_unit(target_id).unwrap().hitpoints, 95.0);
 }
 
 #[test]
@@ -231,6 +270,71 @@ fn targets_foot_launch_uses_ground_impact_as_the_full_splash_pool() {
 }
 
 #[test]
+fn impact_request_retains_proto_surface_and_intended_target_flying_rule() {
+    let mut world = World::new();
+    world.init_players(2);
+    let target_id = world.create_unit_at(2, Vec3::X);
+    world.get_unit_mut(target_id).unwrap().proto_object_name = "metal_target".to_owned();
+    let database = Database {
+        objects: vec![ProtoObject {
+            name: "metal_target".to_owned(),
+            surface_type: Some("Metal".to_owned()),
+            ..ProtoObject::default()
+        }],
+        ..Database::default()
+    };
+    let effect = ImpactEffectProfile {
+        name: "Impact".to_owned(),
+        size: ImpactEffectSize::Large,
+        do_shockwave_action: false,
+    };
+    let impact = ProjectileImpact {
+        projectile_id: EntityId::new(EntityClass::Projectile, 9),
+        owning_power_execution_id: None,
+        source_id: EntityId::INVALID,
+        source_player_id: 1,
+        intended_target_id: target_id,
+        primary_target_id: Some(target_id),
+        position: Vec3::X,
+        direction: Vec3::X,
+        damage: 0.0,
+        weapon_type: None,
+        area_damage: None,
+        impact_effect: Some(effect.clone()),
+    };
+
+    world.apply_projectile_impact(impact.clone(), Some(&database), None);
+    let request = world.impact_effect_requests_after(0).next().unwrap();
+    assert_eq!(request.effect(), &effect);
+    assert_eq!(
+        request.surface(),
+        Some(&crate::ImpactSurface::Object("Metal".to_owned()))
+    );
+    assert_eq!(request.forward(), Vec3::Z);
+    assert!(request.emits_surface_effect());
+
+    world.get_unit_mut(target_id).unwrap().flying = true;
+    world.apply_projectile_impact(impact, Some(&database), None);
+    let request = world.impact_effect_requests_after(1).next().unwrap();
+    assert!(!request.emits_surface_effect());
+}
+
+#[test]
+fn shield_impact_forward_matches_retail_special_cases() {
+    let mut world = World::new();
+    let unit_id = world.create_unit_at(1, Vec3::ZERO);
+    let unit = world.get_unit_mut(unit_id).unwrap();
+    unit.base.set_forward(Vec3::X);
+    unit.object_types.push("_WallShield".to_owned());
+    assert_eq!(impact_effect_forward(Some(unit), Vec3::Z), Vec3::X);
+
+    let unit = world.get_unit_mut(unit_id).unwrap();
+    unit.object_types.clear();
+    unit.object_types.push("_BaseShield".to_owned());
+    assert_eq!(impact_effect_forward(Some(unit), Vec3::Z), Vec3::X);
+}
+
+#[test]
 fn terrain_collision_offsets_ground_zero_above_the_triangle_surface() {
     let mut world = World::new();
     world.configure_terrain_simulation(&flat_xsd()).unwrap();
@@ -266,6 +370,7 @@ fn terrain_collision_offsets_ground_zero_above_the_triangle_surface() {
             damage: 5.0,
             weapon_type: None,
             area_damage: None,
+            impact_effect: None,
             friendly_fire: false,
             collides_with_all_units: true,
         },
@@ -329,6 +434,7 @@ fn world_routes_xsd_height_into_tracking_ground_avoidance() {
             damage: 0.0,
             weapon_type: None,
             area_damage: None,
+            impact_effect: None,
             friendly_fire: false,
             collides_with_all_units: true,
         },
@@ -361,13 +467,13 @@ fn sticky_timer_follows_the_unit_and_defers_damage_until_detonation() {
     ));
     assert_close(world.get_unit(target_id).unwrap().hitpoints, 100.0);
     world.get_unit_mut(target_id).unwrap().base.position.x += 1.0;
-    world.update_projectiles(0.05, None);
+    world.update_projectiles(0.05, None, None);
     assert_close(
         world.get_projectile(projectile_id).unwrap().base.position.x,
         world.get_unit(target_id).unwrap().base.position.x,
     );
 
-    world.update_projectiles(0.1, None);
+    world.update_projectiles(0.1, None, None);
     assert!(world.get_projectile(projectile_id).is_none());
     assert_close(world.get_unit(target_id).unwrap().hitpoints, 95.0);
 }
@@ -386,10 +492,10 @@ fn expire_timer_deals_unit_impact_once_then_disappears_without_final_damage() {
     else {
         panic!("expire-on-timer unit impact should apply once and retain the projectile");
     };
-    world.apply_projectile_impact(impact, None);
+    world.apply_projectile_impact(impact, None, None);
     assert_close(world.get_unit(target_id).unwrap().hitpoints, 95.0);
 
-    world.update_projectiles(0.15, None);
+    world.update_projectiles(0.15, None, None);
     assert!(world.get_projectile(projectile_id).is_none());
     assert_close(world.get_unit(target_id).unwrap().hitpoints, 95.0);
 }
@@ -431,6 +537,7 @@ fn timed_sticky_world(behavior: ProjectileBehavior) -> (World, EntityId, EntityI
             damage: 5.0,
             weapon_type: None,
             area_damage: None,
+            impact_effect: None,
             friendly_fire: false,
             collides_with_all_units: true,
         },

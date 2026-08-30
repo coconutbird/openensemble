@@ -3,6 +3,16 @@ use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[path = "scenario_database_layering/physics_assets.rs"]
+mod physics_assets;
+
+use physics_assets::{
+    BASE_VEHICLE_BLUEPRINT, BASE_VEHICLE_PHYSICS, BASE_VEHICLE_SHAPE, SCENARIO_CLAMSHELL_PHYSICS,
+    SCENARIO_LOWER_BLUEPRINT, SCENARIO_LOWER_SHAPE, SCENARIO_PELVIS_BLUEPRINT,
+    SCENARIO_PELVIS_SHAPE, SCENARIO_UPPER_BLUEPRINT, SCENARIO_UPPER_SHAPE,
+    SCENARIO_VEHICLE_BLUEPRINT, SCENARIO_VEHICLE_PHYSICS, SCENARIO_VEHICLE_SHAPE,
+};
+
 const BASE_GAME_DATA: &str = r"<GameData>
     <DifficultyDefault>0.25</DifficultyDefault>
     <ConstructionDamageMultiplier>0.5</ConstructionDamageMultiplier>
@@ -13,7 +23,9 @@ const BASE_GAME_DATA: &str = r"<GameData>
 const BASE_CONFIG: &str = "Veterancy\nBaseOnlyConfig\n";
 const SCENARIO_CONFIG: &str = "-Veterancy\nScenarioOnlyConfig\n";
 
-const SCENARIO_GAME_DATA: &str = r"<GameData>
+const SCENARIO_GAME_DATA: &str = r#"<GameData>
+    <Resources><Resource Deductable="true">ScenarioResource</Resource></Resources>
+    <Rates><Rate>ScenarioRate</Rate></Rates>
     <DifficultyDefault>0.82</DifficultyDefault>
     <ConstructionDamageMultiplier>3.0</ConstructionDamageMultiplier>
     <TimeFrozenToThaw>8</TimeFrozenToThaw>
@@ -23,7 +35,7 @@ const SCENARIO_GAME_DATA: &str = r"<GameData>
     <FreezingSpeedModifier>0.4</FreezingSpeedModifier>
     <FreezingDamageModifier>1.5</FreezingDamageModifier>
     <FrozenDamageModifier>2</FrozenDamageModifier>
-</GameData>";
+</GameData>"#;
 
 const BASE_SQUADS: &str = r#"<Squads>
     <Squad name="base_only" />
@@ -55,6 +67,7 @@ const SCENARIO_OBJECTS: &str = r#"<Objects>
         <Hitpoints>40</Hitpoints>
         <AmmoMax>20</AmmoMax>
         <Flag>StartAtMaxAmmo</Flag>
+        <PhysicsReplacementInfo>layered_clamshell</PhysicsReplacementInfo>
     </Object>
     <Object name="scenario_mine">
         <ObjectClass>Unit</ObjectClass>
@@ -99,6 +112,12 @@ const SCENARIO_OBJECTS: &str = r#"<Objects>
     <Object name="scenario_cryo_bomber">
         <ObjectClass>Object</ObjectClass>
         <Visual>scenario_cryo_bomber</Visual>
+    </Object>
+    <Object name="scenario_generator">
+        <ObjectClass>Building</ObjectClass>
+        <Hitpoints>500</Hitpoints>
+        <AddResource Amount="25">ScenarioResource</AddResource>
+        <Rate rate="ScenarioRate">7</Rate>
     </Object>
 </Objects>"#;
 
@@ -184,48 +203,6 @@ const SCENARIO_MINELAYER_TACTICS: &str = r"<TacticData>
     </Tactic>
 </TacticData>";
 
-const BASE_VEHICLE_PHYSICS: &str = r"<physics>
-    <blueprint>layered_vehicle</blueprint>
-    <Vehicle>warthog</Vehicle>
-    <CenterOffset>9,9,9</CenterOffset>
-</physics>";
-
-const SCENARIO_VEHICLE_PHYSICS: &str = r"<physics>
-    <blueprint>layered_vehicle</blueprint>
-    <Vehicle>ghost</Vehicle>
-    <CenterOffset>1,2,3</CenterOffset>
-</physics>";
-
-const BASE_VEHICLE_BLUEPRINT: &str = r"<blueprint>
-    <mass>10</mass>
-    <friction>0.1</friction>
-    <restitution>0.05</restitution>
-    <linearDamping>0.2</linearDamping>
-    <angularDamping>0.3</angularDamping>
-    <shape>layered_vehicle</shape>
-</blueprint>";
-
-const SCENARIO_VEHICLE_BLUEPRINT: &str = r"<blueprint>
-    <mass>222</mass>
-    <friction>1.25</friction>
-    <restitution>0.4</restitution>
-    <linearDamping>0.05</linearDamping>
-    <angularDamping>0.15</angularDamping>
-    <shape>layered_vehicle</shape>
-</blueprint>";
-
-const BASE_VEHICLE_SHAPE: &str = r#"<hke version="V_20200_B_20031014">
-    <hkobject name="body" type="hkBoxShape">
-        <hkparam name="halfExtents" type="hkTypeVector4">(9 9 9)</hkparam>
-    </hkobject>
-</hke>"#;
-
-const SCENARIO_VEHICLE_SHAPE: &str = r#"<hke version="V_20200_B_20031014">
-    <hkobject name="body" type="hkBoxShape">
-        <hkparam name="halfExtents" type="hkTypeVector4">(4 5 6)</hkparam>
-    </hkobject>
-</hke>"#;
-
 const SCENARIO_DESCRIPTIONS: &str = r#"<ScenarioDescriptions>
     <ScenarioInfo
         File="skirmish\design\layered_test\layered_test.scn"
@@ -243,6 +220,7 @@ const SCENARIO: &str = r#"<Scenario>
     <Objects>
         <Object Player="1" ID="99" VisualVariationIndex="1">variation_crate</Object>
         <Object Player="1" ID="100">variation_crate</Object>
+        <Object Player="1" ID="101">scenario_generator</Object>
     </Objects>
 </Scenario>"#;
 
@@ -293,6 +271,25 @@ fn scenario_database_tables_win_before_authoritative_simulation_is_built() {
                 SCENARIO_VEHICLE_BLUEPRINT,
             ),
             ("physics\\layered_vehicle.shp.xmb", SCENARIO_VEHICLE_SHAPE),
+            (
+                "physics\\layered_clamshell.physics.xmb",
+                SCENARIO_CLAMSHELL_PHYSICS,
+            ),
+            (
+                "physics\\layered_upper.blueprint.xmb",
+                SCENARIO_UPPER_BLUEPRINT,
+            ),
+            ("physics\\layered_upper.shp.xmb", SCENARIO_UPPER_SHAPE),
+            (
+                "physics\\layered_lower.blueprint.xmb",
+                SCENARIO_LOWER_BLUEPRINT,
+            ),
+            ("physics\\layered_lower.shp.xmb", SCENARIO_LOWER_SHAPE),
+            (
+                "physics\\layered_pelvis.blueprint.xmb",
+                SCENARIO_PELVIS_BLUEPRINT,
+            ),
+            ("physics\\layered_pelvis.shp.xmb", SCENARIO_PELVIS_SHAPE),
             ("startup\\game.cfg", SCENARIO_CONFIG),
             (
                 "scenario\\skirmish\\design\\layered_test\\layered_test.scn.xmb",
@@ -327,7 +324,7 @@ fn assert_layered_database_and_scenario_state(loaded: &sim::LoadedGameScenario) 
     assert_eq!(game_data.default_cryo_points, Some(66.0));
     assert_eq!(game_data.freezing_speed_modifier, Some(0.4));
     assert_eq!(loaded.content.database.squads.len(), 3);
-    assert_eq!(loaded.content.database.objects.len(), 10);
+    assert_eq!(loaded.content.database.objects.len(), 11);
     assert_eq!(loaded.content.database.powers.len(), 1);
     assert!(
         loaded
@@ -347,6 +344,19 @@ fn assert_layered_database_and_scenario_state(loaded: &sim::LoadedGameScenario) 
     assert!((scenario_player.difficulty - 0.82).abs() < f32::EPSILON);
     assert_eq!(scenario_player.civ_id, 0);
     assert_eq!(scenario_player.leader_id, 0);
+    assert_close(scenario_player.get_resource(0), 25.0);
+    assert_close(scenario_player.get_rate(0), 7.0);
+    let generator_id = loaded
+        .simulation
+        .get_unit_id(101)
+        .expect("scenario-layered generator unit");
+    assert!(
+        loaded
+            .simulation
+            .world
+            .get_building(generator_id)
+            .is_some_and(|building| building.built)
+    );
     assert_eq!(
         scenario_player
             .technologies
@@ -597,6 +607,30 @@ fn assert_layered_vehicle_physics(loaded: &mut sim::LoadedGameScenario) {
     assert_close(profile.material().restitution, 0.4);
     assert_close(profile.material().linear_damping, 0.05);
     assert_close(profile.material().angular_damping, 0.15);
+
+    let replacement = loaded
+        .simulation
+        .gameplay
+        .physics_replacement("SCENARIO_MINELAYER")
+        .expect("scenario object should load replacement physics without a detonation flag");
+    assert!(
+        loaded
+            .simulation
+            .gameplay
+            .physics_replacement_issues()
+            .is_empty()
+    );
+    assert_eq!(replacement.physics_info(), "layered_clamshell");
+    assert_eq!(
+        replacement.collider().half_extents,
+        glam::Vec3::new(2.0, 3.5, 2.0)
+    );
+    assert_eq!(
+        replacement.collider().center_offset,
+        glam::Vec3::new(1.0, 10.5, 3.0)
+    );
+    assert_close(replacement.material().mass, 222.0);
+    assert!(replacement.is_clamshell());
 
     let vehicle_id = sim::spawn_object_at(
         &mut loaded.simulation.world,

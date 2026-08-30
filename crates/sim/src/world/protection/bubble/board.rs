@@ -61,7 +61,12 @@ impl World {
         action: &JoinActionProfile,
         gameplay: &GameplayCatalog,
     ) {
-        if !self.update_join_follow(source_squad_id, target.position, action.work_range()) {
+        if !self.update_join_follow(
+            source_squad_id,
+            target_squad_id,
+            target.position,
+            action.work_range(),
+        ) {
             return;
         }
         if self.join_channel_occupied(source_squad_id, target_squad_id, action.merge_type()) {
@@ -393,9 +398,7 @@ impl World {
             .units
             .get(unit_id)
             .map_or(0.0, |unit| unit.max_hitpoints * fraction.max(0.0));
-        if let Some(unit) = self.units.get_mut(unit_id) {
-            let _damaged = unit.damage(damage);
-        }
+        let _damaged = self.damage_unit(unit_id, damage);
     }
 }
 

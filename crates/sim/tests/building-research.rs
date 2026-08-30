@@ -19,6 +19,17 @@ const UPGRADE_TWO: &str = "test_marine_upgrade2";
 const INSTANT_UPGRADE: &str = "test_instant_upgrade";
 const BUILDING_PREREQ: &str = "test_building_prereq";
 const OR_PREREQ: &str = "test_or_prereq";
+const UNIQUE_BASE: &str = "test_command_01";
+const UNIQUE_COMMAND_TWO: &str = "test_command_02";
+const UNIQUE_COMMAND_THREE: &str = "test_command_03";
+const UNIQUE_UPGRADE_ONE: &str = "test_base_upgrade1";
+const UNIQUE_UPGRADE_TWO: &str = "test_base_upgrade2";
+const UNIQUE_ALTERNATE: &str = "test_base_alternate";
+const COOP_LAB: &str = "test_coop_lab";
+const COOP_REACTOR: &str = "test_coop_reactor";
+const COOP_MARINE: &str = "test_coop_marine";
+const COOP_BUILDING_TECH: &str = "test_coop_building_prereq";
+const COOP_UNIT_TECH: &str = "test_coop_unit_prereq";
 
 #[test]
 fn building_packet_dispatches_the_fixed_retail_payload() {
@@ -240,6 +251,151 @@ fn player_technology_forbids_gate_new_research() {
     );
 }
 
+#[test]
+fn unique_research_status_and_work_are_keyed_by_building() {
+    let database = unique_research_database();
+    let mut world = sim::World::new();
+    world.init_players(1);
+    world.get_player_mut(1).unwrap().resources.amounts = [1_000.0, 0.0, 0.0, 0.0];
+    let first = spawn_unique_base(&mut world, &database);
+    let second = spawn_unique_base(&mut world, &database);
+    let upgrade = technology_prototype_id(&database, UNIQUE_UPGRADE_ONE).unwrap();
+    let alternate = technology_prototype_id(&database, UNIQUE_ALTERNATE).unwrap();
+
+    assert_eq!(
+        world.technology_status(1, &database, upgrade).unwrap(),
+        TechStatus::Obtainable
+    );
+    assert_eq!(
+        world
+            .building_technology_status(1, first, &database, upgrade)
+            .unwrap(),
+        TechStatus::Available
+    );
+    assert_eq!(
+        world.queue_research(1, first, &database, upgrade).unwrap(),
+        ResearchQueueResult::Queued
+    );
+    assert_eq!(
+        world.queue_research(1, second, &database, upgrade).unwrap(),
+        ResearchQueueResult::Queued
+    );
+    assert!(matches!(
+        world.queue_research(1, first, &database, alternate),
+        Err(ResearchError::UniqueResearchInProgress(id)) if id == first
+    ));
+    assert_eq!(
+        world
+            .building_technology_status(1, first, &database, upgrade)
+            .unwrap(),
+        TechStatus::Researching
+    );
+    assert!(
+        world
+            .building_research_progress(1, first, &database, upgrade)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        world
+            .research_progress(1, &database, upgrade)
+            .unwrap()
+            .is_none()
+    );
+    assert_resources(&world, [800.0, 0.0, 0.0, 0.0]);
+
+    assert!(
+        world
+            .cancel_research(1, second, &database, upgrade)
+            .unwrap()
+    );
+    assert_resources(&world, [900.0, 0.0, 0.0, 0.0]);
+    assert_eq!(
+        world
+            .building_technology_status(1, second, &database, upgrade)
+            .unwrap(),
+        TechStatus::Available
+    );
+}
+
+#[test]
+fn unique_transform_changes_only_the_researching_instance_and_preserves_identity() {
+    let database = unique_research_database();
+    let mut world = sim::World::new();
+    world.init_players(1);
+    world.get_player_mut(1).unwrap().resources.amounts = [1_000.0, 0.0, 0.0, 0.0];
+    let upgraded = spawn_unique_base(&mut world, &database);
+    let untouched = spawn_unique_base(&mut world, &database);
+    world.get_building_mut(upgraded).unwrap().hitpoints = 25.0;
+    let upgrade_one = technology_prototype_id(&database, UNIQUE_UPGRADE_ONE).unwrap();
+    let upgrade_two = technology_prototype_id(&database, UNIQUE_UPGRADE_TWO).unwrap();
+
+    world
+        .queue_research(1, upgraded, &database, upgrade_one)
+        .unwrap();
+    advance_research(&mut world, &database, 2.0);
+    let building = world.get_building(upgraded).unwrap();
+    assert_eq!(building.base.id, upgraded);
+    assert_eq!(building.proto_object_name, UNIQUE_COMMAND_TWO);
+    assert_eq!(building.logical_proto_object_name(), UNIQUE_COMMAND_TWO);
+    assert_close(building.max_hitpoints, 200.0);
+    assert_close(building.hitpoints, 50.0);
+    assert!(building.unique_technology_is_active(upgrade_one));
+    assert_eq!(
+        world.get_building(untouched).unwrap().proto_object_name,
+        UNIQUE_BASE
+    );
+    assert_eq!(
+        world
+            .building_technology_status(1, upgraded, &database, upgrade_two)
+            .unwrap(),
+        TechStatus::Available
+    );
+
+    world
+        .queue_research(1, upgraded, &database, upgrade_two)
+        .unwrap();
+    advance_research(&mut world, &database, 2.0);
+    let building = world.get_building(upgraded).unwrap();
+    assert_eq!(building.proto_object_name, UNIQUE_COMMAND_THREE);
+    assert!(building.unique_technology_is_active(upgrade_one));
+    assert!(building.unique_technology_is_active(upgrade_two));
+    assert_eq!(
+        building.active_unique_technologies().collect::<Vec<_>>(),
+        vec![upgrade_one, upgrade_two]
+    );
+}
+
+#[test]
+fn cooperative_partner_buildings_but_not_units_satisfy_research_type_counts() {
+    let database = coop_prerequisite_database();
+    let mut world = sim::World::new();
+    world.init_players(2);
+    let _lab = spawn_named(&mut world, &database, 1, COOP_LAB);
+    let _reactor = spawn_named(&mut world, &database, 2, COOP_REACTOR);
+    let _marine = spawn_named(&mut world, &database, 2, COOP_MARINE);
+    let building_tech = technology_prototype_id(&database, COOP_BUILDING_TECH).unwrap();
+    let unit_tech = technology_prototype_id(&database, COOP_UNIT_TECH).unwrap();
+
+    assert_eq!(
+        world
+            .technology_status(1, &database, building_tech)
+            .unwrap(),
+        TechStatus::Obtainable
+    );
+    world.get_player_mut(1).unwrap().set_coop_player_id(Some(2));
+    assert_eq!(
+        world
+            .technology_status(1, &database, building_tech)
+            .unwrap(),
+        TechStatus::Available
+    );
+    assert_eq!(
+        world.technology_status(1, &database, unit_tech).unwrap(),
+        TechStatus::Obtainable
+    );
+}
+
 fn assert_resources(world: &sim::World, expected: [f32; 4]) {
     let actual = world.get_player(1).unwrap().resources.amounts;
     for (actual, expected) in actual.into_iter().zip(expected) {
@@ -266,6 +422,165 @@ fn enqueue_research(simulation: &mut Simulation, building_id: EntityId, technolo
 fn spawn_barracks(world: &mut sim::World, database: &Database) -> EntityId {
     let prototype_id = object_prototype_id(database, BARRACKS).unwrap();
     spawn_object_at(world, database, 1, prototype_id, Vec3::ZERO, Vec3::Z).unwrap()
+}
+
+fn spawn_unique_base(world: &mut sim::World, database: &Database) -> EntityId {
+    let prototype_id = object_prototype_id(database, UNIQUE_BASE).unwrap();
+    spawn_object_at(world, database, 1, prototype_id, Vec3::ZERO, Vec3::Z).unwrap()
+}
+
+fn spawn_named(world: &mut sim::World, database: &Database, player_id: u8, name: &str) -> EntityId {
+    let prototype_id = object_prototype_id(database, name).unwrap();
+    spawn_object_at(
+        world,
+        database,
+        player_id,
+        prototype_id,
+        Vec3::ZERO,
+        Vec3::Z,
+    )
+    .unwrap()
+}
+
+fn advance_research(world: &mut sim::World, database: &Database, points: f32) {
+    let promoted = world.update_production(0.01, database);
+    assert_eq!(promoted.completed_research, 0);
+    let completed = world.update_production(points, database);
+    assert_eq!(completed.completed_research, 1);
+}
+
+fn coop_prerequisite_database() -> Database {
+    let technologies = vec![
+        technology(
+            COOP_BUILDING_TECH,
+            1.0,
+            Vec::new(),
+            Vec::new(),
+            Some(type_count_prerequisite(COOP_REACTOR)),
+            None,
+        ),
+        technology(
+            COOP_UNIT_TECH,
+            1.0,
+            Vec::new(),
+            Vec::new(),
+            Some(type_count_prerequisite(COOP_MARINE)),
+            None,
+        ),
+    ];
+    Database {
+        objects: vec![
+            ProtoObject {
+                name: COOP_LAB.to_owned(),
+                object_class: Some("Building".to_owned()),
+                commands: technologies
+                    .iter()
+                    .map(|technology| ObjectCommand {
+                        target: technology.name.clone(),
+                        command_type: Some("Research".to_owned()),
+                        ..ObjectCommand::default()
+                    })
+                    .collect(),
+                ..ProtoObject::default()
+            },
+            ProtoObject {
+                name: COOP_REACTOR.to_owned(),
+                object_class: Some("Building".to_owned()),
+                ..ProtoObject::default()
+            },
+            ProtoObject {
+                name: COOP_MARINE.to_owned(),
+                object_class: Some("Unit".to_owned()),
+                ..ProtoObject::default()
+            },
+        ],
+        techs: technologies,
+        ..Database::default()
+    }
+}
+
+fn type_count_prerequisite(unit: &str) -> PrereqsWrapper {
+    PrereqsWrapper {
+        type_counts: vec![TypeCountEntry {
+            unit: unit.to_owned(),
+            operator: Some("gt".to_owned()),
+            count: Some(0),
+        }],
+        ..PrereqsWrapper::default()
+    }
+}
+
+fn unique_research_database() -> Database {
+    Database {
+        objects: vec![
+            unique_command_proto(
+                UNIQUE_BASE,
+                501,
+                100.0,
+                &[UNIQUE_UPGRADE_ONE, UNIQUE_ALTERNATE],
+            ),
+            unique_command_proto(UNIQUE_COMMAND_TWO, 502, 200.0, &[UNIQUE_UPGRADE_TWO]),
+            unique_command_proto(UNIQUE_COMMAND_THREE, 503, 300.0, &[]),
+        ],
+        techs: vec![
+            unique_technology(UNIQUE_UPGRADE_ONE, UNIQUE_COMMAND_TWO, 100.0, None),
+            unique_technology(
+                UNIQUE_UPGRADE_TWO,
+                UNIQUE_COMMAND_THREE,
+                150.0,
+                Some(active_prerequisite(UNIQUE_UPGRADE_ONE)),
+            ),
+            unique_technology(UNIQUE_ALTERNATE, UNIQUE_COMMAND_TWO, 50.0, None),
+        ],
+        game_data: Some(GameData {
+            resources: Some(ResourcesWrapper {
+                entries: vec![ResourceDef {
+                    name: "Supplies".to_owned(),
+                    deductable: Some(true),
+                }],
+            }),
+            ..GameData::default()
+        }),
+        ..Database::default()
+    }
+}
+
+fn unique_command_proto(name: &str, dbid: i32, hitpoints: f32, techs: &[&str]) -> ProtoObject {
+    ProtoObject {
+        name: name.to_owned(),
+        dbid: Some(dbid),
+        object_class: Some("Building".to_owned()),
+        hitpoints: Some(hitpoints),
+        commands: techs
+            .iter()
+            .map(|technology| ObjectCommand {
+                target: (*technology).to_owned(),
+                command_type: Some("Research".to_owned()),
+                ..ObjectCommand::default()
+            })
+            .collect(),
+        ..ProtoObject::default()
+    }
+}
+
+fn unique_technology(
+    name: &str,
+    target: &str,
+    supplies: f32,
+    prereqs: Option<PrereqsWrapper>,
+) -> Tech {
+    technology(
+        name,
+        2.0,
+        vec![cost("Supplies", supplies)],
+        vec!["UniqueProtoUnitInstance".to_owned()],
+        prereqs,
+        Some(TechEffect {
+            effect_type: "TransformUnit".to_owned(),
+            value: Some(target.to_owned()),
+            ..TechEffect::default()
+        }),
+    )
 }
 
 fn research_database() -> Database {

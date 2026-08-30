@@ -1,8 +1,8 @@
 //! Retail-style unit/squad training validation, payment, and cancellation.
 
-use super::World;
+use super::{ObjectCostError, World};
 use crate::entities::units::TriggerCommandStateRef;
-use crate::entities::{TrainingKind, TrainingProgress, TrainingTask};
+use crate::entities::{TrainingKind, TrainingProgress, TrainingRecharge, TrainingTask};
 use crate::entity_id::EntityId;
 use crate::player::{MAX_RESOURCES, PlayerId, PlayerTechState, PopulationCost, Resources};
 use crate::scenario::population::{
@@ -61,10 +61,8 @@ pub enum TrainingError {
         prototype: String,
         population: String,
     },
-    #[error("'{0}' uses InstantTrainWithRecharge, which is not modeled yet")]
-    InstantRechargeUnsupported(String),
-    #[error("'{0}' uses dynamic cost escalation, which is not modeled yet")]
-    CostEscalationUnsupported(String),
+    #[error(transparent)]
+    ObjectCost(#[from] ObjectCostError),
     #[error("training count {count} exceeds the per-command limit of {MAX_TRAIN_BATCH}")]
     BatchTooLarge { count: u32 },
 }
@@ -77,6 +75,7 @@ struct TrainingDefinition {
     total_points: f32,
     cost: Resources,
     population_costs: Vec<PopulationCost>,
+    instant_recharge: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -108,6 +107,13 @@ pub(crate) struct TriggerTrainingRequest<'database> {
     pub(crate) trigger_state: Option<TriggerCommandStateRef>,
 }
 
+#[derive(Debug)]
+pub(crate) struct TriggerTrainingResult {
+    pub(crate) queue: TrainingQueueResult,
+    pub(crate) waits_for_completion: bool,
+    pub(crate) trained_squads: Vec<EntityId>,
+}
+
 impl World {
     /// Validate, pay, reserve population, and enqueue as many items as possible.
     ///
@@ -136,12 +142,13 @@ impl World {
             no_cost: false,
             trigger_state: None,
         })
+        .map(|result| result.queue)
     }
 
     pub(crate) fn queue_trigger_training(
         &mut self,
         request: TriggerTrainingRequest<'_>,
-    ) -> Result<TrainingQueueResult, TrainingError> {
+    ) -> Result<TriggerTrainingResult, TrainingError> {
         let TriggerTrainingRequest {
             player_id,
             building_id,
@@ -166,78 +173,172 @@ impl World {
     fn queue_training_internal(
         &mut self,
         request: TrainingQueueRequest<'_>,
-    ) -> Result<TrainingQueueResult, TrainingError> {
-        let TrainingQueueRequest {
-            player_id,
-            building_id,
-            database,
-            kind,
-            prototype_id,
-            count,
-            no_cost,
-            trigger_state,
-        } = request;
-        if count > MAX_TRAIN_BATCH {
-            return Err(TrainingError::BatchTooLarge { count });
+    ) -> Result<TriggerTrainingResult, TrainingError> {
+        if request.count > MAX_TRAIN_BATCH {
+            return Err(TrainingError::BatchTooLarge {
+                count: request.count,
+            });
         }
         let definition = training_definition(
-            database,
-            kind,
-            prototype_id,
-            self.get_player(player_id)
+            request.database,
+            request.kind,
+            request.prototype_id,
+            self.get_player(request.player_id)
                 .map(|player| &player.technologies),
         )?;
-        let limit =
-            self.validate_training_command(player_id, building_id, database, &definition)?;
+        let limit = self.validate_training_command(
+            request.player_id,
+            request.building_id,
+            request.database,
+            &definition,
+        )?;
+        if definition.instant_recharge
+            && self
+                .get_building(request.building_id)
+                .and_then(|building| {
+                    building
+                        .production
+                        .training_recharge(request.kind, request.prototype_id)
+                })
+                .is_some()
+        {
+            return Ok(trigger_training_result(0, request.count, true, Vec::new()));
+        }
         let mut accepted = 0;
-        while accepted < count {
+        let mut trained_squads = Vec::new();
+        let completes_immediately = request.no_cost || definition.instant_recharge;
+        while accepted < request.count {
             if limit.is_some_and(|rule| {
-                self.training_limit_count(building_id, &definition, rule) >= rule.count
+                self.training_limit_count(request.building_id, &definition, rule) >= rule.count
             }) {
                 break;
             }
-            let Some(player) = self.get_player(player_id) else {
-                return Err(TrainingError::PlayerNotFound(player_id));
-            };
-            if (!no_cost && !player.resources.can_afford(&definition.cost))
-                || !player.can_reserve_population(&definition.population_costs)
-            {
+            let Some(task) = self.try_purchase_training_item(request, &definition, limit)? else {
                 break;
-            }
-            if let Some(player) = self.get_player_mut(player_id) {
-                if !no_cost {
-                    player.resources.pay(&definition.cost);
+            };
+            if completes_immediately {
+                let trained = self.complete_training_with_sound(
+                    request.building_id,
+                    &task,
+                    request.database,
+                    !request.no_cost,
+                );
+                if request.kind == TrainingKind::Squad
+                    && let Some(squad_id) = trained
+                {
+                    trained_squads.push(squad_id);
                 }
-                let reserved = player.reserve_population(&definition.population_costs);
-                debug_assert!(reserved, "immutable population check just succeeded");
+            } else if let Some(building) = self.get_building_mut(request.building_id) {
+                building.production.enqueue_training(task);
+            } else {
+                self.refund_training_task(&task);
+                return Err(TrainingError::BuildingNotFound(request.building_id));
             }
-            let task = TrainingTask {
-                player_id,
-                kind,
-                prototype_id,
+            accepted += 1;
+        }
+        if definition.instant_recharge && accepted > 0 {
+            let recharge_points = self.training_recharge_points(
+                request.building_id,
+                request.database,
+                request.kind,
+                request.prototype_id,
+                definition.total_points,
+            );
+            let building = self
+                .get_building_mut(request.building_id)
+                .ok_or(TrainingError::BuildingNotFound(request.building_id))?;
+            building.production.set_training_recharge(
+                request.kind,
+                request.prototype_id,
+                recharge_points,
+            );
+        }
+        Ok(trigger_training_result(
+            accepted,
+            request.count,
+            completes_immediately,
+            trained_squads,
+        ))
+    }
+
+    fn try_purchase_training_item(
+        &mut self,
+        request: TrainingQueueRequest<'_>,
+        definition: &TrainingDefinition,
+        limit: Option<TrainLimitRule>,
+    ) -> Result<Option<TrainingTask>, TrainingError> {
+        let player = self
+            .get_player(request.player_id)
+            .ok_or(TrainingError::PlayerNotFound(request.player_id))?;
+        if request.no_cost {
+            return Ok(Some(TrainingTask {
+                player_id: request.player_id,
+                kind: request.kind,
+                prototype_id: request.prototype_id,
                 prototype_name: definition.prototype_name.clone(),
                 current_points: 0.0,
                 total_points: definition.total_points,
-                cost: if no_cost {
-                    Resources::new()
-                } else {
-                    definition.cost
-                },
-                population_costs: definition.population_costs.clone(),
+                cost: Resources::new(),
+                population_costs: Vec::new(),
                 train_limit_bucket: limit.and_then(|rule| rule.bucket),
-                trigger_state,
-            };
-            let Some(building) = self.get_building_mut(building_id) else {
-                self.refund_training_task(&task);
-                return Err(TrainingError::BuildingNotFound(building_id));
-            };
-            building.production.enqueue_training(task);
-            accepted += 1;
+                trigger_state: request.trigger_state,
+            }));
         }
-        Ok(TrainingQueueResult {
-            accepted,
-            requested: count,
-        })
+        let cost = if request.kind == TrainingKind::Unit {
+            self.object_cost(request.database, request.player_id, request.prototype_id)?
+        } else {
+            definition.cost
+        };
+        if !player.resources.can_afford(&cost)
+            || !player.can_reserve_population(&definition.population_costs)
+        {
+            return Ok(None);
+        }
+        if let Some(player) = self.get_player_mut(request.player_id) {
+            player.resources.pay(&cost);
+            let reserved = player.reserve_population(&definition.population_costs);
+            debug_assert!(reserved, "immutable population check just succeeded");
+        }
+        Ok(Some(TrainingTask {
+            player_id: request.player_id,
+            kind: request.kind,
+            prototype_id: request.prototype_id,
+            prototype_name: definition.prototype_name.clone(),
+            current_points: 0.0,
+            total_points: definition.total_points,
+            cost,
+            population_costs: definition.population_costs.clone(),
+            train_limit_bucket: limit.and_then(|rule| rule.bucket),
+            trigger_state: request.trigger_state,
+        }))
+    }
+
+    fn training_recharge_points(
+        &self,
+        building_id: EntityId,
+        database: &Database,
+        kind: TrainingKind,
+        prototype_id: i32,
+        fallback: f32,
+    ) -> f32 {
+        let technologies = self
+            .get_building(building_id)
+            .and_then(|building| self.get_player(building.base.player_id))
+            .map(|player| &player.technologies);
+        training_points(database, kind, prototype_id, technologies).unwrap_or(fallback)
+    }
+
+    /// Return one building's authoritative instant-training lockout.
+    #[must_use]
+    pub fn training_recharge(
+        &self,
+        building_id: EntityId,
+        kind: TrainingKind,
+        prototype_id: i32,
+    ) -> Option<TrainingRecharge> {
+        self.get_building(building_id)?
+            .production
+            .training_recharge(kind, prototype_id)
     }
 
     /// Cancel matching queued items from the tail, then the current item.
@@ -509,18 +610,8 @@ fn unit_training_definition(
             kind: TrainingKind::Unit,
             prototype_id,
         })?;
-    if has_flag(&prototype.flags, "InstantTrainWithRecharge") {
-        return Err(TrainingError::InstantRechargeUnsupported(
-            prototype.name.clone(),
-        ));
-    }
     if !object_is_spawnable(prototype) {
         return Err(TrainingError::PrototypeNotSpawnable(prototype.name.clone()));
-    }
-    if prototype.cost_escalation.is_some() || !prototype.cost_escalation_object.is_empty() {
-        return Err(TrainingError::CostEscalationUnsupported(
-            prototype.name.clone(),
-        ));
     }
     validate_object_population(database, prototype)?;
     Ok(TrainingDefinition {
@@ -528,15 +619,9 @@ fn unit_training_definition(
         forbid_id: prototype.dbid.unwrap_or(prototype_id),
         prototype_name: prototype.name.clone(),
         total_points: valid_unit_build_points(prototype, technologies)?,
-        cost: training_cost(
-            database,
-            &prototype.name,
-            prototype
-                .costs
-                .iter()
-                .map(|cost| (cost.resource_type.as_str(), cost.amount)),
-        )?,
+        cost: Resources::new(),
         population_costs: object_population_costs(database, prototype),
+        instant_recharge: has_flag(&prototype.flags, "InstantTrainWithRecharge"),
     })
 }
 
@@ -549,11 +634,6 @@ fn squad_training_definition(
             kind: TrainingKind::Squad,
             prototype_id,
         })?;
-    if has_flag(&prototype.flags, "InstantTrainWithRecharge") {
-        return Err(TrainingError::InstantRechargeUnsupported(
-            prototype.name.clone(),
-        ));
-    }
     for member in prototype
         .units
         .as_ref()
@@ -581,7 +661,24 @@ fn squad_training_definition(
                 .map(|cost| (cost.resource_type.as_str(), cost.amount)),
         )?,
         population_costs: squad_population_costs(database, prototype),
+        instant_recharge: has_flag(&prototype.flags, "InstantTrainWithRecharge"),
     })
+}
+
+fn trigger_training_result(
+    accepted: u32,
+    requested: u32,
+    completes_immediately: bool,
+    trained_squads: Vec<EntityId>,
+) -> TriggerTrainingResult {
+    TriggerTrainingResult {
+        queue: TrainingQueueResult {
+            accepted,
+            requested,
+        },
+        waits_for_completion: accepted > 0 && !completes_immediately,
+        trained_squads,
+    }
 }
 
 fn valid_build_points(name: &str, points: Option<f32>) -> Result<f32, TrainingError> {

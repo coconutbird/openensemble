@@ -4,6 +4,18 @@ use super::{World, design_lines, events, presentation, scoring, team};
 use crate::entity_id::{EntityClass, EntityId};
 
 impl World {
+    pub(super) fn prepare_remove_squad_actions(&mut self, squad_id: EntityId) {
+        self.prepare_remove_squad_capture(squad_id);
+        self.prepare_remove_squad_repair_other(squad_id);
+        self.prepare_remove_squad_ambient_life(squad_id);
+        self.prepare_remove_squad_cloak(squad_id);
+        self.prepare_remove_squad_wander(squad_id);
+        self.prepare_remove_squad_spirit_bond(squad_id);
+        self.prepare_remove_squad_garrison(squad_id);
+        self.detach_squad_hitch(squad_id);
+        self.prepare_remove_squad_protection(squad_id);
+    }
+
     /// Reset the world to initial state.
     pub fn reset(&mut self) {
         self.players.clear();
@@ -32,6 +44,7 @@ impl World {
         self.prototype_squads.clear();
         self.prototype_shield_coverages.clear();
         self.prototype_ground_vehicle_physics.clear();
+        self.prototype_flight_controllers.clear();
         self.objects.clear();
         self.units.clear();
         self.squads.clear();
@@ -83,11 +96,17 @@ impl World {
         if self.get_unit(unit_id).is_none() {
             return false;
         }
+        let base_id = self.get_unit(unit_id).and_then(|unit| unit.base_id);
         self.remove_owned_attachments(unit_id);
+        self.prepare_kill_unit_parking_lot(unit_id);
+        self.prepare_kill_unit_authored_children(unit_id);
         let Some(unit) = self.get_unit_mut(unit_id) else {
             return false;
         };
         unit.kill();
+        if let Some(base_id) = base_id {
+            self.recompute_base_child_damage(base_id);
+        }
         true
     }
 

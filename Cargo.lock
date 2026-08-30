@@ -1853,6 +1853,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "motion"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "log",
+ "num-traits",
+ "pipeline",
+]
+
+[[package]]
 name = "moxcms"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2717,7 +2727,9 @@ dependencies = [
  "egui-winit",
  "gilrs",
  "glam",
+ "half",
  "log",
+ "motion",
  "num-traits",
  "pipeline",
  "pollster",
@@ -2915,6 +2927,8 @@ dependencies = [
  "era",
  "glam",
  "half",
+ "log",
+ "motion",
  "num-traits",
  "pipeline",
  "quick-xml 0.37.5",

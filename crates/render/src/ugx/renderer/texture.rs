@@ -94,6 +94,31 @@ pub(super) fn create_fallback_shadow_view(
     })
 }
 
+pub(super) fn create_fallback_local_shadow_view(
+    device: &wgpu::Device,
+    label: &str,
+    layers: u32,
+) -> wgpu::TextureView {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: layers,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    })
+}
+
 pub(super) fn create_fallback_volume_view(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

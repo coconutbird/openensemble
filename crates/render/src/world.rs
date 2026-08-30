@@ -16,6 +16,11 @@ pub enum RenderPhase {
         /// Zero-based cascade index.
         cascade: usize,
     },
+    /// One renderer-owned local spot or omni shadow-map pass.
+    LocalShadow {
+        /// Zero-based index into the current local-shadow pass buffer.
+        pass: usize,
+    },
 }
 
 /// A renderer that can contribute draws to the shared world lifecycle.

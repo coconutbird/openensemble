@@ -25,6 +25,8 @@ pub struct CaptureConfig {
     pub output_path: PathBuf,
     /// Width and height in pixels.
     pub size: u32,
+    /// Terrain shader debug/display mode used for the primary capture.
+    pub debug_mode: u32,
     /// Optional world-space X/Z center for a focused top-down capture.
     pub center: Option<Vec2>,
     /// Optional world-space width and height for a focused top-down capture.
@@ -38,9 +40,17 @@ impl CaptureConfig {
         Self {
             output_path,
             size,
+            debug_mode: 0,
             center: None,
             span: None,
         }
+    }
+
+    /// Selects the terrain shader mode used for the primary capture.
+    #[must_use]
+    pub const fn with_debug_mode(mut self, debug_mode: u32) -> Self {
+        self.debug_mode = debug_mode;
+        self
     }
 
     /// Restricts the capture to a square world-space region.
@@ -186,6 +196,10 @@ impl CaptureState {
 pub struct ValidationCamera {
     /// Orthographic view-projection matrix.
     pub view_projection: Mat4,
+    /// World-to-view matrix used by camera-facing particle geometry.
+    pub world_to_view: Mat4,
+    /// Depth reconstruction coefficients used by soft particles.
+    pub depth_unproject: [f32; 2],
     /// Camera position used by lighting and foliage.
     pub position: Vec3,
     /// Distance that keeps every foliage placement visible in this overview.
@@ -255,6 +269,11 @@ fn top_down_camera_for_bounds(
 
     ValidationCamera {
         view_projection: projection * view,
+        world_to_view: view,
+        // Validation captures are orthographic. A constant far-plane depth
+        // keeps soft particles visible without pretending reciprocal
+        // perspective reconstruction applies to this diagnostic camera.
+        depth_unproject: [0.0, far.recip()],
         position,
         foliage_fade_start,
     }
@@ -413,6 +432,8 @@ pub fn foliage_camera(
     let projection = Mat4::perspective_rh(40.0_f32.to_radians(), aspect, 0.1, 4096.0);
     Some(ValidationCamera {
         view_projection: projection * view,
+        world_to_view: view,
+        depth_unproject: render::particle::ParticleScene::perspective_depth_unproject(projection),
         position,
         foliage_fade_start: 400.0,
     })

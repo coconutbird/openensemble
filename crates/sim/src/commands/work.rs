@@ -114,6 +114,114 @@ impl WorkCommand {
         }
     }
 
+    /// Build a command-ability Jump to a world location.
+    #[must_use]
+    pub fn jump_squads(
+        player_id: i32,
+        recipients: Vec<EntityId>,
+        target: Vec3,
+        ability_id: Option<u8>,
+    ) -> Self {
+        jump_command(
+            player_id,
+            recipients,
+            crate::order::OrderType::Jump,
+            EntityId::INVALID,
+            Some(target),
+            ability_id,
+        )
+    }
+
+    /// Build a `JumpGather` command retaining its resource target for landing.
+    #[must_use]
+    pub fn jump_gather_squads(
+        player_id: i32,
+        recipients: Vec<EntityId>,
+        target: EntityId,
+        ability_id: Option<u8>,
+    ) -> Self {
+        jump_command(
+            player_id,
+            recipients,
+            crate::order::OrderType::JumpGather,
+            target,
+            None,
+            ability_id,
+        )
+    }
+
+    /// Build a `JumpGarrison` command retaining its container target for landing.
+    #[must_use]
+    pub fn jump_garrison_squads(
+        player_id: i32,
+        recipients: Vec<EntityId>,
+        target: EntityId,
+        ability_id: Option<u8>,
+    ) -> Self {
+        jump_command(
+            player_id,
+            recipients,
+            crate::order::OrderType::JumpGarrison,
+            target,
+            None,
+            ability_id,
+        )
+    }
+
+    /// Build a `JumpAttack` command retaining its attack target for landing placement.
+    #[must_use]
+    pub fn jump_attack_squads(
+        player_id: i32,
+        recipients: Vec<EntityId>,
+        target: EntityId,
+        ability_id: Option<u8>,
+    ) -> Self {
+        jump_command(
+            player_id,
+            recipients,
+            crate::order::OrderType::JumpAttack,
+            target,
+            None,
+            ability_id,
+        )
+    }
+
+    /// Build a gather command for player-owned squads.
+    #[must_use]
+    pub fn gather_squads(player_id: i32, recipients: Vec<EntityId>, target: EntityId) -> Self {
+        Self {
+            base: squad_work_command(player_id, recipients, crate::order::OrderType::Gather),
+            unit_id: target,
+            ..Self::default()
+        }
+    }
+
+    /// Build a capture command for player-owned squads.
+    #[must_use]
+    pub fn capture_squads(player_id: i32, recipients: Vec<EntityId>, target: EntityId) -> Self {
+        Self {
+            base: squad_work_command(player_id, recipients, crate::order::OrderType::Capture),
+            unit_id: target,
+            ..Self::default()
+        }
+    }
+
+    /// Build a targeted `RepairOther` command for player-owned squads.
+    #[must_use]
+    pub fn repair_squads(
+        player_id: i32,
+        recipients: Vec<EntityId>,
+        target: EntityId,
+        ability_id: Option<u8>,
+    ) -> Self {
+        Self {
+            base: squad_work_command(player_id, recipients, crate::order::OrderType::RepairOther),
+            unit_id: target,
+            ability_id: ability_id.map_or(-1, i32::from),
+            ..Self::default()
+        }
+    }
+
     /// Build a targeted Detonate work command for player-owned squads.
     #[must_use]
     pub fn detonate_squads(
@@ -142,6 +250,16 @@ impl WorkCommand {
             base: squad_work_command(player_id, recipients, crate::order::OrderType::Mines),
             terrain_point: Some(target),
             ability_id: i32::from(ability_id),
+            ..Self::default()
+        }
+    }
+
+    /// Build a Cloak work command for player-owned squads.
+    #[must_use]
+    pub fn cloak_squads(player_id: i32, recipients: Vec<EntityId>, ability_id: Option<u8>) -> Self {
+        Self {
+            base: squad_work_command(player_id, recipients, crate::order::OrderType::Cloak),
+            ability_id: ability_id.map_or(-1, i32::from),
             ..Self::default()
         }
     }
@@ -359,6 +477,23 @@ impl WorkCommand {
         self.override_range = work_flags & flags::OVERRIDE_RANGE != 0;
 
         Ok(())
+    }
+}
+
+fn jump_command(
+    player_id: i32,
+    recipients: Vec<EntityId>,
+    order_type: crate::order::OrderType,
+    target: EntityId,
+    terrain_point: Option<Vec3>,
+    ability_id: Option<u8>,
+) -> WorkCommand {
+    WorkCommand {
+        base: squad_work_command(player_id, recipients, order_type),
+        unit_id: target,
+        terrain_point,
+        ability_id: ability_id.map_or(-1, i32::from),
+        ..WorkCommand::default()
     }
 }
 

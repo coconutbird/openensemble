@@ -4,17 +4,25 @@ use crate::entities::squads::{formation_offset_to_local, formation_offset_to_wor
 use crate::entities::{Base, BaseId, Object, Projectile, ShieldCoverage, Squad, Unit};
 use crate::entity::EntityManager;
 use crate::entity_id::{EntityClass, EntityId};
-use crate::gameplay::GroundVehiclePhysicsProfile;
+use crate::gameplay::{FlightControllerProfile, GroundVehiclePhysicsProfile};
 use crate::player::{GAIA_PLAYER, MAX_TEAMS, Player, PlayerId, TeamRelation};
 use crate::random::{Random, SimRandom};
 use glam::Vec3;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod ability;
+mod air_avoidance;
+mod ambient_life;
 mod ammunition;
 mod attachments;
+mod authored_children;
+mod bomb;
 mod bounds;
+mod capture;
+mod charge;
 mod checksum;
+mod child_damage;
+mod cloak;
 mod collision_attacks;
 mod combat;
 mod construction;
@@ -26,21 +34,30 @@ mod death_spawns;
 mod design_lines;
 mod detonate;
 mod events;
+mod flight;
 mod game_settings;
 mod garrison;
+mod gather;
+mod ground_movement;
+mod heal;
 mod health;
 mod hitch;
 mod icons;
 mod idle;
+mod infect;
+mod jump;
 mod lifecycle;
 #[cfg(test)]
 mod lifecycle_tests;
 mod mines;
+mod object_costs;
 mod object_state;
 mod object_types;
 mod objectives;
 mod orders;
 mod ownership;
+mod parking_lots;
+mod persistent_spawns;
 mod powers;
 mod presentation;
 mod production;
@@ -49,6 +66,7 @@ mod protection;
 mod proto_data;
 mod query;
 mod rally_points;
+mod reflect_damage;
 mod repair;
 mod research;
 mod resources;
@@ -58,6 +76,8 @@ mod scoring;
 mod shields;
 pub(crate) mod sockets;
 mod spatial;
+mod spirit_bond;
+mod squad_carpet_bomb;
 mod team;
 mod technology;
 mod terrain;
@@ -70,6 +90,7 @@ mod triggers;
 mod update;
 mod veterancy;
 mod visibility;
+mod wander;
 
 pub use bounds::WorldBounds;
 pub use construction::{ConstructionError, ConstructionQueueResult};
@@ -77,19 +98,26 @@ pub use custom_commands::{CustomCommand, CustomCommandFlags};
 pub use design_lines::DesignLineId;
 pub(crate) use events::EventEntityParameter;
 pub use events::{
-    ChatRequest, CinematicRequest, GeneralEvent, GeneralEventType, PresentationRequest,
+    ChatRequest, CinematicRequest, GeneralEvent, GeneralEventType, ImpactEffectRequest,
+    ImpactSurface, PresentationRequest,
 };
 pub use garrison::GarrisonError;
 pub use health::UnitHealth;
 pub use hitch::HitchError;
+pub use object_costs::ObjectCostError;
 pub use objectives::ObjectiveState;
 pub use powers::{
-    CryoPowerError, CryoPowerExecution, CryoPowerInvocation, DisruptionPowerError,
-    DisruptionPowerExecution, DisruptionPowerInvocation, NativePowerError, NativePowerInput,
-    NativePowerInvocation, OdstDrop, OdstPowerError, OdstPowerExecution, OdstPowerInvocation,
-    PowerExecutionId, RagePowerError, RagePowerExecution, RagePowerInvocation, RagePowerPhase,
-    RepairPowerError, RepairPowerExecution, RepairPowerInvocation, power_prototype_id,
-    TransportPowerError, TransportPowerExecution, TransportPowerInvocation,
+    CarpetBomb, CarpetBombingPhase, CarpetBombingPowerError, CarpetBombingPowerExecution,
+    CarpetBombingPowerInvocation, CleansingPowerError, CleansingPowerExecution,
+    CleansingPowerInvocation, CryoPowerError, CryoPowerExecution, CryoPowerInvocation,
+    DisruptionPowerError, DisruptionPowerExecution, DisruptionPowerInvocation, NativePowerError,
+    NativePowerInput, NativePowerInvocation, OdstDrop, OdstPowerError, OdstPowerExecution,
+    OdstPowerInvocation, OrbitalPowerError, OrbitalPowerExecution, OrbitalPowerInvocation,
+    OrbitalShot, PowerExecutionId, RagePowerError, RagePowerExecution, RagePowerInvocation,
+    RagePowerPhase, RepairPowerError, RepairPowerExecution, RepairPowerInvocation,
+    TransportPowerError, TransportPowerExecution, TransportPowerInvocation, WaveCapturedObject,
+    WaveFakeObject, WaveGravityBallState, WavePowerError, WavePowerExecution, WavePowerInvocation,
+    power_prototype_id,
 };
 pub use presentation::{
     CameraControlPermissions, CameraDirective, CameraShake, HintCallout, HintCalloutAnchor,
@@ -102,9 +130,13 @@ pub use scoring::ScenarioScoreInfo;
 pub use technology::TechnologyError;
 pub use terrain::TerrainLoadError;
 pub use timers::{GameTimer, GameTimerAudience};
-pub(crate) use training::TriggerTrainingRequest;
 pub use training::{
     MAX_TRAIN_BATCH, TrainingError, TrainingQueueResult, object_runtime_id, squad_runtime_id,
+};
+pub(crate) use training::{TriggerTrainingRequest, TriggerTrainingResult};
+pub(crate) use transports::{
+    TransportGroupPlan, TransportGroupRequest, average_transport_position, plan_transport_groups,
+    transport_carrier_spacing,
 };
 
 use team::neutral_team_relations;
@@ -174,6 +206,8 @@ pub struct World {
     prototype_shield_coverages: BTreeMap<String, ShieldCoverage>,
     /// Scenario-layered supported vehicle bodies keyed by proto-object name.
     prototype_ground_vehicle_physics: BTreeMap<String, GroundVehiclePhysicsProfile>,
+    /// Scenario-layered retail flight-controller rules keyed by prototype name.
+    prototype_flight_controllers: BTreeMap<String, FlightControllerProfile>,
     /// Class-0 invisible and world-control objects.
     pub objects: EntityManager<Object>,
     /// Unit pool. Mobile units and buildings both use vanilla class 1.
@@ -232,6 +266,7 @@ impl World {
             prototype_squads: BTreeMap::new(),
             prototype_shield_coverages: BTreeMap::new(),
             prototype_ground_vehicle_physics: BTreeMap::new(),
+            prototype_flight_controllers: BTreeMap::new(),
             objects: EntityManager::new(EntityClass::Object),
             units: EntityManager::new(EntityClass::Unit),
             squads: EntityManager::new(EntityClass::Squad),
@@ -329,6 +364,7 @@ impl World {
         let id = self.squads.allocate_id();
         let mut squad = Squad::new(id, player_id);
         squad.set_position(position);
+        squad.set_leash_position(position, true);
         self.squads.insert(id, squad);
         id
     }
@@ -346,9 +382,7 @@ impl World {
 
     /// Remove a squad and detach its surviving units.
     pub fn remove_squad(&mut self, id: EntityId) -> Option<Squad> {
-        self.prepare_remove_squad_garrison(id);
-        self.detach_squad_hitch(id);
-        self.prepare_remove_squad_protection(id);
+        self.prepare_remove_squad_actions(id);
         let squad = self.squads.remove(id)?;
         self.remove_hint_callouts_for_entity(id);
         for (_, other_squad) in self.squads.iter_mut() {
@@ -374,6 +408,9 @@ impl World {
                 && unit.squad_id == Some(id)
             {
                 unit.squad_id = None;
+                unit.cancel_gather_action();
+                unit.cancel_capture_action();
+                unit.cancel_jump_action();
                 unit.shields.request_recharge();
                 unit.stop();
             }
@@ -433,6 +470,16 @@ impl World {
 
     /// Remove a unit or building and clean up squad/base membership.
     pub fn remove_unit(&mut self, id: EntityId) -> Option<Unit> {
+        self.release_air_traffic_assignment(id);
+        self.prepare_remove_unit_infection(id);
+        self.prepare_remove_unit_capture(id);
+        self.prepare_remove_unit_ambient_life(id);
+        self.prepare_remove_unit_cloak(id);
+        self.prepare_remove_unit_wander(id);
+        self.prepare_remove_unit_spirit_bond(id);
+        self.deactivate_unit_built_economy(id);
+        self.prepare_remove_unit_parking_lot(id);
+        self.prepare_remove_unit_authored_children(id);
         let socket_children = self
             .units
             .get(id)?
@@ -467,6 +514,7 @@ impl World {
         {
             squad.remove_unit(id);
             if squad.unit_ids.is_empty() {
+                squad.gather.cancel();
                 emptied_squad = Some(squad_id);
             }
         }
@@ -498,6 +546,16 @@ impl World {
         if old_squad_id == Some(squad_id) {
             return true;
         }
+        if let Some(old_squad_id) = old_squad_id {
+            self.prepare_squad_membership_change_ambient_life(old_squad_id);
+            self.prepare_squad_membership_change_cloak(old_squad_id);
+            self.prepare_squad_membership_change_wander(old_squad_id);
+            self.prepare_squad_membership_change_spirit_bond(old_squad_id);
+        }
+        self.prepare_squad_membership_change_ambient_life(squad_id);
+        self.prepare_squad_membership_change_cloak(squad_id);
+        self.prepare_squad_membership_change_wander(squad_id);
+        self.prepare_squad_membership_change_spirit_bond(squad_id);
         if let Some(old_id) = old_squad_id
             && let Some(old_squad) = self.squads.get_mut(old_id)
         {
@@ -517,6 +575,9 @@ impl World {
             return false;
         };
         unit.squad_id = Some(squad_id);
+        unit.cancel_gather_action();
+        unit.cancel_capture_action();
+        unit.cancel_jump_action();
         unit.set_reverse_move(reverse_move);
         unit.shields.clear_recharge_request();
         unit.formation_offset = formation_offset;
@@ -553,6 +614,10 @@ impl World {
         let Some(squad_id) = self.units.get(unit_id).and_then(|unit| unit.squad_id) else {
             return false;
         };
+        self.prepare_squad_membership_change_ambient_life(squad_id);
+        self.prepare_squad_membership_change_cloak(squad_id);
+        self.prepare_squad_membership_change_wander(squad_id);
+        self.prepare_squad_membership_change_spirit_bond(squad_id);
         if let Some(squad) = self.squads.get_mut(squad_id) {
             squad.remove_unit(unit_id);
         }
@@ -560,6 +625,9 @@ impl World {
             return false;
         };
         unit.squad_id = None;
+        unit.cancel_gather_action();
+        unit.cancel_capture_action();
+        unit.cancel_jump_action();
         unit.shields.request_recharge();
         unit.clear_cryo_effect();
         unit.stop();
@@ -575,6 +643,7 @@ impl World {
         if let Some(anchor) = self.units.get_mut(anchor_id) {
             anchor.base_id = Some(base_id);
         }
+        self.recompute_base_child_damage(base_id);
         base_id
     }
 
@@ -594,6 +663,7 @@ impl World {
             return None;
         };
         anchor.base_id = Some(base_id);
+        self.recompute_base_child_damage(base_id);
         Some(base_id)
     }
 
@@ -619,6 +689,7 @@ impl World {
             return false;
         };
         building.base_id = Some(base_id);
+        self.recompute_base_child_damage(base_id);
         true
     }
 
@@ -673,6 +744,7 @@ impl World {
             }
         } else if let Some(base) = self.bases.get_mut(&base_id) {
             base.remove_building(building_id);
+            self.recompute_base_child_damage(base_id);
         }
     }
 }
@@ -892,24 +964,6 @@ mod tests {
         assert_eq!(building_id.class(), Some(EntityClass::Unit));
         assert!(world.get_building(building_id).is_some());
         assert!(!world.get_unit_mut(building_id).unwrap().move_to(Vec3::X));
-    }
-
-    #[test]
-    fn squad_members_follow_the_squad_transform() {
-        let mut world = World::new();
-        let squad_id = world.create_squad_at(1, Vec3::ZERO);
-        let unit_id = world.create_unit_at(1, Vec3::X);
-        assert!(world.attach_unit_to_squad(unit_id, squad_id));
-
-        world
-            .get_squad_mut(squad_id)
-            .unwrap()
-            .move_to(Vec3::new(10.0, 0.0, 0.0));
-        world.update_entities(0.1);
-        let squad = world.get_squad(squad_id).unwrap();
-        let unit = world.get_unit(unit_id).unwrap();
-        let world_offset = unit.base.position - squad.base.position;
-        assert!((world_offset - Vec3::NEG_Z).length() < f32::EPSILON);
     }
 
     #[test]

@@ -55,12 +55,16 @@ struct VertexOutput {
     @location(1) static_alpha: f32,
 };
 
-fn dynamic_alpha_enabled(grid_coord: vec2<u32>) -> bool {
+fn dynamic_alpha_enabled(uv: vec2<f32>) -> bool {
     let dimensions = textureDimensions(t_dynamic_alpha);
-    let word_x = min(grid_coord.x >> 5u, dimensions.x - 1u);
-    let row = min(grid_coord.y, dimensions.y - 1u);
-    let word = textureLoad(t_dynamic_alpha, vec2<u32>(word_x, row), 0).r;
-    return (word & (1u << (grid_coord.x & 31u))) != 0u;
+    let maximum_pixel = dimensions.y - 1u;
+    let pixel = vec2<u32>(
+        min(u32(saturate(uv.x) * f32(maximum_pixel)), maximum_pixel),
+        min(u32(saturate(uv.y) * f32(maximum_pixel)), maximum_pixel),
+    );
+    let word_x = min(pixel.x >> 5u, dimensions.x - 1u);
+    let word = textureLoad(t_dynamic_alpha, vec2<u32>(word_x, pixel.y), 0).r;
+    return (word & (1u << (pixel.x & 31u))) != 0u;
 }
 
 fn quantize_domain(value: f32, factor: u32) -> f32 {
@@ -127,19 +131,15 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     // Transform to light clip space
     out.clip_position = camera.view_proj * vec4<f32>(pos, 1.0);
     out.alpha_uv = vec2<f32>(u, v);
-    out.static_alpha = textureSampleLevel(t_alpha, s_alpha, out.alpha_uv, 0.0).r;
+    // Static XTD alpha remains in authored SCN axes, transposed from world X/Z.
+    out.static_alpha = textureSampleLevel(t_alpha, s_alpha, out.alpha_uv.yx, 0.0).r;
 
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let num_verts = u32(shadow_params.terrain_info.x);
-    let grid_coord = vec2<u32>(
-        min(u32(saturate(in.alpha_uv.x) * f32(num_verts - 1u)), num_verts - 1u),
-        min(u32(saturate(in.alpha_uv.y) * f32(num_verts - 1u)), num_verts - 1u),
-    );
-    let alpha = select(0.0, in.static_alpha, dynamic_alpha_enabled(grid_coord));
+    let alpha = select(0.0, in.static_alpha, dynamic_alpha_enabled(in.alpha_uv));
     if alpha < 0.5 {
         discard;
     }

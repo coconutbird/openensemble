@@ -20,6 +20,16 @@ fn phx03_renderer_loads_only_the_animation_selected_by_authoritative_sim_state()
         &loaded.content.database.objects,
     );
     assert!(scene.roster_matches(&loaded.simulation.world));
+    assert!(
+        scene.particle_effect_count() > 0,
+        "PHXscn03 should decode at least one authored PFX graph"
+    );
+    assert_eq!(
+        scene.particle_effect_issue_count(),
+        0,
+        "{:#?}",
+        scene.particle_effect_issues()
+    );
 
     let update = loaded
         .simulation
@@ -33,6 +43,13 @@ fn phx03_renderer_loads_only_the_animation_selected_by_authoritative_sim_state()
         &loaded.content.visuals,
         &loaded.content.database.objects,
     ));
+    assert!(scene.particle_effect_count() > 0);
+    assert_eq!(
+        scene.particle_effect_issue_count(),
+        0,
+        "{:#?}",
+        scene.particle_effect_issues()
+    );
 
     for scenario_id in [1958, 616] {
         let entity_id = loaded

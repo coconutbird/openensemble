@@ -1,5 +1,7 @@
+use pipeline::database::hw1::gamedata::PopsWrapper;
+use pipeline::database::hw1::objects::PopulationAmount;
 use pipeline::database::hw1::squads::{UnitEntry, UnitsWrapper};
-use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad};
+use pipeline::database::hw1::{Civ, Database, GameData, ProtoObject, Squad as ProtoSquad};
 use sim::trigger::{
     Condition, ConditionType, Effect, EffectType, Trigger, TriggerScript, TriggerValue, TriggerVar,
     VarType,
@@ -180,6 +182,93 @@ fn create_squads_preserves_duplicate_prototypes_and_retail_list_outputs() {
         assert_eq!(squad.base.forward, -glam::Vec3::X);
         assert_eq!(squad.move_target, Some(glam::Vec3::new(30.0, 0.0, 40.0)));
     }
+}
+
+#[test]
+fn create_squads_uses_capacity_aware_multi_carrier_fly_in() {
+    let database = transport_database();
+    let mut world = trigger_world();
+    world.get_player_mut(1).unwrap().civ_id = 0;
+    let mut script = TriggerScript::default();
+    script.add_variable(proto_squad_list(0, vec![201, 201, 201]));
+    script.add_variable(player(1, 1));
+    script.add_variable(location(2, 0.0, 0.0, 0.0));
+    script.add_variable(vector(3, 1.0, 0.0, 0.0));
+    script.add_variable(location(4, -20.0, 0.0, 0.0));
+    script.add_variable(location(5, 20.0, 0.0, 0.0));
+    script.add_variable(location(6, 40.0, 0.0, 0.0));
+    script.add_variable(boolean(7, true));
+    script.add_variable(empty_squad_list(8));
+    script.add_variable(empty_squad_list(9));
+    script.add_variable(boolean(10, true));
+    add_guard_variables(&mut script);
+    let mut create = Effect::new(0, EffectType::CreateSquads)
+        .with_input_at(1, 0)
+        .with_input_at(2, 1)
+        .with_input_at(3, 2)
+        .with_input_at(4, 3)
+        .with_input_at(5, 4)
+        .with_input_at(6, 5)
+        .with_input_at(7, 6)
+        .with_input_at(8, 7)
+        .with_output_at(9, 8)
+        .with_output_at(10, 9)
+        .with_input_at(11, 10);
+    create.version = 1;
+    script.add_trigger(Trigger::new(0).starts_active().with_effect_on_true(create));
+    add_guard(&mut script);
+    let script_id = install_script(&mut world, script);
+
+    let update = world.update_triggers_with_database(&database);
+
+    assert_eq!(update.effects_applied, 1);
+    let created = script_entities(&world, script_id, 8);
+    assert_eq!(created.len(), 3);
+    assert_eq!(script_entities(&world, script_id, 9), created);
+    let carriers = world
+        .squads
+        .iter()
+        .filter_map(|(squad_id, squad)| {
+            squad
+                .transport_fly_in()
+                .map(|action| (squad_id, action.passenger_squad_ids().to_vec()))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        carriers.len(),
+        2,
+        "six population needs two four-seat carriers"
+    );
+    let mut assigned = carriers
+        .iter()
+        .flat_map(|(_, passengers)| passengers.iter().copied())
+        .collect::<Vec<_>>();
+    assigned.sort_unstable();
+    let mut expected = created.clone();
+    expected.sort_unstable();
+    assert_eq!(assigned, expected);
+    assert!(carriers.iter().any(|(_, passengers)| passengers.len() == 2));
+    assert!(carriers.iter().any(|(_, passengers)| passengers.len() == 1));
+    assert!(created.iter().all(|squad_id| {
+        world
+            .get_squad(*squad_id)
+            .is_some_and(|squad| squad.garrison.is_garrisoned())
+    }));
+
+    world.update_entities(0.5);
+    assert!(created.iter().all(|squad_id| {
+        world.get_squad(*squad_id).is_some_and(|squad| {
+            !squad.garrison.is_garrisoned()
+                && (squad.is_executing_attack_move()
+                    || squad.base.position == glam::Vec3::new(40.0, 0.0, 0.0))
+        })
+    }));
+    world.update_entities(0.5);
+    assert!(
+        carriers
+            .iter()
+            .all(|(carrier_id, _)| world.get_squad(*carrier_id).is_none())
+    );
 }
 
 #[test]
@@ -375,6 +464,45 @@ fn entity_database() -> Database {
             }],
         }),
         ..ProtoSquad::default()
+    });
+    database
+}
+
+fn transport_database() -> Database {
+    let mut database = entity_database();
+    database.objects[2].object_types = vec!["Transportable".to_owned()];
+    database.objects[2].population = vec![PopulationAmount {
+        population_type: Some("Unit".to_owned()),
+        amount: 1.0,
+    }];
+    database.objects.push(ProtoObject {
+        name: "test_transport".to_owned(),
+        dbid: Some(104),
+        object_class: Some("Squad".to_owned()),
+        contain: vec!["Transportable".to_owned()],
+        max_contained: Some(4),
+        velocity: Some(100.0),
+        obstruction_radius_x: Some(3.0),
+        obstruction_radius_z: Some(3.0),
+        ..ProtoObject::default()
+    });
+    database.civs.push(Civ {
+        name: "Test".to_owned(),
+        transport: Some("test_transport".to_owned()),
+        transport_trigger: Some("test_transport".to_owned()),
+        ..Civ::default()
+    });
+    database.game_data = Some(GameData {
+        transport_max: Some(3),
+        transport_incoming_height: Some(0.0),
+        transport_incoming_offset: Some(0.0),
+        transport_outgoing_height: Some(0.0),
+        transport_outgoing_offset: Some(0.0),
+        transport_dropoff_height: Some(0.0),
+        pops: Some(PopsWrapper {
+            entries: vec!["Unit".to_owned()],
+        }),
+        ..GameData::default()
     });
     database
 }

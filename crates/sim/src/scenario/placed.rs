@@ -1,5 +1,6 @@
 //! Retail scenario promotion of placed unit/building proto-objects into squads.
 
+use super::prototypes::prototype_has_flag;
 use super::{
     PlacedUnitKind, ScenarioObject, classify_proto_object, configure_unit_from_proto,
     create_scenario_squad, database_id, find_proto_object, find_proto_squad, is_class_zero_object,
@@ -9,6 +10,7 @@ use crate::entities::objects::is_icon_prototype;
 use crate::entities::squads::marine::is_marine_squad;
 use crate::entities::squads::warthog::{WarthogSquadSpec, is_warthog_squad};
 use crate::entities::{IconObject, Object, SquadArchetype, SquadFormation};
+use crate::player::GAIA_PLAYER;
 use crate::{EntityId, World};
 use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad};
 
@@ -59,11 +61,27 @@ fn create_class_zero_object(
     prototype_index: usize,
     prototype: &ProtoObject,
 ) -> EntityId {
-    let id = world.objects.allocate_id();
     let owner = u8::try_from(placement.player).unwrap_or_default();
     let position = scenario_position(placement);
     let forward = scenario_forward(placement);
     let prototype_id = database_id(prototype.dbid, prototype_index);
+    create_class_zero_object_at(world, owner, position, forward, prototype_id, prototype)
+}
+
+pub(crate) fn create_class_zero_object_at(
+    world: &mut World,
+    requested_owner: u8,
+    position: glam::Vec3,
+    forward: glam::Vec3,
+    prototype_id: i32,
+    prototype: &ProtoObject,
+) -> EntityId {
+    let owner = if prototype_has_flag(prototype, "ForceToGaiaPlayer") {
+        GAIA_PLAYER
+    } else {
+        requested_owner
+    };
+    let id = world.objects.allocate_id();
     let object = if is_icon_prototype(prototype) {
         Object::new_icon(
             id,
@@ -152,7 +170,6 @@ fn create_proto_object_squad(
         let _removed_squad = world.remove_squad(squad_id);
         return None;
     }
-    super::sockets::materialize_authored_sockets(world, unit_id, prototype, database);
     if placement.start_built || kind == PlacedUnitKind::Mobile {
         super::population::apply_object_population(world, unit_id, database, prototype);
     } else {
@@ -165,7 +182,7 @@ fn create_proto_object_squad(
     Some((squad_id, unit_id))
 }
 
-fn configure_synthetic_squad(
+pub(super) fn configure_synthetic_squad(
     world: &mut World,
     squad_id: EntityId,
     prototype: &ProtoObject,
@@ -186,6 +203,7 @@ fn configure_synthetic_squad(
     squad.max_turn_radius = 0.0;
     squad.aggro_distance = 0.0;
     squad.leash_distance = 0.0;
+    squad.configure_leash_profile(0.0, 0);
     if is_warthog_squad(&prototype.name) {
         let spec = WarthogSquadSpec::default();
         squad.archetype = SquadArchetype::Warthog;
@@ -198,6 +216,7 @@ fn configure_synthetic_squad(
         squad.formation = SquadFormation::Flock;
         squad.aggro_distance = spec.aggro_distance;
         squad.leash_distance = spec.leash_distance;
+        squad.configure_leash_profile(spec.leash_deadzone, spec.leash_recall_delay_ms);
     }
     if let Some((_, proto)) = matching_proto_squad(database, &prototype.name) {
         if let Some(aggro_distance) = valid_nonnegative(proto.aggro_distance) {
@@ -206,6 +225,11 @@ fn configure_synthetic_squad(
         if let Some(leash_distance) = valid_nonnegative(proto.leash_distance) {
             squad.leash_distance = leash_distance;
         }
+        let deadzone = valid_nonnegative(proto.leash_deadzone).unwrap_or(squad.leash_deadzone());
+        let recall_delay = proto
+            .leash_recall_delay
+            .unwrap_or_else(|| squad.leash_recall_delay_ms());
+        squad.configure_leash_profile(deadzone, recall_delay);
     }
 }
 

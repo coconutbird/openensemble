@@ -11,6 +11,7 @@ const DEFAULT_VELOCITY_SCALAR: f32 = 1.0;
 #[derive(Debug, Clone, PartialEq)]
 pub struct DetonateActionProfile {
     action_name: String,
+    starts_disabled: bool,
     weapon_name: String,
     weapon_type: Option<String>,
     projectile: Option<String>,
@@ -74,6 +75,12 @@ impl DetonateActionProfile {
     #[must_use]
     pub fn action_name(&self) -> &str {
         &self.action_name
+    }
+
+    /// Return whether this action waits for technology or live enablement.
+    #[must_use]
+    pub const fn starts_disabled(&self) -> bool {
+        self.starts_disabled
     }
 
     /// Return the authored weapon name used by technology modifiers.
@@ -212,6 +219,24 @@ impl GameplayCatalog {
             .find(|action| is_detonate(action))
             .and_then(|action| object.detonate_profile(action))
     }
+
+    /// Select the first persistent `Detonate` action in compiled authored order.
+    #[must_use]
+    pub(crate) fn first_persistent_detonate_action(
+        &self,
+        proto_object_name: &str,
+    ) -> Option<DetonateActionProfile> {
+        let object = self.object(proto_object_name)?;
+        let rules = object.tactics.tactic.as_ref()?;
+        rules.persistent_actions.iter().find_map(|name| {
+            object
+                .tactics
+                .actions
+                .iter()
+                .find(|action| action.name.eq_ignore_ascii_case(name) && is_detonate(action))
+                .and_then(|action| object.detonate_profile(action))
+        })
+    }
 }
 
 impl ObjectGameplay {
@@ -224,6 +249,7 @@ impl ObjectGameplay {
             .find(|weapon| weapon.name.eq_ignore_ascii_case(weapon_name))?;
         Some(DetonateActionProfile {
             action_name: action.name.clone(),
+            starts_disabled: action.start_disabled == Some(true),
             weapon_name: weapon.name.clone(),
             weapon_type: weapon.weapon_type.clone(),
             projectile: weapon.projectile.clone(),

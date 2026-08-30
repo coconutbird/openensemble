@@ -285,9 +285,9 @@ pub struct RawXtdData {
     /// factors 16, 8, 4, and 2, then raises shared edges to the finer of the
     /// two adjacent patches.
     pub tessellation: Option<TerrainTessellationData>,
-    /// Ambient occlusion data (R8 values, half resolution).
+    /// Ambient occlusion data (R8 values at the decoded XTD dimensions).
     pub ao_data: Option<AoTextureData>,
-    /// Alpha/transparency data (R8 values, half resolution).
+    /// Alpha/transparency data (R8 values at the decoded XTD dimensions).
     pub alpha_data: Option<AlphaTextureData>,
 }
 
@@ -299,8 +299,8 @@ pub struct TerrainTessellationData {
     pub levels: Vec<u8>,
 }
 
-/// Half-resolution AO texture data as decoded from the game.
-/// Dimensions: full width × half height (e.g., 1024×512 for 1024×1024 terrain).
+/// AO texture data as decoded from the game.
+/// Dimensions are stored explicitly because XTD assets define both axes.
 #[derive(Clone)]
 pub struct AoTextureData {
     pub values: Vec<u8>,
@@ -308,8 +308,8 @@ pub struct AoTextureData {
     pub height: u32,
 }
 
-/// Half-resolution Alpha texture data as decoded from the game.
-/// Dimensions: full width × half height (same as AO).
+/// Alpha texture data as decoded from the game.
+/// Dimensions are stored explicitly because XTD assets define both axes.
 /// Used for terrain transparency (holes, cliff edges).
 #[derive(Clone)]
 pub struct AlphaTextureData {

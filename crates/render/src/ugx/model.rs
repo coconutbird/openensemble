@@ -7,8 +7,11 @@ use pipeline::ugx::{
 
 use glam::Mat4;
 
-use super::animation::AnimationPose;
 use crate::environment::EnvironmentMap;
+use motion::{AnimationPose, blended_local_transform, upper_body_weights};
+
+mod ik;
+mod mesh_mapping;
 
 /// Errors produced while resolving or decoding a UGX model.
 #[derive(Debug, thiserror::Error)]
@@ -227,6 +230,7 @@ pub(super) struct Section {
     pub(super) indices: Vec<u16>,
     pub(super) index_count: u32,
     pub(super) material_index: usize,
+    pub(super) mesh_name: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -240,6 +244,7 @@ struct Bone {
 
 #[derive(Clone, Debug)]
 pub(super) struct ModelPose {
+    local_transforms: Vec<Mat4>,
     bone_to_model: Vec<Mat4>,
     joint_matrices: Vec<Mat4>,
 }
@@ -256,6 +261,7 @@ pub struct Model {
     pub(super) sections: Vec<Section>,
     pub(super) joint_count: usize,
     bones: Vec<Bone>,
+    upper_body_weights: Vec<f32>,
 }
 
 impl Model {
@@ -303,6 +309,13 @@ impl Model {
         self.sections.len()
     }
 
+    /// Return the Granny mesh associated with each section in draw order.
+    pub fn section_mesh_names(&self) -> impl Iterator<Item = Option<&str>> {
+        self.sections
+            .iter()
+            .map(|section| section.mesh_name.as_deref())
+    }
+
     /// Returns the total triangle count across all sections.
     #[must_use]
     pub fn triangle_count(&self) -> usize {
@@ -326,11 +339,40 @@ impl Model {
     }
 
     pub(super) fn pose(&self, animation: Option<&AnimationPose>) -> ModelPose {
+        self.pose_tracks(animation, None)
+    }
+
+    pub(super) fn bind_local_transform(&self, name: &str) -> Option<Mat4> {
+        self.bones
+            .iter()
+            .find(|bone| bone.name.eq_ignore_ascii_case(name))
+            .map(|bone| bone.bind_local)
+    }
+
+    pub(super) fn pose_tracks(
+        &self,
+        action: Option<&AnimationPose>,
+        movement: Option<&AnimationPose>,
+    ) -> ModelPose {
+        let mut local_transforms = Vec::with_capacity(self.bones.len());
         let mut bone_to_model = Vec::with_capacity(self.bones.len());
         for (index, bone) in self.bones.iter().enumerate() {
-            let local = animation
-                .and_then(|pose| pose.local_transform(&bone.name))
-                .unwrap_or(bone.bind_local);
+            let action = action.and_then(|pose| pose.local_transform(&bone.name));
+            let movement = movement.and_then(|pose| pose.local_transform(&bone.name));
+            let local = movement.map_or_else(
+                || action.unwrap_or(bone.bind_local),
+                |movement| {
+                    blended_local_transform(
+                        action.unwrap_or(bone.bind_local),
+                        movement,
+                        self.upper_body_weights
+                            .get(index)
+                            .copied()
+                            .unwrap_or_default(),
+                    )
+                },
+            );
+            local_transforms.push(local);
             let world = bone
                 .parent_index
                 .filter(|&parent| parent < index)
@@ -359,6 +401,7 @@ impl Model {
             }
         }
         ModelPose {
+            local_transforms,
             bone_to_model,
             joint_matrices,
         }
@@ -386,6 +429,7 @@ impl Model {
         }
 
         let mut maximum_joint = 0_usize;
+        let mesh_names = mesh_mapping::section_mesh_names(geometry);
         let sections = geometry
             .sections
             .iter()
@@ -435,6 +479,7 @@ impl Model {
                     indices,
                     index_count,
                     material_index,
+                    mesh_name: mesh_names.get(section_index).cloned().flatten(),
                 })
             })
             .collect::<Result<Vec<_>, LoadError>>()?;
@@ -447,6 +492,8 @@ impl Model {
         let joint_count = skeleton_joint_count
             .max(maximum_joint.saturating_add(1))
             .max(1);
+        let bones = load_bind_pose_bones(geometry);
+        let upper_body_weights = upper_body_weights(&geometry.granny_bones);
         Ok(Self {
             asset_path: asset_path.replace('/', "\\").to_ascii_lowercase(),
             bounds_min: geometry.bounds.min,
@@ -456,7 +503,8 @@ impl Model {
             materials,
             sections,
             joint_count,
-            bones: load_bind_pose_bones(geometry),
+            bones,
+            upper_body_weights,
         })
     }
 }

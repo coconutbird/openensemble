@@ -5,7 +5,10 @@
 
 pub mod environment;
 pub mod gpu;
+pub mod light_effect;
+pub mod light_volume;
 pub mod lighting;
+pub mod local_shadow;
 pub mod particle;
 pub mod postprocess;
 pub mod terrain;

@@ -83,6 +83,9 @@ fn loads_squad_members_buildings_and_base_anchors() {
     db.squads.push(ProtoSquad {
         name: "marine_squad".to_owned(),
         dbid: Some(303),
+        leash_distance: Some(45.0),
+        leash_deadzone: Some(15.0),
+        leash_recall_delay: Some(2_500),
         units: Some(UnitsWrapper {
             entries: vec![UnitEntry {
                 proto_object: "marine".to_owned(),
@@ -105,6 +108,9 @@ fn loads_squad_members_buildings_and_base_anchors() {
 
     assert_eq!(squad.proto_squad_id, 303);
     assert_eq!(squad.unit_ids.len(), 2);
+    assert!((squad.leash_distance - 45.0).abs() < f32::EPSILON);
+    assert!((squad.leash_deadzone() - 15.0).abs() < f32::EPSILON);
+    assert_eq!(squad.leash_recall_delay_ms(), 2_500);
     assert_eq!(building_squad.proto_squad_name, "unsc_base");
     assert_eq!(building_squad.unit_ids.len(), 1);
     assert_eq!(building.proto_object_id, 202);

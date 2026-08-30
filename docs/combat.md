@@ -51,7 +51,8 @@ Recovered source corroboration comes from `unitactionrangedattack.cpp`,
 `unit.cpp`, `unitactionshieldregen.cpp`, `squadactionshieldregen.cpp`,
 `techeffect.cpp`, `actionmanager.cpp`, `unitactionbubbleshield.cpp`, and
 `unitactionplasmashieldgen.cpp`, `unitactionjoin.cpp`, `tactic.cpp`,
-`protosquad.cpp`, and `squad.cpp` in the recovered Halo Wars source tree. The
+`unitactiondodge.cpp`, `unitactiondeflect.cpp`, `protosquad.cpp`, and
+`squad.cpp` in the recovered Halo Wars source tree. The
 Join work used those recovered named sources; it did not inspect additional IDA
 functions beyond the renamed functions listed above. Veterancy and XP recovery
 likewise used the named `squad.cpp`, `unit.cpp`, `protosquad.cpp`,
@@ -67,6 +68,10 @@ Hand-attack reconstruction used the named `database.cpp`, `tactic.cpp`,
 `action.cpp`, `squad.cpp`, `opportunity.cpp`, and
 `unitactionrangedattack.cpp` sources and likewise introduced no additional IDA
 functions requiring rename.
+Charge reconstruction used the named `unitactionchargedrangedattack.cpp`,
+`unitactionrangedattack.cpp`, `unitactionjump.cpp`, `squadactionjump.cpp`,
+`damagehelper.cpp`, `squad.cpp`, and `tactic.cpp` sources. It introduced no
+additional inspected IDA functions requiring a rename.
 Tactic-state reconstruction used the named `unit.cpp`, `tactic.cpp`,
 `unitactionrangedattack.cpp`, and `UnitActionCollisionAttack.cpp` sources and
 likewise introduced no additional IDA functions requiring rename.
@@ -74,6 +79,31 @@ Detonate reconstruction used the named `squadactiondetonate.cpp`,
 `unitactiondetonate.cpp`, `unit.cpp`, `squad.cpp`, `tactic.cpp`, and
 `damagehelper.cpp` sources and likewise introduced no additional IDA functions
 requiring rename.
+Persistent Dodge/Deflect reconstruction used the already-named
+`unitactiondodge.cpp`, `unitactiondeflect.cpp`, `projectile.cpp`, `unit.cpp`,
+and `tactic.cpp` sources and likewise introduced no additional IDA functions
+requiring rename.
+Hunter SpiritBond reconstruction used the named
+`squadactionspiritbond.cpp`/`.h`, `squad.cpp`, `unit.cpp`, and `tactic.cpp`
+sources and likewise introduced no additional IDA functions requiring rename.
+Arbiter ReflectDamage reconstruction used the named
+`squadactionreflectdamage.cpp`/`.h`, `damagehelper.cpp`, `unit.cpp`,
+`techeffect.cpp`, and `tactic.cpp` sources and likewise introduced no additional
+IDA functions requiring rename.
+Cloak reconstruction used the named `squadactioncloak.cpp`/`.h`,
+`squadactioncloakdetect.cpp`/`.h`, `squad.cpp`, `unit.cpp`, `tactic.cpp`, and
+modifier sources and likewise introduced no additional IDA functions requiring
+rename.
+Flood Wander reconstruction used the named `squadactionwander.cpp`/`.h`,
+`simhelper.cpp`, `squad.cpp`, `unitquery.cpp`, and `tactic.cpp` sources and
+likewise introduced no additional IDA functions requiring rename.
+Ambient-life reconstruction used the named `squadactionambientlife.cpp`/`.h`,
+`unitactionambientlifespawner.cpp`/`.h`, `database.cpp`, `squad.cpp`,
+`simhelper.cpp`, `tactic.cpp`, and `unitquery.cpp` sources and likewise
+introduced no additional IDA functions requiring rename.
+Capture reconstruction used the named `unitactioncapture.cpp`,
+`squadactioncapture.cpp`, `unit.cpp`, `squad.cpp`, `tactic.cpp`, and database
+sources and likewise introduced no additional IDA functions requiring rename.
 
 ## Implemented retail contracts
 
@@ -81,6 +111,10 @@ requiring rename.
   tactic, visual, and UAX files therefore participate in last-loaded-wins
   resolution. The typed pipeline database, raw gameplay tables, and
   authoritative sim are all built from that same already-layered source.
+- Lethal attributed damage records the killer entity, player, team, and authored
+  weapon type on the unit before death replacement or cleanup. That state is
+  synchronized and exposed from `Unit`, so later gameplay and presentation read
+  the same attribution instead of reconstructing it from renderer-side events.
 - Tactic target rules are evaluated at runtime in authored order. The selector
   applies relation, current squad mode, manual/auto-target mode gates,
   `NoAutoTarget`, ability matching and fallback, target state, damage/object
@@ -130,6 +164,36 @@ requiring rename.
   live target members whose authoritative squad mode is Cover. Retail AI
   attack-rating analysis includes both authored names through that same action
   type. The renderer only observes the resulting transforms and health.
+- Persistent unit `Charge` owns a checksummed elapsed timer, delayed-clear bit,
+  and ready-effect entity. Enabled actions add fixed-substep elapsed time up to
+  `DamageCharge + 0.000001`; disabled actions preserve existing charge. A pull
+  requests rather than immediately performs the clear, reproducing the source
+  update ordering in which readiness survives one Charge update and its effect
+  is removed on the following update. The authored effect is an ordinary
+  attached class-zero sim entity, so presentation consumes the same roster as
+  every other object.
+- A ready Charge extends only an eligible GroundVehicle, Infantry, or Flood
+  target to the weapon's `MaxPullRange`. Pull eligibility preserves the source
+  exception that skips type/mobile validation when an action has no
+  `InvalidTarget` entries, and requires planar edge distance greater than 2.5
+  times normal attack range. A successful eligibility check replaces primary
+  damage with a critical target-squad `JumpPull` even if landing-order creation
+  subsequently fails; an area weapon retains its non-primary splash pool.
+- The immutable attack profile also resolves the persistent Charge action's
+  authored `Pull` UAX variants. The sim selects that clip only when the same
+  recovered `canPull` predicate succeeds and drives the hit from its own
+  normalized `Attack` tags. `UnitCombat` exposes the selected cycle; the
+  renderer only projects its animation type, asset, and normalized position.
+- `JumpPull` removes the victim's orders and moves every member along the
+  recovered asymmetric quadratic spline: its horizontal midpoint is 75% start
+  plus 25% end, its apex is one quarter of planar distance above the higher
+  endpoint, and progress is elapsed times `VelocityScalar / distance`. The
+  landing anchor combines attacker and squad obstruction radii with normal
+  weapon range, applies the recovered half-unit adjustment, terrain height,
+  and playable bounds. Pulled members are non-attackable and excluded from
+  formation syncing and obstruction resolution while their sim-owned `Flail`
+  state is active, then return to attackable `Idle`; the renderer performs none
+  of this gameplay.
 - Unit ammunition is authoritative, persistent, and checksummed. Scenario-
   layered prototypes plus live player technology set maximum and regeneration
   rate at spawn; `StartAtMaxAmmo` selects maximum rather than zero as the
@@ -293,6 +357,109 @@ requiring rename.
   crossed height tile, and place ground zero 0.25 units above the surface.
   Unit hits are resolved first; a terrain or targets-foot impact has no direct
   primary target and therefore supplies the full base-damage pool to AOE.
+- Persistent `Deflect` and `Dodge` actions are resolved at the projectile's
+  first predicted unit collision, in retail order. The layered weapon retains
+  independent `Dodgeable`, `Deflectable`, and `SmallArmsDeflectable` gates;
+  the target action retains live technology/unit enablement, squad-mode and
+  cover/join/frozen gates, cross-action cooldowns, angle-interpolated chance,
+  accumulated Deflect damage, and synchronized random draws. Deflection moves
+  the live projectile back to its pre-impact point, chooses retail's randomized
+  away/up vector, and disables tracking, fuel, and perturbance. Dodge chooses a
+  weighted unobstructed side/front/back position (or applies its authored
+  physics impulse), updates formation state, and lets the same projectile
+  continue without target collision or duplicated damage. All action timers,
+  damage, projectile flags, and transformed state participate in checksums.
+- Persistent squad `SpiritBond` resolves only the tactic rule's named action.
+  It pauses while `StartDisabled` remains in force, then permanently completes
+  unless the squad has exactly two live children. Activation multiplies both
+  members' outgoing damage by the authored factor, creates the authored
+  class-zero beam object at their simulation centers, and recreates a missing
+  beam while the action remains active. Member death, immediate removal,
+  detachment, reassignment, or squad teardown removes the beam and restores
+  both unit scalars exactly once. Phase, beam ID, unit multipliers, and both
+  endpoints participate in authoritative checksums.
+- The renderer projects the SpiritBond object from the ordinary live sim
+  roster. Its optional second world matrix is derived directly from the
+  sim-owned second endpoint and passed to attached PFX beam emitters; the
+  renderer neither identifies Hunters nor decides bond membership, damage,
+  activation, reconstruction, or teardown.
+- Persistent squad `ReflectDamage` resolves only the tactic rule's named
+  action. `StartDisabled`, player `ActionEnable` technology, and live unit
+  overrides share the ordinary action-enablement path. Its authored `WorkRate`
+  is resolved through the owning player's action-scoped technology state,
+  independently of per-unit work-rate scalars.
+- An accepted unit damage event returns its positive integer-truncated base
+  damage times the attacking weapon-type modifier and the ReflectDamage work
+  rate. The event payload is deliberately independent of target damage-taken
+  scalars, shields, HP caps, and construction damage; an invulnerable target
+  still emits it. Damage proxies transfer event ownership to the receiving
+  proxy squad. The returned hit uses the defender player's neutral weapon type
+  and no attacker entity, so normal target armor/scalars/shields still apply
+  while another ReflectDamage action cannot recurse. The renderer merely
+  observes the resulting authoritative health and lifecycle state.
+- Persistent squad `Cloak` resolves its tactic action from the scenario-layered
+  database. `StartDisabled`, player `ActionEnable` technology, and live unit
+  action overrides use the ordinary action-enablement path. `NoAutoTarget`
+  marks permanent cloak and activates immediately; ordinary cloak observes the
+  global cloak delay, command duration, and ability recovery authored by the
+  same layered database.
+- Cloak applies the command ability's damage-taken and dodge modifiers to every
+  live member, owns its per-member effect objects, and switches the retail
+  cloak mesh-section bits in authoritative sim state. Moving uncloaks squads
+  without `MoveWhileCloaked`; expiry and explicit cancellation restore every
+  modifier and visual state exactly once. Damage and explicit detector events
+  start the independent global re-cloak detection timer.
+- Undetected enemy cloak is enforced by sim-owned visibility and targeting:
+  ordinary attacks, attack-move selection, and concrete firing reject the
+  hidden squad while allies and detected enemies can still see it. The renderer
+  only projects the sim visibility, attachment, and mesh-section state. The
+  extracted retail database contains no shipped persistent `CloakDetect`
+  action, so detector systems can use the public authoritative detection event
+  without inventing a database profile.
+- Persistent squad `Wander` captures its squad origin when connected and uses
+  the scenario-layered action's `WorkRange`. With no same-prototype squad in
+  the retail five-unit neighborhood, it consumes the synchronized sim RNG's
+  square-root radial distribution and angle draw around that origin. Nearby
+  peers instead use retail's inverted averaged-separation branch without
+  consuming RNG.
+- Wander removes existing orders, applies the authored five-unit target range,
+  enters a strict five-second wait after dispatch, and immediately chooses
+  again when its owned movement completes. Live action enablement, idle-action
+  conflict, membership cleanup, origin/target/wait phase, and RNG state remain
+  authoritative and checksummed. Rendering continues to project the resulting
+  ordinary squad and member transforms without its own wander behavior.
+- Persistent squad `AmbientLife` joins its named scenario-layered tactic action
+  to the global `AL*` game-data fields used by retail. Its initial and repeated
+  wander delays use the synchronized inclusive integer RNG, and wander targets
+  reuse retail's square-root circular distribution between the authored inner
+  and outer radii. Targets are clamped to scenario terrain bounds before the
+  sim-owned movement order is issued.
+- Ambient opportunity checks use retail's square query and preserve the source
+  bug that fails to update its nearest-distance accumulators, leaving the last
+  qualifying deterministic query result selected. Non-Gaia squads and squads
+  able to attack the creature trigger a randomized flee vector and the global
+  movement multiplier. Hunting chooses the nearest live prey member; attributed
+  damage immediately selects the attacker's squad, and a killed prey member
+  starts retail's ten-second devour pause. All timers, behavior, targets,
+  modifiers, cleanup state, and RNG draws are authoritative and checksummed;
+  the renderer only sees the resulting ordinary transforms and health state.
+- Retail reads the wander, predator, and prey frequency fields as whole-second
+  integers before multiplying by 1,000. The sim deliberately preserves that
+  conversion, including the shipped `0.5` prey interval becoming zero
+  milliseconds. Platoon ally-damage propagation remains pending because the
+  authoritative world does not yet model retail platoons.
+- Persistent unit `AmbientLifeSpawner` joins the named action, authored squad
+  type, and layered `ALSpawnerCheckFrequency`/`ALOppCheckRadius` values. Its
+  class-zero owner performs retail's first-update transition, repeated square
+  opportunity query, deterministic first-result selection, and one-shot done
+  transition. Spawn placement uses the source `+Z` rotation, synchronized
+  angle and `[2, 4]` obstruction-radius draw, and the owner's player-specific
+  squad/member prototypes. Class-zero creation honors the shipped
+  `ForceToGaiaPlayer` flag. The spawned squad connects `AmbientLife`
+  immediately and receives the source `fleeMap` handoff; ordinary sim entities
+  and transforms remain the renderer's only input. Unlike the three squad
+  timers, the spawner interval is parsed as a float before multiplication by
+  1,000.
 - Impact damage applies attacker damage, optional height bonus, the attacking
   player's weapon type versus damage type, and the target's live damage-taken
   multiplier.
@@ -447,8 +614,10 @@ thrown-unit/leash action, the depleted ranged-action `Done` versus `Failed`
 attacker predicates, visual bone/animation hardpoint overrides, targeted hit-
 zone offsets and oriented hit-zone/visual-mesh projectile intersection, hit-
 zone shields, broader runtime `Unhittable` and invulnerability controls,
-destructible non-unit AOE recipients, dodge/deflect, sticky visual-mesh/bone
-intersections, timer damage reapplication, beam/needler behaviors, hero death/
+destructible non-unit AOE recipients, sticky visual-mesh/bone intersections,
+exact evade/block animation opportunities, leash-biased Dodge selection, and
+Deflect visual prototype swaps,
+timer damage reapplication, non-SpiritBond beam/needler behaviors, hero death/
   revival presentation, death effects, Detonate's forearm projectile/scream and
   detonated animation presentation, and its BaseShield target remap,
   HandAttack-specific infection, pickup,
@@ -459,9 +628,57 @@ controller presentation. Veterancy presentation effects remain to be
 reconstructed. The Mines object activation/detonation behavior and retail's
 full pather/LOS placement suggestion remain separate slices; the implemented
 placement action currently uses authoritative playable bounds, terrain height,
-and obstruction boxes.
+and obstruction boxes. Non-shipped projectile-backed `PullUnits` impacts remain
+a separate reconstruction boundary; the shipped Brute Chief pull is instant.
 
 ## Installed-data validation
+
+The opt-in `scenario-persistent-actions` integration test loads Blood Gulch
+through the normal scenario archive path and verifies the shipped Hunter's
+unit-persistent Dodge/Deflect, squad-persistent SpiritBond, Wraith typed
+secondary-turret action, converted 90-degree angles, chances/cooldowns, and the
+  Fuel Rod weapon's Dodgeable/Deflectable gates from the already-layered catalog.
+
+The opt-in sim and render `scenario-spirit-bond` regressions load the same
+Blood Gulch archive and its already-layered database. They verify the shipped
+Hunter action's disabled initial state, `1.35` damage factor, and
+`fx_proj_hunterSpiritBondBeam_01` prototype, then exercise live enablement,
+both unit multipliers, beam recreation, member-loss cleanup, and scalar
+restoration. The render regression proves that both beam matrices projected by
+the scene originate in the authoritative sim object.
+
+The opt-in `scenario-reflect-damage` regression loads that same Blood Gulch
+archive and verifies the shipped Arbiter `FiendishReturn` profile, disabled
+initial state, and `0.15` work rate from the scenario-layered tactic. Activating
+the shipped `cov_arbiter_upgrade1` technology enables it, after which a real
+Brute Chief hand attack damages both the Arbiter and its attacker through the
+authoritative combat path.
+
+The opt-in `scenario-cloak` regression loads Blood Gulch through the normal
+scenario archive path and verifies the shipped Elite Commando timed cloak and
+Arbiter permanent cloak profiles, global delay values, command duration,
+recovery, and damage-taken modifier. It exercises command routing, live scalar
+application, enemy visibility and attack rejection, damage detection, timed
+expiry/recovery, and technology-enabled permanent cloak in the authoritative
+world.
+
+The opt-in `scenario-wander` regression loads Blood Gulch through that same
+scenario archive path and verifies the compiled spore-cloud tactic's persistent
+`WanderAction` and explicit `50`-unit range (which is absent from the extracted
+XML view). It then spawns the shipped squad and checks its sim-owned origin,
+synchronized target selection, and five-unit movement range.
+
+The opt-in `scenario-ambient-life` regression uses the same normal scenario
+loader and verifies the compiled bird tactic's persistent `AmbientLife` action
+plus all eight layered `AL*` behavior values. It spawns the shipped bird squad
+and proves that the persistent controller connects to authoritative sim state.
+The broader `scenario-persistent-actions` inventory now checks this family as
+well. The separate `scenario-ambient-life-spawner` regression resolves the
+installed compiled tree-spawner tactic and layered global settings, runtime-
+spawns its class-zero owner beside a real Marine squad, and proves it creates
+exactly one bird squad at the authored radial offset before the bird enters its
+sim-owned leaving-map flee. The renderer needs no parallel spawner behavior;
+the new bird is projected through the ordinary authoritative squad/unit path.
 
 The opt-in `scenario-ammunition` integration test loads Blood Gulch through the
 normal scenario path and verifies that its already-mounted database supplies
@@ -502,6 +719,34 @@ and 15-unit AOE. Real Marine projectile damage then replaces the original tank,
 runs that passive action, preserves the Marine instigator team's health, and
 removes the settled replacement after detonation.
 
+The persistent unit `Bomb` action is also authoritative. The gameplay catalog
+joins compiled persistent membership to the active database object, then loads
+that object's `PhysicsInfo` (or its action-created `PhysicsReplacementInfo`
+fallback) through the same scenario-layered `.physics`, `.blueprint`, and `.shp`
+source. Connection consumes one synchronized `[0, 1]` roll and compares it to
+the action's `WorkRange`. The extracted Flood-egg XML omits that field, while
+the installed XMB materializes `0.5`; the C++ constructor's `0.1` remains only
+the fallback for an unmaterialized synthetic action.
+
+Both the compiled `Bomb` and `Detonate` actions start independently. A
+non-rolling egg falls under authoritative rigid-body physics and forces its
+active Detonate action on descending terrain contact, after which normal sim
+damage, removal, and `DeathSpawnSquad` handling apply. A rolling egg records the
+same contact but releases control when it is less than one unit above terrain,
+retaining primary `PhysicsInfo` bodies and restoring only bodies created from
+`PhysicsReplacementInfo`. Retail multiplies an initial speed of 20 by
+`BUnitActionBomb::mDir`, but that vector is never initialized or assigned in
+the named source. The sim deliberately uses a zero direction for that branch
+instead of introducing nondeterministic memory into synchronized state. The
+renderer merely projects the resulting unit transforms, detonation, removal,
+and spawned squads.
+
+The opt-in `scenario-bomb` regression loads Blood Gulch normally, verifies the
+compiled `0.5` threshold and the layered `egg` material/box, drops the shipped
+Flood egg from above terrain, observes both persistent actions, and proves the
+resulting death creates `fld_inf_InfectionForm_03` through the database-backed
+death-spawn path.
+
 The opt-in `scenario-hand-attacks` integration test loads the shipped Brute
 Chief tactic and its weighted `MeleeAttack` UAX tags through Blood Gulch's
 already-layered source. It verifies the authored `HandAttack`, 3-unit range,
@@ -509,6 +754,18 @@ non-projectile profile, and cover rejection, then sends a real spawned Brute
 Chief squad through the work-command pipeline. A covered target takes no
 damage; leaving cover starts `HammerAttackAction`, applies authoritative
 instant damage, and creates no projectile entity.
+
+The opt-in `scenario-charge` regression loads the same layered Blood Gulch
+data and verifies all three Brute Chief definitions compile a disabled
+10-second Charge with `Pull`, `fx_brutePullCharged` on `BoneFX`, and both
+preserved charge-event flags. Its pull weapons compile the shipped 55-unit
+range, 40-unit velocity, `Flail`, and Scarab exclusion. Activating
+`cov_bruteChief_upgrade1` and `cov_bruteChief_upgrade2` transforms a real
+spawned Chief to definition 03 while retaining definition 01 as the technology
+key; the unit charges, acquires its effect entity, selects the authored `Pull`
+UAX timeline, and pulls a real Marine squad without applying the replaced
+hammer damage. Every Marine is non-attackable during spline flight and restored
+on landing.
 
 The opt-in `scenario-asset-loading` integration test mounts Blood Gulch before
 database parsing, verifies that canonical tables and scenario assets share one
@@ -599,7 +856,12 @@ $env:OPENENSEMBLE_GAME_DIR='C:\Program Files (x86)\Steam\steamapps\common\HaloWa
 cargo test -p sim --test scenario-asset-loading -- --ignored
 cargo test -p sim --test scenario-ram -- --ignored
 cargo test -p sim --test scenario-hand-attacks -- --ignored
+cargo test -p sim --test scenario-charge -- --ignored
 cargo test -p sim --test scenario-mines -- --ignored
+cargo test -p sim --test scenario-ambient-life-spawner -- --ignored
+cargo test -p sim --test scenario-spirit-bond -- --ignored
+cargo test -p render --test scenario-spirit-bond -- --ignored
+cargo test -p sim --test scenario-reflect-damage -- --ignored
 cargo test -p sim --test scenario-cryo-power -- --ignored
 cargo test -p render --test scenario-cryo-power -- --ignored
 cargo test -p sim --test scenario-disruption-power -- --ignored
@@ -607,4 +869,5 @@ cargo test -p render --test scenario-disruption-power -- --ignored
 cargo test -p sim --test scenario-repair-power -- --ignored
 cargo test -p render --test scenario-repair-power -- --ignored
 cargo test -p sim --test scenario-tactic-states -- --ignored
+cargo test -p sim --test scenario-bomb -- --ignored
 ```

@@ -232,11 +232,16 @@ impl Simulation {
     ) -> Vec<CommandEntry> {
         let commands = self.tick_once();
         scenario.world.game_time_ms = self.game_time_ms;
-        CommandExecutor::with_database(database).execute_all(&mut scenario.world, &commands);
+        CommandExecutor::with_database_and_gameplay(database, &scenario.gameplay)
+            .execute_all(&mut scenario.world, &commands);
         scenario.world.update_player_resources(SECONDS_PER_TICK);
         scenario.world.update_player_power_recharges(database);
         let _custom_commands = scenario.world.update_custom_commands(SECONDS_PER_TICK);
-        let _production = scenario.world.update_production(SECONDS_PER_TICK, database);
+        let _production = scenario.world.update_production_with_gameplay(
+            SECONDS_PER_TICK,
+            database,
+            &scenario.gameplay,
+        );
         scenario.world.update_entities_with_database_and_gameplay(
             SECONDS_PER_TICK,
             database,

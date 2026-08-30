@@ -74,6 +74,8 @@ impl Squad {
         {
             return false;
         }
+        self.gather.cancel();
+        self.capture.cancel();
         let mut orders = targets.iter().copied().map(|target| SquadMoveOrder {
             target,
             attack_move,
@@ -142,6 +144,9 @@ impl Squad {
 
     /// Cancel combat, resuming a suspended attack-move or a queued move.
     pub fn clear_attack_order(&mut self) {
+        if self.is_jumping() {
+            return;
+        }
         self.cancel_idle_action();
         let resume_attack_move = self.orders.auto_attack_origin.take().is_some();
         self.clear_attack_state();
@@ -202,6 +207,7 @@ impl Squad {
     fn start_moving_to(&mut self, target: Vec3) {
         self.mines.cancel();
         self.detonate.cancel();
+        self.carpet_bomb.cancel();
         self.cancel_idle_action();
         self.move_target = Some(target);
         self.state = SquadState::Moving;

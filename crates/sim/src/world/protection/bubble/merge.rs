@@ -18,7 +18,12 @@ impl World {
         action: &JoinActionProfile,
         gameplay: &GameplayCatalog,
     ) {
-        if !self.update_join_follow(source_squad_id, target.position, action.work_range()) {
+        if !self.update_join_follow(
+            source_squad_id,
+            target_squad_id,
+            target.position,
+            action.work_range(),
+        ) {
             return;
         }
         if self.join_channel_occupied(source_squad_id, target_squad_id, action.merge_type()) {

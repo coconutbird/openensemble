@@ -2,9 +2,9 @@
 
 use super::prototypes::{
     PlacedUnitKind, classify_proto_object, creates_base, database_id, find_proto_object,
-    prototype_has_flag,
+    is_class_zero_object, prototype_has_flag,
 };
-use super::{population, sockets, valid_nonnegative};
+use super::{population, valid_nonnegative};
 use crate::entities::squads::marine::MarineSquadSpec;
 use crate::entities::units::configure_ground_vehicle_physics;
 use crate::entities::units::marine::{MARINE_HITPOINTS, MarineUnitSpec, is_marine_unit};
@@ -48,7 +48,7 @@ pub(crate) fn add_squad_member_from_prototype(
     if let Some((_, prototype)) = find_proto_object(database, &effective_name) {
         UnitScalarModifiers::from_veterancy_levels(&prototype.veterancy, 0, veterancy_level)
             .apply(world.get_unit_mut(unit_id)?);
-        sockets::materialize_authored_sockets(world, unit_id, prototype, database);
+        world.activate_unit_on_built(unit_id, database, prototype);
     }
     Some(unit_id)
 }
@@ -64,6 +64,16 @@ pub(crate) fn create_object_from_prototype(
     let (logical_index, logical_proto) = find_proto_object(database, proto_name)?;
     let effective_name = resolved_unit_prototype_name(world, player_id, proto_name);
     let (_, proto) = find_proto_object(database, &effective_name)?;
+    if is_class_zero_object(proto) {
+        return Some(super::placed::create_class_zero_object_at(
+            world,
+            player_id,
+            position,
+            forward,
+            database_id(logical_proto.dbid, logical_index),
+            proto,
+        ));
+    }
     let kind = classify_proto_object(proto)?;
     let unit_id = match kind {
         PlacedUnitKind::Mobile => world.create_unit_at(player_id, position),
@@ -77,15 +87,57 @@ pub(crate) fn create_object_from_prototype(
         &effective_name,
         proto,
     );
-    population::apply_object_population(world, unit_id, database, proto);
     if let Some(unit) = world.get_unit_mut(unit_id) {
         unit.base.set_forward(forward);
     }
-    sockets::materialize_authored_sockets(world, unit_id, proto, database);
+    population::apply_object_population(world, unit_id, database, proto);
     if kind == PlacedUnitKind::Building && creates_base(proto) {
         let _base_id = world.register_base(unit_id);
     }
     Some(unit_id)
+}
+
+/// Create the hidden parent squad retail assigns to a trained proto-object.
+pub(crate) fn create_unit_squad_from_prototype(
+    world: &mut World,
+    player_id: PlayerId,
+    position: Vec3,
+    forward: Vec3,
+    proto_name: &str,
+    database: &Database,
+) -> Option<(EntityId, EntityId)> {
+    let (logical_index, logical_proto) = find_proto_object(database, proto_name)?;
+    let effective_name = resolved_unit_prototype_name(world, player_id, proto_name);
+    let (_, effective_proto) = find_proto_object(database, &effective_name)?;
+    let kind = classify_proto_object(effective_proto)?;
+    let squad_id = world.create_squad_at(player_id, position);
+    super::placed::configure_synthetic_squad(world, squad_id, logical_proto, database, forward);
+    let unit_id = match kind {
+        PlacedUnitKind::Mobile => world.create_unit_at(player_id, position),
+        PlacedUnitKind::Building => world.create_building_at(player_id, position),
+    };
+    configure_unit_from_player_proto(
+        world,
+        unit_id,
+        proto_name,
+        database_id(logical_proto.dbid, logical_index),
+        &effective_name,
+        effective_proto,
+    );
+    if let Some(unit) = world.get_unit_mut(unit_id) {
+        unit.base.set_forward(forward);
+    }
+    if !world.attach_unit_to_squad(unit_id, squad_id) {
+        let _removed_unit = world.remove_unit(unit_id);
+        let _removed_squad = world.remove_squad(squad_id);
+        return None;
+    }
+    population::apply_object_population(world, unit_id, database, effective_proto);
+    if kind == PlacedUnitKind::Building && creates_base(effective_proto) {
+        let _base_id = world.register_base(unit_id);
+    }
+    super::refresh_squad_member_settings(world, squad_id);
+    Some((squad_id, unit_id))
 }
 
 pub(crate) fn create_unbuilt_building_from_prototype(
@@ -115,7 +167,6 @@ pub(crate) fn create_unbuilt_building_from_prototype(
         unit.built = false;
         unit.base.set_forward(forward);
     }
-    sockets::materialize_authored_sockets(world, unit_id, proto, database);
     population::initialize_object_population(world, unit_id, database, proto, false);
     Some(unit_id)
 }
@@ -209,12 +260,14 @@ pub(crate) fn configure_unit_from_player_proto(
     let ground_vehicle_physics = world
         .prototype_ground_vehicle_physics(effective_name)
         .cloned();
+    let flight_controller = world.prototype_flight_controller(effective_name);
     let Some(unit) = world.get_unit_mut(unit_id) else {
         return;
     };
     unit.proto_object_id = logical_id;
     effective_name.clone_into(&mut unit.proto_object_name);
     logical_name.clone_into(&mut unit.logical_proto_object_name);
+    unit.reset_projectile_defense();
     configure_unit_traits(
         unit,
         proto,
@@ -227,6 +280,15 @@ pub(crate) fn configure_unit_from_player_proto(
         ammunition_settings.1,
         prototype_has_flag(proto, "StartAtMaxAmmo"),
     );
+    let height_displacement = if unit.flying {
+        proto
+            .flight_level
+            .filter(|value| value.is_finite())
+            .unwrap_or(10.0)
+    } else {
+        0.0
+    };
+    unit.configure_flight_controller(flight_controller, height_displacement);
     configure_unit_movement(
         unit,
         proto,
@@ -260,6 +322,10 @@ fn configure_unit_traits(
 ) {
     let prototype_non_mobile = unit.is_building() || prototype_has_flag(proto, "Immoveable");
     unit.base.configure_prototype_mobility(prototype_non_mobile);
+    unit.configure_air_navigation(
+        valid_nonnegative(proto.reverse_speed),
+        prototype_has_flag(proto, "ObstructsAir"),
+    );
     unit.set_auto_attackable(!prototype_has_flag(proto, "DontAutoAttackMe"));
     unit.set_invulnerable(
         prototype_has_flag(proto, "Invulnerable")
@@ -267,13 +333,52 @@ fn configure_unit_traits(
                 && prototype_has_flag(proto, "InvulnerableWhenGaia")),
     );
     unit.set_external_shield(prototype_has_flag(proto, "ExternalShield"));
+    unit.set_kill_authored_children_on_death(prototype_has_flag(proto, "KillChildObjectsOnDeath"));
+    unit.configure_child_damage_state(
+        proto.child_object_damage_taken_scalar,
+        prototype_has_flag(proto, "ChildForDamageTakenScalar"),
+    );
     super::garrison::configure_unit(unit, proto);
+    configure_unit_resource(unit, proto);
+    unit.configure_capture_target(prototype_has_flag(proto, "Capturable"), proto.build_points);
     if let Some(hitpoints) = hitpoints {
         unit.set_max_hitpoints(hitpoints);
     }
     unit.shields.configure(shield_coverage, shield_settings.0);
     unit.shields
         .set_regen_scalars(shield_settings.1, shield_settings.2);
+}
+
+fn configure_unit_resource(unit: &mut crate::entities::Unit, proto: &ProtoObject) {
+    let resource_name = proto
+        .object_types
+        .iter()
+        .find_map(|object_type| resource_object_type_name(object_type))
+        .or_else(|| {
+            proto
+                .object_types
+                .iter()
+                .any(|object_type| object_type.trim().eq_ignore_ascii_case("Collectable"))
+                .then(|| "Collectable".to_owned())
+        });
+    unit.resource_node.configure(
+        resource_name,
+        proto.resource_amount,
+        prototype_has_flag(proto, "UnlimitedResources"),
+        prototype_has_flag(proto, "DieAtZeroResources"),
+        proto.gatherer_limit,
+    );
+}
+
+fn resource_object_type_name(object_type: &str) -> Option<String> {
+    let object_type = object_type.trim();
+    let prefix = "resource_";
+    (object_type.len() > prefix.len()
+        && object_type
+            .get(..prefix.len())
+            .is_some_and(|value| value.eq_ignore_ascii_case(prefix)))
+    .then(|| object_type[prefix.len()..].trim().to_owned())
+    .filter(|name| !name.is_empty())
 }
 
 fn configure_unit_movement(

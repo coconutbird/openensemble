@@ -150,6 +150,27 @@ impl World {
         }
     }
 
+    pub(crate) fn reparent_attachment(
+        &mut self,
+        attachment_id: EntityId,
+        parent_id: EntityId,
+    ) -> bool {
+        if attachment_id == parent_id
+            || self.entity_object_state(attachment_id).is_none()
+            || self.entity_object_state(parent_id).is_none()
+        {
+            return false;
+        }
+        self.detach_attachment_from_parent(attachment_id);
+        self.entity_object_state_mut(attachment_id)
+            .expect("validated attachment")
+            .set_attached_to(Some(parent_id));
+        self.entity_object_state_mut(parent_id)
+            .expect("validated parent")
+            .add_attachment(attachment_id);
+        true
+    }
+
     pub(crate) fn remove_unit_attachments_by_prototype(
         &mut self,
         unit_id: EntityId,

@@ -54,17 +54,21 @@ pub(super) fn building_command(
         Some(TriggerBuildingWork::TrainSquads {
             prototype_id,
             count,
-        }) => world
-            .queue_trigger_training(TriggerTrainingRequest {
-                player_id,
-                building_id,
-                database,
-                prototype_id,
-                count,
-                no_cost,
-                trigger_state: state_ref,
-            })
-            .is_ok_and(|result| result.accepted > 0),
+        }) => match world.queue_trigger_training(TriggerTrainingRequest {
+            player_id,
+            building_id,
+            database,
+            prototype_id,
+            count,
+            no_cost,
+            trigger_state: state_ref,
+        }) {
+            Ok(result) => {
+                record_immediate_training(script, state_ref, &result);
+                result.waits_for_completion
+            }
+            Err(_) => false,
+        },
         Some(TriggerBuildingWork::Research { technology_id }) => world
             .queue_trigger_research(
                 player_id,
@@ -146,6 +150,26 @@ fn finish_building_command_state(
         state.finish();
         variable.is_null = false;
     }
+}
+
+fn record_immediate_training(
+    script: &mut TriggerScript,
+    state_ref: Option<TriggerCommandStateRef>,
+    result: &crate::world::TriggerTrainingResult,
+) {
+    let Some(state_ref) = state_ref else {
+        return;
+    };
+    let Some(variable) = script.get_variable_mut(state_ref.variable_id) else {
+        return;
+    };
+    let TriggerValue::BuildingCommandState(state) = &mut variable.value else {
+        return;
+    };
+    for squad_id in &result.trained_squads {
+        state.record_trained_squad(*squad_id);
+    }
+    variable.is_null = false;
 }
 
 pub(super) fn clear_building_command_state(

@@ -37,16 +37,17 @@ pixels per chunk in a 5120×5120 atlas on an 8192-limit device.
 Blood Gulch's XTT bytes identify 256 linkers. Linker order increments XTT
 `grid_x` first, which is world Z; compositor placement transposes that into the
 world-facing atlas. All 256 request the specular pass; none requests a self or
-environment-mask pass. Mode 12 reads the resulting unique albedo atlas and is
-the canonical viewer comparison.
+environment-mask pass. The retail-lit path reads the composited atlases in mode
+0, which is the canonical viewer output. Mode 12 exposes the unique albedo atlas
+directly as a compositor diagnostic.
 
 ## Main terrain material
 
-The lit diagnostic material implements the decompiled bundle's normal fade,
+The default retail-lit material implements the decompiled bundle's normal fade,
 XTD light texture, AO ordering, SH fill, directional/local illumination,
 specular response, cascaded VSM, radial/planar fog, and blackmap calculations.
-It is retained for inspecting those channels, but mode 0 is not the canonical
-visual target because its final presentation does not yet match mode 12.
+Mode 0 is therefore the canonical final presentation; the other modes isolate
+intermediate channels for diagnosis.
 
 ## Foliage material
 
@@ -65,8 +66,9 @@ parent chunk. For example, parent 96 remains viewer chunk `(0, 6)`.
 
 ## Canonical check
 
-Run `cargo run --locked --bin terrain_viewer`. The viewer must start in mode 12
-with compositor debug mode 0. Mode 13 is the orientation diagnostic: red marks
+Run `cargo run --locked --bin terrain_viewer`. The viewer must start in mode 0
+(`Retail Lit`) with compositor debug mode 0. Mode 12 is the composited-albedo
+diagnostic. Mode 13 is the orientation diagnostic: red marks
 the `(0,0)` corner, blue `+X`, green `+Z`, and yellow the opposite corner.
 
 For an automated oracle image, run:

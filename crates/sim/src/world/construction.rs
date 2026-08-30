@@ -1,9 +1,9 @@
 //! Retail-style building construction, placement, payment, and cancellation.
 
-mod cost;
+mod on_built;
 mod placement;
 
-use super::World;
+use super::{ObjectCostError, World};
 use crate::entities::units::{ProductionTask, TriggerCommandStateRef};
 use crate::entities::{ConstructionKind, ConstructionProgress, ConstructionTask};
 use crate::entity_id::EntityId;
@@ -14,7 +14,6 @@ use glam::Vec3;
 use pipeline::database::hw1::Database;
 use pipeline::database::hw1::objects::{ProtoObject, TrainLimitType};
 
-use cost::construction_cost;
 use placement::{direct_build_transform, find_build_other_socket};
 
 impl World {
@@ -56,12 +55,8 @@ pub enum ConstructionError {
         kind: ConstructionKind,
         prototype: String,
     },
-    #[error("construction '{0}' has costs but the database has no resource table")]
-    MissingResourceTable(String),
-    #[error("construction '{prototype}' references unknown resource '{resource}'")]
-    UnknownResource { prototype: String, resource: String },
-    #[error("construction '{prototype}' has invalid cost for resource '{resource}'")]
-    InvalidCost { prototype: String, resource: String },
+    #[error(transparent)]
+    ObjectCost(#[from] ObjectCostError),
     #[error("construction '{0}' has invalid build points")]
     InvalidBuildPoints(String),
     #[error("construction '{0}' has population but the database has no population table")]
@@ -71,8 +66,6 @@ pub enum ConstructionError {
         prototype: String,
         population: String,
     },
-    #[error("'{0}' uses dynamic cost escalation, which is not modeled yet")]
-    CostEscalationUnsupported(String),
     #[error("player {player_id} cannot afford '{prototype}'")]
     InsufficientResources {
         player_id: PlayerId,
@@ -147,12 +140,13 @@ impl World {
         position: Vec3,
         socket_id: EntityId,
     ) -> Result<EntityId, ConstructionError> {
-        let definition = construction_definition(
+        let mut definition = construction_definition(
             database,
             prototype_id,
             self.get_player(player_id)
                 .map(|player| &player.technologies),
         )?;
+        definition.cost = self.object_cost(database, player_id, prototype_id)?;
         let limit = self.validate_construction_command(
             player_id,
             builder_id,
@@ -310,12 +304,15 @@ impl World {
             no_cost,
             trigger_state,
         } = request;
-        let definition = construction_definition(
+        let mut definition = construction_definition(
             database,
             prototype_id,
             self.get_player(player_id)
                 .map(|player| &player.technologies),
         )?;
+        if !no_cost {
+            definition.cost = self.object_cost(database, player_id, prototype_id)?;
+        }
         let limit = self.validate_construction_command(
             player_id,
             builder_id,
@@ -529,6 +526,12 @@ impl World {
             database,
             &definition.prototype_name,
         );
+        let _parking_lot = crate::scenario::parking_lots::materialize_auto_parking_lot(
+            self,
+            builder_id,
+            building_id,
+            database,
+        );
         let Some(ProductionTask::Construction(source_task)) = self
             .get_building_mut(builder_id)
             .and_then(|builder| builder.production.current_item.as_mut())
@@ -540,8 +543,24 @@ impl World {
         true
     }
 
-    pub(super) fn complete_direct_construction(&mut self, building_id: EntityId) -> bool {
-        crate::scenario::population::complete_object_population(self, building_id)
+    pub(super) fn complete_direct_construction(
+        &mut self,
+        building_id: EntityId,
+        database: &Database,
+    ) -> bool {
+        if !crate::scenario::population::complete_object_population(self, building_id) {
+            return false;
+        }
+        let Some(prototype_name) = self
+            .get_building(building_id)
+            .map(|building| building.proto_object_name.clone())
+        else {
+            return true;
+        };
+        if let Some(prototype) = object_by_name(database, &prototype_name) {
+            self.activate_unit_on_built(building_id, database, prototype);
+        }
+        true
     }
 
     pub(super) fn complete_build_other(&mut self, task: &ConstructionTask) {
@@ -816,18 +835,13 @@ fn construction_definition(
             prototype.name.clone(),
         ));
     }
-    if prototype.cost_escalation.is_some() || !prototype.cost_escalation_object.is_empty() {
-        return Err(ConstructionError::CostEscalationUnsupported(
-            prototype.name.clone(),
-        ));
-    }
     validate_object_population(database, prototype)?;
     Ok(ConstructionDefinition {
         prototype_id,
         forbid_id: prototype.dbid.unwrap_or(prototype_id),
         prototype_name: prototype.name.clone(),
         total_points: valid_build_points(prototype, technologies)?,
-        cost: construction_cost(database, prototype)?,
+        cost: Resources::new(),
         population_costs: object_population_costs(database, prototype),
         manual: has_flag(&prototype.flags, "ManualBuild"),
     })

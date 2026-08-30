@@ -15,8 +15,10 @@ byteorder = { workspace = true }
 binrw = { workspace = true }
 quick-xml = { workspace = true }
 pipeline = { workspace = true }
+motion = { workspace = true }
 ecf = { workspace = true }
 half = { workspace = true }
+log = { workspace = true }
 
 [dev-dependencies]
 era = { workspace = true }

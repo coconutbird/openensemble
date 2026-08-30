@@ -169,7 +169,7 @@ var t_gpu_composited_normal: texture_2d<f32>;
 var t_gpu_composited_specular: texture_2d<f32>;
 
 @group(1) @binding(25)
-var t_local_shadow_map: texture_2d_array<f32>;
+var t_local_shadow_map: texture_depth_2d_array;
 
 @group(1) @binding(26)
 var t_light_volume_color: texture_3d<f32>;
@@ -188,14 +188,21 @@ struct VertexOutput {
     @location(6) light_color: vec3<f32>,    // pre-baked light texture (HWDE v8.xyz)
     @location(7) @interpolate(linear) bump_fadeout: f32, // normal map distance fadeout (HWDE v8.w)
     @location(8) static_alpha: f32,
+    @location(9) ambient_occlusion: f32,
 };
 
-fn dynamic_alpha_enabled(grid_coord: vec2<u32>) -> bool {
+fn dynamic_alpha_enabled(uv: vec2<f32>) -> bool {
     let dimensions = textureDimensions(t_dynamic_alpha);
-    let word_x = min(grid_coord.x >> 5u, dimensions.x - 1u);
-    let row = min(grid_coord.y, dimensions.y - 1u);
-    let word = textureLoad(t_dynamic_alpha, vec2<u32>(word_x, row), 0).r;
-    return (word & (1u << (grid_coord.x & 31u))) != 0u;
+    // Rows retain the exact logical square dimension; X is bit-packed and may
+    // have padding in its final word.
+    let maximum_pixel = dimensions.y - 1u;
+    let pixel = vec2<u32>(
+        min(u32(saturate(uv.x) * f32(maximum_pixel)), maximum_pixel),
+        min(u32(saturate(uv.y) * f32(maximum_pixel)), maximum_pixel),
+    );
+    let word_x = min(pixel.x >> 5u, dimensions.x - 1u);
+    let word = textureLoad(t_dynamic_alpha, vec2<u32>(word_x, pixel.y), 0).r;
+    return (word & (1u << (pixel.x & 31u))) != 0u;
 }
 
 fn quantize_domain(value: f32, factor: u32) -> f32 {
@@ -287,19 +294,26 @@ fn vs_main(in: VertexInput) -> VertexOutput {
         planar_fog_density = compute_planar_fog_density(world_pos, lighting.world_camera_pos.xyz, lighting.planar_fog_params.y, lighting.planar_fog_params.z);
     }
 
-    // Sample light texture (HWDE: t2 = gVertSampler_light_Texture)
-    // Luminance (L8) sampled at grid UV, passed to PS as v8.xyz
-    let light_sample = textureSampleLevel(t_light, s_terrain, vec2<f32>(global_u, global_v), 0.0).r;
-    let light_rgb = vec3<f32>(light_sample, light_sample, light_sample);
+    // The PC domain shader uses this unswizzled coordinate for its authored
+    // AO, alpha, and RGB baked-light textures. Scenario/world X/Z are the
+    // transpose of those texture axes.
+    let authored_xtd_uv = vec2<f32>(global_v, global_u);
+    // Retail binds separate linear/clamp samplers for these vertex-stage
+    // auxiliary maps; they must not inherit the repeating anisotropic material
+    // sampler used by the composited terrain textures.
+    let light_rgb = textureSampleLevel(t_light, s_lighting, authored_xtd_uv, 0.0).rgb;
+    let ambient_occlusion = textureSampleLevel(t_ao, s_lighting, authored_xtd_uv, 0.0).r;
 
     // The PC domain shader samples the static XTD alpha once per generated
-    // terrain vertex. Its interpolated varying is thresholded by the pixel
-    // shader, avoiding false holes from sampling and thresholding it again per
+    // terrain vertex. The static alpha texture retains the authored SCN axes,
+    // transposed relative to canonical terrain world X/Z. Its interpolated
+    // varying is thresholded by the pixel shader,
+    // avoiding false holes from sampling and thresholding it again per
     // fragment.
     let static_alpha = textureSampleLevel(
         t_alpha,
-        s_terrain,
-        vec2<f32>(global_u, global_v),
+        s_lighting,
+        authored_xtd_uv,
         0.0,
     ).r;
 
@@ -325,6 +339,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.light_color = light_rgb;
     out.bump_fadeout = fadeout;
     out.static_alpha = static_alpha;
+    out.ambient_occlusion = ambient_occlusion;
 
     return out;
 }
@@ -365,17 +380,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(mix(albedo, vec3<f32>(1.0, 0.0, 0.8), contour * 0.85), 1.0);
     }
 
-    let num_verts = u32(tess_params.terrain_info.x);
     // XTD/unique texture UV: same grid-based UV.
     let xtd_uv = sample_uv;
 
-    // Threshold the interpolated domain-stage alpha like the PC pixel shader.
-    let alpha_grid = vec2<u32>(
-        min(u32(saturate(xtd_uv.x) * f32(num_verts - 1u)), num_verts - 1u),
-        min(u32(saturate(xtd_uv.y) * f32(num_verts - 1u)), num_verts - 1u),
-    );
-    let combined_alpha = select(0.0, in.static_alpha, dynamic_alpha_enabled(alpha_grid));
-    if combined_alpha < 0.66666 {
+    // Retail uses a roughly two-thirds cutoff. At the coarsest authored
+    // tessellation that expands Blood Gulch's supply-pad cutouts just beyond
+    // their covering geometry. A half-alpha boundary preserves the covered
+    // cutout centers without reproducing that presentation seam; the terrain
+    // shadow paths use the same corrected boundary.
+    let combined_alpha = select(0.0, in.static_alpha, dynamic_alpha_enabled(xtd_uv));
+    if combined_alpha < 0.5 {
         discard;
     }
 
@@ -414,8 +428,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let tbn = mat3x3<f32>(tangent, binormal, vertex_normal);
     let world_normal = normalize(tbn * tangent_normal);
 
-    // Sample AO texture (XTD-decoded, uses xtd_uv)
-    let ao = textureSample(t_ao, s_terrain, xtd_uv).r;
+    // The PC domain shader samples AO per generated vertex and passes the
+    // interpolated result to the pixel shader in v7.x.
+    let ao = in.ambient_occlusion;
     let ao_intensity = lighting.ao_params.x;
 
     // === Lighting pipeline (matches original shFillLighting.inc + dirLighting.inc) ===

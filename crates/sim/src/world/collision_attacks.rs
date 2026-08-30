@@ -61,7 +61,12 @@ impl World {
         &mut self,
         gameplay: Option<&GameplayCatalog>,
     ) {
-        let contacts = resolve_unit_collisions(&mut self.units);
+        let excluded_squads = self
+            .squads
+            .iter()
+            .filter_map(|(id, squad)| (squad.is_being_pulled() || squad.is_jumping()).then_some(id))
+            .collect();
+        let contacts = resolve_unit_collisions(&mut self.units, &excluded_squads);
         self.activate_physics_detonation_contacts(&contacts);
         let Some(gameplay) = gameplay else {
             self.finish_all_collision_attacks();

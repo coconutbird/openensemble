@@ -1,5 +1,6 @@
 //! Per-unit enablement overrides for authored tactic actions.
 
+use super::Unit;
 use crate::sync::SyncChecksum;
 use std::collections::BTreeMap;
 
@@ -41,6 +42,18 @@ impl UnitActions {
             checksum.hash_u32(u32::try_from(name.len()).unwrap_or(u32::MAX));
             checksum.hash_bytes(name.as_bytes());
             checksum.hash_u32(u32::from(enabled));
+        }
+    }
+}
+
+impl Unit {
+    /// Return the stable logical prototype retained across technology transforms.
+    #[must_use]
+    pub fn logical_proto_object_name(&self) -> &str {
+        if self.logical_proto_object_name.is_empty() {
+            &self.proto_object_name
+        } else {
+            &self.logical_proto_object_name
         }
     }
 }

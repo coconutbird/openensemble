@@ -212,16 +212,18 @@ Entity effects preserve the representable retail contracts:
   writes the invalid-entity sentinel on failure, and applies retail clear/add
   behavior to its optional object-list output.
 - DBID 36 `CreateSquad` versions 6/7 creates the full proto-squad roster with
-  version-7 facing, optional ordinary rally movement, and scalar/list outputs.
-  Fly-in transport and attack-move rally inputs are reported unsupported before
-  mutation because the sim does not yet model those action states.
+  version-7 facing, optional rally or attack-move movement, and scalar/list
+  outputs. Authored fly-in/fly-off inputs create the civilization's trigger
+  transport, contain the squad for its incoming flight, release it at the
+  drop-off, apply facing and rally state, then remove the outgoing carrier.
 - DBID 875 `CreateSquads` creates one full database-backed squad for every
   ordered ProtoSquadList entry, including duplicates. Its first output replaces
   a SquadList; its second optionally clears and then appends, matching retail's
-  distinct output contracts. Ordinary rally movement uses the shared world
-  order path. Until transport actions exist, an authored fly-in takes retail's
-  failed-transport ground-rally fallback, so creation and list-dependent script
-  flow remain authoritative while the airborne lifecycle remains a known gap.
+  distinct output contracts. Authored fly-ins partition whole squads across a
+  capacity-aware, `TransportMax`-bounded carrier group and share the same
+  authoritative containment, flight, drop-off, facing, rally/attack-move, and
+  cleanup lifecycle. If the player has no usable civilization transport, both
+  creation effects retain retail's ground fallback.
 - DBID 154 `CreateUnit` versions 1/2 promotes an allowed proto-object into the
   retail one-member wrapper squad, returns its leader unit and squad, preserves
   `StartBuilt` for buildings, and supports version-2 facing. On failure, retail
@@ -377,6 +379,18 @@ by physics, checksums, and rendering:
   squads. Version 4 optionally restricts the contained passenger squads; an
   empty filter means all passengers. Passengers are dispatched under their
   current owners and enter the normal authoritative ungarrison lifecycle.
+- DBID 71 `CarpetBomb` supports the two source-active signatures. Version 3 accepts a Flying unit,
+  resolves its parent squad, and uses the squad's current position as the attack-run origin.
+  Version 4 accepts a proto-squad carrying the `Flying` flag, refuses a squad with any returning
+  `MoveAir` child, and obtains the base only from child zero; a non-`MoveAir` lead therefore keeps
+  the retail invalid-base result even when a later child has a base. Optional distance/count
+  inputs default to 20/1. The resulting checksummed squad action owns its ground-target list,
+  per-member attack progress, persistent `IgnoreLeash` flag, `MoveAir` launch/return requests, and
+  lead-position dragging. Position attacks use the ordinary tactic selector and shared ranged
+  executor, including animation tags, hardpoint launch anchors, ammunition, projectiles, and area
+  damage; actions authored only for air targets are rejected. Installed campaign/tutorial trigger
+  catalogs contain no DBID 71 instance, so this contract is covered by named-source and synthetic
+  scenario-trigger regressions rather than a fabricated shipped fixture.
 - DBID 66 `Move` version 6 and DBID 117 `Work` versions 3/4 support the
   currently representable location-target path when `AttackMove`, `QueueOrder`,
   and `DoAbility` are false. Squad-list values are consumed first, the valid
@@ -460,6 +474,10 @@ The target-list and scripted-order routines were recovered and saved as
 `BTriggerEffect_teUnitOrSquadListRemove` (`0x140459EC0`). DBIDs 146/147 list
 size are compiler-inlined as direct writes in `BTriggerEffect_fire`.
 
+The DBID 71 signatures and `BSquadActionCarpetBomb`/`BUnitActionMoveAir` interaction were recovered
+from the named 2008 source. No additional installed-executable function was inspected for that
+slice.
+
 The list-processing, iterator, and filter handlers were recovered as
 `BTriggerVarIterator_attachIterator` (`0x140447C20`),
 `BTriggerCondition_tcNextUnit` (`0x140426BA0`),
@@ -511,11 +529,11 @@ for gameplay coverage.
 - Implement the rest of the retail condition/effect catalog, especially
   objectives, the remaining list element types and advanced filters, AI,
   and powers.
-- Model fly-in transports, attack-move rally behavior, death presentation
-  duration, scoring, squad plot-search, object obstruction fallback, generic
-  entity-target work, alternate order queues, AI-command abilities, turret
-  hardpoints, and the remaining optional effect paths needed to reproduce every
-  retail side effect rather than reporting a bounded fidelity gap.
+- Model death presentation duration, scoring, full squad plot-search, object
+  obstruction fallback, generic entity-target work, alternate order queues,
+  AI-command abilities, turret hardpoints, and the remaining optional effect
+  paths needed to reproduce every retail side effect rather than reporting a
+  bounded fidelity gap.
 - Add retail async-condition consensus and UI-input delivery. Async conditions
   currently remain in `Waiting` state.
 - Load external, power, and ability trigger-script lifecycles in addition to

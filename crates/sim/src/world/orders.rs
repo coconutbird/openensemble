@@ -25,11 +25,19 @@ impl World {
                 && squad.is_alive()
                 && !self.is_squad_incapacitated(recipient_id)
                 && !squad.garrison.is_garrisoned()
+                && !squad.is_jumping()
+                && squad.trained_air_birth.is_none()
         }) {
+            let _cancelled = self.cancel_capture_order(recipient_id);
+            let _repair_cancelled = self.cancel_repair_other_order(recipient_id);
             let Some(squad) = self.squads.get_mut(recipient_id) else {
                 return false;
             };
-            return squad.issue_scripted_move(target, false, false);
+            let accepted = squad.issue_scripted_move(target, false, false);
+            if accepted {
+                self.cancel_incoming_power_transport(recipient_id);
+            }
+            return accepted;
         }
         if self.units.get(recipient_id).is_some_and(|unit| {
             unit.base.player_id == player_id
@@ -107,12 +115,21 @@ impl World {
                 && squad.is_alive()
                 && !self.is_squad_incapacitated(squad_id)
                 && !squad.garrison.is_garrisoned()
+                && !squad.is_jumping()
+                && squad.trained_air_birth.is_none()
         }) {
             return false;
         }
-        self.squads
+        let _cancelled = self.cancel_capture_order(squad_id);
+        let _repair_cancelled = self.cancel_repair_other_order(squad_id);
+        let accepted = self
+            .squads
             .get_mut(squad_id)
-            .is_some_and(|squad| squad.issue_scripted_path(waypoints, attack_move, queue))
+            .is_some_and(|squad| squad.issue_scripted_path(waypoints, attack_move, queue));
+        if accepted {
+            self.cancel_incoming_power_transport(squad_id);
+        }
+        accepted
     }
 
     /// Persistently enable or disable reverse movement for a squad and its members.

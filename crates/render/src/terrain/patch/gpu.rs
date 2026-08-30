@@ -58,6 +58,34 @@ pub(super) fn create_2d_fallback(
     create_image_view(device, queue, label, &TerrainPatchImage::solid(color))
 }
 
+pub(super) fn create_uint_2d_fallback(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    value: u32,
+) -> wgpu::TextureView {
+    let texture = device.create_texture_with_data(
+        queue,
+        &wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R32Uint,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+        wgpu::util::TextureDataOrder::LayerMajor,
+        bytemuck::bytes_of(&value),
+    );
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
 pub(super) fn create_array_fallback(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -89,6 +117,31 @@ pub(super) fn create_array_fallback(
         },
         texture.size(),
     );
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    })
+}
+
+pub(super) fn create_depth_array_fallback(
+    device: &wgpu::Device,
+    label: &str,
+    layers: u32,
+) -> wgpu::TextureView {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: layers,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
     texture.create_view(&wgpu::TextureViewDescriptor {
         dimension: Some(wgpu::TextureViewDimension::D2Array),
         ..Default::default()
@@ -150,6 +203,32 @@ pub(super) fn texture_entry_layout(
         binding,
         visibility,
         wgpu::TextureSampleType::Float { filterable: true },
+        view_dimension,
+    )
+}
+
+pub(super) fn uint_texture_entry_layout(
+    binding: u32,
+    view_dimension: wgpu::TextureViewDimension,
+    visibility: wgpu::ShaderStages,
+) -> wgpu::BindGroupLayoutEntry {
+    crate::gpu::texture_layout_entry(
+        binding,
+        visibility,
+        wgpu::TextureSampleType::Uint,
+        view_dimension,
+    )
+}
+
+pub(super) fn depth_texture_entry_layout(
+    binding: u32,
+    view_dimension: wgpu::TextureViewDimension,
+    visibility: wgpu::ShaderStages,
+) -> wgpu::BindGroupLayoutEntry {
+    crate::gpu::texture_layout_entry(
+        binding,
+        visibility,
+        wgpu::TextureSampleType::Depth,
         view_dimension,
     )
 }

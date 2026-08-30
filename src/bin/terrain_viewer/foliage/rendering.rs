@@ -42,7 +42,7 @@ impl WorldRenderer for FoliageResources {
                     self.shadow_params_bind_group.as_ref(),
                 )
             }
-            RenderPhase::Sky | RenderPhase::Distortion => return,
+            RenderPhase::Sky | RenderPhase::Distortion | RenderPhase::LocalShadow { .. } => return,
         };
         let Some(params) = params else { return };
         pass.set_pipeline(pipeline);

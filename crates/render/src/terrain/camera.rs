@@ -1,10 +1,15 @@
 //! Camera for terrain rendering.
 
 use glam::{Mat4, Vec2, Vec3};
+use num_traits::ToPrimitive;
+use std::time::Duration;
 
 use sim::{CameraDirective, CameraShake, PlayerId, PlayerPresentationState, World};
 
 const DEFAULT_CAMERA_ZOOM: f32 = 300.0;
+const DEFAULT_SHAKE_TRAIL_OFF_SECONDS: f32 = 0.4;
+const DEFAULT_SHAKE_CONSERVATION_FACTOR: f32 = 0.5;
+const LOCAL_SHAKE_REVISION_BIT: u64 = 1_u64 << 63;
 
 /// Fly camera for navigating terrain.
 ///
@@ -140,7 +145,9 @@ impl Camera {
 #[derive(Clone, Debug)]
 pub struct SimulationCameraAdapter {
     applied_revision: u32,
-    applied_shake_revision: u32,
+    applied_shake_revision: u64,
+    next_local_shake_revision: u32,
+    local_shake: Option<LocalCameraShake>,
     sampled_shake_time_ms: Option<u32>,
     accumulated_shake: Vec2,
     hover_point: Option<Vec3>,
@@ -153,6 +160,8 @@ impl Default for SimulationCameraAdapter {
         Self {
             applied_revision: 0,
             applied_shake_revision: 0,
+            next_local_shake_revision: 0,
+            local_shake: None,
             sampled_shake_time_ms: None,
             accumulated_shake: Vec2::ZERO,
             hover_point: None,
@@ -166,6 +175,7 @@ impl SimulationCameraAdapter {
     /// Seed renderer-local hover/zoom state after loading a terrain scene.
     pub fn reset(&mut self, camera: &mut Camera, hover_point: Vec3) {
         self.applied_revision = 0;
+        self.local_shake = None;
         self.clear_shake(camera);
         self.hover_point = hover_point.is_finite().then_some(hover_point);
         self.hover_height_offset = 0.0;
@@ -187,6 +197,18 @@ impl SimulationCameraAdapter {
         world: &World,
         player_id: PlayerId,
     ) -> PlayerPresentationState {
+        let render_time_seconds = Duration::from_millis(u64::from(world.game_time())).as_secs_f32();
+        self.synchronize_at_time(camera, world, player_id, render_time_seconds)
+    }
+
+    /// Project sim directives plus renderer-owned animation shakes at render time.
+    pub fn synchronize_at_time(
+        &mut self,
+        camera: &mut Camera,
+        world: &World,
+        player_id: PlayerId,
+        render_time_seconds: f32,
+    ) -> PlayerPresentationState {
         let state = world.player_presentation_state(player_id);
         if let Some(directive) = state
             .camera_directive
@@ -194,8 +216,35 @@ impl SimulationCameraAdapter {
         {
             self.apply_directive(camera, directive);
         }
-        self.apply_shake(camera, world.camera_shake(player_id), world.game_time());
+        self.apply_shake(
+            camera,
+            world.camera_shake(player_id),
+            world.game_time(),
+            render_time_seconds,
+        );
         state
+    }
+
+    /// Begin a renderer-local visual-animation shake with retail defaults.
+    pub fn begin_animation_shake(
+        &mut self,
+        duration_seconds: f32,
+        strength: f32,
+        render_time_seconds: f32,
+    ) {
+        if !duration_seconds.is_finite()
+            || !strength.is_finite()
+            || !render_time_seconds.is_finite()
+        {
+            return;
+        }
+        self.next_local_shake_revision = self.next_local_shake_revision.wrapping_add(1).max(1);
+        self.local_shake = Some(LocalCameraShake {
+            revision: self.next_local_shake_revision,
+            started_at_seconds: render_time_seconds,
+            duration_seconds: duration_seconds.max(0.0),
+            strength: strength.max(0.0),
+        });
     }
 
     fn apply_directive(&mut self, camera: &mut Camera, directive: CameraDirective) {
@@ -221,27 +270,50 @@ impl SimulationCameraAdapter {
         self.applied_revision = directive.revision;
     }
 
-    fn apply_shake(&mut self, camera: &mut Camera, shake: Option<CameraShake>, game_time_ms: u32) {
+    fn apply_shake(
+        &mut self,
+        camera: &mut Camera,
+        simulation_shake: Option<CameraShake>,
+        game_time_ms: u32,
+        render_time_seconds: f32,
+    ) {
+        let local = self
+            .local_shake
+            .and_then(|shake| shake.sample(render_time_seconds));
+        if self.local_shake.is_some() && local.is_none() {
+            self.local_shake = None;
+        }
+        let shake = local.or_else(|| {
+            simulation_shake.map(|shake| CameraShakeSample {
+                identity: u64::from(shake.revision()),
+                strength: shake.strength(),
+                conservation_factor: shake.conservation_factor(),
+                sample_time_ms: game_time_ms,
+            })
+        });
         let Some(shake) = shake else {
             self.clear_shake(camera);
             return;
         };
-        if shake.revision() != self.applied_shake_revision {
-            self.applied_shake_revision = shake.revision();
+        if shake.identity != self.applied_shake_revision {
+            self.applied_shake_revision = shake.identity;
             self.sampled_shake_time_ms = None;
             self.accumulated_shake = Vec2::ZERO;
         }
-        if self.sampled_shake_time_ms == Some(game_time_ms) {
+        if self.sampled_shake_time_ms == Some(shake.sample_time_ms) {
             return;
         }
-        let random = shake_sample(shake.revision(), game_time_ms) * shake.strength();
-        let correction = self.accumulated_shake * shake.conservation_factor();
+        let revision = u32::try_from(shake.identity).unwrap_or_else(|_| {
+            u32::try_from(shake.identity & u64::from(u32::MAX)).unwrap_or(u32::MAX)
+        });
+        let random = shake_sample(revision, shake.sample_time_ms) * shake.strength;
+        let correction = self.accumulated_shake * shake.conservation_factor;
         self.accumulated_shake += random - correction;
         let world_forward =
             Vec3::new(camera.forward().x, 0.0, camera.forward().z).normalize_or_zero();
         camera.shake_offset =
             camera.right() * self.accumulated_shake.x + world_forward * self.accumulated_shake.y;
-        self.sampled_shake_time_ms = Some(game_time_ms);
+        self.sampled_shake_time_ms = Some(shake.sample_time_ms);
     }
 
     fn clear_shake(&mut self, camera: &mut Camera) {
@@ -250,6 +322,59 @@ impl SimulationCameraAdapter {
         self.accumulated_shake = Vec2::ZERO;
         camera.shake_offset = Vec3::ZERO;
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LocalCameraShake {
+    revision: u32,
+    started_at_seconds: f32,
+    duration_seconds: f32,
+    strength: f32,
+}
+
+impl LocalCameraShake {
+    fn sample(self, render_time_seconds: f32) -> Option<CameraShakeSample> {
+        if !render_time_seconds.is_finite() {
+            return None;
+        }
+        let elapsed = (render_time_seconds - self.started_at_seconds).max(0.0);
+        let total = self.duration_seconds + DEFAULT_SHAKE_TRAIL_OFF_SECONDS;
+        if elapsed > total {
+            return None;
+        }
+        let strength = if elapsed <= self.duration_seconds {
+            self.strength
+        } else {
+            let remaining = (total - elapsed).max(0.0);
+            let endpoint_epsilon = f32::EPSILON * render_time_seconds.abs().max(1.0);
+            if remaining <= endpoint_epsilon {
+                0.0
+            } else {
+                let multiplier = remaining / DEFAULT_SHAKE_TRAIL_OFF_SECONDS;
+                self.strength * multiplier * multiplier
+            }
+        };
+        Some(CameraShakeSample {
+            identity: LOCAL_SHAKE_REVISION_BIT | u64::from(self.revision),
+            strength,
+            conservation_factor: DEFAULT_SHAKE_CONSERVATION_FACTOR,
+            sample_time_ms: render_time_milliseconds(render_time_seconds),
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CameraShakeSample {
+    identity: u64,
+    strength: f32,
+    conservation_factor: f32,
+    sample_time_ms: u32,
+}
+
+fn render_time_milliseconds(render_time_seconds: f32) -> u32 {
+    (render_time_seconds.max(0.0) * 1_000.0)
+        .to_u32()
+        .unwrap_or(u32::MAX)
 }
 
 fn shake_sample(revision: u32, game_time_ms: u32) -> Vec2 {
@@ -285,6 +410,10 @@ fn apply_retail_v4_yaw(camera: &mut Camera, direction: Vec3) {
 mod tests {
     use super::*;
 
+    fn assert_near(actual: f32, expected: f32) {
+        assert!((actual - expected).abs() <= f32::EPSILON);
+    }
+
     #[test]
     fn simulation_directive_is_one_shot_and_preserves_renderer_zoom() {
         let mut camera = Camera::default();
@@ -314,5 +443,29 @@ mod tests {
         for component in [first.x, first.y, second.x, second.y] {
             assert!((-1.0..=1.0).contains(&component));
         }
+    }
+
+    #[test]
+    fn local_shake_holds_then_uses_retail_quadratic_trailoff() {
+        let shake = LocalCameraShake {
+            revision: 7,
+            started_at_seconds: 10.0,
+            duration_seconds: 0.5,
+            strength: 4.0,
+        };
+
+        let held = shake.sample(10.25).expect("held shake");
+        assert_near(held.strength, 4.0);
+        assert_near(held.conservation_factor, 0.5);
+        let trailing = shake.sample(10.7).expect("trailing shake");
+        assert!((trailing.strength - 1.0).abs() < 0.0001);
+        assert_near(shake.sample(10.9).expect("trail endpoint").strength, 0.0);
+        assert!(shake.sample(10.901).is_none());
+    }
+
+    #[test]
+    fn render_time_conversion_saturates_without_panicking() {
+        assert_eq!(render_time_milliseconds(-1.0), 0);
+        assert_eq!(render_time_milliseconds(f32::MAX), u32::MAX);
     }
 }
