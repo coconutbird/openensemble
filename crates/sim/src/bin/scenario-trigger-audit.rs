@@ -433,60 +433,34 @@ fn print_hot_triggers(scenario: &str, engine: &sim::TriggerEngine) {
                 .triggers
                 .iter()
                 .filter(|trigger| trigger.evaluate_count > 1)
-                .map(move |trigger| {
-                    (
-                        trigger.evaluate_count,
-                        *script_id,
-                        trigger.id,
-                        trigger.editor_id,
-                        trigger.name.clone(),
-                        trigger.evaluate_limit,
-                        trigger.evaluate_frequency,
-                        trigger
-                            .conditions
-                            .iter()
-                            .map(|condition| condition.raw_type)
-                            .collect::<Vec<_>>(),
-                        trigger
-                            .conditions
-                            .iter()
-                            .map(|condition| describe_condition(condition, script))
-                            .collect::<Vec<_>>(),
-                        trigger
-                            .effects()
-                            .map(|effect| effect.raw_type)
-                            .collect::<Vec<_>>(),
-                        trigger
-                            .effects()
-                            .map(|effect| describe_effect(effect, script))
-                            .collect::<Vec<_>>(),
-                    )
-                })
+                .map(move |trigger| (*script_id, script, trigger))
         })
         .collect::<Vec<_>>();
-    hot.sort_by_key(|entry| std::cmp::Reverse(entry.0));
-    for (
-        count,
-        script_id,
-        id,
-        editor_id,
-        name,
-        evaluate_limit,
-        evaluate_frequency,
-        conditions,
-        condition_details,
-        effects,
-        details,
-    ) in hot.into_iter().take(25)
-    {
+    hot.sort_by_key(|(_, _, trigger)| std::cmp::Reverse(trigger.evaluate_count));
+    for (script_id, script, trigger) in hot.into_iter().take(25) {
         println!(
-            "{scenario}: hot-trigger count={count} script={script_id} id={id} editor={editor_id} name={name:?} limit={evaluate_limit} frequency={evaluate_frequency} conditions={conditions:?} effects={effects:?}",
+            "{scenario}: hot-trigger count={} script={script_id} id={} editor={} name={:?} limit={} frequency={} conditions={:?} effects={:?}",
+            trigger.evaluate_count,
+            trigger.id,
+            trigger.editor_id,
+            trigger.name,
+            trigger.evaluate_limit,
+            trigger.evaluate_frequency,
+            trigger
+                .conditions
+                .iter()
+                .map(|condition| condition.raw_type)
+                .collect::<Vec<_>>(),
+            trigger
+                .effects()
+                .map(|effect| effect.raw_type)
+                .collect::<Vec<_>>(),
         );
-        for detail in condition_details {
-            println!("{scenario}:   {detail}");
+        for condition in trigger.conditions.iter() {
+            println!("{scenario}:   {}", describe_condition(condition, script));
         }
-        for detail in details {
-            println!("{scenario}:   {detail}");
+        for effect in trigger.effects() {
+            println!("{scenario}:   {}", describe_effect(effect, script));
         }
     }
     print_iterator_source_references(scenario, engine, &iterator_sources);
@@ -600,42 +574,49 @@ fn print_condition_variable_references(
 }
 
 fn describe_condition(condition: &sim::trigger::Condition, script: &sim::TriggerScript) -> String {
-    let bindings = condition
-        .inputs
-        .iter()
-        .chain(&condition.outputs)
-        .map(|binding| describe_binding(binding.signature_id, binding.variable_id, script))
-        .collect::<Vec<_>>()
-        .join(", ");
     format!(
-        "condition id={} dbid={} version={} bindings=[{bindings}]",
-        condition.id, condition.raw_type, condition.version
+        "condition id={} dbid={} version={} bindings=[{}]",
+        condition.id,
+        condition.raw_type,
+        condition.version,
+        describe_bindings(&condition.inputs, &condition.outputs, script)
     )
 }
 
 fn describe_effect(effect: &sim::trigger::Effect, script: &sim::TriggerScript) -> String {
-    let bindings = effect
-        .inputs
-        .iter()
-        .chain(&effect.outputs)
-        .map(|binding| describe_binding(binding.signature_id, binding.variable_id, script))
-        .collect::<Vec<_>>()
-        .join(", ");
     format!(
-        "effect id={} dbid={} version={} bindings=[{bindings}]",
-        effect.id, effect.raw_type, effect.version
+        "effect id={} dbid={} version={} bindings=[{}]",
+        effect.id,
+        effect.raw_type,
+        effect.version,
+        describe_bindings(&effect.inputs, &effect.outputs, script)
     )
 }
 
-fn describe_binding(signature_id: u16, variable_id: u32, script: &sim::TriggerScript) -> String {
-    let variable = script.get_variable(variable_id);
+fn describe_bindings(
+    inputs: &[sim::trigger::VarBinding],
+    outputs: &[sim::trigger::VarBinding],
+    script: &sim::TriggerScript,
+) -> String {
+    inputs
+        .iter()
+        .chain(outputs)
+        .map(|binding| describe_binding(*binding, script))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn describe_binding(binding: sim::trigger::VarBinding, script: &sim::TriggerScript) -> String {
+    let variable = script.get_variable(binding.variable_id);
     format!(
-        "{signature_id}:{variable_id}=>{:?}",
+        "{}:{}=>{:?}",
+        binding.signature_id,
+        binding.variable_id,
         variable.map(|variable| (
-            variable.name.clone(),
+            &variable.name,
             variable.var_type,
             variable.is_null,
-            variable.value.clone()
+            &variable.value
         ))
     )
 }
