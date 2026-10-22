@@ -81,12 +81,12 @@ pub(super) fn can_get_one_object_type(
     world: &mut World,
 ) -> bool {
     let Some(values) = value_at(condition, script, 1).and_then(|value| match value {
-        TriggerValue::ObjectTypeList(values) => Some(values.clone()),
+        TriggerValue::ObjectTypeList(values) => Some(values),
         _ => None,
     }) else {
         return false;
     };
-    let Some(selected) = select_value(&values, condition, script, world) else {
+    let Some(selected) = select_value(values, condition, script, world) else {
         return false;
     };
     if let Some(output_id) = condition.variable_id(3) {
@@ -125,14 +125,12 @@ pub(super) fn can_get_one_location(
     world: &mut World,
 ) -> bool {
     let Some(values) = value_at(condition, script, 1).and_then(|value| match value {
-        TriggerValue::LocationList(values) | TriggerValue::VectorList(values) => {
-            Some(values.clone())
-        }
+        TriggerValue::LocationList(values) | TriggerValue::VectorList(values) => Some(values),
         _ => None,
     }) else {
         return false;
     };
-    let Some(selected) = select_value(&values, condition, script, world) else {
+    let Some(selected) = select_value(values, condition, script, world) else {
         return false;
     };
     if let Some(output_id) = condition.variable_id(3) {
@@ -148,7 +146,7 @@ fn select_entity(
     kind: SelectionKind,
 ) -> bool {
     let values = list_at(condition, script, kind).unwrap_or_default();
-    let selected = select_value(&values, condition, script, world)
+    let selected = select_value(values, condition, script, world)
         .filter(|entity_id| entity_exists(world, *entity_id, kind));
     if let Some(output_id) = condition.variable_id(3) {
         let value = selected.unwrap_or(EntityId::INVALID);
@@ -174,7 +172,7 @@ fn select_i32(
     let Some(values) = scalar_list_at(condition, script, kind) else {
         return false;
     };
-    let Some(selected) = select_value(&values, condition, script, world) else {
+    let Some(selected) = select_value(values, condition, script, world) else {
         return false;
     };
     if let Some(output_id) = condition.variable_id(output_slot) {
@@ -183,11 +181,11 @@ fn select_i32(
     true
 }
 
-fn scalar_list_at(
+fn scalar_list_at<'a>(
     condition: &Condition,
-    script: &TriggerScript,
+    script: &'a TriggerScript,
     kind: ScalarSelectionKind,
-) -> Option<Vec<i32>> {
+) -> Option<&'a [i32]> {
     match (kind, value_at(condition, script, 1)?) {
         (ScalarSelectionKind::Player, TriggerValue::PlayerList(values))
         | (ScalarSelectionKind::Team, TriggerValue::TeamList(values))
@@ -195,9 +193,7 @@ fn scalar_list_at(
         | (ScalarSelectionKind::ProtoSquad, TriggerValue::ProtoSquadList(values))
         | (ScalarSelectionKind::Tech, TriggerValue::TechList(values))
         | (ScalarSelectionKind::Integer, TriggerValue::IntegerList(values))
-        | (ScalarSelectionKind::DesignLine, TriggerValue::DesignLineList(values)) => {
-            Some(values.clone())
-        }
+        | (ScalarSelectionKind::DesignLine, TriggerValue::DesignLineList(values)) => Some(values),
         _ => None,
     }
 }
@@ -214,14 +210,14 @@ fn scalar_value(kind: ScalarSelectionKind, value: i32) -> TriggerValue {
     }
 }
 
-fn list_at(
+fn list_at<'a>(
     condition: &Condition,
-    script: &TriggerScript,
+    script: &'a TriggerScript,
     kind: SelectionKind,
-) -> Option<Vec<EntityId>> {
+) -> Option<&'a [EntityId]> {
     match (kind, value_at(condition, script, 1)?) {
         (SelectionKind::Unit, TriggerValue::UnitList(values))
-        | (SelectionKind::Squad, TriggerValue::SquadList(values)) => Some(values.clone()),
+        | (SelectionKind::Squad, TriggerValue::SquadList(values)) => Some(values),
         _ => None,
     }
 }
