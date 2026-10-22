@@ -1,7 +1,9 @@
 //! Retail trigger-list iterator conditions.
 
 use crate::EntityId;
-use crate::trigger::{Condition, TriggerScript, TriggerValue, VarType};
+use crate::trigger::{
+    Condition, TriggerIterator, TriggerScript, TriggerValue, TriggerVec3, VarType,
+};
 
 #[derive(Debug, Clone, Copy)]
 enum IteratorKind {
@@ -65,10 +67,7 @@ pub(super) fn next_location(condition: &Condition, script: &mut TriggerScript) -
     {
         return false;
     }
-    let Some(iterator_variable) = script.get_variable_mut(iterator_id) else {
-        return false;
-    };
-    let TriggerValue::Iterator(iterator) = &mut iterator_variable.value else {
+    let Some(iterator) = iterator_value_mut(script, iterator_id) else {
         return false;
     };
     iterator.visit_vector(next);
@@ -84,14 +83,7 @@ fn next_entity(condition: &Condition, script: &mut TriggerScript, kind: Iterator
     let Some(iterator_id) = condition.variable_id(1) else {
         return false;
     };
-    let Some(iterator) = script
-        .get_variable(iterator_id)
-        .filter(|variable| !variable.is_null)
-        .and_then(|variable| match &variable.value {
-            TriggerValue::Iterator(iterator) => Some(iterator.clone()),
-            _ => None,
-        })
-    else {
+    let Some(iterator) = iterator_value(script, iterator_id) else {
         return false;
     };
     let Some(source_id) = iterator.source_list_id() else {
@@ -115,10 +107,7 @@ fn next_entity(condition: &Condition, script: &mut TriggerScript, kind: Iterator
         return false;
     }
 
-    let Some(iterator_variable) = script.get_variable_mut(iterator_id) else {
-        return false;
-    };
-    let TriggerValue::Iterator(iterator) = &mut iterator_variable.value else {
+    let Some(iterator) = iterator_value_mut(script, iterator_id) else {
         return false;
     };
     match kind {
@@ -143,14 +132,14 @@ fn source_values(
     script: &TriggerScript,
     source_id: u32,
     kind: IteratorKind,
-) -> Option<Vec<EntityId>> {
+) -> Option<&[EntityId]> {
     let variable = script
         .get_variable(source_id)
         .filter(|variable| !variable.is_null)?;
     match (kind, &variable.value) {
         (IteratorKind::Unit, TriggerValue::UnitList(values))
         | (IteratorKind::Squad, TriggerValue::SquadList(values))
-        | (IteratorKind::Object, TriggerValue::ObjectList(values)) => Some(values.clone()),
+        | (IteratorKind::Object, TriggerValue::ObjectList(values)) => Some(values),
         _ => None,
     }
 }
@@ -197,10 +186,7 @@ fn next_scalar(
         return false;
     }
 
-    let Some(iterator_variable) = script.get_variable_mut(iterator_id) else {
-        return false;
-    };
-    let TriggerValue::Iterator(iterator) = &mut iterator_variable.value else {
+    let Some(iterator) = iterator_value_mut(script, iterator_id) else {
         return false;
     };
     match kind {
@@ -219,45 +205,49 @@ fn next_scalar(
     true
 }
 
-fn iterator_value(
-    script: &TriggerScript,
-    iterator_id: u32,
-) -> Option<crate::trigger::TriggerIterator> {
+/// Borrow the iterator of a variable that is not null.
+fn iterator_value(script: &TriggerScript, iterator_id: u32) -> Option<&TriggerIterator> {
     script
         .get_variable(iterator_id)
         .filter(|variable| !variable.is_null)
         .and_then(|variable| match &variable.value {
-            TriggerValue::Iterator(iterator) => Some(iterator.clone()),
+            TriggerValue::Iterator(iterator) => Some(iterator),
             _ => None,
         })
+}
+
+/// Mutably borrow the iterator of a variable to record a visited value.
+fn iterator_value_mut(
+    script: &mut TriggerScript,
+    iterator_id: u32,
+) -> Option<&mut TriggerIterator> {
+    match &mut script.get_variable_mut(iterator_id)?.value {
+        TriggerValue::Iterator(iterator) => Some(iterator),
+        _ => None,
+    }
 }
 
 fn scalar_source_values(
     script: &TriggerScript,
     source_id: u32,
     kind: ScalarIteratorKind,
-) -> Option<Vec<i32>> {
+) -> Option<&[i32]> {
     let variable = script
         .get_variable(source_id)
         .filter(|variable| !variable.is_null)?;
     match (kind, &variable.value) {
         (ScalarIteratorKind::Player, TriggerValue::PlayerList(values))
-        | (ScalarIteratorKind::Team, TriggerValue::TeamList(values)) => Some(values.clone()),
+        | (ScalarIteratorKind::Team, TriggerValue::TeamList(values)) => Some(values),
         _ => None,
     }
 }
 
-fn vector_source_values(
-    script: &TriggerScript,
-    source_id: u32,
-) -> Option<Vec<crate::trigger::TriggerVec3>> {
+fn vector_source_values(script: &TriggerScript, source_id: u32) -> Option<&[TriggerVec3]> {
     let variable = script
         .get_variable(source_id)
         .filter(|variable| !variable.is_null)?;
     match &variable.value {
-        TriggerValue::LocationList(values) | TriggerValue::VectorList(values) => {
-            Some(values.clone())
-        }
+        TriggerValue::LocationList(values) | TriggerValue::VectorList(values) => Some(values),
         _ => None,
     }
 }
