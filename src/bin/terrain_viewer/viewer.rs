@@ -242,7 +242,7 @@ impl TerrainViewer {
 
 fn load_scenario_inputs(scenario_name: &str) -> Result<TerrainLoadInputs, String> {
     log::info!("Loading scenario database and game state via sim: {scenario_name}");
-    let dir = data::paths::game_dir();
+    let dir = openensemble::game_dir();
     let dir_str = dir.to_string_lossy();
     let sim::LoadedGameScenario {
         simulation,

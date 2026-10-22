@@ -71,7 +71,8 @@ Follow the Cargo package layout:
 - Put a module in `foo.rs` and its child modules in `foo/`. Do not use `mod.rs` files. The
   workspace denies `clippy::mod_module_files`.
 - Put each library crate in `crates/<crate-name>/`. The root package `openensemble` contains the
-  executables.
+  executables. Its small library (`src/lib.rs`) contains only the code that the executables
+  share, for example the search for the game directory.
 
 `tests/repository-standards.rs` checks the lint inheritance, the file size and the package
 layout.
@@ -87,7 +88,7 @@ repository:
 
 The crates of this repository are in four layers:
 
-1. `xcore`, `data` and `motion`.
+1. `xcore` and `motion`.
 2. `sim`.
 3. `net` and `render`.
 4. The root package `openensemble`.

@@ -20,7 +20,7 @@ fn main() -> anyhow::Result<()> {
         .find(|argument| !argument.starts_with('-'))
         .cloned()
         .unwrap_or_else(|| "blood_gulch".to_owned());
-    let game_dir = data::paths::game_dir().to_string_lossy().into_owned();
+    let game_dir = openensemble::game_dir().to_string_lossy().into_owned();
     let (mut world, mut source) = hw1::World::load(&game_dir)?;
     world.swap_scenario(&mut source, &scenario);
 

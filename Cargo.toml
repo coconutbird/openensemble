@@ -6,7 +6,6 @@ members = [
     "crates/render",
     "crates/sim",
     "crates/net",
-    "crates/data",
     "crates/test-support",
     "crates/render-test-support",
 ]
@@ -23,7 +22,6 @@ xcore = { path = "crates/xcore" }
 motion = { path = "crates/motion" }
 render = { path = "crates/render" }
 sim = { path = "crates/sim" }
-data = { path = "crates/data" }
 test-support = { path = "crates/test-support" }
 render-test-support = { path = "crates/render-test-support" }
 
@@ -83,7 +81,6 @@ workspace = true
 xcore = { workspace = true }
 render = { workspace = true }
 sim = { workspace = true }
-data = { workspace = true }
 pipeline = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }

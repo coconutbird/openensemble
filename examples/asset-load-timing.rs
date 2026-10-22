@@ -2,6 +2,9 @@
 
 use std::time::Instant;
 
+use pipeline::hw1::scenario::ScenarioData;
+use pipeline::hw1::{World, WorldLoadOptions, loader};
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments = std::env::args().skip(1).collect::<Vec<_>>();
     let runtime = arguments.iter().any(|argument| argument == "--runtime");
@@ -10,11 +13,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .find(|argument| !argument.starts_with('-'))
         .cloned()
         .unwrap_or_else(|| "blood_gulch".to_owned());
-    let game_dir = data::game_dir().to_string_lossy().into_owned();
+    let game_dir = openensemble::game_dir().to_string_lossy().into_owned();
     let total_started = Instant::now();
 
     let started = Instant::now();
-    let mut source = data::loader::load_game_dir(&game_dir);
+    let mut source = loader::load_game_dir(&game_dir);
     let archives = source.era_count();
     let archive_elapsed = started.elapsed();
 
@@ -26,12 +29,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let started = Instant::now();
     let options = if runtime {
-        data::pipeline::hw1::WorldLoadOptions::runtime()
+        WorldLoadOptions::runtime()
     } else {
-        data::pipeline::hw1::WorldLoadOptions::full()
+        WorldLoadOptions::full()
     };
-    let mut world =
-        data::pipeline::hw1::World::load_from_source_with_options(&mut source, options)?;
+    let mut world = World::load_from_source_with_options(&mut source, options)?;
     let world_elapsed = started.elapsed();
 
     let started = Instant::now();
@@ -40,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .scenario_data
             .as_ref()
             .into_iter()
-            .flat_map(data::ScenarioData::objects)
+            .flat_map(ScenarioData::objects)
             .map(|object| object.proto_name.clone())
             .collect::<Vec<_>>();
         world.load_visuals_for(&mut source, names)

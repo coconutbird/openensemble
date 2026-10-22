@@ -604,14 +604,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "data"
-version = "0.1.0"
-dependencies = [
- "log",
- "pipeline",
-]
-
-[[package]]
 name = "database"
 version = "0.1.0"
 dependencies = [
@@ -2297,7 +2289,6 @@ name = "openensemble"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "data",
  "dotenvy",
  "egui",
  "env_logger",

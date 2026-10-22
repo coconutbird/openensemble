@@ -7,8 +7,9 @@
 //! - Replay validation
 
 use anyhow::{Context, Result};
-use data::GameDatabase;
 use num_traits::ToPrimitive;
+use pipeline::database::hw1::Database;
+use pipeline::hw1::loader;
 use pipeline::hw1::scenario::ScenarioData;
 use sim::{Session, SessionState, Simulation, World, load_scenario_into_world};
 use std::time::{Duration, Instant};
@@ -49,7 +50,7 @@ impl Default for HeadlessConfig {
 /// Headless game server.
 pub struct HeadlessServer {
     config: HeadlessConfig,
-    database: Option<GameDatabase>,
+    database: Option<Database>,
     simulation: Simulation,
     session: Session,
     world: World,
@@ -72,8 +73,8 @@ impl HeadlessServer {
             None
         } else {
             log::info!("Loading game database...");
-            let mut src = data::load_game_assets();
-            let db = GameDatabase::load(&mut src)
+            let mut src = loader::load_game_dir(&openensemble::game_dir().to_string_lossy());
+            let db = Database::load(&mut src)
                 .map_err(|e| anyhow::anyhow!("{e}"))
                 .context("Failed to load game database from game directory")?;
 
@@ -114,7 +115,7 @@ impl HeadlessServer {
     ///
     /// Returns an error if the scenario cannot initialize the simulation world.
     pub fn load_scenario_data(&mut self, scenario: &ScenarioData) -> Result<()> {
-        let empty_db = GameDatabase::new();
+        let empty_db = Database::new();
         let db = self.database.as_ref().unwrap_or(&empty_db);
         let loaded = load_scenario_into_world(scenario, db);
         self.world = loaded.world;
@@ -150,7 +151,7 @@ impl HeadlessServer {
 
     /// Get the game database (if loaded).
     #[must_use]
-    pub fn database(&self) -> Option<&GameDatabase> {
+    pub fn database(&self) -> Option<&Database> {
         self.database.as_ref()
     }
 
