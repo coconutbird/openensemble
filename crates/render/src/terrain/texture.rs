@@ -2,6 +2,8 @@
 //!
 //! Provides mipmap generation and texture helper functions.
 
+use rayon::prelude::*;
+
 /// Calculate the number of mip levels for a given texture size.
 ///
 /// Returns the number of mip levels from the largest dimension down to 1x1.
@@ -22,6 +24,7 @@ pub fn mip_level_count(width: u32, height: u32) -> u32 {
 /// Uses box filtering (2x2 average) for downsampling.
 /// Returns a vector of mip levels, each containing RGBA pixel data.
 /// Level 0 is the original image, level 1 is half size, etc.
+/// The rows of each level are made in parallel. The result does not depend on the thread count.
 ///
 /// # Arguments
 /// * `pixels` - RGBA pixel data (4 bytes per pixel)
@@ -32,86 +35,81 @@ pub fn mip_level_count(width: u32, height: u32) -> u32 {
 /// Vector of mip levels, each as `Vec<u8>` of RGBA data.
 #[must_use]
 pub fn generate_mipmaps(pixels: &[u8], width: u32, height: u32) -> Vec<Vec<u8>> {
-    let mut mips = Vec::new();
-
     // Level 0 is the original
-    mips.push(pixels.to_vec());
+    let mut mips = vec![pixels.to_vec()];
 
     let mut current_width = width;
     let mut current_height = height;
-    let mut current_pixels = pixels.to_vec();
 
     // Generate mip levels until we reach 1x1
     while current_width > 1 || current_height > 1 {
         let new_width = (current_width / 2).max(1);
         let new_height = (current_height / 2).max(1);
-        let Some(pixel_count) = usize::try_from(new_width)
+        let Some(row_bytes) = usize::try_from(new_width)
             .ok()
-            .and_then(|width| {
-                usize::try_from(new_height)
-                    .ok()
-                    .and_then(|height| width.checked_mul(height))
-            })
-            .and_then(|pixels| pixels.checked_mul(4))
+            .and_then(|width| width.checked_mul(4))
+        else {
+            return mips;
+        };
+        let Some(pixel_count) = usize::try_from(new_height)
+            .ok()
+            .and_then(|height| height.checked_mul(row_bytes))
         else {
             return mips;
         };
         let mut new_pixels = vec![0u8; pixel_count];
+        let current_pixels = mips.last().map_or(&[][..], Vec::as_slice);
+        new_pixels
+            .par_chunks_mut(row_bytes)
+            .zip(0..new_height)
+            .for_each(|(row, y)| {
+                downsample_row(current_pixels, [current_width, current_height], y, row);
+            });
 
-        // Box filter: average 2x2 blocks
-        for y in 0..new_height {
-            for x in 0..new_width {
-                let src_x = (x * 2).min(current_width - 1);
-                let src_y = (y * 2).min(current_height - 1);
+        mips.push(new_pixels);
+        current_width = new_width;
+        current_height = new_height;
+    }
 
-                // Sample up to 4 pixels (handle edge cases)
-                let mut r: u32 = 0;
-                let mut g: u32 = 0;
-                let mut b: u32 = 0;
-                let mut a: u32 = 0;
-                let mut count: u32 = 0;
+    mips
+}
 
-                for dy in 0..2 {
-                    for dx in 0..2 {
-                        let sx = (src_x + dx).min(current_width - 1);
-                        let sy = (src_y + dy).min(current_height - 1);
-                        let idx = usize::try_from(
-                            (u64::from(sy) * u64::from(current_width) + u64::from(sx)) * 4,
-                        )
-                        .unwrap_or(usize::MAX);
-                        if idx + 3 < current_pixels.len() {
-                            r += u32::from(current_pixels[idx]);
-                            g += u32::from(current_pixels[idx + 1]);
-                            b += u32::from(current_pixels[idx + 2]);
-                            a += u32::from(current_pixels[idx + 3]);
-                            count += 1;
-                        }
+/// Write the row `row_y` of the next mip level of `current_pixels` (size `[width, height]`)
+/// into `row`.
+fn downsample_row(current_pixels: &[u8], [width, height]: [u32; 2], row_y: u32, row: &mut [u8]) {
+    let (pixels, _) = row.as_chunks_mut::<4>();
+    for (column, pixel) in (0..).zip(pixels) {
+        let src_x = (column * 2).min(width - 1);
+        let src_y = (row_y * 2).min(height - 1);
+
+        // Box filter: average 2x2 blocks. Sample up to 4 pixels (handle edge cases)
+        let mut sum = [0_u32; 4];
+        let mut count: u32 = 0;
+
+        for dy in 0..2 {
+            for dx in 0..2 {
+                let sx = (src_x + dx).min(width - 1);
+                let sy = (src_y + dy).min(height - 1);
+                let idx = usize::try_from((u64::from(sy) * u64::from(width) + u64::from(sx)) * 4)
+                    .unwrap_or(usize::MAX);
+                if let Some(source) = current_pixels.get(idx..idx.saturating_add(4)) {
+                    for (total, &value) in sum.iter_mut().zip(source) {
+                        *total += u32::from(value);
                     }
-                }
-
-                let [Some(r), Some(g), Some(b), Some(a)] = [r, g, b, a].map(|channel| {
-                    channel
-                        .checked_div(count)
-                        .and_then(|value| u8::try_from(value).ok())
-                }) else {
-                    continue;
-                };
-                let dst_idx =
-                    usize::try_from((u64::from(y) * u64::from(new_width) + u64::from(x)) * 4)
-                        .unwrap_or(usize::MAX);
-                if let Some(pixel) = new_pixels.get_mut(dst_idx..dst_idx + 4) {
-                    pixel.copy_from_slice(&[r, g, b, a]);
+                    count += 1;
                 }
             }
         }
 
-        mips.push(new_pixels.clone());
-        current_width = new_width;
-        current_height = new_height;
-        current_pixels = new_pixels;
+        let [Some(red), Some(green), Some(blue), Some(alpha)] = sum.map(|channel| {
+            channel
+                .checked_div(count)
+                .and_then(|value| u8::try_from(value).ok())
+        }) else {
+            continue;
+        };
+        *pixel = [red, green, blue, alpha];
     }
-
-    mips
 }
 
 /// Get the dimensions of a mip level given the base size.
@@ -160,5 +158,21 @@ mod tests {
         assert_eq!(mips[0].len(), 64); // 4*4*4
         assert_eq!(mips[1].len(), 16); // 2*2*4
         assert_eq!(mips[2].len(), 4); // 1*1*4
+    }
+
+    #[test]
+    fn generate_mipmaps_truncates_odd_edges_and_box_averages() {
+        // 5x2 image: pixel (x, y) is [40x + y, 100y, x, 200].
+        let pixels = (0..2_u8)
+            .flat_map(|y| (0..5_u8).flat_map(move |x| [40 * x + y, 100 * y, x, 200]))
+            .collect::<Vec<_>>();
+        let mips = generate_mipmaps(&pixels, 5, 2);
+
+        assert_eq!(mips.len(), 3);
+        assert_eq!(mips[0], pixels);
+        // Level 1 is 2x1. Column 4 of level 0 is not sampled.
+        assert_eq!(mips[1], [20, 50, 0, 200, 100, 50, 2, 200]);
+        // Level 2 is 1x1. The missing row repeats the last row.
+        assert_eq!(mips[2], [60, 50, 1, 200]);
     }
 }
