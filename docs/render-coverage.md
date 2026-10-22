@@ -16,18 +16,19 @@ see [hwde-shader-comparison.md](hwde-shader-comparison.md).
 | Animation sampling, blends, attachments | Granny runtime (`granny_model_instance.cpp` @ `0x140f1c058`), `BGrannyAnimation` | `crates/motion/src/`, `crates/render/src/ugx/unit/` |
 | Inverse kinematics (CCD, ground IK) | Granny IK in the Granny runtime | `crates/render/src/ugx/model/ik.rs`, `crates/render/src/ugx/unit/ik.rs` |
 | Particles (PFX) with beams and trails | `*.pfx` @ `0x1411e218c` (`sub_1407955A0`) | `crates/render/src/particle.rs`, `crates/render/src/particle/runtime.rs` |
-| Terrain (XTD/XTT), GPU compositor, foliage, roads | `BTerrainIOLoader*`, `BTerrainVisual*` | `crates/render/src/terrain/`, `src/bin/terrain_viewer/` |
+| Terrain (XTD/XTT), GPU compositor, foliage, roads | `BTerrainIOLoader*`, `BTerrainVisual*` | `crates/render/src/terrain/`, `crates/render/src/world_view/` |
 | Terrain effects (`.tfx`) and `impacteffects.xml` | `impacteffects.xml` @ `0x1411a3388` | `crates/render/src/terrain_effect.rs`, `crates/render/src/terrain_effect/` |
 | Impact decals on terrain | `BTerrainImpactDecalManager_createImpactDecal` @ `0x14041AB80` | `crates/render/src/ugx/scene/impact_decals.rs` |
 | Light effects (`.lgt`) and local lights | `uiGlobalLights.gls` @ `0x1411b7a60` | `crates/render/src/light_effect.rs`, `crates/render/src/lighting.rs` |
 | Buffered light volume | `mLightBuffered` light path | `crates/render/src/light_volume.rs` |
-| Shadows: cascaded VSM, local spot and omni maps | terrain shader bundles | `crates/render/src/local_shadow.rs`, `src/bin/terrain_viewer/shadow.rs` |
-| Scenario light sets (GLS/FLS) | `uiGlobalLights.fls` @ `0x1411b7af8` | `pipeline::hw1::LightSetData` in `ensemble-assets`, used by `src/bin/terrain_viewer/viewer.rs` |
+| Shadows: cascaded VSM, local spot and omni maps | terrain shader bundles | `crates/render/src/local_shadow.rs`, `crates/render/src/world_view/shadow.rs` |
+| Scenario light sets (GLS/FLS) | `uiGlobalLights.fls` @ `0x1411b7af8` | `pipeline::hw1::LightSetData` in `ensemble-assets`, used by `crates/render/src/world_view/frame.rs` |
 | HDR target, tone map, distortion | `postprocess` pass of the PC renderer | `crates/render/src/postprocess.rs` |
 | HDR environment cubemap, sky render phase | `BUGXGeomUberSectionRenderer__initEffect` @ `0x1406c93e0` ("Found sky material") | `crates/render/src/environment.rs`, `RenderPhase::Sky` in `crates/render/src/world.rs` |
 | Fog of war on terrain (blackmap) | `gBlackmapParams*` @ `0x1411d64e0`, `BWorldVisibility_loadConfig` @ `0x1406D4D10` | `crates/render/src/terrain/uniforms.rs` |
 | Screen projection of callouts, objective pointers, icons | in-game HUD | `crates/render/src/terrain/callouts.rs`, `objective_pointers.rs`, `icons.rs` |
 | Screen fades and game timers | trigger effects | `crates/render/src/ui/fades.rs`, `crates/render/src/ui/timers.rs` |
+| Frame of a loaded scenario: shadow, scene, particle, distortion and tone-map passes | PC renderer frame | `crates/render/src/world_view.rs`. `terrain_viewer` and a future game client use the same `WorldView`. |
 
 ## Gaps
 

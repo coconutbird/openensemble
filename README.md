@@ -46,7 +46,7 @@ Otherwise, it uses the current directory.
 |---|---|
 | `crates/motion` | Skeletal animation sampling and attachment transforms, shared by `sim` and `render`. |
 | `crates/sim` | Deterministic lockstep simulation: commands, entities, orders, powers and triggers. |
-| `crates/render` | `wgpu` renderer: UGX models, terrain, particles, lights, shadows, terrain effects and the window loop. |
+| `crates/render` | `wgpu` renderer: UGX models, terrain, particles, lights, shadows, terrain effects and the window loop. `render::world_view::WorldView` draws a loaded scenario. |
 | `crates/net` | UDP host and client transport. No executable uses it yet. |
 | `crates/test-support` | Test helpers that load the installed game. Use only as a dev-dependency. |
 | `crates/render-test-support` | Scene helpers for the renderer tests. Use only as a dev-dependency. |
@@ -57,7 +57,7 @@ Otherwise, it uses the current directory.
 |---|---|
 | `openensemble` (`src/main.rs`) | Window with a placeholder `egui` menu. |
 | `headless` (`src/bin/headless.rs`) | Runs the simulation without a renderer. |
-| `terrain_viewer` (`src/bin/terrain_viewer/`) | Shows a scenario: terrain, foliage, roads, units and effects. Writes top-down captures. |
+| `terrain_viewer` (`src/bin/terrain_viewer/`) | Loads a scenario and shows it with `WorldView`: terrain, foliage, roads, units and effects. Steps the simulation, moves the camera and writes top-down captures. |
 | `renderer-asset-audit` (`src/bin/renderer-asset-audit.rs`) | Prints an inventory of the visual features that the installed assets use. |
 | `renderer-gpu-smoke` (`src/bin/renderer-gpu-smoke.rs`) | Creates renderer pipelines that the viewer does not always create, without a window. |
 | `scenario-trigger-audit` (`crates/sim/src/bin/`) | Prints the trigger DBIDs of installed scenarios. |
