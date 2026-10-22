@@ -269,7 +269,7 @@ impl WorldView {
             );
         }
         if let (Some(renderer), Some(world)) = (&mut self.units, frame.world) {
-            renderer.update_from_world_with_particles_at_time(
+            renderer.present_with_particles_at_time(
                 device,
                 queue,
                 world,
