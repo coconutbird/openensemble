@@ -27,7 +27,7 @@ fn blood_gulch_triggers_load_remap_and_execute_from_the_authoritative_tick() {
     assert_eq!(blood_gulch.triggers.len(), 2);
     assert!(blood_gulch.triggers.iter().all(|trigger| {
         matches!(
-            trigger.effects_on_true.as_slice(),
+            &*trigger.effects_on_true,
             [teleporter, debug]
                 if teleporter.effect_type == EffectType::SetTeleporterDestination
                     && debug.effect_type == EffectType::DebugVarString

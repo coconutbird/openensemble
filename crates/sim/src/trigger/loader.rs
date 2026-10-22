@@ -239,12 +239,7 @@ impl VanillaLoader {
             .iter()
             .find(|n| n.name == "TriggerEffectsOnTrue")
         {
-            for effect_node in &effects_node.children {
-                if effect_node.name == "Effect" {
-                    let effect = Self::parse_effect(effect_node)?;
-                    trigger.effects_on_true.push(effect);
-                }
-            }
+            trigger.effects_on_true = Self::parse_effects(effects_node)?.into();
         }
 
         // Parse effects on false
@@ -253,40 +248,39 @@ impl VanillaLoader {
             .iter()
             .find(|n| n.name == "TriggerEffectsOnFalse")
         {
-            for effect_node in &effects_node.children {
-                if effect_node.name == "Effect" {
-                    let effect = Self::parse_effect(effect_node)?;
-                    trigger.effects_on_false.push(effect);
-                }
-            }
+            trigger.effects_on_false = Self::parse_effects(effects_node)?.into();
         }
 
         Ok(trigger)
+    }
+
+    /// Parse the `Effect` children of an effect list node.
+    fn parse_effects(node: &pipeline::xmb::Node) -> LoadResult<Vec<Effect>> {
+        node.children
+            .iter()
+            .filter(|effect_node| effect_node.name == "Effect")
+            .map(Self::parse_effect)
+            .collect()
     }
 
     /// Parse `TriggerConditions` node (contains And or Or wrapper).
     fn parse_conditions(node: &pipeline::xmb::Node, trigger: &mut Trigger) -> LoadResult<()> {
         // Find the And or Or wrapper node
         for child in &node.children {
-            if child.name == "Or" {
-                trigger.condition_mode = ConditionMode::Any;
-                for cond_node in &child.children {
-                    if cond_node.name == "Condition" {
-                        let condition = Self::parse_condition(cond_node)?;
-                        trigger.conditions.push(condition);
-                    }
-                }
-                break;
-            } else if child.name == "And" {
-                trigger.condition_mode = ConditionMode::All;
-                for cond_node in &child.children {
-                    if cond_node.name == "Condition" {
-                        let condition = Self::parse_condition(cond_node)?;
-                        trigger.conditions.push(condition);
-                    }
-                }
-                break;
-            }
+            let mode = match child.name.as_str() {
+                "Or" => ConditionMode::Any,
+                "And" => ConditionMode::All,
+                _ => continue,
+            };
+            trigger.condition_mode = mode;
+            trigger.conditions = child
+                .children
+                .iter()
+                .filter(|cond_node| cond_node.name == "Condition")
+                .map(Self::parse_condition)
+                .collect::<LoadResult<Vec<_>>>()?
+                .into();
+            break;
         }
         Ok(())
     }

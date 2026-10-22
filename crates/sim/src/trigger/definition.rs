@@ -1,5 +1,7 @@
 //! Trigger - a condition/effect pair that executes when conditions are met.
 
+use std::sync::Arc;
+
 use super::{Condition, Effect, TriggerId};
 
 /// How a trigger combines its conditions.
@@ -32,13 +34,15 @@ pub struct Trigger {
     pub group_id: i32,
 
     /// Conditions to evaluate (AND'd together by default).
-    pub conditions: Vec<Condition>,
+    ///
+    /// The list is shared and immutable, so a clone does not copy the conditions.
+    pub conditions: Arc<[Condition]>,
 
     /// Effects to fire when conditions evaluate to true.
-    pub effects_on_true: Vec<Effect>,
+    pub effects_on_true: Arc<[Effect]>,
 
     /// Effects to fire when conditions evaluate to false.
-    pub effects_on_false: Vec<Effect>,
+    pub effects_on_false: Arc<[Effect]>,
 
     /// How this trigger combines its conditions.
     pub condition_mode: ConditionMode,
@@ -75,9 +79,9 @@ impl Default for Trigger {
             editor_id: super::INVALID_TRIGGER_ID,
             name: String::new(),
             group_id: -1,
-            conditions: Vec::new(),
-            effects_on_true: Vec::new(),
-            effects_on_false: Vec::new(),
+            conditions: Arc::default(),
+            effects_on_true: Arc::default(),
+            effects_on_false: Arc::default(),
             condition_mode: ConditionMode::All,
             start_active: false,
             is_conditional: false,
@@ -111,21 +115,21 @@ impl Trigger {
     /// Add a condition.
     #[must_use]
     pub fn with_condition(mut self, condition: Condition) -> Self {
-        self.conditions.push(condition);
+        self.conditions = appended(&self.conditions, condition);
         self
     }
 
     /// Add an effect for when conditions are true.
     #[must_use]
     pub fn with_effect_on_true(mut self, effect: Effect) -> Self {
-        self.effects_on_true.push(effect);
+        self.effects_on_true = appended(&self.effects_on_true, effect);
         self
     }
 
     /// Add an effect for when conditions are false.
     #[must_use]
     pub fn with_effect_on_false(mut self, effect: Effect) -> Self {
-        self.effects_on_false.push(effect);
+        self.effects_on_false = appended(&self.effects_on_false, effect);
         self
     }
 
@@ -141,6 +145,13 @@ impl Trigger {
     pub fn with_frequency(mut self, frequency_ms: u32) -> Self {
         self.evaluate_frequency = frequency_ms;
         self
+    }
+
+    /// Iterate over the effects on true, then the effects on false.
+    pub fn effects(&self) -> impl Iterator<Item = &Effect> {
+        self.effects_on_true
+            .iter()
+            .chain(self.effects_on_false.iter())
     }
 
     /// Check if it's time to evaluate this trigger.
@@ -179,4 +190,9 @@ impl Trigger {
         self.evaluate_count += 1;
         self.next_evaluate_time = current_time.wrapping_add(self.evaluate_frequency);
     }
+}
+
+/// Make a new shared list with the items of `items` followed by `item`.
+fn appended<T: Clone>(items: &[T], item: T) -> Arc<[T]> {
+    items.iter().cloned().chain(std::iter::once(item)).collect()
 }

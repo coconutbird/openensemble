@@ -46,9 +46,7 @@ pub(super) fn scripted_animation_requests(scenario: &LoadedScenario) -> Vec<(Str
         .flat_map(|(_, script)| {
             script.triggers.iter().flat_map(|trigger| {
                 trigger
-                    .effects_on_true
-                    .iter()
-                    .chain(&trigger.effects_on_false)
+                    .effects()
                     .filter_map(|effect| scripted_animation_request(scenario, script, effect))
             })
         })

@@ -1,6 +1,7 @@
 //! Deterministic scheduling and execution of retail trigger scripts.
 
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::Arc;
 
 use super::effects::{ControlAction, EffectOutcome, execute_effect};
 use super::{INVALID_TRIGGER_SCRIPT_ID, TriggerId, TriggerScript, TriggerScriptId};
@@ -281,7 +282,7 @@ impl TriggerEngine {
             return;
         }
 
-        let conditions = trigger.conditions.clone();
+        let conditions = Arc::clone(&trigger.conditions);
         let condition_mode = trigger.condition_mode;
         let activated_time = trigger.activated_time;
         let is_conditional = trigger.is_conditional;
@@ -307,18 +308,18 @@ impl TriggerEngine {
 
         let effects = script
             .get_trigger(trigger_id)
-            .map_or_else(Vec::new, |trigger| {
+            .map_or_else(Arc::default, |trigger| {
                 if fire_true {
-                    trigger.effects_on_true.clone()
+                    Arc::clone(&trigger.effects_on_true)
                 } else {
-                    trigger.effects_on_false.clone()
+                    Arc::clone(&trigger.effects_on_false)
                 }
             });
         deactivate_trigger(script, trigger_id, queue);
         update.triggers_fired += 1;
-        for effect in effects {
+        for effect in effects.iter() {
             let (outcome, control) =
-                execute_effect(&effect, script, world, context.database, context.gameplay);
+                execute_effect(effect, script, world, context.database, context.gameplay);
             update.record_effect(effect.raw_type, outcome);
             apply_control(control, script, context.current_time, queue);
         }

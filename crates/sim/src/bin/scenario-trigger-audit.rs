@@ -124,9 +124,7 @@ fn print_raw_selected_variables(
         .flat_map(|(_, script)| {
             script.triggers.iter().flat_map(|trigger| {
                 trigger
-                    .effects_on_true
-                    .iter()
-                    .chain(&trigger.effects_on_false)
+                    .effects()
                     .filter(|effect| dbids.contains(&effect.raw_type))
                     .flat_map(|effect| effect.inputs.iter().chain(&effect.outputs))
                     .map(|binding| binding.variable_id)
@@ -248,9 +246,7 @@ fn print_selected_bindings(scenario: &str, engine: &sim::TriggerEngine, dbids: &
                 );
             }
             for effect in trigger
-                .effects_on_true
-                .iter()
-                .chain(&trigger.effects_on_false)
+                .effects()
                 .filter(|effect| dbids.contains(&effect.raw_type))
             {
                 println!(
@@ -275,9 +271,7 @@ fn print_reached_selected_bindings(
     for (script_id, script) in engine.scripts() {
         for trigger in trigger_reached_selected(script, dbids) {
             for effect in trigger
-                .effects_on_true
-                .iter()
-                .chain(&trigger.effects_on_false)
+                .effects()
                 .filter(|effect| dbids.contains(&effect.raw_type))
             {
                 println!(
@@ -302,9 +296,7 @@ fn print_selected_entities(
     for (_, script) in world.trigger_engine().scripts() {
         for trigger in &script.triggers {
             for effect in trigger
-                .effects_on_true
-                .iter()
-                .chain(&trigger.effects_on_false)
+                .effects()
                 .filter(|effect| dbids.contains(&effect.raw_type))
             {
                 for binding in effect.inputs.iter().chain(&effect.outputs) {
@@ -390,9 +382,7 @@ fn trigger_reached_selected<'a>(
     script.triggers.iter().filter(|trigger| {
         trigger.evaluate_count > 0
             && trigger
-                .effects_on_true
-                .iter()
-                .chain(&trigger.effects_on_false)
+                .effects()
                 .any(|effect| dbids.contains(&effect.raw_type))
     })
 }
@@ -463,15 +453,11 @@ fn print_hot_triggers(scenario: &str, engine: &sim::TriggerEngine) {
                             .map(|condition| describe_condition(condition, script))
                             .collect::<Vec<_>>(),
                         trigger
-                            .effects_on_true
-                            .iter()
-                            .chain(&trigger.effects_on_false)
+                            .effects()
                             .map(|effect| effect.raw_type)
                             .collect::<Vec<_>>(),
                         trigger
-                            .effects_on_true
-                            .iter()
-                            .chain(&trigger.effects_on_false)
+                            .effects()
                             .map(|effect| describe_effect(effect, script))
                             .collect::<Vec<_>>(),
                     )
@@ -515,7 +501,7 @@ fn hot_condition_variables(engine: &sim::TriggerEngine) -> BTreeSet<(u32, u32)> 
                 .triggers
                 .iter()
                 .filter(|trigger| trigger.evaluate_count > 1)
-                .flat_map(|trigger| &trigger.conditions)
+                .flat_map(|trigger| trigger.conditions.iter())
                 .flat_map(|condition| condition.inputs.iter().chain(&condition.outputs))
                 .map(|binding| (*script_id, binding.variable_id))
         })
@@ -530,7 +516,7 @@ fn hot_iterator_sources(engine: &sim::TriggerEngine) -> BTreeSet<(u32, u32)> {
                 .triggers
                 .iter()
                 .filter(|trigger| trigger.evaluate_count > 1)
-                .flat_map(|trigger| &trigger.conditions)
+                .flat_map(|trigger| trigger.conditions.iter())
                 .flat_map(|condition| condition.inputs.iter())
                 .filter_map(|binding| {
                     let variable = script.get_variable(binding.variable_id)?;
@@ -559,18 +545,13 @@ fn print_iterator_source_references(
                 .map(|variable| &variable.value)
         );
         for trigger in &script.triggers {
-            for effect in trigger
-                .effects_on_true
-                .iter()
-                .chain(&trigger.effects_on_false)
-                .filter(|effect| {
-                    effect
-                        .inputs
-                        .iter()
-                        .chain(&effect.outputs)
-                        .any(|binding| binding.variable_id == *source_id)
-                })
-            {
+            for effect in trigger.effects().filter(|effect| {
+                effect
+                    .inputs
+                    .iter()
+                    .chain(&effect.outputs)
+                    .any(|binding| binding.variable_id == *source_id)
+            }) {
                 println!(
                     "{scenario}:   source-ref trigger={} name={:?} {}",
                     trigger.id,
@@ -592,17 +573,12 @@ fn print_condition_variable_references(
             continue;
         };
         for trigger in &script.triggers {
-            for effect in trigger
-                .effects_on_true
-                .iter()
-                .chain(&trigger.effects_on_false)
-                .filter(|effect| {
-                    effect
-                        .outputs
-                        .iter()
-                        .any(|binding| binding.variable_id == *variable_id)
-                })
-            {
+            for effect in trigger.effects().filter(|effect| {
+                effect
+                    .outputs
+                    .iter()
+                    .any(|binding| binding.variable_id == *variable_id)
+            }) {
                 println!(
                     "{scenario}: condition-writer script={script_id} variable={variable_id} trigger={} name={:?} conditions={:?} effects={:?} {}",
                     trigger.id,
@@ -613,9 +589,7 @@ fn print_condition_variable_references(
                         .map(|condition| condition.raw_type)
                         .collect::<Vec<_>>(),
                     trigger
-                        .effects_on_true
-                        .iter()
-                        .chain(&trigger.effects_on_false)
+                        .effects()
                         .map(|effect| effect.raw_type)
                         .collect::<Vec<_>>(),
                     describe_effect(effect, script)
@@ -679,13 +653,7 @@ fn print_catalog(scenario: &str, engine: &sim::TriggerEngine) {
                     .iter()
                     .map(|condition| condition.raw_type),
             );
-            effects.extend(
-                trigger
-                    .effects_on_true
-                    .iter()
-                    .chain(&trigger.effects_on_false)
-                    .map(|effect| effect.raw_type),
-            );
+            effects.extend(trigger.effects().map(|effect| effect.raw_type));
         }
     }
     println!(
