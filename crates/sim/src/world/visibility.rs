@@ -160,10 +160,10 @@ impl World {
     /// Return whether one live entity should be presented to a team's UI.
     ///
     /// A team's own entities remain visible. Other entities are visible when
-    /// fog is disabled or an authoritative revealer covers their position.
+    /// fog is disabled, team unit LOS overlaps them, or a revealer covers them.
     #[must_use]
     pub fn is_entity_visible_to_team(&self, team_id: TeamId, entity_id: EntityId) -> bool {
-        let Some(position) = self.entity_position(entity_id) else {
+        let Some(_position) = self.entity_position(entity_id) else {
             return false;
         };
         if self.is_entity_hidden_by_cloak_to_team(team_id, entity_id) {
@@ -177,9 +177,18 @@ impl World {
             .and_then(|player_id| self.get_player(player_id))
             .is_some_and(|player| player.team_id == team_id);
         owned_by_team
-            || self.is_position_revealed_to_team(team_id, position)
+            || self.entity_in_team_sight(team_id, entity_id)
             || self.cleansing_forces_entity_visibility(team_id, entity_id)
             || self.wave_forces_entity_visibility(team_id, entity_id)
+    }
+
+    pub(super) fn is_entity_visible_from_player(
+        &self,
+        player_id: PlayerId,
+        entity_id: EntityId,
+    ) -> bool {
+        self.get_player(player_id)
+            .is_some_and(|player| self.is_entity_visible_to_team(player.team_id, entity_id))
     }
 
     /// Return whether an undetected enemy cloak suppresses an entity for a team.
@@ -213,6 +222,60 @@ impl World {
     ) -> bool {
         self.get_player(player_id)
             .is_some_and(|player| self.is_entity_hidden_by_cloak_to_team(player.team_id, entity_id))
+    }
+
+    fn entity_in_team_sight(&self, team_id: TeamId, entity_id: EntityId) -> bool {
+        match entity_id.class() {
+            Some(EntityClass::Squad) => self.squads.get(entity_id).is_some_and(|squad| {
+                squad
+                    .unit_ids
+                    .iter()
+                    .any(|unit_id| self.entity_in_team_sight(team_id, *unit_id))
+            }),
+            Some(EntityClass::Unit) => self.units.get(entity_id).is_some_and(|unit| {
+                self.team_sight_overlaps(team_id, unit.base.position, unit.obstruction_radius())
+            }),
+            _ => self
+                .entity_position(entity_id)
+                .is_some_and(|position| self.team_sight_overlaps(team_id, position, 0.0)),
+        }
+    }
+
+    fn team_sight_overlaps(&self, team_id: TeamId, position: Vec3, target_radius: f32) -> bool {
+        if !position.is_finite() {
+            return false;
+        }
+        let target_radius = finite_nonnegative(target_radius);
+        self.objects.iter().any(|(_, object)| {
+            object.base.is_alive()
+                && object.revealer().is_some_and(|revealer| {
+                    revealer.team_id() == team_id
+                        && sight_circles_overlap(
+                            object.base.position,
+                            revealer.line_of_sight(),
+                            position,
+                            target_radius,
+                        )
+                })
+        }) || self.units.iter().any(|(_, observer)| {
+            observer.is_alive()
+                && !observer.is_garrisoned()
+                && !observer.is_physics_replacement()
+                && self
+                    .get_player(observer.base.player_id)
+                    .is_some_and(|player| {
+                        player.team_id == team_id
+                            && sight_circles_overlap(
+                                observer.base.position,
+                                player.technologies.line_of_sight(
+                                    observer.logical_proto_object_name(),
+                                    observer.authored_line_of_sight(),
+                                ) * observer.line_of_sight_scalar,
+                                position,
+                                target_radius,
+                            )
+                    })
+        })
     }
 
     pub(super) fn update_revealers(&mut self, dt: f32) {
@@ -253,6 +316,26 @@ impl World {
         }
         None
     }
+}
+
+fn finite_nonnegative(value: f32) -> f32 {
+    if value.is_finite() {
+        value.max(0.0)
+    } else {
+        0.0
+    }
+}
+
+fn sight_circles_overlap(origin: Vec3, radius: f32, target: Vec3, target_radius: f32) -> bool {
+    if radius == Revealer::GLOBAL_LINE_OF_SIGHT {
+        return true;
+    }
+    if !origin.is_finite() || !radius.is_finite() || radius <= 0.0 {
+        return false;
+    }
+    let range = radius + target_radius;
+    let offset = target - origin;
+    offset.x.mul_add(offset.x, offset.z * offset.z) <= range * range
 }
 
 fn revealer_prototype(database: &Database) -> Option<(i32, &ProtoObject)> {

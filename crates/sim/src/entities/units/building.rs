@@ -697,6 +697,15 @@ impl BuildingProduction {
         self.current_item.iter().chain(self.queued_items.iter())
     }
 
+    pub(crate) fn take_tasks(&mut self) -> Vec<ProductionTask> {
+        let mut tasks = Vec::with_capacity(self.queued_items.len() + 1);
+        if let Some(current) = self.current_item.take() {
+            tasks.push(current);
+        }
+        tasks.append(&mut self.queued_items);
+        tasks
+    }
+
     pub(crate) fn training_tasks(&self) -> impl Iterator<Item = &TrainingTask> {
         self.tasks().filter_map(ProductionTask::as_training)
     }

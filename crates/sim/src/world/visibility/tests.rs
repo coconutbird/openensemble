@@ -142,6 +142,27 @@ fn fog_switch_controls_global_visibility_and_checksum_state() {
 }
 
 #[test]
+fn ordinary_unit_los_is_team_shared_and_uses_live_radius_scalars() {
+    let mut world = World::new();
+    world.init_players(3);
+    world.get_player_mut(1).unwrap().team_id = 1;
+    world.get_player_mut(2).unwrap().team_id = 1;
+    world.get_player_mut(3).unwrap().team_id = 2;
+    let observer = world.create_unit_at(2, Vec3::ZERO);
+    world
+        .get_unit_mut(observer)
+        .unwrap()
+        .configure_authored_line_of_sight(10.0);
+    let enemy = world.create_unit_at(3, Vec3::X * 11.0);
+    world.get_unit_mut(enemy).unwrap().obstruction_half_extents = Vec3::splat(1.0);
+
+    assert!(!world.is_position_revealed_to_team(1, Vec3::X * 11.0));
+    assert!(world.is_entity_visible_to_team(1, enemy));
+    world.get_unit_mut(observer).unwrap().line_of_sight_scalar = 0.5;
+    assert!(!world.is_entity_visible_to_team(1, enemy));
+}
+
+#[test]
 fn whole_map_exploration_is_authoritative_and_checksum_visible() {
     let mut world = World::new();
     let initial_checksum = world.checksum();

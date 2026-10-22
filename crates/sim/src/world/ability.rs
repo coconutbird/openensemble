@@ -194,12 +194,11 @@ mod tests {
                 ..ProtoObject::default()
             },
         ]);
+        let mut rocket_action = ranged_action("RocketAttack", "Rocket");
+        rocket_action.dont_loop_attack_anim = Some(true);
         let tactics = TacticData {
             weapons: vec![weapon("Rifle", 10.0), weapon("Rocket", 40.0)],
-            actions: vec![
-                ranged_action("RifleAttack", "Rifle"),
-                ranged_action("RocketAttack", "Rocket"),
-            ],
+            actions: vec![ranged_action("RifleAttack", "Rifle"), rocket_action],
             tactic: Some(TacticRules {
                 target_rules: vec![
                     TargetRule {
@@ -287,10 +286,15 @@ mod tests {
             friendly_fire: false,
             targets_foot_of_unit: false,
             projectile_reactions: crate::gameplay::ProjectileReactionFlags::default(),
+            min_range: 0.0,
             max_range,
             max_velocity_lead: 0.0,
             accuracy: AttackAccuracyProfile::default(),
             damage_per_attack: 5.0,
+            control: crate::gameplay::AttackControlProfile {
+                dont_loop_attack_animation: action_name.eq_ignore_ascii_case("RocketAttack"),
+                shield_drain: false,
+            },
             ammunition: crate::gameplay::AttackAmmunition::None,
             animations: vec![AttackAnimation {
                 asset_path: "attack.uax".to_owned(),

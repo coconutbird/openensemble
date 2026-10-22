@@ -1,6 +1,20 @@
 //! Unit targetability and simulation-bounds queries.
 
 use super::Unit;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum SquadAiParticipation {
+    #[default]
+    Included,
+    Ignored,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum AutoAttackability {
+    #[default]
+    Enabled,
+    Disabled,
+}
 use crate::entity::Entity;
 use glam::Vec3;
 
@@ -55,7 +69,7 @@ impl Unit {
     /// Return whether automatic combat acquisition may target this object.
     #[must_use]
     pub fn is_auto_attackable(&self) -> bool {
-        self.auto_attackable && self.is_attackable()
+        matches!(self.auto_attackable, AutoAttackability::Enabled) && self.is_attackable()
     }
 
     /// Return whether this prototype owns a retail external-shield volume.
@@ -92,11 +106,27 @@ impl Unit {
     }
 
     pub(crate) const fn auto_attackable_setting(&self) -> bool {
-        self.auto_attackable
+        matches!(self.auto_attackable, AutoAttackability::Enabled)
     }
 
     pub(crate) fn set_auto_attackable(&mut self, auto_attackable: bool) {
-        self.auto_attackable = auto_attackable;
+        self.auto_attackable = if auto_attackable {
+            AutoAttackability::Enabled
+        } else {
+            AutoAttackability::Disabled
+        };
+    }
+
+    pub(crate) const fn ignores_squad_ai(&self) -> bool {
+        matches!(self.squad_ai_participation, SquadAiParticipation::Ignored)
+    }
+
+    pub(crate) fn set_ignores_squad_ai(&mut self, ignore: bool) {
+        self.squad_ai_participation = if ignore {
+            SquadAiParticipation::Ignored
+        } else {
+            SquadAiParticipation::Included
+        };
     }
 
     /// Return whether a persistent retail action currently prevents damage.

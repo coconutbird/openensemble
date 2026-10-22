@@ -129,6 +129,7 @@ fn defense_world(
         ProjectileLaunch {
             source_id: EntityId::new(EntityClass::Unit, 99),
             target_id,
+            attacker_position: Vec3::ZERO,
             source_position: Vec3::ZERO,
             target_position,
             target_entity_position: target_position,

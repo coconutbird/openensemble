@@ -28,14 +28,24 @@ pub struct UnitCombat {
     next_attack_tag: usize,
     reload_remaining: f32,
     visual_ammo_remaining: u32,
+    terminal_result: Option<AttackActionResult>,
     hardpoint_force_body_facing: bool,
+    primary_hardpoint: Option<String>,
     hardpoints: hardpoints::UnitHardpointState,
+}
+
+/// Terminal state reported by retail's ranged-attack unit action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AttackActionResult {
+    Done,
+    Failed,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct AttackAdvance {
     pub hit_count: u32,
     pub completed_cycles: u32,
+    pub result: Option<AttackActionResult>,
     pub events: Vec<AttackEventOccurrence>,
 }
 
@@ -61,7 +71,9 @@ impl Default for UnitCombat {
             next_attack_tag: 0,
             reload_remaining: 0.0,
             visual_ammo_remaining: 0,
+            terminal_result: None,
             hardpoint_force_body_facing: false,
+            primary_hardpoint: None,
             hardpoints: hardpoints::UnitHardpointState::default(),
         }
     }
@@ -72,6 +84,10 @@ impl UnitCombat {
     #[must_use]
     pub fn action_name(&self) -> Option<&str> {
         (!self.action_name.is_empty()).then_some(self.action_name.as_str())
+    }
+
+    pub(crate) const fn terminal_result(&self) -> Option<AttackActionResult> {
+        self.terminal_result
     }
 
     /// Return the concrete target selected for this unit's current engagement.
@@ -147,7 +163,9 @@ impl UnitCombat {
     /// Clear action, cooldown, reload, and visual-ammo state.
     pub fn reset(&mut self) {
         let mut hardpoints = std::mem::take(&mut self.hardpoints);
-        hardpoints.release_active();
+        if let Some(name) = &self.primary_hardpoint {
+            hardpoints.release(name);
+        }
         *self = Self {
             hardpoints,
             ..Self::default()
@@ -165,7 +183,9 @@ impl UnitCombat {
         self.cycle_duration = 0.0;
         self.next_attack_tag = 0;
         self.hardpoint_force_body_facing = false;
-        self.hardpoints.release_active();
+        if let Some(name) = self.primary_hardpoint.take() {
+            self.hardpoints.release(&name);
+        }
     }
 
     pub(crate) fn orient_hardpoint(
@@ -178,6 +198,7 @@ impl UnitCombat {
     ) -> Option<HardpointAim> {
         self.ensure_action(profile);
         profile.hardpoint.as_ref().map(|hardpoint| {
+            self.primary_hardpoint = Some(hardpoint.name.clone());
             self.hardpoints
                 .orient(hardpoint, anchor, unit_world, target_world, elapsed)
         })
@@ -194,6 +215,104 @@ impl UnitCombat {
         profile.hardpoint.as_ref().is_none_or(|hardpoint| {
             self.hardpoints
                 .is_oriented(hardpoint, anchor, unit_world, target_world, tolerance)
+        })
+    }
+
+    pub(crate) fn can_orient_auxiliary_hardpoint(
+        &self,
+        profile: &AttackProfile,
+        anchor: Option<&AttackAnimationAnchor>,
+        unit_world: Mat4,
+        target_world: Vec3,
+    ) -> bool {
+        profile.hardpoint.as_ref().is_some_and(|hardpoint| {
+            self.hardpoints
+                .can_orient(hardpoint, anchor, unit_world, target_world)
+        })
+    }
+
+    pub(crate) fn orient_auxiliary_hardpoint(
+        &mut self,
+        profile: &AttackProfile,
+        anchor: Option<&AttackAnimationAnchor>,
+        unit_world: Mat4,
+        target_world: Vec3,
+        elapsed: f32,
+    ) -> bool {
+        let Some(hardpoint) = profile.hardpoint.as_ref() else {
+            return false;
+        };
+        if self.primary_controls_hardpoint(profile) {
+            return false;
+        }
+        let aim = self
+            .hardpoints
+            .orient(hardpoint, anchor, unit_world, target_world, elapsed);
+        if hardpoint.uses_angles_as_tolerance() {
+            aim.oriented
+        } else {
+            aim.can_face
+        }
+    }
+
+    pub(crate) fn orient_slave_hardpoint(
+        &mut self,
+        profile: &AttackProfile,
+        anchor: Option<&AttackAnimationAnchor>,
+        unit_world: Mat4,
+        target_world: Vec3,
+        elapsed: f32,
+    ) -> bool {
+        let Some(hardpoint) = profile.hardpoint.as_ref() else {
+            return false;
+        };
+        if self.primary_controls_hardpoint(profile) {
+            return false;
+        }
+        self.hardpoints
+            .orient_pitch_only(hardpoint, anchor, unit_world, target_world, elapsed)
+    }
+
+    pub(crate) fn claim_auxiliary_hardpoint(
+        &mut self,
+        profile: &AttackProfile,
+        anchor: Option<&AttackAnimationAnchor>,
+    ) -> bool {
+        let Some(hardpoint) = profile.hardpoint.as_ref() else {
+            return false;
+        };
+        if self.primary_controls_hardpoint(profile) {
+            return false;
+        }
+        self.hardpoints.claim(hardpoint, anchor);
+        true
+    }
+
+    pub(crate) fn auxiliary_hardpoint_forward(
+        &self,
+        profile: &AttackProfile,
+        anchor: Option<&AttackAnimationAnchor>,
+        unit_world: Mat4,
+    ) -> Option<Vec3> {
+        self.hardpoints
+            .yaw_forward(profile.hardpoint.as_ref()?, anchor, unit_world)
+    }
+
+    pub(crate) fn release_auxiliary_hardpoint(&mut self, profile: &AttackProfile) {
+        let Some(hardpoint) = &profile.hardpoint else {
+            return;
+        };
+        if !self.primary_controls_hardpoint(profile) {
+            self.hardpoints.release(&hardpoint.name);
+        }
+    }
+
+    pub(crate) fn primary_controls_hardpoint(&self, profile: &AttackProfile) -> bool {
+        self.primary_hardpoint.as_deref().is_some_and(|primary| {
+            profile
+                .hardpoint
+                .as_ref()
+                .is_some_and(|hardpoint| primary.eq_ignore_ascii_case(&hardpoint.name))
         })
     }
 
@@ -236,7 +355,8 @@ impl UnitCombat {
 
     pub(crate) fn hardpoint_yaw_before_owner_motion(&self, unit_world: Mat4) -> Option<Vec3> {
         self.engaged_target?;
-        self.hardpoints.active_yaw_target_world(unit_world)
+        self.hardpoints
+            .active_yaw_target_world(self.primary_hardpoint.as_deref()?, unit_world)
     }
 
     pub(crate) fn restore_hardpoint_yaw_after_owner_motion(
@@ -244,9 +364,11 @@ impl UnitCombat {
         unit_world: Mat4,
         target_world: Vec3,
     ) {
-        if self.engaged_target.is_some() {
+        if self.engaged_target.is_some()
+            && let Some(name) = self.primary_hardpoint.as_deref()
+        {
             self.hardpoints
-                .restore_active_yaw_target(unit_world, target_world);
+                .restore_active_yaw_target(name, unit_world, target_world);
         }
     }
 
@@ -289,6 +411,11 @@ impl UnitCombat {
         self.select_action(profile, target);
     }
 
+    pub(crate) fn fail_to_start(&mut self, profile: &AttackProfile, target: EntityId) {
+        self.select_action(profile, target);
+        self.terminal_result = Some(AttackActionResult::Failed);
+    }
+
     pub(crate) fn prepare_position(&mut self, profile: &AttackProfile, target: Vec3) {
         self.select_action(profile, EntityId::INVALID);
         self.engaged_target = None;
@@ -308,10 +435,17 @@ impl UnitCombat {
             return AttackAdvance::default();
         }
         self.select_action(profile, target);
+        if let Some(result) = self.terminal_result {
+            return AttackAdvance {
+                result: Some(result),
+                ..AttackAdvance::default()
+            };
+        }
 
         let mut remaining = dt;
         let mut hits = 0_u32;
         let mut completed_cycles = 0_u32;
+        let mut result = None;
         let mut events = Vec::new();
         let mut transitions = 0_u32;
         while remaining > 0.0 && transitions < 128 {
@@ -333,6 +467,8 @@ impl UnitCombat {
                         ammunition_per_attack,
                     )
                 {
+                    result = Some(AttackActionResult::Failed);
+                    self.terminal_result = result;
                     break;
                 }
                 self.begin_cycle(profile, rng);
@@ -383,10 +519,16 @@ impl UnitCombat {
 
             self.finish_cycle(profile);
             completed_cycles += 1;
+            result = cycle_terminal_result(profile, ammunition, ammunition_per_attack);
+            if result.is_some() {
+                self.terminal_result = result;
+                break;
+            }
         }
         AttackAdvance {
             hit_count: hits,
             completed_cycles,
+            result,
             events,
         }
     }
@@ -415,6 +557,10 @@ impl UnitCombat {
 
     fn select_action(&mut self, profile: &AttackProfile, target: EntityId) {
         self.ensure_action(profile);
+        self.primary_hardpoint = profile
+            .hardpoint
+            .as_ref()
+            .map(|hardpoint| hardpoint.name.clone());
         self.engaged_target = Some(target);
         self.engaged_position = None;
     }
@@ -485,9 +631,39 @@ impl UnitCombat {
         checksum.hash_u32(u32::try_from(self.next_attack_tag).unwrap_or(u32::MAX));
         checksum.hash_f32(self.reload_remaining);
         checksum.hash_u32(self.visual_ammo_remaining);
+        checksum.hash_u32(match self.terminal_result {
+            None => 0,
+            Some(AttackActionResult::Done) => 1,
+            Some(AttackActionResult::Failed) => 2,
+        });
         checksum.hash_u32(u32::from(self.hardpoint_force_body_facing));
+        checksum.hash_u32(u32::from(self.primary_hardpoint.is_some()));
+        if let Some(name) = &self.primary_hardpoint {
+            checksum.hash_u32(u32::try_from(name.len()).unwrap_or(u32::MAX));
+            checksum.hash_bytes(name.as_bytes());
+        }
         self.hardpoints.hash_state(checksum);
     }
+}
+
+fn cycle_terminal_result(
+    profile: &AttackProfile,
+    ammunition: &UnitAmmunition,
+    ammunition_per_attack: f32,
+) -> Option<AttackActionResult> {
+    if profile.dont_loop_attack_animation() {
+        return Some(AttackActionResult::Done);
+    }
+    let depleted = profile.ammunition.is_used()
+        && !ammunition.has_full_attack(
+            profile.maximum_attacks_per_animation(),
+            ammunition_per_attack,
+        );
+    depleted.then_some(if profile.ammunition.completes_when_depleted() {
+        AttackActionResult::Done
+    } else {
+        AttackActionResult::Failed
+    })
 }
 
 fn timeline_event(animation: &AttackAnimation, index: usize) -> Option<AttackAnimationEvent> {
@@ -556,10 +732,12 @@ mod tests {
             friendly_fire: false,
             targets_foot_of_unit: false,
             projectile_reactions: crate::gameplay::ProjectileReactionFlags::default(),
+            min_range: 0.0,
             max_range: 25.0,
             max_velocity_lead: 0.0,
             accuracy: AttackAccuracyProfile::default(),
             damage_per_attack: 5.0,
+            control: crate::gameplay::AttackControlProfile::default(),
             ammunition: crate::gameplay::AttackAmmunition::None,
             animations: vec![AttackAnimation {
                 asset_path: "attack.uax".to_owned(),
@@ -696,23 +874,53 @@ mod tests {
         let advance = combat.advance(1.26, target, &profile, &mut ammunition, 5.0, &mut rng);
         assert_eq!(advance.hit_count, 2);
         assert_close(ammunition.current(), 0.0);
-        assert_eq!(
-            combat
-                .advance(10.0, target, &profile, &mut ammunition, 5.0, &mut rng)
-                .hit_count,
-            0
-        );
+        let depleted = combat.advance(10.0, target, &profile, &mut ammunition, 5.0, &mut rng);
+        assert_eq!(depleted.hit_count, 0);
+        assert_eq!(depleted.result, Some(AttackActionResult::Failed));
 
         let mut insufficient = UnitAmmunition::default();
         insufficient.configure(9.0, 0.0, true);
         let mut combat = UnitCombat::default();
-        assert_eq!(
-            combat
-                .advance(10.0, target, &profile, &mut insufficient, 5.0, &mut rng)
-                .hit_count,
-            0
-        );
+        let initial = combat.advance(10.0, target, &profile, &mut insufficient, 5.0, &mut rng);
+        assert_eq!(initial.hit_count, 0);
+        assert_eq!(initial.result, Some(AttackActionResult::Failed));
         assert!(!combat.is_animating());
+    }
+
+    #[test]
+    fn depletion_completes_only_after_an_authored_volley_when_requested() {
+        let mut profile = profile();
+        profile.ammunition = crate::gameplay::AttackAmmunition::CompleteWhenDepleted;
+        let target = EntityId::new(crate::entity_id::EntityClass::Unit, 2);
+        let mut rng = Random::new();
+        let mut combat = UnitCombat::default();
+        let mut ammunition = UnitAmmunition::default();
+        ammunition.configure(10.0, 0.0, true);
+
+        let advance = combat.advance(2.1, target, &profile, &mut ammunition, 5.0, &mut rng);
+        assert_eq!(advance.hit_count, 2);
+        assert_eq!(advance.completed_cycles, 1);
+        assert_eq!(advance.result, Some(AttackActionResult::Done));
+        assert_eq!(combat.terminal_result(), Some(AttackActionResult::Done));
+
+        combat.reset();
+        let retry = combat.advance(0.1, target, &profile, &mut ammunition, 5.0, &mut rng);
+        assert_eq!(retry.result, Some(AttackActionResult::Failed));
+    }
+
+    #[test]
+    fn non_looping_animation_completes_before_the_depleted_failure_check() {
+        let mut profile = profile();
+        profile.control.dont_loop_attack_animation = true;
+        profile.ammunition = crate::gameplay::AttackAmmunition::FailWhenDepleted;
+        let target = EntityId::new(crate::entity_id::EntityClass::Unit, 2);
+        let mut rng = Random::new();
+        let mut combat = UnitCombat::default();
+        let mut ammunition = UnitAmmunition::default();
+        ammunition.configure(10.0, 0.0, true);
+
+        let advance = combat.advance(2.1, target, &profile, &mut ammunition, 5.0, &mut rng);
+        assert_eq!(advance.result, Some(AttackActionResult::Done));
     }
 
     #[test]

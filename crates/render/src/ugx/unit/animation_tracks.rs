@@ -173,6 +173,14 @@ impl RenderedAnimationTrack {
             .map(|segment| segment.animation_type.as_str())
     }
 
+    pub(super) fn selected_animation_type(&self) -> Option<&str> {
+        self.active_animation_type().or_else(|| {
+            self.segments
+                .first()
+                .map(|segment| segment.animation_type.as_str())
+        })
+    }
+
     fn timeline_point(
         &mut self,
         simulation_position: Option<f32>,

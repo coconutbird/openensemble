@@ -63,3 +63,24 @@ fn non_finite_destination_is_rejected_atomically() {
     assert_eq!(squad.move_target, None);
     assert_eq!(squad.state, SquadState::Idle);
 }
+
+#[test]
+fn work_orders_clear_stale_ability_attack_mode_context() {
+    let target = EntityId::new(EntityClass::Unit, 4);
+    let mode_order = SquadModeOrder::new(crate::entities::SquadMode::Lockdown, Some(3));
+
+    let mut gathering = squad();
+    gathering.set_attack_mode_order(Some(mode_order));
+    gathering.begin_gather(target);
+    assert_eq!(gathering.attack_mode_order(), None);
+
+    let mut capturing = squad();
+    capturing.set_attack_mode_order(Some(mode_order));
+    capturing.begin_capture(1, target);
+    assert_eq!(capturing.attack_mode_order(), None);
+
+    let mut repairing = squad();
+    repairing.set_attack_mode_order(Some(mode_order));
+    repairing.begin_repair_other(1, target, "Repair", None);
+    assert_eq!(repairing.attack_mode_order(), None);
+}

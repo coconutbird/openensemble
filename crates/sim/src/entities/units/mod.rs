@@ -11,6 +11,7 @@ mod authored_children;
 mod building;
 mod built_economy;
 mod capture;
+mod change_mode;
 mod charge;
 mod child_damage;
 mod collision_attack;
@@ -40,6 +41,8 @@ mod tactic_state;
 mod targeting;
 mod thrown;
 mod tower_wall;
+mod turn_in_place;
+mod turret_combat;
 mod unique_technologies;
 mod vehicle;
 mod visual_meshes;
@@ -57,9 +60,10 @@ pub use building::{
 pub(crate) use building::{ProductionTask, TriggerCommandStateRef};
 pub(crate) use built_economy::BuiltEconomyState;
 pub use capture::CapturePhase;
+pub use change_mode::UnitChangeModePhase;
 pub(crate) use collision_attack::UnitCollisionAttack;
-pub(crate) use combat::AttackAdvance;
 pub use combat::UnitCombat;
+pub(crate) use combat::{AttackActionResult, AttackAdvance};
 pub(crate) use cryo::UnitCryo;
 pub(crate) use death::UnitDeathState;
 pub(crate) use death_replacement::UnitStaticDeathReplacement;
@@ -86,6 +90,9 @@ pub use shields::{
 };
 pub(crate) use thrown::UnitThrown;
 pub use tower_wall::TowerWallAction;
+pub use turn_in_place::TurnInPlaceDirection;
+pub(crate) use turret_combat::TurretAttackPhase;
+pub use turret_combat::{TurretAttackKind, TurretAttackState, UnitTurretCombat};
 pub(crate) use vehicle::configure_ground_vehicle_physics;
 pub use visual_meshes::UnitVisualMeshMask;
 
@@ -200,6 +207,8 @@ pub struct Unit {
     pub dodge_scalar: f32,
     /// Live research, training, and construction work-rate multiplier.
     pub work_rate_scalar: f32,
+    /// Prototype line-of-sight radius before live and technology scalars.
+    authored_line_of_sight: f32,
     /// Live line-of-sight radius multiplier.
     pub line_of_sight_scalar: f32,
     /// Live movement speed and acceleration multiplier.
@@ -207,7 +216,9 @@ pub struct Unit {
     /// Live authored weapon-range multiplier.
     pub weapon_range_scalar: f32,
     /// Whether automatic target acquisition may choose this object.
-    auto_attackable: bool,
+    auto_attackable: targeting::AutoAttackability,
+    /// Whether the containing squad participates in retail's squad-AI rotation.
+    squad_ai_participation: targeting::SquadAiParticipation,
     /// Whether retail action state currently rejects all incoming damage.
     invulnerability: targeting::InvulnerabilityState,
     /// Whether a hostile Board action temporarily reserves this target.
@@ -226,6 +237,8 @@ pub struct Unit {
     pub acceleration: f32,
     /// Maximum yaw rate in degrees per second; zero means immediate.
     pub turn_rate_degrees: f32,
+    /// Retail turn-in-place animation flag and its persistent left/right bit.
+    turn_in_place: turn_in_place::UnitTurnInPlace,
     /// Gameplay obstruction radii even when no live rigid body is active.
     pub obstruction_half_extents: Vec3,
     /// Whether this prototype blocks aircraft avoidance destinations.
@@ -244,6 +257,8 @@ pub struct Unit {
     pub actions: UnitActions,
     /// Current authored tactic state and its deterministic transition revision.
     tactic_state: tactic_state::UnitTacticState,
+    /// Per-unit animation action owned by a squad mode transition.
+    pub(crate) change_mode: change_mode::UnitChangeMode,
     /// Containment state and immutable container capabilities.
     pub garrison: UnitGarrison,
     /// Finite or unlimited resource payload exposed by gatherable units.
@@ -260,6 +275,8 @@ pub struct Unit {
     pub(crate) air_avoidance: air_avoidance::UnitAirAvoidance,
     /// Per-unit authored attack animation/cooldown state.
     pub combat: UnitCombat,
+    /// Concurrent secondary- and slave-turret attack tracks.
+    pub turret_combat: UnitTurretCombat,
     /// Persistent retail ammunition amount and regeneration action.
     pub ammunition: UnitAmmunition,
     /// Per-unit effects projected from the owning squad's cryo action.
@@ -360,10 +377,12 @@ impl Default for Unit {
             accuracy_scalar: 1.0,
             dodge_scalar: 1.0,
             work_rate_scalar: 1.0,
+            authored_line_of_sight: 0.0,
             line_of_sight_scalar: 1.0,
             velocity_scalar: 1.0,
             weapon_range_scalar: 1.0,
-            auto_attackable: true,
+            auto_attackable: targeting::AutoAttackability::default(),
+            squad_ai_participation: targeting::SquadAiParticipation::default(),
             invulnerability: targeting::InvulnerabilityState::Vulnerable,
             boarding_state: targeting::BoardingState::Free,
             jump_pull_target_state: pull::JumpPullTargetState::default(),
@@ -373,6 +392,7 @@ impl Default for Unit {
             reverse_speed: None,
             acceleration: 0.0,
             turn_rate_degrees: 0.0,
+            turn_in_place: turn_in_place::UnitTurnInPlace::default(),
             obstruction_half_extents: Vec3::ZERO,
             air_obstruction: air_avoidance::AirObstructionState::default(),
             physics: None,
@@ -382,6 +402,7 @@ impl Default for Unit {
             attack_ability_id: None,
             actions: UnitActions::default(),
             tactic_state: tactic_state::UnitTacticState::default(),
+            change_mode: change_mode::UnitChangeMode::default(),
             garrison: UnitGarrison::default(),
             resource_node: gather::UnitResourceNode::default(),
             gather: gather::UnitGatherAction::default(),
@@ -391,6 +412,7 @@ impl Default for Unit {
             charge: charge::UnitCharge::default(),
             air_avoidance: air_avoidance::UnitAirAvoidance::default(),
             combat: UnitCombat::default(),
+            turret_combat: UnitTurretCombat::default(),
             ammunition: UnitAmmunition::default(),
             cryo: UnitCryo::default(),
             collision_attack: UnitCollisionAttack::default(),
@@ -665,6 +687,7 @@ impl Unit {
         self.attack_range = 0.0;
         self.attack_ability_id = None;
         self.combat.reset();
+        self.cancel_change_mode();
         self.cancel_detonate_action();
         self.cancel_gather_action();
         self.cancel_capture_action();
@@ -685,6 +708,7 @@ impl Unit {
         self.air_avoidance.finish();
         self.set_jump_pull_untargetable(false);
         self.cancel_jump_action();
+        self.cancel_change_mode();
         self.attack_target = None;
         self.attack_range = 0.0;
         self.attack_ability_id = None;
@@ -848,10 +872,14 @@ impl Unit {
             return;
         }
         let direction = to_target / distance;
+        let desired_facing = if reverse_move { -direction } else { direction };
+        self.set_turning_in_place(ground_movement::source_turning_flag(
+            self.base.forward,
+            desired_facing,
+        ));
         self.base.velocity = direction * speed;
         self.base.position += self.base.velocity * dt;
-        self.base
-            .set_forward(if reverse_move { -direction } else { direction });
+        self.base.set_forward(desired_facing);
     }
 
     pub(crate) fn move_as_squad_member(&mut self, target: Vec3) {

@@ -55,6 +55,7 @@ impl World {
                 base.player_id = new_owner;
             }
         }
+        self.transfer_unit_goto_base_reference(unit_id, cost.old_owner, new_owner);
         true
     }
 
@@ -95,13 +96,14 @@ impl World {
     }
 
     fn change_single_squad_owner(&mut self, squad_id: EntityId, new_owner: PlayerId) {
-        let (old_owner, squad_costs, unit_ids) = self.squads.get(squad_id).map_or_else(
+        let (old_owner, squad_costs, unit_ids, ignore_ai) = self.squads.get(squad_id).map_or_else(
             || unreachable!("validated squad disappeared during ownership transfer"),
             |squad| {
                 (
                     squad.base.player_id,
                     squad.population_costs.clone(),
                     squad.unit_ids.clone(),
+                    squad.ignore_ai,
                 )
             },
         );
@@ -121,6 +123,7 @@ impl World {
             .collect::<Vec<_>>();
 
         if let Some(player) = self.get_player_mut(old_owner) {
+            player.remove_squad_ai_squad(squad_id);
             player.release_population(&squad_costs);
         }
         for cost in &unit_costs {
@@ -132,6 +135,9 @@ impl World {
             }
         }
         if let Some(player) = self.get_player_mut(new_owner) {
+            if !ignore_ai {
+                player.add_squad_ai_squad(squad_id);
+            }
             player.add_population(&squad_costs);
             for cost in &unit_costs {
                 player.add_population(&cost.population);
@@ -156,6 +162,9 @@ impl World {
             if unit_ids.contains(&base.anchor_building_id) {
                 base.player_id = new_owner;
             }
+        }
+        for cost in unit_costs {
+            self.transfer_unit_goto_base_reference(cost.unit_id, cost.old_owner, new_owner);
         }
     }
 }

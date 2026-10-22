@@ -2,6 +2,7 @@ use super::test_catalog::{ability_catalog, hand_attack_catalog};
 use super::*;
 use crate::gameplay::{AreaDamageProfile, AttackAccuracyProfile, AttackAnimation};
 use crate::random::SimRandom;
+use pipeline::database::hw1::gamedata::{CodeProtoObject, CodeProtoObjectsWrapper, GameData};
 use pipeline::database::hw1::tactics::{Action, TacticData, Weapon};
 use pipeline::database::hw1::techs::{EffectTarget, EffectsWrapper, TechEffect};
 use pipeline::database::hw1::weapontypes::DamageModifier;
@@ -27,7 +28,28 @@ fn combat_catalog_with_tuning(
     max_velocity_lead: f32,
     accuracy: AttackAccuracyProfile,
 ) -> GameplayCatalog {
+    combat_catalog_with_minimum_range(area_damage, max_velocity_lead, accuracy, 0.0, false)
+}
+
+fn combat_catalog_with_minimum_range(
+    area_damage: Option<AreaDamageProfile>,
+    max_velocity_lead: f32,
+    accuracy: AttackAccuracyProfile,
+    min_range: f32,
+    scenario_scarab: bool,
+) -> GameplayCatalog {
     let mut database = Database::new();
+    if scenario_scarab {
+        database.game_data = Some(GameData {
+            code_proto_objects: Some(CodeProtoObjectsWrapper {
+                entries: vec![CodeProtoObject {
+                    object_type: "Scn07Scarab".to_owned(),
+                    proto_name: "test_attacker".to_owned(),
+                }],
+            }),
+            ..GameData::default()
+        });
+    }
     database.objects.extend([
         ProtoObject {
             name: "test_attacker".to_owned(),
@@ -68,6 +90,7 @@ fn combat_catalog_with_tuning(
         }],
         weapons: vec![Weapon {
             name: "Rifle".to_owned(),
+            min_range: Some(min_range),
             max_range: Some(10.0),
             ..Weapon::default()
         }],
@@ -88,10 +111,12 @@ fn combat_catalog_with_tuning(
         friendly_fire: false,
         targets_foot_of_unit: false,
         projectile_reactions: crate::gameplay::ProjectileReactionFlags::default(),
+        min_range,
         max_range: 10.0,
         max_velocity_lead,
         accuracy,
         damage_per_attack: 5.0,
+        control: crate::gameplay::AttackControlProfile::default(),
         ammunition: crate::gameplay::AttackAmmunition::None,
         animations: vec![AttackAnimation {
             asset_path: "test_attack.uax".to_owned(),
@@ -165,6 +190,24 @@ fn moving_target_velocity_is_led_by_the_launched_projectile() {
 }
 
 #[test]
+fn scenario_scarab_primary_attack_does_not_lead_a_moving_target() {
+    let gameplay =
+        combat_catalog_with_minimum_range(None, 2.0, AttackAccuracyProfile::default(), 0.0, true);
+    let (mut world, _, target_id) = combat_world();
+    let target = world.get_unit_mut(target_id).unwrap();
+    target.base.velocity = Vec3::Z * 4.0;
+    target.speed = 4.0;
+    target.state = UnitState::Moving;
+    target.move_target = Some(target.base.position + Vec3::Z * 10.0);
+
+    world.update_entities_with_gameplay(0.05, &gameplay);
+
+    let projectile = world.projectiles.iter().next().unwrap().1;
+    assert!(projectile.target_position.z.abs() < f32::EPSILON);
+    assert!(projectile.base.velocity.z.abs() < f32::EPSILON);
+}
+
+#[test]
 fn projectile_fallback_launches_and_aims_at_retail_simulation_centers() {
     let gameplay = combat_catalog(None);
     let (mut world, attacker_id, target_id) = combat_world();
@@ -218,6 +261,103 @@ fn combat_world() -> (World, EntityId, EntityId) {
     target.damage_taken_multiplier = 0.5;
     assert!(world.issue_attack_order(1, attacker_id, target_id, 0.0));
     (world, attacker_id, target_id)
+}
+
+#[test]
+fn commanded_attack_holds_and_cannot_fire_inside_authored_minimum_range() {
+    let gameplay =
+        combat_catalog_with_minimum_range(None, 0.0, AttackAccuracyProfile::default(), 5.0, false);
+    let (mut world, attacker_id, target_id) = combat_world();
+    world
+        .get_unit_mut(attacker_id)
+        .unwrap()
+        .obstruction_half_extents = Vec3::splat(2.0);
+    world.get_unit_mut(target_id).unwrap().base.position = Vec3::X * 6.9;
+
+    world.update_combat_orders(0.05, &gameplay);
+
+    assert!(world.projectiles.is_empty());
+    assert_eq!(
+        world.get_unit(attacker_id).unwrap().base.position,
+        Vec3::ZERO
+    );
+    assert_eq!(world.get_unit(attacker_id).unwrap().move_target, None);
+    assert_eq!(
+        world.get_unit(target_id).unwrap().hitpoints.to_bits(),
+        100.0_f32.to_bits()
+    );
+
+    world.get_unit_mut(target_id).unwrap().base.position = Vec3::X * 7.0;
+    world.update_combat_orders(0.05, &gameplay);
+
+    assert_eq!(world.projectiles.len(), 1);
+}
+
+#[test]
+fn automatic_attack_move_skips_targets_inside_authored_minimum_range() {
+    let gameplay =
+        combat_catalog_with_minimum_range(None, 0.0, AttackAccuracyProfile::default(), 5.0, false);
+    let mut world = World::with_seed(53);
+    world.init_players(2);
+    world.get_player_mut(1).unwrap().team_id = 1;
+    world.get_player_mut(2).unwrap().team_id = 2;
+    world.configure_standard_team_relations();
+    let squad_id = world.create_squad_at(1, Vec3::ZERO);
+    let attacker_id = world.create_unit_at(1, Vec3::ZERO);
+    let attacker = world.get_unit_mut(attacker_id).unwrap();
+    attacker.proto_object_name = "test_attacker".to_owned();
+    attacker.obstruction_half_extents = Vec3::splat(2.0);
+    attacker.configure_authored_line_of_sight(20.0);
+    assert!(world.attach_unit_to_squad(attacker_id, squad_id));
+    let squad = world.get_squad_mut(squad_id).unwrap();
+    squad.aggro_distance = 20.0;
+    squad.leash_distance = 30.0;
+    let close_target = world.create_unit_at(2, Vec3::X * 6.9);
+    world.get_unit_mut(close_target).unwrap().proto_object_name = "test_target".to_owned();
+    assert!(world.issue_squad_move_order_to_position(1, squad_id, Vec3::X * 40.0, true, false,));
+
+    world.update_attack_move_orders(&gameplay);
+    assert_eq!(world.get_squad(squad_id).unwrap().attack_target, None);
+
+    let valid_target = world.create_unit_at(2, Vec3::X * 7.0);
+    world.get_unit_mut(valid_target).unwrap().proto_object_name = "test_target".to_owned();
+    world.update_attack_move_orders(&gameplay);
+
+    let squad = world.get_squad(squad_id).unwrap();
+    assert_eq!(squad.attack_target, Some(valid_target));
+    assert!(squad.is_auto_attack_engagement());
+}
+
+#[test]
+fn automatic_attack_move_requires_team_visibility() {
+    let gameplay = combat_catalog(None);
+    let mut world = World::with_seed(59);
+    world.init_players(2);
+    world.get_player_mut(1).unwrap().team_id = 1;
+    world.get_player_mut(2).unwrap().team_id = 2;
+    world.configure_standard_team_relations();
+    let squad_id = world.create_squad_at(1, Vec3::ZERO);
+    let attacker_id = world.create_unit_at(1, Vec3::ZERO);
+    let attacker = world.get_unit_mut(attacker_id).unwrap();
+    attacker.proto_object_name = "test_attacker".to_owned();
+    attacker.configure_authored_line_of_sight(4.0);
+    assert!(world.attach_unit_to_squad(attacker_id, squad_id));
+    world.get_squad_mut(squad_id).unwrap().aggro_distance = 20.0;
+    let target = world.create_unit_at(2, Vec3::X * 6.0);
+    world.get_unit_mut(target).unwrap().proto_object_name = "test_target".to_owned();
+    assert!(world.issue_squad_move_order_to_position(1, squad_id, Vec3::X * 40.0, true, false));
+
+    world.update_attack_move_orders(&gameplay);
+    assert_eq!(world.get_squad(squad_id).unwrap().attack_target, None);
+    world
+        .get_unit_mut(attacker_id)
+        .unwrap()
+        .configure_authored_line_of_sight(8.0);
+    world.update_attack_move_orders(&gameplay);
+    assert_eq!(
+        world.get_squad(squad_id).unwrap().attack_target,
+        Some(target)
+    );
 }
 
 #[test]
@@ -456,6 +596,18 @@ fn attack_move_acquires_an_enemy_then_resumes_its_destination() {
     world.get_unit_mut(target_id).unwrap().proto_object_name = "test_target".to_owned();
     let destination = Vec3::new(40.0, 0.0, 0.0);
     assert!(world.issue_squad_move_order_to_position(1, squad_id, destination, true, false,));
+
+    let concrete = world.concrete_attack_target(1, target_id).unwrap();
+    let attacker = world.get_unit(attacker_id).unwrap();
+    eprintln!(
+        "visible={} selected={} can_auto={} target={:?}",
+        world.is_entity_visible_from_player(1, target_id),
+        world
+            .selected_ranged_action(attacker, &concrete, &gameplay, true)
+            .is_some(),
+        world.squad_can_auto_attack_target(world.get_squad(squad_id).unwrap(), &concrete, &gameplay),
+        world.attack_move_target(squad_id, &gameplay),
+    );
 
     world.update_entities_with_gameplay(0.05, &gameplay);
     let squad = world.get_squad(squad_id).unwrap();

@@ -34,6 +34,19 @@ pub(super) fn trained_birth_animation_requests(database: &Database) -> Vec<(Stri
     requests
 }
 
+pub(super) fn squad_mode_animation_requests(database: &Database) -> Vec<(String, String)> {
+    database
+        .objects
+        .iter()
+        .flat_map(|object| {
+            object
+                .squad_mode_animations
+                .iter()
+                .map(|animation| (object.name.clone(), animation.animation.clone()))
+        })
+        .collect()
+}
+
 fn add_member_requests(requests: &mut Vec<(String, String)>, squad: &Squad, birth: &Birth) {
     let animations = [
         birth.animation_0.as_deref(),
@@ -107,6 +120,28 @@ mod tests {
                 ("marine".to_owned(), "Birth0".to_owned()),
                 ("marine".to_owned(), "Birth1".to_owned()),
             ])
+        );
+    }
+
+    #[test]
+    fn squad_mode_requests_include_each_authored_object_animation() {
+        use pipeline::database::hw1::objects::SquadModeAnimation;
+
+        let database = Database {
+            objects: vec![ProtoObject {
+                name: "cobra".to_owned(),
+                squad_mode_animations: vec![SquadModeAnimation {
+                    animation: "AnchorDown".to_owned(),
+                    mode: Some("Lockdown".to_owned()),
+                }],
+                ..ProtoObject::default()
+            }],
+            ..Database::default()
+        };
+
+        assert_eq!(
+            squad_mode_animation_requests(&database),
+            [("cobra".to_owned(), "AnchorDown".to_owned())]
         );
     }
 

@@ -156,6 +156,7 @@ impl Squad {
         self.attack_range = 0.0;
         self.attack_ability_id = None;
         self.ability_used_unit_ids.clear();
+        self.set_attack_mode_order(None);
         self.join.cancel();
         self.mines.cancel();
         self.detonate.cancel();

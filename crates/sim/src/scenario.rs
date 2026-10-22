@@ -246,6 +246,9 @@ pub fn load_scenario_from_game_dir(
         .chain(animation_requests::trained_birth_animation_requests(
             &content.database,
         ))
+        .chain(animation_requests::squad_mode_animation_requests(
+            &content.database,
+        ))
         .chain(simulation.gameplay.energy_shield_animation_requests());
     simulation.gameplay.load_scripted_animation_requests(
         &content.database,
@@ -692,6 +695,7 @@ fn apply_squad_member_movement_settings(world: &mut World, squad_id: EntityId) {
 pub(crate) fn refresh_squad_member_settings(world: &mut World, squad_id: EntityId) {
     apply_squad_member_movement_settings(world, squad_id);
     apply_squad_physics_settings(world, squad_id);
+    world.refresh_squad_ai_membership(squad_id);
 }
 
 fn apply_squad_physics_settings(world: &mut World, squad_id: EntityId) {

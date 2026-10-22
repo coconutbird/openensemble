@@ -1,4 +1,5 @@
 use super::*;
+use pipeline::database::hw1::gamedata::{CodeProtoObject, CodeProtoObjectsWrapper, GameData};
 use pipeline::database::hw1::tactics::{TacticRules, TargetRule};
 
 fn database() -> Database {
@@ -49,6 +50,24 @@ fn catalog_lookup_is_case_insensitive_and_preserves_raw_tactics() {
             .and_then(|resolved| resolved.weapon.max_range),
         Some(25.0)
     );
+}
+
+#[test]
+fn scenario_scarab_mapping_disables_only_its_primary_ranged_lead() {
+    let mut database = database();
+    database.game_data = Some(GameData {
+        code_proto_objects: Some(CodeProtoObjectsWrapper {
+            entries: vec![CodeProtoObject {
+                object_type: "Scn07Scarab".to_owned(),
+                proto_name: "cov_scn07_scarab".to_owned(),
+            }],
+        }),
+        ..GameData::default()
+    });
+    let catalog = GameplayCatalog::from_tactics(&database, []);
+
+    assert!(catalog.disables_ranged_target_lead("COV_SCN07_SCARAB"));
+    assert!(!catalog.disables_ranged_target_lead("cov_veh_scarab_01"));
 }
 
 #[test]

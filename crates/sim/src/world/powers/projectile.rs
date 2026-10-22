@@ -62,6 +62,7 @@ pub(super) fn launch_power_projectile(
     let launch = ProjectileLaunch {
         source_id: request.source_id,
         target_id: request.target_id,
+        attacker_position: request.source,
         source_position: request.source,
         target_position: request.target,
         target_entity_position: request.target_entity_position,

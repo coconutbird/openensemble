@@ -1,7 +1,7 @@
 //! Small deterministic combat calculations shared by targeting and launch code.
 
 use super::fire::LaunchTuning;
-use super::{AttackerSnapshot, CombatMotion, ConcreteTargetSnapshot, TargetSnapshot};
+use super::{AttackerSnapshot, ConcreteTargetSnapshot};
 use crate::entities::Unit;
 use crate::entities::projectiles::{ballistic_aim_direction, launch_target_position};
 use crate::gameplay::{
@@ -116,26 +116,6 @@ pub(super) fn selected_range(range_override: f32, authored_range: f32, scalar: f
 
 pub(super) fn xz_distance_squared(left: Vec3, right: Vec3) -> f32 {
     Vec3::new(left.x - right.x, 0.0, left.z - right.z).length_squared()
-}
-
-pub(super) fn combat_motion(
-    position: Vec3,
-    target: TargetSnapshot,
-    range: Option<f32>,
-) -> CombatMotion {
-    let Some(range) = range else {
-        return CombatMotion::Hold(target);
-    };
-    let offset = Vec3::new(
-        target.position.x - position.x,
-        0.0,
-        target.position.z - position.z,
-    );
-    if offset.length_squared() <= range * range {
-        CombatMotion::Hold(target)
-    } else {
-        CombatMotion::Chase(target)
-    }
 }
 
 pub(super) fn scaled_launch_damage(

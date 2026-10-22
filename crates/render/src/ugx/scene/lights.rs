@@ -406,9 +406,11 @@ fn active_lights(
         .enumerate()
         .filter(move |(_, attachment)| {
             attachment.kind == UnitAttachmentKind::Light
-                && attachment
-                    .trigger
-                    .matches_animations(placement.animation_type, placement.movement_animation_type)
+                && placement.renderer.attachment_matches_animations(
+                    attachment,
+                    placement.animation_type,
+                    placement.movement_animation_type,
+                )
         })
 }
 

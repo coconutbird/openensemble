@@ -60,7 +60,7 @@ pub(super) fn launch_motion(
 fn ballistic_motion(launch: &ProjectileLaunch, profile: &ProjectileProfile) -> Option<(Vec3, f32)> {
     ballistic_solution(
         launch.source_position,
-        launch.source_position,
+        launch.attacker_position,
         launch.target_position,
         launch.target_entity_position,
         launch.target_radius,
@@ -308,6 +308,29 @@ mod tests {
 
         assert!((direction.y / direction.x - 0.5).abs() < 0.000_1);
         assert!((direction.z / direction.x + 0.2).abs() < 0.000_1);
+    }
+
+    #[test]
+    fn hardpoint_launch_uses_retails_attacker_relative_horizontal_range() {
+        let source = Vec3::Z * 5.0;
+        let target = Vec3::X * 20.0;
+        let mut launch = ProjectileLaunch::test(source, target, 30.0);
+        launch.attacker_position = Vec3::ZERO;
+        let motion = launch_motion(&launch, &ballistic_profile());
+        let aim = ballistic_aim_direction(
+            source,
+            Vec3::ZERO,
+            target,
+            target,
+            0.0,
+            30.0,
+            &ballistic_profile(),
+        )
+        .expect("gravity profile should produce an aim direction");
+
+        assert!((motion.velocity.normalize() - aim).length() < 0.000_1);
+        assert!((motion.gravity - 640.0 / 153.0).abs() < 0.000_1);
+        assert!((motion.gravity - 40.0 / 9.0).abs() > 0.1);
     }
 
     #[test]

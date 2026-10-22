@@ -1,9 +1,27 @@
 //! Shared authoritative order entry points.
 
 use super::World;
+use crate::entities::{SquadMode, SquadModeOrder};
 use crate::entity::Entity;
+use crate::gameplay::GameplayCatalog;
 use crate::{EntityId, PlayerId};
 use glam::Vec3;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct SquadMoveContext {
+    pub(crate) attack_move: bool,
+    pub(crate) queue: bool,
+    pub(crate) requested_mode: Option<SquadMode>,
+    pub(crate) requested_ability_id: Option<u8>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ResolvedSquadMoveContext {
+    attack_move: bool,
+    queue: bool,
+    mode_order: Option<SquadModeOrder>,
+    permits_locked: bool,
+}
 
 impl World {
     /// Issue an immediate movement order through the shared simulation path.
@@ -26,6 +44,7 @@ impl World {
                 && !self.is_squad_incapacitated(recipient_id)
                 && !squad.garrison.is_garrisoned()
                 && !squad.is_jumping()
+                && squad.can_accept_movement_order()
                 && squad.trained_air_birth.is_none()
         }) {
             let _cancelled = self.cancel_capture_order(recipient_id);
@@ -64,6 +83,38 @@ impl World {
         queue: bool,
     ) -> bool {
         self.issue_squad_move_path(player_id, squad_id, &[target], attack_move, queue)
+    }
+
+    /// Issue a movement command retaining an ability-requested squad mode.
+    pub(crate) fn issue_squad_move_order_to_position_with_context(
+        &mut self,
+        player_id: PlayerId,
+        squad_id: EntityId,
+        target: Vec3,
+        context: SquadMoveContext,
+        gameplay: &GameplayCatalog,
+    ) -> bool {
+        let (mode_order, permits_locked) = self.squad_move_mode_context(
+            squad_id,
+            context.requested_mode,
+            context.requested_ability_id,
+            gameplay,
+        );
+        let accepted = self.issue_squad_move_path_internal(
+            player_id,
+            squad_id,
+            &[target],
+            ResolvedSquadMoveContext {
+                attack_move: context.attack_move,
+                queue: context.queue,
+                mode_order,
+                permits_locked,
+            },
+        );
+        if accepted {
+            self.update_squad_mode_order_transition(squad_id, gameplay);
+        }
+        accepted
     }
 
     /// Snapshot a live unit or squad leader position into a squad work command.
@@ -110,22 +161,46 @@ impl World {
         attack_move: bool,
         queue: bool,
     ) -> bool {
+        self.issue_squad_move_path_internal(
+            player_id,
+            squad_id,
+            waypoints,
+            ResolvedSquadMoveContext {
+                attack_move,
+                queue,
+                ..ResolvedSquadMoveContext::default()
+            },
+        )
+    }
+
+    fn issue_squad_move_path_internal(
+        &mut self,
+        player_id: PlayerId,
+        squad_id: EntityId,
+        waypoints: &[Vec3],
+        context: ResolvedSquadMoveContext,
+    ) -> bool {
         if !self.squads.get(squad_id).is_some_and(|squad| {
             squad.base.player_id == player_id
                 && squad.is_alive()
                 && !self.is_squad_incapacitated(squad_id)
                 && !squad.garrison.is_garrisoned()
                 && !squad.is_jumping()
+                && (squad.can_accept_movement_order() || context.permits_locked)
                 && squad.trained_air_birth.is_none()
         }) {
             return false;
         }
         let _cancelled = self.cancel_capture_order(squad_id);
         let _repair_cancelled = self.cancel_repair_other_order(squad_id);
-        let accepted = self
-            .squads
-            .get_mut(squad_id)
-            .is_some_and(|squad| squad.issue_scripted_path(waypoints, attack_move, queue));
+        let accepted = self.squads.get_mut(squad_id).is_some_and(|squad| {
+            squad.issue_scripted_path_with_mode(
+                waypoints,
+                context.attack_move,
+                context.queue,
+                context.mode_order,
+            )
+        });
         if accepted {
             self.cancel_incoming_power_transport(squad_id);
         }

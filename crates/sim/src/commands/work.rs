@@ -114,6 +114,22 @@ impl WorkCommand {
         }
     }
 
+    /// Build a squad-mode transition, optionally resolved through an ability.
+    #[must_use]
+    pub fn change_mode_squads(
+        player_id: i32,
+        recipients: Vec<EntityId>,
+        mode: Option<crate::entities::SquadMode>,
+        ability_id: Option<u8>,
+    ) -> Self {
+        Self {
+            base: squad_work_command(player_id, recipients, crate::order::OrderType::ChangeMode),
+            squad_mode: mode.map_or(-1, |mode| mode as i32),
+            ability_id: ability_id.map_or(-1, i32::from),
+            ..Self::default()
+        }
+    }
+
     /// Build a command-ability Jump to a world location.
     #[must_use]
     pub fn jump_squads(

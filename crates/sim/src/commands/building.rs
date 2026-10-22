@@ -97,6 +97,22 @@ impl Default for BuildingCommand {
 }
 
 impl BuildingCommand {
+    /// Construct retail's direct object-command mode transition.
+    #[must_use]
+    pub fn change_mode(
+        player_id: i32,
+        recipients: Vec<EntityId>,
+        mode: crate::entities::SquadMode,
+    ) -> Self {
+        Self {
+            base: production_base(player_id, recipients),
+            building_type: BuildingCommandType::ChangeMode,
+            target_id: mode as i32,
+            count: 1,
+            ..Self::default()
+        }
+    }
+
     /// Construct a retail research/cancel command for one or more buildings.
     #[must_use]
     pub fn research(

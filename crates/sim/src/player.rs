@@ -3,10 +3,12 @@
 //! Based on `BPlayer` from the original source.
 
 mod forbids;
+mod goto_bases;
 mod one_time_spawns;
 mod powers;
 mod rally_points;
 mod research;
+mod squad_ai;
 mod technology;
 
 pub use powers::{PowerEntry, PowerEntryItem, ProtoPowerId};
@@ -284,6 +286,8 @@ pub struct Player {
     pub technologies: PlayerTechState,
     /// Player-global rally destination used by newly trained forces.
     rally_point: Option<crate::entities::RallyPoint>,
+    /// Mobile lockdown-menu units that currently act as production destinations.
+    goto_bases: goto_bases::PlayerGotoBases,
     /// Per-player object, squad, and technology availability overrides.
     forbids: forbids::PlayerForbidState,
     /// Proto squads already consumed by an authored one-time child spawn.
@@ -292,6 +296,8 @@ pub struct Player {
     powers: powers::PlayerPowerState,
     /// Player-global technology work currently assigned to buildings.
     pub research: PlayerResearchState,
+    /// Retail's insertion-ordered squad-AI work rotation and cursors.
+    squad_ai: squad_ai::PlayerSquadAiState,
 }
 
 impl Player {
@@ -315,10 +321,12 @@ impl Player {
             name: String::new(),
             technologies: PlayerTechState::default(),
             rally_point: None,
+            goto_bases: goto_bases::PlayerGotoBases::default(),
             forbids: forbids::PlayerForbidState::default(),
             one_time_spawns: one_time_spawns::OneTimeSpawnState::default(),
             powers: powers::PlayerPowerState::default(),
             research: PlayerResearchState::default(),
+            squad_ai: squad_ai::PlayerSquadAiState::default(),
         }
     }
 

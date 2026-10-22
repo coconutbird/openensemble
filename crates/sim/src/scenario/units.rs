@@ -267,6 +267,7 @@ pub(crate) fn configure_unit_from_player_proto(
     unit.proto_object_id = logical_id;
     effective_name.clone_into(&mut unit.proto_object_name);
     logical_name.clone_into(&mut unit.logical_proto_object_name);
+    unit.configure_authored_line_of_sight(valid_nonnegative(proto.los).unwrap_or_default());
     unit.reset_projectile_defense();
     configure_unit_traits(
         unit,
@@ -327,6 +328,8 @@ fn configure_unit_traits(
         prototype_has_flag(proto, "ObstructsAir"),
     );
     unit.set_auto_attackable(!prototype_has_flag(proto, "DontAutoAttackMe"));
+    unit.set_ignores_squad_ai(prototype_has_flag(proto, "IgnoreSquadAI"));
+    unit.configure_turn_in_place(prototype_has_flag(proto, "TurnInPlace"));
     unit.set_invulnerable(
         prototype_has_flag(proto, "Invulnerable")
             || (unit.base.player_id == GAIA_PLAYER

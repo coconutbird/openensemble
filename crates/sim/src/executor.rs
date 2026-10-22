@@ -6,7 +6,7 @@ use crate::command_queue::{CommandEntry, QueuedCommand};
 use crate::commands::{
     BuildingCommand, BuildingCommandType, GameCommand, GameCommandType, PowerCommand,
     PowerCommandType, PowerInputCommand, PowerInputCommandType, PowerUserId, WorkCommand,
-    power_command_flags, power_input_command_flags, work_command_flags,
+    power_command_flags, power_input_command_flags,
 };
 use crate::entities::{RecoveryType, SquadMode, TrainingKind};
 use crate::gameplay::{GameplayCatalog, resolve_database_ability};
@@ -16,10 +16,14 @@ use crate::spawn::{MAX_SPAWN_BATCH, spawn_object_at, spawn_squads_at};
 use crate::world::{NativePowerInvocation, World};
 use pipeline::database::hw1::Database;
 
+mod change_mode;
 mod detonate;
 mod jump;
 mod mines;
+mod mode_orders;
 
+#[cfg(test)]
+use crate::commands::work_command_flags;
 #[cfg(test)]
 use glam::Vec3;
 
@@ -84,13 +88,14 @@ impl<'database> CommandExecutor<'database> {
         let order_type = OrderType::from_i32(cmd.base.id);
 
         match order_type {
-            Some(OrderType::Move) => Self::execute_move(world, cmd),
+            Some(OrderType::Move) => self.execute_move(world, cmd),
             Some(OrderType::Attack) => self.execute_attack(world, cmd),
             Some(OrderType::Gather) => self.execute_gather(world, cmd),
             Some(OrderType::Capture) => self.execute_capture(world, cmd),
             Some(OrderType::RepairOther) => self.execute_repair_other(world, cmd),
             Some(OrderType::Cloak) => self.execute_cloak(world, cmd),
             Some(OrderType::Detonate) => self.execute_detonate(world, cmd),
+            Some(OrderType::ChangeMode) => self.execute_change_mode(world, cmd),
             Some(OrderType::Join) => self.execute_join(world, cmd),
             Some(OrderType::Garrison) => Self::execute_garrison(world, cmd),
             Some(OrderType::Ungarrison) => Self::execute_ungarrison(world, cmd),
@@ -162,55 +167,6 @@ impl<'database> CommandExecutor<'database> {
                 ability_id,
                 database,
                 gameplay,
-            );
-        }
-    }
-
-    /// Execute a move order.
-    fn execute_move(world: &mut World, cmd: &WorkCommand) {
-        let entity_position = (!cmd.unit_id.is_invalid())
-            .then(|| world.squad_move_entity_target(cmd.unit_id))
-            .flatten()
-            .map(|(_, position)| position);
-        if let Some(target) = entity_position.or(cmd.terrain_point) {
-            Self::move_owned_recipients(world, cmd, target);
-        }
-    }
-
-    /// Execute an attack order.
-    fn execute_attack(&self, world: &mut World, cmd: &WorkCommand) {
-        let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
-            return;
-        };
-        if cmd.unit_id.is_invalid() {
-            return;
-        }
-        let squad_mode = if cmd.squad_mode == -1 {
-            None
-        } else {
-            let Some(mode) = SquadMode::from_i32(cmd.squad_mode) else {
-                return;
-            };
-            Some(mode)
-        };
-        let Ok(ability_id) = self.work_ability_id(cmd.ability_id) else {
-            return;
-        };
-        for &recipient_id in &cmd.base.recipients {
-            if ability_id.is_some_and(|ability_id| {
-                self.ability_order_is_recovering(world, recipient_id, ability_id)
-            }) {
-                continue;
-            }
-            let _accepted = world.issue_attack_order_with_context(
-                player_id,
-                recipient_id,
-                cmd.unit_id,
-                cmd.range,
-                squad_mode.or_else(|| {
-                    ability_id.and_then(|id| self.ability_squad_mode(world, recipient_id, id))
-                }),
-                ability_id,
             );
         }
     }
@@ -350,26 +306,6 @@ impl<'database> CommandExecutor<'database> {
             .and_then(SquadMode::from_authored)
     }
 
-    fn move_owned_recipients(world: &mut World, cmd: &WorkCommand, target: glam::Vec3) {
-        let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
-            return;
-        };
-        let attack_move = cmd.base.has_flag(work_command_flags::ATTACK_MOVE);
-        let queue = cmd.base.has_flag(crate::Command::ALTERNATE_FLAG);
-        for &recipient_id in &cmd.base.recipients {
-            let accepted = world.issue_squad_move_order_to_position(
-                player_id,
-                recipient_id,
-                target,
-                attack_move,
-                queue,
-            );
-            if !accepted && !attack_move && !queue {
-                let _accepted = world.issue_move_order(player_id, recipient_id, target);
-            }
-        }
-    }
-
     /// Execute a power command.
     fn execute_power(&self, world: &mut World, cmd: &PowerCommand) {
         let (Some(database), Ok(player_id)) = (self.database, u8::try_from(cmd.base.player_id))
@@ -447,6 +383,10 @@ impl<'database> CommandExecutor<'database> {
             for &building_id in &cmd.base.recipients {
                 let _cleared = world.clear_unit_rally_point(building_id, player_id);
             }
+            return;
+        }
+        if cmd.building_type == BuildingCommandType::ChangeMode {
+            self.execute_building_change_mode(world, cmd, player_id);
             return;
         }
         if cmd.count == 0 {

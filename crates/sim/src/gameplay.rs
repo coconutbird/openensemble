@@ -21,8 +21,10 @@ mod analysis;
 mod avoidance;
 mod bomb;
 mod capture;
+mod change_mode;
 mod charge;
 mod cloak;
+mod code_objects;
 mod collision_attacks;
 mod damage_parts;
 mod damage_types;
@@ -90,8 +92,9 @@ pub use tactic_states::{TacticStateId, TacticStateProfile};
 pub use timing::{
     AreaDamageProfile, AttackAccuracyProfile, AttackAmmunition, AttackAnimation,
     AttackAnimationAnchor, AttackAnimationEvent, AttackAnimationEventKind, AttackAttachmentPose,
-    AttackHardpointProfile, AttackOrientationProfile, AttackProfile, AttackSingleBonePose,
-    ChargedAttackAnimation, PhysicsImpulseEvent, ProjectileReactionFlags, PullAttackProfile,
+    AttackControlProfile, AttackHardpointProfile, AttackOrientationProfile, AttackProfile,
+    AttackSingleBonePose, ChargedAttackAnimation, PhysicsImpulseEvent, ProjectileReactionFlags,
+    PullAttackProfile,
 };
 pub(crate) use vehicle_physics::FlightControllerProfile;
 pub use vehicle_physics::{
@@ -139,8 +142,10 @@ pub struct GameplayCatalog {
     wander_actions: BTreeMap<String, WanderProfile>,
     ambient_life_actions: BTreeMap<String, AmbientLifeProfile>,
     ambient_life_spawners: BTreeMap<String, AmbientLifeSpawnerProfile>,
+    change_modes: change_mode::ChangeModeCatalog,
     scripted_animation_clips:
         BTreeMap<(String, String), scripted_animations::ScriptedAnimationClip>,
+    scn07_scarab: Option<String>,
     projectile_gravity: f32,
     track_intercept_distance: f32,
     attack_orientation_tolerances: timing::AttackOrientationTolerances,
@@ -235,6 +240,8 @@ impl GameplayCatalog {
             command_ability_id: abilities::command_ability_id(database),
             object_ability_commands: abilities::collect_object_ability_commands(database),
             target_traits,
+            change_modes: change_mode::ChangeModeCatalog::from_database(database),
+            scn07_scarab: code_objects::named_proto(database, "Scn07Scarab"),
             neutral_objects: collect_neutral_objects(database),
             vehicle_physics: vehicle_physics::GroundVehiclePhysicsCatalog::load(database, source),
             physics_replacements: vehicle_physics::PhysicsReplacementCatalog::load(
@@ -288,13 +295,7 @@ impl GameplayCatalog {
                 Ok(tactics) => {
                     let timing =
                         timing::load_attack_profiles(object, &tactics, source, &mut timing_cache);
-                    catalog.timing_issues.extend(timing.issues.into_iter().map(
-                        |(action_name, reason)| GameplayTimingIssue {
-                            proto_object_name: object.name.clone(),
-                            action_name,
-                            reason,
-                        },
-                    ));
+                    catalog.add_timing_issues(object, timing.issues);
                     catalog.insert_object(
                         object,
                         tactics_path,
@@ -314,6 +315,23 @@ impl GameplayCatalog {
         bomb::load_bomb_physics(&mut catalog.bomb_actions, source);
 
         catalog
+    }
+
+    fn add_timing_issues(
+        &mut self,
+        object: &ProtoObject,
+        issues: impl IntoIterator<Item = (String, String)>,
+    ) {
+        self.timing_issues
+            .extend(
+                issues
+                    .into_iter()
+                    .map(|(action_name, reason)| GameplayTimingIssue {
+                        proto_object_name: object.name.clone(),
+                        action_name,
+                        reason,
+                    }),
+            );
     }
 
     /// Build a catalog from already parsed per-object tactics.
@@ -350,6 +368,8 @@ impl GameplayCatalog {
             command_ability_id: abilities::command_ability_id(database),
             object_ability_commands: abilities::collect_object_ability_commands(database),
             target_traits,
+            change_modes: change_mode::ChangeModeCatalog::from_database(database),
+            scn07_scarab: code_objects::named_proto(database, "Scn07Scarab"),
             neutral_objects: collect_neutral_objects(database),
             projectile_profiles: projectiles::collect_projectile_profiles(database),
             projectile_gravity: database
@@ -683,6 +703,12 @@ impl GameplayCatalog {
         self.track_intercept_distance
     }
 
+    pub(crate) fn disables_ranged_target_lead(&self, proto_object_name: &str) -> bool {
+        self.scn07_scarab
+            .as_deref()
+            .is_some_and(|name| name.eq_ignore_ascii_case(proto_object_name))
+    }
+
     pub(crate) fn attack_orientation_tolerance(
         &self,
         profile: &AttackProfile,
@@ -804,7 +830,8 @@ impl ObjectGameplay {
         self.attack_profiles.get(&action_name.to_ascii_lowercase())
     }
 
-    /// Iterate over attack profiles in normalized action-name order.
+    /// Iterate over primary, secondary, and slave attack profiles in normalized
+    /// action-name order.
     pub fn attack_profiles(&self) -> impl Iterator<Item = &AttackProfile> {
         self.attack_profiles.values()
     }

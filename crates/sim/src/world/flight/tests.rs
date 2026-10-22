@@ -285,10 +285,12 @@ fn move_air_attack_profile() -> AttackProfile {
         friendly_fire: false,
         targets_foot_of_unit: false,
         projectile_reactions: ProjectileReactionFlags::default(),
+        min_range: 0.0,
         max_range: 100.0,
         max_velocity_lead: 0.0,
         accuracy: AttackAccuracyProfile::default(),
         damage_per_attack: 5.0,
+        control: crate::gameplay::AttackControlProfile::default(),
         ammunition: AttackAmmunition::None,
         animations: vec![AttackAnimation {
             asset_path: "test_attack.uax".to_owned(),

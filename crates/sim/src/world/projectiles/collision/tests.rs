@@ -83,10 +83,12 @@ fn collision_catalog(
         friendly_fire: false,
         targets_foot_of_unit: targets_foot,
         projectile_reactions: crate::gameplay::ProjectileReactionFlags::default(),
+        min_range: 0.0,
         max_range: 20.0,
         max_velocity_lead: 0.0,
         accuracy: AttackAccuracyProfile::default(),
         damage_per_attack: 5.0,
+        control: crate::gameplay::AttackControlProfile::default(),
         ammunition: crate::gameplay::AttackAmmunition::None,
         animations: vec![AttackAnimation {
             asset_path: "attack.uax".to_owned(),
@@ -361,6 +363,7 @@ fn terrain_collision_offsets_ground_zero_above_the_triangle_surface() {
         ProjectileLaunch {
             source_id,
             target_id,
+            attacker_position: Vec3::new(1.0, 1.0, 1.0),
             source_position: Vec3::new(1.0, 1.0, 1.0),
             target_position: Vec3::new(3.0, -1.0, 1.0),
             target_entity_position: Vec3::new(3.0, -1.0, 1.0),
@@ -425,6 +428,7 @@ fn world_routes_xsd_height_into_tracking_ground_avoidance() {
         ProjectileLaunch {
             source_id: EntityId::INVALID,
             target_id: EntityId::INVALID,
+            attacker_position: Vec3::new(1.0, 2.0, 1.0),
             source_position: Vec3::new(1.0, 2.0, 1.0),
             target_position: Vec3::new(7.0, 0.0, 1.0),
             target_entity_position: Vec3::new(7.0, 0.0, 1.0),
@@ -528,6 +532,7 @@ fn timed_sticky_world(behavior: ProjectileBehavior) -> (World, EntityId, EntityI
         ProjectileLaunch {
             source_id: EntityId::INVALID,
             target_id,
+            attacker_position: Vec3::ZERO,
             source_position: Vec3::ZERO,
             target_position: Vec3::X * 3.0,
             target_entity_position: Vec3::X * 3.0,

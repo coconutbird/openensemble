@@ -57,7 +57,7 @@ fn released_hardpoint_waits_five_seconds_before_centering() {
     let anchor = anchor("turret", Mat4::IDENTITY);
     let _aim = state.orient(&profile, Some(&anchor), Mat4::IDENTITY, Vec3::X * 10.0, 1.0);
     let turned = state.attachment_transform("turret").unwrap();
-    state.release_active();
+    state.release(&profile.name);
 
     state.advance_auto_center(5.0);
     assert!(
@@ -112,10 +112,12 @@ fn infinite_rate_preserves_world_yaw_when_the_unit_turns() {
     profile.yaw_rate = PI;
     let anchor = anchor("turret", Mat4::IDENTITY);
     let _aim = state.orient(&profile, Some(&anchor), Mat4::IDENTITY, Vec3::X * 10.0, 1.0);
-    let yaw_target = state.active_yaw_target_world(Mat4::IDENTITY).unwrap();
+    let yaw_target = state
+        .active_yaw_target_world(&profile.name, Mat4::IDENTITY)
+        .unwrap();
     let turned_unit = Mat4::from_rotation_y(FRAC_PI_4);
 
-    state.restore_active_yaw_target(turned_unit, yaw_target);
+    state.restore_active_yaw_target(&profile.name, turned_unit, yaw_target);
 
     let world_forward = turned_unit.transform_vector3(
         state

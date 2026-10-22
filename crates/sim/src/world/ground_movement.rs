@@ -37,7 +37,8 @@ impl World {
                     && !squad.garrison.is_garrisoned()
                     && !squad.is_cryo_frozen()
                     && !squad.is_being_pulled()
-                    && !squad.is_jumping(),
+                    && !squad.is_jumping()
+                    && squad.can_accept_movement_order(),
                 unit_ids: squad.unit_ids.clone(),
             })
             .collect::<Vec<_>>();

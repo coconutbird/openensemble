@@ -332,11 +332,12 @@ impl AttachedParticleRenderer {
             .iter()
             .enumerate()
             .filter(|(_, attachment)| {
-                active_particle(
-                    attachment,
-                    placement.animation_type,
-                    placement.movement_animation_type,
-                )
+                active_particle(attachment)
+                    && placement.renderer.attachment_matches_animations(
+                        attachment,
+                        placement.animation_type,
+                        placement.movement_animation_type,
+                    )
             })
         {
             self.sync_attachment(device, queue, placement, attachment_index, attachment);
@@ -441,11 +442,12 @@ impl AttachedParticleRenderer {
             .iter()
             .enumerate()
             .filter(|(_, attachment)| {
-                active_particle(
-                    attachment,
-                    placement.animation_type,
-                    placement.movement_animation_type,
-                )
+                active_particle(attachment)
+                    && placement.renderer.attachment_matches_animations(
+                        attachment,
+                        placement.animation_type,
+                        placement.movement_animation_type,
+                    )
             })
         {
             self.sync_attachment(device, queue, placement, attachment_index, attachment);
@@ -746,17 +748,11 @@ impl AttachedParticleRenderer {
     }
 }
 
-fn active_particle(
-    attachment: &UnitAttachment,
-    animation_type: Option<&str>,
-    movement_animation_type: Option<&str>,
-) -> bool {
+fn active_particle(attachment: &UnitAttachment) -> bool {
     matches!(
         attachment.kind,
         UnitAttachmentKind::Particle | UnitAttachmentKind::TerrainEffect
-    ) && attachment
-        .trigger
-        .matches_animations(animation_type, movement_animation_type)
+    )
 }
 
 fn attachment_particle_path(

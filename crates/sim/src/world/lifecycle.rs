@@ -90,6 +90,7 @@ impl World {
                 .is_some_and(crate::entities::Unit::down_hero);
             if downed {
                 self.cancel_incapacitated_squad_orders(unit_id);
+                self.remove_unit_goto_base_references(unit_id);
             }
             return downed;
         }
@@ -100,6 +101,7 @@ impl World {
         self.remove_owned_attachments(unit_id);
         self.prepare_kill_unit_parking_lot(unit_id);
         self.prepare_kill_unit_authored_children(unit_id);
+        self.remove_unit_goto_base_references(unit_id);
         let Some(unit) = self.get_unit_mut(unit_id) else {
             return false;
         };

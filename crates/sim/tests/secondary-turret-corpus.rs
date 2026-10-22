@@ -11,10 +11,20 @@ fn shipped_secondary_and_slave_turret_actions_remain_discoverable() {
         .expect("scenario archive and layered gameplay should load");
     let mut secondary_count = 0;
     let mut slave_count = 0;
+    let mut master_count = 0;
 
     for object in loaded.simulation.gameplay.objects() {
         let tactics = object.tactics();
         for action in &tactics.actions {
+            if let Some(slave) = action.slave_attack_action.as_deref() {
+                master_count += 1;
+                println!(
+                    "MASTER|{}|{}|{}|slave={slave}",
+                    object.proto_object_name(),
+                    action.name,
+                    action.action_type.as_deref().unwrap_or("-"),
+                );
+            }
             let Some(kind) = action.action_type.as_deref() else {
                 continue;
             };
@@ -34,6 +44,19 @@ fn shipped_secondary_and_slave_turret_actions_remain_discoverable() {
                     .iter()
                     .find(|weapon| weapon.name.eq_ignore_ascii_case(name))
             });
+            let profile = object.attack_profile(&action.name).unwrap_or_else(|| {
+                panic!(
+                    "{} {} has no attack timing profile",
+                    object.proto_object_name(),
+                    action.name
+                )
+            });
+            assert!(
+                !profile.animations.is_empty(),
+                "{} {} has no loaded attack animation",
+                object.proto_object_name(),
+                action.name
+            );
             let persistent = tactics.tactic.as_ref().is_some_and(|rules| {
                 rules
                     .persistent_actions
@@ -64,10 +87,14 @@ fn shipped_secondary_and_slave_turret_actions_remain_discoverable() {
         }
     }
 
-    println!("secondary={secondary_count} slave={slave_count}");
+    println!("secondary={secondary_count} slave={slave_count} masters={master_count}");
     assert!(
         secondary_count > 0,
         "installed data has no secondary turrets"
     );
     assert!(slave_count > 0, "installed data has no slave turrets");
+    assert!(
+        master_count > 0,
+        "installed data has no slave-turret masters"
+    );
 }

@@ -53,10 +53,18 @@ pub(super) struct UnitHardpointState {
     attachment_transforms: BTreeMap<String, Mat4>,
     bone_transforms: BTreeMap<String, Mat4>,
     controllers: BTreeMap<String, HardpointController>,
-    active_controller: Option<String>,
+    active_controllers: BTreeSet<String>,
 }
 
 impl UnitHardpointState {
+    pub(super) fn claim(
+        &mut self,
+        profile: &AttackHardpointProfile,
+        anchor: Option<&AttackAnimationAnchor>,
+    ) {
+        self.activate(profile, anchor);
+    }
+
     pub(super) fn orient(
         &mut self,
         profile: &AttackHardpointProfile,
@@ -137,6 +145,78 @@ impl UnitHardpointState {
         )
     }
 
+    pub(super) fn can_orient(
+        &self,
+        profile: &AttackHardpointProfile,
+        anchor: Option<&AttackAnimationAnchor>,
+        unit_world: Mat4,
+        target_world: Vec3,
+    ) -> bool {
+        let mut probe = self.clone();
+        let aim = probe.orient(profile, anchor, unit_world, target_world, 0.0);
+        if profile.uses_angles_as_tolerance() {
+            aim.oriented
+        } else {
+            aim.can_face
+        }
+    }
+
+    pub(super) fn orient_pitch_only(
+        &mut self,
+        profile: &AttackHardpointProfile,
+        anchor: Option<&AttackAnimationAnchor>,
+        unit_world: Mat4,
+        target_world: Vec3,
+        elapsed: f32,
+    ) -> bool {
+        self.activate(profile, anchor);
+        if profile.uses_single_bone_ik() || profile.is_combined() {
+            return true;
+        }
+        let Some(component) = profile.pitch_attachment.as_deref() else {
+            return true;
+        };
+        let Some(anchor) = anchor else {
+            return true;
+        };
+        self.orient_pitch(
+            profile,
+            anchor,
+            component,
+            unit_world,
+            target_world,
+            elapsed,
+        )
+        .can_face
+    }
+
+    pub(super) fn yaw_forward(
+        &self,
+        profile: &AttackHardpointProfile,
+        anchor: Option<&AttackAnimationAnchor>,
+        unit_world: Mat4,
+    ) -> Option<Vec3> {
+        if !valid_transform(unit_world) {
+            return None;
+        }
+        let (base, rotation) = if profile.uses_single_bone_ik() {
+            let bone = single_bone_name(profile)?;
+            (single_bone_base(profile, anchor), self.bone_rotation(bone))
+        } else {
+            let component = profile
+                .yaw_attachment
+                .as_deref()
+                .or(profile.pitch_attachment.as_deref())?;
+            (
+                self.component_base(anchor?, component)?,
+                self.attachment_rotation(component),
+            )
+        };
+        (unit_world * base)
+            .transform_vector3(rotation * Vec3::Z)
+            .try_normalize()
+    }
+
     pub(super) fn yaw_origin(
         &self,
         profile: &AttackHardpointProfile,
@@ -152,13 +232,10 @@ impl UnitHardpointState {
         valid_transform(unit_world).then(|| (unit_world * base).w_axis.truncate())
     }
 
-    pub(super) fn release_active(&mut self) {
-        let Some(key) = self.active_controller.take() else {
-            return;
-        };
-        if let Some(controller) = self.controllers.get_mut(&key) {
-            controller.auto_center_delay = AUTO_CENTER_DELAY_SECONDS;
-            controller.centered = false;
+    pub(super) fn release(&mut self, hardpoint_name: &str) {
+        let key = canonical_name(hardpoint_name);
+        if self.active_controllers.remove(&key) {
+            self.begin_auto_center(&key);
         }
     }
 
@@ -167,10 +244,12 @@ impl UnitHardpointState {
             return;
         }
         let controlled = self.controlled_names();
-        let active = self.active_controller.as_deref();
         let mut ready = Vec::new();
         for (key, controller) in &mut self.controllers {
-            if active == Some(key) || controller.centered || !controller.profile.auto_centers() {
+            if self.active_controllers.contains(key)
+                || controller.centered
+                || !controller.profile.auto_centers()
+            {
                 continue;
             }
             if controller.auto_center_delay > 0.0 {
@@ -266,19 +345,32 @@ impl UnitHardpointState {
         }
     }
 
-    pub(super) fn active_yaw_target_world(&self, unit_world: Mat4) -> Option<Vec3> {
-        let controller = self
-            .active_controller
-            .as_deref()
-            .and_then(|key| self.controllers.get(key))?;
+    pub(super) fn active_yaw_target_world(
+        &self,
+        hardpoint_name: &str,
+        unit_world: Mat4,
+    ) -> Option<Vec3> {
+        let key = canonical_name(hardpoint_name);
+        let controller = self.active_controllers.contains(&key).then(|| {
+            self.controllers
+                .get(&key)
+                .expect("active hardpoint has a controller")
+        })?;
         self.yaw_target_world(&controller.profile, controller.anchor.as_ref(), unit_world)
     }
 
-    pub(super) fn restore_active_yaw_target(&mut self, unit_world: Mat4, target_world: Vec3) {
+    pub(super) fn restore_active_yaw_target(
+        &mut self,
+        hardpoint_name: &str,
+        unit_world: Mat4,
+        target_world: Vec3,
+    ) {
+        let key = canonical_name(hardpoint_name);
         let Some((profile, anchor)) = self
-            .active_controller
-            .as_deref()
-            .and_then(|key| self.controllers.get(key))
+            .active_controllers
+            .contains(&key)
+            .then(|| self.controllers.get(&key))
+            .flatten()
             .map(|controller| (controller.profile.clone(), controller.anchor.clone()))
         else {
             return;
@@ -287,7 +379,10 @@ impl UnitHardpointState {
     }
 
     pub(super) fn hash_state(&self, checksum: &mut SyncChecksum) {
-        hash_optional_name(checksum, self.active_controller.as_deref());
+        checksum.hash_u32(u32::try_from(self.active_controllers.len()).unwrap_or(u32::MAX));
+        for name in &self.active_controllers {
+            hash_name(checksum, name);
+        }
         hash_transforms(checksum, &self.attachment_transforms);
         hash_transforms(checksum, &self.bone_transforms);
         checksum.hash_u32(u32::try_from(self.controllers.len()).unwrap_or(u32::MAX));
@@ -304,10 +399,7 @@ impl UnitHardpointState {
         anchor: Option<&AttackAnimationAnchor>,
     ) {
         let key = canonical_name(&profile.name);
-        if self.active_controller.as_deref() != Some(&key) {
-            self.release_active();
-            self.active_controller = Some(key.clone());
-        }
+        self.active_controllers.insert(key.clone());
         self.controllers
             .entry(key)
             .and_modify(|controller| {
@@ -617,27 +709,25 @@ impl UnitHardpointState {
     }
 
     fn controlled_names(&self) -> BTreeSet<String> {
-        let Some(active) = self
-            .active_controller
-            .as_deref()
-            .and_then(|key| self.controllers.get(key))
-        else {
-            return BTreeSet::new();
-        };
-        if active.profile.uses_single_bone_ik() {
-            single_bone_name(&active.profile)
-                .map(canonical_name)
-                .into_iter()
-                .collect()
-        } else {
-            active
-                .profile
-                .yaw_attachment
-                .iter()
-                .chain(&active.profile.pitch_attachment)
-                .map(|name| canonical_name(name))
-                .collect()
+        let mut names = BTreeSet::new();
+        for key in &self.active_controllers {
+            let Some(active) = self.controllers.get(key) else {
+                continue;
+            };
+            if active.profile.uses_single_bone_ik() {
+                names.extend(single_bone_name(&active.profile).map(canonical_name));
+            } else {
+                names.extend(
+                    active
+                        .profile
+                        .yaw_attachment
+                        .iter()
+                        .chain(&active.profile.pitch_attachment)
+                        .map(|name| canonical_name(name)),
+                );
+            }
         }
+        names
     }
 
     fn attachment_rotation(&self, name: &str) -> Quat {
@@ -665,6 +755,13 @@ impl UnitHardpointState {
             canonical_name(name),
             Mat4::from_quat(normalized_or_identity(rotation)),
         );
+    }
+
+    fn begin_auto_center(&mut self, key: &str) {
+        if let Some(controller) = self.controllers.get_mut(key) {
+            controller.auto_center_delay = AUTO_CENTER_DELAY_SECONDS;
+            controller.centered = false;
+        }
     }
 }
 
@@ -847,13 +944,6 @@ fn hash_transforms(checksum: &mut SyncChecksum, transforms: &BTreeMap<String, Ma
         for value in transform.to_cols_array() {
             checksum.hash_f32(value);
         }
-    }
-}
-
-fn hash_optional_name(checksum: &mut SyncChecksum, name: Option<&str>) {
-    checksum.hash_u32(u32::from(name.is_some()));
-    if let Some(name) = name {
-        hash_name(checksum, name);
     }
 }
 

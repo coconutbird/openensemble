@@ -162,10 +162,12 @@ fn hash_players(checksum: &mut SyncChecksum, players: &[Player]) {
         }
         player.technologies.hash_state(checksum);
         player.hash_rally_point_state(checksum);
+        player.hash_goto_base_state(checksum);
         player.hash_forbid_state(checksum);
         player.hash_one_time_spawn_state(checksum);
         player.hash_power_state(checksum);
         player.research.hash_state(checksum);
+        player.hash_squad_ai_state(checksum);
     }
 }
 
@@ -191,6 +193,7 @@ fn hash_units(checksum: &mut SyncChecksum, units: &EntityManager<Unit>) {
         checksum.hash_u32(u32::from(unit.flying));
         unit.hash_flight_state(checksum);
         checksum.hash_u32(u32::from(unit.auto_attackable_setting()));
+        checksum.hash_u32(u32::from(unit.ignores_squad_ai()));
         checksum.hash_u32(u32::from(unit.is_invulnerable()));
         checksum.hash_u32(u32::from(unit.is_being_boarded()));
         checksum.hash_u32(u32::from(unit.is_jump_pull_untargetable()));
@@ -210,6 +213,7 @@ fn hash_units(checksum: &mut SyncChecksum, units: &EntityManager<Unit>) {
         checksum.hash_f32(unit.accuracy_scalar);
         checksum.hash_f32(unit.dodge_scalar);
         checksum.hash_f32(unit.work_rate_scalar);
+        checksum.hash_f32(unit.authored_line_of_sight());
         checksum.hash_f32(unit.line_of_sight_scalar);
         checksum.hash_f32(unit.velocity_scalar);
         checksum.hash_f32(unit.weapon_range_scalar);
@@ -282,7 +286,10 @@ fn hash_unit_action_state(checksum: &mut SyncChecksum, unit: &Unit) {
     unit.garrison.hash_state(checksum);
     unit.hash_ground_move_state(checksum);
     unit.hash_jump_state(checksum);
+    unit.hash_turn_in_place_state(checksum);
+    unit.hash_change_mode_state(checksum);
     unit.combat.hash_state(checksum);
+    unit.turret_combat.hash_state(checksum);
     unit.ammunition.hash_state(checksum);
     unit.hash_gather_state(checksum);
     unit.hash_capture_state(checksum);
@@ -352,6 +359,7 @@ fn hash_squads(checksum: &mut SyncChecksum, squads: &EntityManager<Squad>) {
         checksum.hash_f32(squad.aggro_distance);
         checksum.hash_f32(squad.leash_distance);
         squad.hash_leash_state(checksum);
+        checksum.hash_u32(u32::from(squad.ignore_ai));
         checksum.hash_u32(u32::from(squad.is_reverse_moving()));
         hash_optional_vec3(checksum, squad.move_target);
         squad.hash_order_state(checksum);
@@ -361,6 +369,7 @@ fn hash_squads(checksum: &mut SyncChecksum, squads: &EntityManager<Squad>) {
         hash_optional_entity_id(checksum, squad.attack_target);
         checksum.hash_f32(squad.attack_range);
         checksum.hash_u32(squad.mode as u32);
+        squad.hash_change_mode_state(checksum);
         checksum.hash_u32(squad.attack_ability_id.map_or(u32::MAX, u32::from));
         squad.recovery.hash_state(checksum);
         squad.shields.hash_state(checksum);

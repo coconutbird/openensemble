@@ -19,10 +19,8 @@ use perturbance::ProjectilePerturbance;
 use sticky::ProjectileMotionState;
 
 pub(crate) use flight::{ballistic_aim_direction, launch_target_position};
-
 const MIN_COLLISION_RADIUS: f32 = 0.25;
 const DIRECTION_EPSILON: f32 = 0.000_001;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 struct ProjectileRuntimeFlags(u32);
 
@@ -93,6 +91,7 @@ pub(crate) enum ProjectileStep {
 pub(crate) struct ProjectileLaunch {
     pub source_id: EntityId,
     pub target_id: EntityId,
+    pub attacker_position: Vec3,
     pub source_position: Vec3,
     pub target_position: Vec3,
     pub target_entity_position: Vec3,
@@ -113,6 +112,7 @@ impl ProjectileLaunch {
         Self {
             source_id: EntityId::INVALID,
             target_id: EntityId::INVALID,
+            attacker_position: source_position,
             source_position,
             target_position,
             target_entity_position: target_position,
@@ -732,6 +732,7 @@ mod tests {
             ProjectileLaunch {
                 source_id: source,
                 target_id: target,
+                attacker_position: Vec3::ZERO,
                 source_position: Vec3::ZERO,
                 target_position: Vec3::new(1.0, 0.0, 0.0),
                 target_entity_position: Vec3::new(1.0, 0.0, 0.0),
@@ -797,6 +798,7 @@ mod tests {
         let launch = ProjectileLaunch {
             source_id: source,
             target_id: target,
+            attacker_position: Vec3::ZERO,
             source_position: Vec3::ZERO,
             target_position: Vec3::X * 10.0,
             target_entity_position: Vec3::X * 10.0,

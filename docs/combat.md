@@ -75,6 +75,14 @@ additional inspected IDA functions requiring a rename.
 Tactic-state reconstruction used the named `unit.cpp`, `tactic.cpp`,
 `unitactionrangedattack.cpp`, and `UnitActionCollisionAttack.cpp` sources and
 likewise introduced no additional IDA functions requiring rename.
+Minimum-range reconstruction used the named `tactic.cpp`, `squad.cpp`,
+`squadactionattack.cpp`, `squadactionmove.cpp`, `opportunity.cpp`, and
+`user.cpp` sources and likewise introduced no additional IDA functions
+requiring rename.
+Ammunition-depletion control reconstruction used the named `tactic.cpp`,
+`unit.cpp`, `unitactionrangedattack.cpp`, and `squadactionattack.cpp` sources
+and likewise introduced no additional inspected IDA functions requiring a
+rename.
 Detonate reconstruction used the named `squadactiondetonate.cpp`,
 `unitactiondetonate.cpp`, `unit.cpp`, `squad.cpp`, `tactic.cpp`, and
 `damagehelper.cpp` sources and likewise introduced no additional IDA functions
@@ -119,6 +127,19 @@ sources and likewise introduced no additional IDA functions requiring rename.
   applies relation, current squad mode, manual/auto-target mode gates,
   `NoAutoTarget`, ability matching and fallback, target state, damage/object
   type, Gaia, and invulnerability predicates.
+- Every computed attack profile retains the weapon's authored `MinRange` and
+  `MaxRange`. Range validation follows retail's asymmetric geometry: minimum
+  range is measured from the attacker's obstruction edge to the target center,
+  while maximum range is measured edge to edge. Player technology and the live
+  unit range scalar modify only maximum range. Commanded squad, standalone,
+  position, and secondary/slave-turret attacks all stop firing outside that
+  interval; attack-move and turret opportunity scans reject targets inside the
+  minimum before engagement. A too-close commanded squad holds instead of
+  chasing farther inward. Lockdown automation may unlock for the pending
+  attack, but it cannot relock while the selected deployed action would still
+  violate its minimum range. The shipped Cobra test covers its scenario-layered
+  `0..60` mobile and `6..120` lockdown artillery profiles and the close-target
+  unlock/wait/relock lifecycle.
 - Every unit owns retail's optional 8-bit tactic-state index plus a deterministic
   transition revision, and both participate in the world checksum. Contextual
   work and attack selection rejects actions outside a valid non-empty state
@@ -149,10 +170,10 @@ sources and likewise introduced no additional IDA functions requiring rename.
   members to existing squads. As in retail, removing the technology does not
   reverse an already-applied squad transform.
 - A requested database `Command` ability maps through each proto object's
-  `AbilityCommand`. A successful authored attack cycle starts its declared
-  recovery channel and duration; the command executor rejects another ability
-  using that channel until it expires. Units use the normal tactic action while
-  the squad recovers.
+  `AbilityCommand`. A successful monitored attack completion starts its
+  declared recovery channel and duration; the command executor rejects another
+  ability using that channel until it expires. Units use the normal tactic
+  action while the squad recovers.
 - VIS model selection and weighted UAX durations produce immutable attack
   profiles. Normalized `Attack` tags drive shot timing, including pre/post
   cooldowns, visual ammo, and reload duration.
@@ -203,6 +224,21 @@ sources and likewise introduced no additional IDA functions requiring rename.
   in the animation at its player-modified damage per attack, then spends that
   amount at each tag. Squad current ammunition sums surviving enabled members,
   while its maximum retains the authored proto-squad member counts.
+- Attack profiles retain `DontLoopAttackAnim`, shield-drain monitoring, and
+  `StopAttackingWhenAmmoDepleted` as control state rather than treating those
+  flags as presentation metadata. An action that cannot pay its first complete
+  volley reports `Failed` even when stop-on-depletion is authored. After an
+  animation has fired, inability to pay the next complete volley reports
+  `Done` for stop-on-depletion and `Failed` otherwise; a non-looping animation's
+  `Done` transition takes precedence over that depletion check.
+- Terminal unit results are checksummed and remain latched until the owning
+  squad opportunity resolves. Retail's monitored-opportunity boundary is
+  preserved: `DontLoopAttackAnim` and shield-drain actions report to the squad,
+  while an ordinary looping opportunity discards the local terminal result and
+  retries when ammunition returns. The squad waits for every live participant,
+  fails if any unit failed, and starts Attack recovery only after successful
+  ability participants. Position and independent turret timelines consume the
+  same terminal result without inventing a second ammunition state machine.
 - Work command order 16 now drives retail's latent Mines action. Generic
   `Command` resolves through the source object's `AbilityCommand`; the concrete
   ability supplies its first mine object and per-placement `AmmoCost`, while
@@ -607,10 +643,9 @@ sources and likewise introduced no additional IDA functions requiring rename.
 This is the deterministic baseline, not a claim of complete combat parity.
 Remaining retail systems include unsupported technology effect families,
 collision-attack evade opportunities and the full
-thrown-unit/leash action, the depleted ranged-action `Done` versus `Failed`
-  control result, non-attack recovery start events, tactic-state transitions for
-  action families other than CollisionAttack and Detonate, lockdown minimum-
-  range behavior, remaining garrison and melee-
+thrown-unit/leash action, non-attack recovery start events, tactic-state transitions for
+  action families other than CollisionAttack and Detonate, remaining garrison
+  and melee-
 attacker predicates, visual bone/animation hardpoint overrides, targeted hit-
 zone offsets and oriented hit-zone/visual-mesh projectile intersection, hit-
 zone shields, broader runtime `Unhittable` and invulnerability controls,
@@ -686,6 +721,11 @@ the shipped Marine `200/9` and Warthog `800/40` maximum/regeneration values.
 It checks the empty-versus-full spawn flags, the regeneration action's first-
 update transition, the proto-squad maximum, and the real
 `unsc_warthog_upgrade1` `1.25` `AmmoMax`/`AmmoRegenRate` effects on live state.
+The loaded Blood Gulch tactic catalog contains no ranged profile authored with
+`UsesAmmo`, so depletion-result execution is covered by deterministic synthetic
+profiles for both outcomes, monitored versus persistent opportunities,
+initially empty actions, ability recovery, and multi-member aggregation rather
+than being misrepresented as a shipped scenario behavior.
 
 The opt-in `scenario-ram` integration test uses the same scenario loader and
 its already-mounted database. It verifies that the runtime XMB supplies the

@@ -532,7 +532,11 @@ pub(crate) fn prepare_squad_movement(
         if squad.is_being_pulled() || squad.is_jumping() {
             continue;
         }
-        if squad.garrison.is_garrisoned() || squad.is_cryo_frozen() || !squad.base.is_mobile() {
+        if squad.garrison.is_garrisoned()
+            || squad.is_cryo_frozen()
+            || !squad.base.is_mobile()
+            || !squad.can_accept_movement_order()
+        {
             for &unit_id in &squad.unit_ids {
                 if let Some(unit) = units.get_mut(unit_id)
                     && unit.is_physics_driven()

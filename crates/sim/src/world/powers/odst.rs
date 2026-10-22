@@ -610,6 +610,7 @@ fn launch_drop_projectile(
     let launch = ProjectileLaunch {
         source_id: EntityId::INVALID,
         target_id: EntityId::INVALID,
+        attacker_position: source,
         source_position: source,
         target_position: target,
         target_entity_position: target,

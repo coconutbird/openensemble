@@ -522,11 +522,27 @@ fn visual_cache_key(
     let movement_animation = animation
         .movement_animation_type
         .map_or_else(String::new, str::to_ascii_lowercase);
+    let auxiliary_animations = animation
+        .auxiliary_animations
+        .iter()
+        .map(|auxiliary| {
+            format!(
+                "{}:{}:{}:{}:{}:{}",
+                auxiliary.action_name.to_ascii_lowercase(),
+                auxiliary.component.to_ascii_lowercase(),
+                auxiliary.animation_type.to_ascii_lowercase(),
+                auxiliary.animation_asset.to_ascii_lowercase(),
+                auxiliary.duration_seconds.to_bits(),
+                auxiliary.animation_roll,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("|");
     let sim_clock = animation.uses_simulation_clock;
     let animation_roll = animation.animation_roll;
     let movement_roll = animation.movement_animation_roll;
     format!(
-        "{lookup_name}\0variation={variation}\0animation_type={animation_type}\0animation={animation_asset}\0sim_clock={sim_clock}\0roll={animation_roll}\0movement={movement_animation}\0movement_roll={movement_roll}"
+        "{lookup_name}\0variation={variation}\0animation_type={animation_type}\0animation={animation_asset}\0sim_clock={sim_clock}\0roll={animation_roll}\0movement={movement_animation}\0movement_roll={movement_roll}\0auxiliary={auxiliary_animations}"
     )
 }
 

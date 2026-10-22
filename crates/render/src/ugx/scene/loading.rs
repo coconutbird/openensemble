@@ -10,13 +10,17 @@ use sim::World as SimWorld;
 use super::{
     ImpactDecalAssets, ImpactVisualAssets, LightAssets, ParticleAssets, SimulationVisual,
     TerrainEffectAssets, UnitPlacement, UnitScene, UnitSceneIssue,
-    combat_animations::active_combat_animation,
+    combat_animations::{
+        active_auxiliary_combat_animations as active_turret_animations, active_combat_animation,
+    },
     hidden_proto_names, load_cached_unit,
     movement_animations::{MovementAnimation, MovementAnimationProfile},
     simulation_entity_secondary_transform, simulation_visuals, visual_name_lookup,
 };
 use crate::terrain_effect::TerrainImpactAssets;
-use crate::ugx::unit::{UnitAnimationRequest, UnitAssetCache, UnitIkProfile};
+use crate::ugx::unit::{
+    AuxiliaryAnimationRequest, UnitAnimationRequest, UnitAssetCache, UnitIkProfile,
+};
 use crate::ugx::{Unit, UnitAttachmentKind};
 
 #[derive(Clone, Copy)]
@@ -101,14 +105,17 @@ pub(super) fn load_placements(
             animation.uses_simulation_clock,
             animation.revision,
         );
-        let animation_roll =
+        let main_animation_roll =
             retained_animation_roll(inputs, &entity, animation, &selection_identity);
         let movement_animation_roll = animation
             .movement_track
             .map_or(0, |movement| movement_roll(entity.id, movement));
-        scene
-            .animation_selections
-            .insert(entity.id, (selection_identity, animation_roll));
+        let auxiliary_animations =
+            active_turret_animations(inputs.world, inputs.gameplay, entity.id);
+        let auxiliary_requests = auxiliary_animation_requests(entity.id, &auxiliary_animations);
+        let animation_revision =
+            animation.revision ^ auxiliary_animation_revision(&auxiliary_animations);
+        record_animation_selection(scene, entity.id, selection_identity, main_animation_roll);
         let unit = load_cached_unit(
             source,
             visual,
@@ -118,9 +125,10 @@ pub(super) fn load_placements(
                 animation_type: animation.animation_type,
                 animation_asset: animation.animation_asset,
                 uses_simulation_clock: animation.uses_simulation_clock,
-                animation_roll,
+                animation_roll: main_animation_roll,
                 movement_animation_type: animation.movement_track.map(MovementAnimation::as_str),
                 movement_animation_roll,
+                auxiliary_animations: &auxiliary_requests,
             },
             &mut asset_cache,
             units,
@@ -139,7 +147,7 @@ pub(super) fn load_placements(
             animation_type: animation.animation_type.map(str::to_owned),
             animation_asset: animation.animation_asset.map(str::to_owned),
             animation_uses_simulation_clock: animation.uses_simulation_clock,
-            animation_revision: animation.revision,
+            animation_revision,
             combat_animation_duration: animation.combat_duration,
             movement_animation: animation.movement,
             movement_track_animation: animation.movement_track,
@@ -154,6 +162,53 @@ pub(super) fn load_placements(
         used_visuals.insert(lookup_name);
     }
     scene.unique_visual_count = used_visuals.len();
+}
+
+fn record_animation_selection(
+    scene: &mut UnitScene,
+    entity_id: sim::EntityId,
+    identity: String,
+    roll: u64,
+) {
+    scene
+        .animation_selections
+        .insert(entity_id, (identity, roll));
+}
+
+fn auxiliary_animation_requests<'animation>(
+    entity_id: sim::EntityId,
+    animations: &'animation [super::combat_animations::AuxiliaryCombatAnimation<'animation>],
+) -> Vec<AuxiliaryAnimationRequest<'animation>> {
+    animations
+        .iter()
+        .map(|auxiliary| AuxiliaryAnimationRequest {
+            action_name: auxiliary.action_name,
+            component: auxiliary.component,
+            animation_type: auxiliary.animation_type,
+            animation_asset: auxiliary.asset_path,
+            duration_seconds: auxiliary.duration_seconds,
+            animation_roll: animation_roll(entity_id, 0, Some(auxiliary.action_name))
+                ^ u64::from(auxiliary.revision),
+        })
+        .collect()
+}
+
+fn auxiliary_animation_revision(
+    animations: &[super::combat_animations::AuxiliaryCombatAnimation<'_>],
+) -> u32 {
+    if animations.is_empty() {
+        return 0;
+    }
+    animations.iter().fold(0x811C_9DC5, |hash, animation| {
+        animation
+            .action_name
+            .bytes()
+            .chain(animation.component.bytes())
+            .chain(animation.asset_path.bytes())
+            .fold(hash ^ animation.revision, |hash, byte| {
+                (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
+            })
+    })
 }
 
 fn retained_animation_roll(

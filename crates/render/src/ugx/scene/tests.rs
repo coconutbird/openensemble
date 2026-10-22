@@ -4,6 +4,8 @@ use glam::Vec3;
 use pipeline::database::hw1::{Database, GameData, ProtoObject};
 use pipeline::source::{AssetSource, StdFileProvider};
 
+use crate::ugx::unit::AuxiliaryAnimationRequest;
+
 use super::{
     prototype_is_hidden, simulation_entity_flash, simulation_entity_transform,
     simulation_entity_visible_to_team, simulation_proto_names, simulation_unit_transform,
@@ -90,6 +92,7 @@ fn roster_matching_tracks_generational_sim_entity_ids() {
         visual_variation_index: None,
         visual_mesh_revision: 0,
         combat_animation: None,
+        auxiliary_combat_animations: Vec::new(),
     };
     let mut scene = super::UnitScene {
         simulation_entity_states: vec![state(first, 0)],
@@ -173,12 +176,29 @@ fn visual_cache_distinguishes_random_explicit_and_animated_variants() {
             ..idle
         },
     );
+    let auxiliary = [AuxiliaryAnimationRequest {
+        action_name: "LeftGun",
+        component: "LeftTurret",
+        animation_type: "Attack",
+        animation_asset: "Art\\Left_Attack.UAX",
+        duration_seconds: 1.0,
+        animation_roll: 9,
+    }];
+    let turret_attack = super::visual_cache_key(
+        "marine",
+        Some(1),
+        super::UnitAnimationRequest {
+            auxiliary_animations: &auxiliary,
+            ..idle
+        },
+    );
 
     assert_ne!(random, first);
     assert_ne!(first, second);
     assert_ne!(second, animated);
     assert_ne!(animated, death);
     assert_ne!(animated, moving_attack);
+    assert_ne!(second, turret_attack);
 }
 
 #[test]
@@ -212,6 +232,7 @@ fn scenario_visual_variation_is_projected_only_from_sim_state() {
             visual_variation_index: Some(2),
             visual_mesh_revision: 0,
             combat_animation: None,
+            auxiliary_combat_animations: Vec::new(),
         }]
     );
 }

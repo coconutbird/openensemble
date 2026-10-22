@@ -48,6 +48,18 @@ impl HardpointFlags {
 }
 
 impl AttackHardpointProfile {
+    /// Component whose attachment transform owns horizontal hardpoint motion.
+    #[must_use]
+    pub fn yaw_attachment(&self) -> Option<&str> {
+        self.yaw_attachment.as_deref()
+    }
+
+    /// Component whose attachment transform owns vertical hardpoint motion.
+    #[must_use]
+    pub fn pitch_attachment(&self) -> Option<&str> {
+        self.pitch_attachment.as_deref()
+    }
+
     pub(super) fn from_weapon(object: &ProtoObject, weapon: &Weapon) -> Option<Self> {
         let requested = nonempty(weapon.hardpoint.as_deref())?;
         let hardpoint = object

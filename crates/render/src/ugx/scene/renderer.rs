@@ -11,6 +11,7 @@ use super::{
     UnitScene,
     combat_animations::combat_animation_position,
     lights::{AttachedLightRenderer, LightPlacementState},
+    movement_animations::MovementAnimation,
     particles::{AttachedParticleRenderer, ParticlePlacementState},
     simulation_entity_animation, simulation_entity_transform, simulation_entity_visible_to_team,
     simulation_entity_visual_opacity,
@@ -45,6 +46,7 @@ struct RenderedPlacement {
     animation_uses_simulation_clock: bool,
     animation_revision: u32,
     combat_animation_duration: Option<f32>,
+    movement_animation: Option<MovementAnimation>,
     movement_track_animation: Option<String>,
     visual_mesh_revision: u32,
     visual_opacity: f32,
@@ -55,6 +57,7 @@ struct RenderedPlacement {
     visual_bounds_max: Vec3,
     selection: SelectionOverlay,
     animation_clock: PresentationAnimationClock,
+    movement_animation_clock: PresentationAnimationClock,
     renderer: UnitRenderer,
 }
 
@@ -175,6 +178,7 @@ impl UnitSceneRenderer {
                 animation_uses_simulation_clock: placement.animation_uses_simulation_clock(),
                 animation_revision: placement.animation_revision(),
                 combat_animation_duration: placement.combat_animation_duration,
+                movement_animation: placement.movement_animation,
                 movement_track_animation: placement
                     .movement_track_animation_type()
                     .map(str::to_owned),
@@ -187,6 +191,7 @@ impl UnitSceneRenderer {
                 visual_bounds_max: Vec3::from_array(placement.unit.bounds_max()),
                 selection: SelectionOverlay::default(),
                 animation_clock: PresentationAnimationClock::default(),
+                movement_animation_clock: PresentationAnimationClock::default(),
                 renderer: configured_unit_renderer(device, queue, placement, &resources.shared),
             })
             .collect::<Vec<_>>();
@@ -276,12 +281,26 @@ impl UnitSceneRenderer {
             .iter()
             .map(|placement| {
                 let mut previous_placement = previous.remove(&placement.entity_id());
-                let animation_clock = previous_placement
-                    .as_ref()
-                    .filter(|rendered| same_visual(rendered, placement))
-                    .map_or_else(PresentationAnimationClock::default, |rendered| {
-                        rendered.animation_clock
-                    });
+                let (animation_clock, mut movement_animation_clock, previous_movement, complete) =
+                    previous_placement
+                        .as_ref()
+                        .filter(|rendered| same_visual(rendered, placement))
+                        .map_or(
+                            (Default::default(), Default::default(), None, true),
+                            |rendered| {
+                                (
+                                    rendered.animation_clock,
+                                    rendered.movement_animation_clock,
+                                    rendered.movement_animation,
+                                    rendered.renderer.ik_idle_transition_complete(),
+                                )
+                            },
+                        );
+                movement_animation_clock.rebase_movement(
+                    previous_movement,
+                    placement.movement_animation,
+                    complete,
+                );
                 if previous_placement
                     .as_ref()
                     .is_some_and(|rendered| renderer_is_reusable(rendered, placement))
@@ -295,8 +314,10 @@ impl UnitSceneRenderer {
                     rendered.animation_uses_simulation_clock =
                         placement.animation_uses_simulation_clock();
                     rendered.combat_animation_duration = placement.combat_animation_duration;
+                    rendered.movement_animation = placement.movement_animation;
                     rendered.movement_track_animation =
                         placement.movement_track_animation_type().map(str::to_owned);
+                    rendered.movement_animation_clock = movement_animation_clock;
                     rendered.visible = true;
                     return rendered;
                 }
@@ -316,6 +337,7 @@ impl UnitSceneRenderer {
                     animation_uses_simulation_clock: placement.animation_uses_simulation_clock(),
                     animation_revision: placement.animation_revision(),
                     combat_animation_duration: placement.combat_animation_duration,
+                    movement_animation: placement.movement_animation,
                     movement_track_animation: placement
                         .movement_track_animation_type()
                         .map(str::to_owned),
@@ -328,6 +350,7 @@ impl UnitSceneRenderer {
                     visual_bounds_max: Vec3::from_array(placement.unit.bounds_max()),
                     selection: SelectionOverlay::default(),
                     animation_clock,
+                    movement_animation_clock,
                     renderer,
                 }
             })
@@ -786,19 +809,38 @@ fn update_placement_states(
             },
             |duration| combat_animation_position(world, placement.entity_id, duration),
         );
-        let presentation_phase = placement.animation_clock.sample(
-            time_seconds,
-            placement.renderer.presentation_animation_duration(),
-        );
+        let action_duration = placement.renderer.action_presentation_animation_duration();
+        let movement_on_action_track = placement.movement_animation.is_some_and(|movement| {
+            placement.movement_track_animation.is_none()
+                && placement
+                    .animation_type
+                    .as_deref()
+                    .is_some_and(|animation| animation.eq_ignore_ascii_case(movement.as_str()))
+        });
+        let movement_duration = if movement_on_action_track {
+            action_duration
+        } else {
+            placement
+                .renderer
+                .movement_presentation_animation_duration()
+        };
+        let action_presentation_phase = placement
+            .animation_clock
+            .sample(time_seconds, action_duration);
+        let movement_presentation_phase = placement
+            .movement_animation_clock
+            .sample(time_seconds, movement_duration);
         let movement_animation = placement
             .movement_track_animation
             .as_deref()
-            .or(placement.animation_type.as_deref());
+            .or_else(|| placement.movement_animation.map(MovementAnimation::as_str));
         let events = placement.renderer.update_animation(
             queue,
             UnitAnimationFrame {
                 simulation_position: animation_position,
-                presentation_phase,
+                action_presentation_phase,
+                movement_presentation_phase,
+                movement_on_action_track,
                 unit_transform: placement.transform,
                 source_owner_id: u64::from(placement.entity_id.as_u32()),
                 world,

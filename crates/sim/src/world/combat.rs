@@ -2,17 +2,21 @@
 
 mod ammunition;
 mod area_damage;
+mod completion;
 mod damage;
 mod deviation;
 mod fire;
 mod hardpoints;
 mod helpers;
 mod impulses;
+mod orders;
 mod position;
 mod pull;
+mod range;
 mod selection;
 #[cfg(test)]
 mod test_catalog;
+mod turrets;
 
 use super::World;
 use crate::entities::projectiles::{ProjectileLaunch, launch_target_position};
@@ -25,11 +29,12 @@ pub(crate) use area_damage::AttackDamage;
 use fire::{FireEvent, LaunchTuning};
 use glam::Vec3;
 use helpers::{
-    animation_anchor_world_transform, attack_aim_position, combat_motion,
-    effective_attack_accuracy, scaled_launch_damage, selected_range, unit_world_transform,
-    xz_distance_squared,
+    animation_anchor_world_transform, attack_aim_position, effective_attack_accuracy,
+    scaled_launch_damage, selected_range, unit_world_transform, xz_distance_squared,
 };
+pub(crate) use orders::SquadAttackContext;
 pub(in crate::world) use position::PositionAttackStatus;
+use range::{AttackRangeRelation, attack_profile_range_relation};
 
 const MIN_TARGET_RADIUS: f32 = 0.5;
 const MOVEMENT_EPSILON: f32 = 0.000_001;
@@ -39,12 +44,14 @@ struct TargetSnapshot {
     id: EntityId,
     player_id: PlayerId,
     position: Vec3,
+    obstruction_radius: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
 enum CombatMotion {
     Clear,
     Hold(TargetSnapshot),
+    InsideMinimum(TargetSnapshot),
     Chase(TargetSnapshot),
 }
 
@@ -68,6 +75,7 @@ struct AttackAdvanceSettings {
 struct AttackerSnapshot {
     player_id: PlayerId,
     position: Vec3,
+    obstruction_radius: f32,
     launch_position: Vec3,
     hardpoint_position: Option<Vec3>,
     damage_multiplier: f32,
@@ -168,6 +176,7 @@ impl World {
         engagements.sort_by_key(|engagement| engagement.attacker_id);
         engagements.dedup_by_key(|engagement| engagement.attacker_id);
         self.advance_attacks(dt, gameplay, engagements);
+        self.advance_turret_attacks(dt, gameplay);
     }
 
     pub(in crate::world) fn validated_squad_attack_target(
@@ -177,7 +186,19 @@ impl World {
     ) -> Option<EntityId> {
         match self.squad_combat_motion(squad_id, gameplay) {
             CombatMotion::Hold(target) => Some(target.id),
-            CombatMotion::Clear | CombatMotion::Chase(_) => None,
+            CombatMotion::Clear | CombatMotion::InsideMinimum(_) | CombatMotion::Chase(_) => None,
+        }
+    }
+
+    pub(super) fn squad_attack_is_in_range(
+        &self,
+        squad_id: EntityId,
+        gameplay: &GameplayCatalog,
+    ) -> Option<bool> {
+        match self.squad_combat_motion(squad_id, gameplay) {
+            CombatMotion::Hold(_) => Some(true),
+            CombatMotion::InsideMinimum(_) | CombatMotion::Chase(_) => Some(false),
+            CombatMotion::Clear => None,
         }
     }
 
@@ -229,6 +250,7 @@ impl World {
                     && !unit.is_garrisoned()
                     && unit.is_auto_attackable()
                     && self.players_are_enemies(squad.base.player_id, unit.base.player_id)
+                    && self.is_entity_visible_from_player(squad.base.player_id, *unit_id)
                     && !self.entity_hidden_by_cloak_from_player(squad.base.player_id, *unit_id)
             })
             .filter_map(|(unit_id, unit)| {
@@ -237,12 +259,7 @@ impl World {
                     return None;
                 }
                 let target = concrete_target_snapshot(unit_id, unit, self.unit_is_in_cover(unit));
-                let can_attack = squad.unit_ids.iter().any(|member_id| {
-                    self.units.get(*member_id).is_some_and(|member| {
-                        self.selected_ranged_action(member, &target, gameplay, true)
-                            .is_some()
-                    })
-                });
+                let can_attack = self.squad_can_auto_attack_target(squad, &target, gameplay);
                 can_attack.then_some((distance_squared, unit_id))
             })
             .min_by(|(left_distance, left_id), (right_distance, right_id)| {
@@ -298,6 +315,9 @@ impl World {
                             range_override,
                         }
                     }));
+                }
+                CombatMotion::InsideMinimum(target) => {
+                    squad.hold_attack_position(target.position);
                 }
                 CombatMotion::Chase(target) => squad.chase_attack_target(target.position),
             }
@@ -356,6 +376,9 @@ impl World {
                         range_override,
                     });
                 }
+                CombatMotion::InsideMinimum(target) => {
+                    unit.hold_attack_position(target.position);
+                }
                 CombatMotion::Chase(target) => unit.chase_attack_target(target.position),
             }
             if !matches!(motion, CombatMotion::Hold(_)) {
@@ -373,46 +396,46 @@ impl World {
     ) {
         let mut fire_events = Vec::new();
         for engagement in engagements {
-            let Some(attacker_player_id) = self.unblocked_attacker_player(engagement.attacker_id)
-            else {
+            let attacker_id = engagement.attacker_id;
+            let Some(attacker_player_id) = self.unblocked_attacker_player(attacker_id) else {
                 continue;
             };
             let Some(target) =
                 self.concrete_attack_target(attacker_player_id, engagement.ordered_target_id)
             else {
-                self.stop_unit_firing(&[engagement.attacker_id]);
+                self.stop_unit_firing(&[attacker_id]);
                 continue;
             };
-            let Some(profile) =
-                self.selected_unit_attack_profile(engagement.attacker_id, &target, gameplay)
-            else {
-                self.stop_unit_firing(&[engagement.attacker_id]);
+            let ability_squad_id = self.active_ability_squad(attacker_id, gameplay);
+            let Some(profile) = self.attack_profile_or_record_depletion(
+                attacker_id,
+                &target,
+                gameplay,
+                ability_squad_id,
+            ) else {
+                self.stop_unit_firing(&[attacker_id]);
                 continue;
             };
-            let ability_squad_id = self.active_ability_squad(engagement.attacker_id, gameplay);
-            let Some(attacker) = self.attacker_snapshot(engagement.attacker_id, profile) else {
+            let Some(attacker) = self.attacker_snapshot(attacker_id, profile) else {
                 continue;
             };
             let (normal_range, range) =
                 self.engagement_attack_range(&engagement, &attacker, &target, profile);
-            if !self.players_are_enemies(attacker.player_id, target.player_id)
-                || xz_distance_squared(attacker.position, target.position) > range * range
-            {
-                self.stop_unit_firing(&[engagement.attacker_id]);
+            if !self.attack_in_range(&attacker, &target, profile.min_range, range) {
+                self.stop_unit_firing(&[attacker_id]);
                 continue;
             }
-            let charged_cycle = profile.pull.as_ref().is_some_and(|pull| {
-                self.can_resolve_charged_pull(engagement.attacker_id, &target, pull, normal_range)
-            });
+            let charged_cycle = self.should_charge(&engagement, &target, profile, normal_range);
             let orientation_tolerance = gameplay.attack_orientation_tolerance(
                 profile,
                 target.velocity != Vec3::ZERO,
                 ability_squad_id.is_some(),
             );
-
-            let authored_damage =
-                self.authored_attack_damage(engagement.attacker_id, &attacker, profile);
+            let authored_damage = self.authored_attack_damage(attacker_id, &attacker, profile);
             let mut tuning = self.launch_tuning(&attacker, profile);
+            if gameplay.disables_ranged_target_lead(&attacker.logical_proto_object_name) {
+                tuning.max_velocity_lead = 0.0;
+            }
             let aim_position = attack_aim_position(&attacker, &target, profile, gameplay, &tuning);
             tuning.max_range = range;
             let settings = AttackAdvanceSettings {
@@ -422,17 +445,10 @@ impl World {
                 orientation_tolerance,
                 authored_damage,
             };
-            let Some(advance) =
-                self.advance_unit_attack(engagement.attacker_id, profile, &target, settings)
+            let Some(advance) = self.advance_unit_attack(attacker_id, profile, &target, settings)
             else {
                 continue;
             };
-            if advance.completed_cycles > 0
-                && let Some(squad_id) = ability_squad_id
-                && let Some(squad) = self.squads.get_mut(squad_id)
-            {
-                squad.mark_unit_ability_complete(engagement.attacker_id);
-            }
             let damage = scaled_launch_damage(
                 authored_damage,
                 attacker.damage_multiplier,
@@ -447,18 +463,18 @@ impl World {
                 profile,
             );
             for occurrence in &advance.events {
-                if self.apply_physics_impulse_event(engagement.attacker_id, &occurrence.event) {
+                if self.apply_physics_impulse_event(attacker_id, &occurrence.event) {
                     continue;
                 }
                 let mut launch_attacker = attacker.clone();
                 launch_attacker.launch_position = self.attack_event_launch_position(
-                    engagement.attacker_id,
+                    attacker_id,
                     attacker.launch_position,
                     occurrence.event.anchor.as_ref(),
                 );
                 fire_events.push(
                     FireEvent::from_attack(
-                        engagement.attacker_id,
+                        attacker_id,
                         &launch_attacker,
                         target.clone(),
                         damage,
@@ -469,8 +485,10 @@ impl World {
                     .with_launch_tuning(tuning),
                 );
             }
+            self.record_attack_result(attacker_id, profile, ability_squad_id, advance.result);
         }
         self.finish_completed_ability_attacks(gameplay);
+        self.finish_terminal_attack_actions(gameplay);
         self.resolve_fire_events(fire_events, gameplay);
     }
 
@@ -546,6 +564,30 @@ impl World {
         Some(unit.base.player_id)
     }
 
+    fn attack_in_range(
+        &self,
+        attacker: &AttackerSnapshot,
+        target: &ConcreteTargetSnapshot,
+        min_range: f32,
+        max_range: f32,
+    ) -> bool {
+        self.players_are_enemies(attacker.player_id, target.player_id)
+            && attack_profile_range_relation(attacker, target, min_range, max_range)
+                == AttackRangeRelation::Within
+    }
+
+    fn should_charge(
+        &self,
+        engagement: &AttackEngagement,
+        target: &ConcreteTargetSnapshot,
+        profile: &AttackProfile,
+        normal_range: f32,
+    ) -> bool {
+        profile.pull.as_ref().is_some_and(|pull| {
+            self.can_resolve_charged_pull(engagement.attacker_id, target, pull, normal_range)
+        })
+    }
+
     fn attacker_snapshot(
         &self,
         attacker_id: EntityId,
@@ -583,6 +625,7 @@ impl World {
             accuracy_scalar: unit.accuracy_scalar,
             dodge_scalar: unit.dodge_scalar,
             moving_at_full_speed: speed > MOVEMENT_EPSILON && speed >= desired_speed * 0.9,
+            obstruction_radius: unit.obstruction_radius(),
         })
     }
 
@@ -677,6 +720,7 @@ impl World {
             ProjectileLaunch {
                 source_id: event.source_id,
                 target_id: event.target.id,
+                attacker_position: event.source_position,
                 source_position: event.launch_position,
                 target_position,
                 target_entity_position: event.target.position,
@@ -723,72 +767,9 @@ impl World {
         for &unit_id in unit_ids {
             if let Some(unit) = self.units.get_mut(unit_id) {
                 unit.combat.stop_firing();
+                unit.set_turning_in_place(false);
             }
         }
-    }
-
-    fn squad_combat_motion(&self, squad_id: EntityId, gameplay: &GameplayCatalog) -> CombatMotion {
-        let Some(squad) = self.squads.get(squad_id) else {
-            return CombatMotion::Clear;
-        };
-        if self.is_squad_incapacitated(squad_id) {
-            return CombatMotion::Clear;
-        }
-        let Some(target_id) = squad.attack_target else {
-            return CombatMotion::Clear;
-        };
-        let Some(target) = self.attack_target_snapshot(squad.base.player_id, target_id) else {
-            return CombatMotion::Clear;
-        };
-        if !self.players_are_enemies(squad.base.player_id, target.player_id) {
-            return CombatMotion::Clear;
-        }
-        if let Some(origin) = squad.auto_attack_origin()
-            && !squad.ignores_leash()
-            && squad.leash_distance.is_finite()
-            && squad.leash_distance > 0.0
-            && xz_distance_squared(origin, target.position)
-                > squad.leash_distance * squad.leash_distance
-        {
-            return CombatMotion::Clear;
-        }
-        let range = if squad.attack_range > 0.0 {
-            Some(squad.attack_range)
-        } else {
-            let Some(concrete_target) =
-                self.concrete_attack_target(squad.base.player_id, target.id)
-            else {
-                return CombatMotion::Clear;
-            };
-            self.collision_attack_range(squad, gameplay)
-                .or_else(|| self.squad_tactic_range(squad, &concrete_target, gameplay))
-        };
-        combat_motion(squad.base.position, target, range)
-    }
-
-    fn unit_combat_motion(&self, unit_id: EntityId, gameplay: &GameplayCatalog) -> CombatMotion {
-        let Some(unit) = self.units.get(unit_id).filter(|unit| unit.is_operational()) else {
-            return CombatMotion::Clear;
-        };
-        let Some(target_id) = unit.attack_target else {
-            return CombatMotion::Clear;
-        };
-        let Some(target) = self.attack_target_snapshot(unit.base.player_id, target_id) else {
-            return CombatMotion::Clear;
-        };
-        if !self.players_are_enemies(unit.base.player_id, target.player_id) {
-            return CombatMotion::Clear;
-        }
-        let range = if unit.attack_range > 0.0 {
-            Some(unit.attack_range)
-        } else {
-            let Some(concrete_target) = self.concrete_attack_target(unit.base.player_id, target.id)
-            else {
-                return CombatMotion::Clear;
-            };
-            self.unit_tactic_range(unit, &concrete_target, gameplay, false)
-        };
-        combat_motion(unit.base.position, target, range)
     }
 
     fn concrete_attack_target(
@@ -862,12 +843,14 @@ impl World {
                     id: squad_id,
                     player_id: squad.base.player_id,
                     position: squad.base.position,
+                    obstruction_radius: self.squad_obstruction_radius(squad_id),
                 });
             }
             return Some(TargetSnapshot {
                 id: requested_id,
                 player_id: unit.base.player_id,
                 position: unit.base.position,
+                obstruction_radius: unit.obstruction_radius(),
             });
         }
         let squad = self.squads.get(requested_id).filter(|squad| {
@@ -880,50 +863,8 @@ impl World {
             id: requested_id,
             player_id: squad.base.player_id,
             position: squad.base.position,
+            obstruction_radius: self.squad_obstruction_radius(requested_id),
         })
-    }
-
-    fn squad_tactic_range(
-        &self,
-        squad: &Squad,
-        target: &ConcreteTargetSnapshot,
-        gameplay: &GameplayCatalog,
-    ) -> Option<f32> {
-        let automatic = squad.is_auto_attack_engagement();
-        squad
-            .unit_ids
-            .iter()
-            .filter_map(|&unit_id| self.units.get(unit_id))
-            .filter_map(|unit| self.unit_tactic_range(unit, target, gameplay, automatic))
-            .reduce(f32::max)
-    }
-
-    fn unit_tactic_range(
-        &self,
-        unit: &Unit,
-        target: &ConcreteTargetSnapshot,
-        gameplay: &GameplayCatalog,
-        automatic: bool,
-    ) -> Option<f32> {
-        let action = self.selected_ranged_action(unit, target, gameplay, automatic)?;
-        let range = action
-            .weapon
-            .max_range
-            .filter(|range| range.is_finite() && *range >= 0.0)
-            .map(|range| {
-                self.get_player(unit.base.player_id)
-                    .map_or(range, |player| {
-                        player.technologies.weapon_range(
-                            unit.logical_proto_object_name(),
-                            &action.weapon.name,
-                            range,
-                        )
-                    })
-            })?;
-        Some(
-            self.charged_action_range(unit, target, &action.action.name, range, gameplay)
-                * unit.weapon_range_scalar,
-        )
     }
 
     fn selected_unit_attack_profile<'gameplay>(

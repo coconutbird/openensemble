@@ -24,6 +24,8 @@ pub struct AbilityGameplay {
     ammunition_cost: f32,
     squad_mode: Option<SquadMode>,
     keep_squad_mode: bool,
+    movement_speed_modifier: Option<f32>,
+    mode_movement_modifier: bool,
     recovery_start: Option<AbilityRecoveryStart>,
     recovery_type: Option<RecoveryType>,
     recovery_time: f32,
@@ -79,6 +81,16 @@ impl AbilityGameplay {
     #[must_use]
     pub const fn keeps_squad_mode(&self) -> bool {
         self.keep_squad_mode
+    }
+
+    /// Return a persistent squad-mode movement scalar, when authored.
+    #[must_use]
+    pub const fn mode_movement_modifier(&self) -> Option<f32> {
+        if self.mode_movement_modifier {
+            self.movement_speed_modifier
+        } else {
+            None
+        }
     }
 
     /// Return the authored recovery-start event.
@@ -143,6 +155,13 @@ pub(super) fn collect_abilities(database: &Database) -> Vec<AbilityGameplay> {
                     .as_deref()
                     .and_then(SquadMode::from_authored),
                 keep_squad_mode: ability.keep_squad_mode.unwrap_or(false),
+                movement_speed_modifier: ability
+                    .movement_speed_modifier
+                    .filter(|modifier| modifier.is_finite() && *modifier > 0.0),
+                mode_movement_modifier: ability
+                    .movement_modifier_type
+                    .as_deref()
+                    .is_some_and(|kind| kind.eq_ignore_ascii_case("Mode")),
                 recovery_start: parse_recovery_start(ability.recover_start.as_deref()),
                 recovery_type: ability
                     .recover_type

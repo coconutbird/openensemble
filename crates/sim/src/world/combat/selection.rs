@@ -15,7 +15,49 @@ impl World {
         gameplay: &'gameplay GameplayCatalog,
         automatic: bool,
     ) -> Option<RangedAction<'gameplay>> {
-        let (squad_mode, requested_ability_id) = unit
+        self.selected_ranged_action_for_mode(unit, target, gameplay, automatic, None)
+    }
+
+    pub(super) fn selected_ranged_action_for_mode<'gameplay>(
+        &self,
+        unit: &Unit,
+        target: &ConcreteTargetSnapshot,
+        gameplay: &'gameplay GameplayCatalog,
+        automatic: bool,
+        mode_override: Option<SquadMode>,
+    ) -> Option<RangedAction<'gameplay>> {
+        self.selected_ranged_action_with_ammunition_gate(
+            unit,
+            target,
+            gameplay,
+            automatic,
+            mode_override,
+            true,
+        )
+    }
+
+    pub(super) fn selected_ranged_action_ignoring_ammunition<'gameplay>(
+        &self,
+        unit: &Unit,
+        target: &ConcreteTargetSnapshot,
+        gameplay: &'gameplay GameplayCatalog,
+        automatic: bool,
+    ) -> Option<RangedAction<'gameplay>> {
+        self.selected_ranged_action_with_ammunition_gate(
+            unit, target, gameplay, automatic, None, false,
+        )
+    }
+
+    fn selected_ranged_action_with_ammunition_gate<'gameplay>(
+        &self,
+        unit: &Unit,
+        target: &ConcreteTargetSnapshot,
+        gameplay: &'gameplay GameplayCatalog,
+        automatic: bool,
+        mode_override: Option<SquadMode>,
+        require_ammunition: bool,
+    ) -> Option<RangedAction<'gameplay>> {
+        let (current_mode, requested_ability_id) = unit
             .squad_id
             .and_then(|id| self.squads.get(id))
             .map_or((SquadMode::Normal, unit.attack_ability_id), |squad| {
@@ -26,6 +68,7 @@ impl World {
                         .flatten(),
                 )
             });
+        let squad_mode = mode_override.unwrap_or(current_mode);
         let ability_id = requested_ability_id.filter(|requested| {
             gameplay
                 .resolve_order_ability(&unit.proto_object_name, *requested)
@@ -82,7 +125,7 @@ impl World {
                 .get_player(unit.base.player_id)
                 .map(|player| &player.technologies);
             unit.actions.is_enabled(&action.name, !player_enabled)
-                && ammunition::can_select(unit, profile, technologies)
+                && (!require_ammunition || ammunition::can_select(unit, profile, technologies))
         })
     }
 

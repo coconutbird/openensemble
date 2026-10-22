@@ -157,13 +157,29 @@ impl World {
     }
 
     pub(crate) fn refund_production_for_removed_unit(&mut self, unit: &Unit) {
-        for task in unit.production.tasks() {
+        let tasks = unit.production.tasks().cloned().collect::<Vec<_>>();
+        self.refund_production_tasks(unit.base.id, tasks);
+    }
+
+    pub(crate) fn clear_building_production_queue(&mut self, building_id: EntityId) {
+        let tasks = self
+            .get_building_mut(building_id)
+            .map_or_else(Vec::new, |building| building.production.take_tasks());
+        self.refund_production_tasks(building_id, tasks);
+    }
+
+    fn refund_production_tasks(
+        &mut self,
+        building_id: EntityId,
+        tasks: impl IntoIterator<Item = ProductionTask>,
+    ) {
+        for task in tasks {
             let trigger_state = task.trigger_state();
-            match task {
+            match &task {
                 ProductionTask::Research(task) => {
                     self.finish_research_assignment(
                         task.player_id,
-                        unit.base.id,
+                        building_id,
                         task.technology_id,
                     );
                     self.refund_cost(task.player_id, &task.cost);

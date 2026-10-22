@@ -6,6 +6,7 @@
 mod ambient_life;
 mod capture;
 mod carpet_bomb;
+mod change_mode;
 mod cloak;
 mod cryo;
 mod detonate;
@@ -36,6 +37,8 @@ pub(crate) use ambient_life::{
 };
 pub(crate) use carpet_bomb::CarpetBombOrder;
 pub use carpet_bomb::SquadCarpetBombPhase;
+pub use change_mode::SquadChangeModePhase;
+pub(crate) use change_mode::{SquadChangeModeResume, SquadModeOrder};
 pub(crate) use cloak::{CloakModifiers, SquadCloak};
 pub use cryo::SquadCryoState;
 pub(crate) use cryo::{SquadCryo, SquadCryoConfig, SquadCryoEffect};
@@ -129,6 +132,10 @@ pub struct Squad {
     pub attack_range: f32,
     /// Current retail squad mode used by tactic target rules.
     pub mode: SquadMode,
+    /// Uninterruptible transition to another retail squad mode.
+    pub(crate) change_mode: change_mode::SquadChangeMode,
+    /// Persistent movement scalar installed by a mode-changing ability.
+    mode_movement_modifier: f32,
     /// Ability database index requested by the current attack order.
     pub attack_ability_id: Option<u8>,
     /// Active movement, attack, or command-ability recovery channel.
@@ -187,6 +194,8 @@ pub struct Squad {
     pub(crate) leash: leash::SquadLeash,
     /// Persistent retail flag set by the legacy carpet-bomb action.
     ignore_leash: bool,
+    /// Whether this squad is excluded from the player's squad-AI work rotation.
+    pub(crate) ignore_ai: bool,
     /// Whether movement keeps the squad facing opposite its travel direction.
     reverse_move: bool,
     /// Units in this squad, sorted by entity ID for deterministic iteration.
@@ -249,6 +258,8 @@ impl Default for Squad {
             attack_target: None,
             attack_range: 0.0,
             mode: SquadMode::Normal,
+            change_mode: change_mode::SquadChangeMode::default(),
+            mode_movement_modifier: 1.0,
             attack_ability_id: None,
             recovery: SquadRecovery::default(),
             shields: SquadShields::default(),
@@ -278,6 +289,7 @@ impl Default for Squad {
             leash_distance: 0.0,
             leash: leash::SquadLeash::default(),
             ignore_leash: false,
+            ignore_ai: false,
             reverse_move: false,
             unit_ids: Vec::new(),
             population_costs: Vec::new(),
@@ -432,6 +444,7 @@ impl Squad {
     /// Issue a move order to the given position.
     pub fn move_to(&mut self, target: Vec3) {
         if !self.base.is_mobile()
+            || !self.can_accept_movement_order()
             || self.garrison.is_garrisoned()
             || self.is_raging()
             || self.is_being_pulled()
@@ -457,10 +470,11 @@ impl Squad {
 
     /// Remove every authoritative movement, combat, and containment order.
     pub(crate) fn remove_all_orders(&mut self) {
-        if self.is_jumping() {
+        if self.is_jumping() || self.is_changing_mode() {
             return;
         }
         self.garrison.cancel_pending();
+        self.clear_mode_order_automation();
         self.cancel_scripted_move_orders();
         self.move_target = None;
         self.attack_target = None;
@@ -495,6 +509,7 @@ impl Squad {
             || self.is_raging()
             || self.is_being_pulled()
             || self.is_jumping()
+            || self.is_changing_mode()
             || target.is_invalid()
         {
             return false;
@@ -507,6 +522,7 @@ impl Squad {
         self.carpet_bomb.cancel();
         self.gather.cancel();
         self.capture.cancel();
+        self.set_attack_mode_order(None);
         if self.attack_target != Some(target) {
             self.clear_experience_bank();
         }
@@ -525,7 +541,10 @@ impl Squad {
     }
 
     pub(crate) fn chase_attack_target(&mut self, target: Vec3) {
-        if self.state == SquadState::Attacking && self.base.is_mobile() {
+        if self.state == SquadState::Attacking
+            && self.base.is_mobile()
+            && self.can_chase_attack_target()
+        {
             self.move_target = Some(target);
         }
     }
@@ -548,11 +567,17 @@ impl Squad {
 
     /// Stop moving.
     pub fn stop(&mut self) {
-        if self.is_jumping() {
+        if self.is_jumping() || self.is_changing_mode() {
             return;
         }
         let interrupted_movement = self.state == SquadState::Moving || self.move_target.is_some();
+        let relock = self
+            .active_move_mode_order()
+            .filter(|order| self.mode != order.target_mode());
         self.cancel_scripted_move_orders();
+        if let Some(order) = relock {
+            self.change_mode.schedule_move_relock(order);
+        }
         self.move_target = None;
         self.base.velocity = Vec3::ZERO;
         if self.state == SquadState::Moving {
@@ -581,6 +606,7 @@ impl Squad {
         self.capture.cancel();
         self.pull.cancel();
         self.jump.cancel();
+        self.cancel_change_mode();
         self.base.velocity = Vec3::ZERO;
         self.cancel_idle_action();
     }
@@ -773,7 +799,7 @@ impl Squad {
     ) -> bool {
         const ARRIVAL_THRESHOLD: f32 = 0.5;
 
-        if !self.base.is_mobile() {
+        if !self.base.is_mobile() || !self.can_accept_movement_order() {
             self.base.velocity = Vec3::ZERO;
             return false;
         }
@@ -809,8 +835,10 @@ impl Squad {
             self.base.forward
         };
         let current_speed = self.base.velocity.length();
-        let maximum_speed =
-            self.speed * self.cryo_movement_modifier() * self.ambient_life_movement_modifier();
+        let maximum_speed = self.speed
+            * self.mode_movement_modifier
+            * self.cryo_movement_modifier()
+            * self.ambient_life_movement_modifier();
         let maximum_speed = speed_limit.map_or(maximum_speed, |limit| maximum_speed.min(limit));
         let desired_speed = desired_speed(maximum_speed, self.acceleration, distance);
         let next_speed = approach_speed(current_speed, desired_speed, self.acceleration, dt);
@@ -838,6 +866,7 @@ impl Squad {
             return;
         }
         if self.base.is_mobile()
+            && self.can_accept_movement_order()
             && !self.garrison.is_garrisoned()
             && (self.state == SquadState::Moving
                 || (self.state == SquadState::Attacking && self.move_target.is_some()))

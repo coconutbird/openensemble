@@ -70,6 +70,7 @@ pub(super) fn orient_for_attack(
     check_hit_orientation: bool,
     elapsed: f32,
 ) -> bool {
+    unit.set_turning_in_place(false);
     if profile.orientation.skips_orientation_check() {
         return true;
     }
@@ -154,6 +155,10 @@ fn turn_body_toward(unit: &mut Unit, target_world: Vec3, elapsed: f32) -> bool {
         unit.base.set_forward(desired);
         return true;
     }
+    if !unit.has_active_move_action() {
+        unit.set_turning_in_place_right(current.cross(desired).y > 0.0);
+        unit.set_turning_in_place(true);
+    }
     let maximum = unit.turn_rate_degrees.max(0.0).to_radians() * elapsed.max(0.0);
     if maximum <= 0.0 {
         return false;
@@ -186,5 +191,21 @@ mod tests {
         assert!(!turn_body_toward(&mut unit, Vec3::X * 10.0, 0.5));
         assert!(unit.base.forward.abs_diff_eq(Vec3::X, 1.0e-5));
         assert!(turn_body_toward(&mut unit, Vec3::X * 10.0, 0.5));
+    }
+
+    #[test]
+    fn stationary_primary_attack_sets_and_clears_retail_turn_direction() {
+        let mut unit = Unit::default();
+        unit.configure_turn_in_place(true);
+        unit.base.set_forward(Vec3::Z);
+        unit.turn_rate_degrees = 90.0;
+
+        assert!(!turn_body_toward(&mut unit, Vec3::X * 10.0, 0.5));
+        assert_eq!(
+            unit.turn_in_place_direction(),
+            Some(crate::TurnInPlaceDirection::Right)
+        );
+        unit.set_turning_in_place(false);
+        assert_eq!(unit.turn_in_place_direction(), None);
     }
 }

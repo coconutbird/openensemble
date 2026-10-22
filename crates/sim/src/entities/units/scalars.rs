@@ -124,6 +124,14 @@ impl UnitDataScalar {
 }
 
 impl Unit {
+    pub(crate) fn configure_authored_line_of_sight(&mut self, radius: f32) {
+        self.authored_line_of_sight = radius;
+    }
+
+    pub(crate) const fn authored_line_of_sight(&self) -> f32 {
+        self.authored_line_of_sight
+    }
+
     pub(crate) fn set_join_damage_modifiers(&mut self, damage: f32, damage_taken: f32) {
         self.join_damage_multiplier = damage;
         self.join_damage_taken_multiplier = damage_taken;

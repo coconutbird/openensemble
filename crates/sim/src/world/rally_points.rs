@@ -22,13 +22,7 @@ impl World {
         };
         player.set_rally_point(rally_point);
 
-        let base_anchors = self
-            .bases
-            .values()
-            .filter(|base| base.player_id == player_id)
-            .map(|base| base.anchor_building_id)
-            .collect::<Vec<_>>();
-        for anchor_id in base_anchors {
+        for anchor_id in self.player_rally_anchor_ids(player_id) {
             if let Some(anchor) = self.units.get_mut(anchor_id) {
                 anchor.clear_rally_point(player_id);
             }
@@ -117,16 +111,11 @@ impl World {
         })
     }
 
-    fn check_player_rally_point(&mut self, player_id: PlayerId) {
+    pub(in crate::world) fn check_player_rally_point(&mut self, player_id: PlayerId) {
         if self.player_rally_point(player_id).is_none() {
             return;
         }
-        let base_anchors = self
-            .bases
-            .values()
-            .filter(|base| base.player_id == player_id)
-            .map(|base| base.anchor_building_id)
-            .collect::<Vec<_>>();
+        let base_anchors = self.player_rally_anchor_ids(player_id);
         if base_anchors.is_empty() {
             return;
         }
@@ -138,6 +127,21 @@ impl World {
         if all_have_rally_points && let Some(player) = self.get_player_mut(player_id) {
             player.clear_rally_point();
         }
+    }
+
+    fn player_rally_anchor_ids(&self, player_id: PlayerId) -> Vec<EntityId> {
+        let mut anchors = self
+            .bases
+            .values()
+            .filter(|base| base.player_id == player_id)
+            .map(|base| base.anchor_building_id)
+            .collect::<Vec<_>>();
+        if let Some(player) = self.get_player(player_id) {
+            anchors.extend(player.goto_base_units().iter().copied());
+        }
+        anchors.sort_unstable();
+        anchors.dedup();
+        anchors
     }
 }
 

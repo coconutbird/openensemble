@@ -1,5 +1,6 @@
 //! Authoritative squad movement-command state.
 
+use super::change_mode::SquadModeOrder;
 use super::{Squad, SquadState};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
@@ -11,12 +12,17 @@ use std::collections::VecDeque;
 struct SquadMoveOrder {
     target: Vec3,
     attack_move: bool,
+    mode_order: Option<SquadModeOrder>,
 }
 
 impl SquadMoveOrder {
     fn hash_state(self, checksum: &mut SyncChecksum) {
         checksum.hash_vec3(self.target.x, self.target.y, self.target.z);
         checksum.hash_u32(u32::from(self.attack_move));
+        checksum.hash_u32(u32::from(self.mode_order.is_some()));
+        if let Some(order) = self.mode_order {
+            order.hash_state(checksum);
+        }
     }
 }
 
@@ -66,10 +72,23 @@ impl Squad {
         attack_move: bool,
         queue: bool,
     ) -> bool {
+        self.issue_scripted_path_with_mode(targets, attack_move, queue, None)
+    }
+
+    pub(crate) fn issue_scripted_path_with_mode(
+        &mut self,
+        targets: &[Vec3],
+        attack_move: bool,
+        queue: bool,
+        mode_order: Option<SquadModeOrder>,
+    ) -> bool {
         if targets.is_empty()
             || targets.iter().any(|target| !target.is_finite())
             || !self.is_alive()
             || !self.base.is_mobile()
+            || !(self.can_accept_movement_order()
+                || mode_order.is_some() && self.mode == crate::entities::SquadMode::Lockdown)
+            || self.is_changing_mode()
             || self.garrison.is_garrisoned()
         {
             return false;
@@ -79,6 +98,7 @@ impl Squad {
         let mut orders = targets.iter().copied().map(|target| SquadMoveOrder {
             target,
             attack_move,
+            mode_order,
         });
         self.garrison.cancel_pending();
         if queue
@@ -107,6 +127,7 @@ impl Squad {
 
     pub(crate) fn cancel_scripted_move_orders(&mut self) {
         self.orders.clear();
+        self.change_mode.clear_pending_move_relock();
     }
 
     /// Whether the active scripted movement order may acquire enemy targets.
@@ -149,7 +170,13 @@ impl Squad {
         }
         self.cancel_idle_action();
         let resume_attack_move = self.orders.auto_attack_origin.take().is_some();
+        let relock = self
+            .attack_mode_order()
+            .filter(|order| self.mode != order.target_mode());
         self.clear_attack_state();
+        if let Some(order) = relock {
+            self.change_mode.schedule_move_relock(order);
+        }
         self.move_target = None;
         self.base.velocity = Vec3::ZERO;
         if resume_attack_move && self.resume_active_move() {
@@ -169,8 +196,19 @@ impl Squad {
         if self.state == SquadState::Attacking {
             return;
         }
+        let completed_mode_order = self.orders.active_move.and_then(|order| order.mode_order);
         self.orders.active_move = None;
         self.orders.auto_attack_origin = None;
+        if let Some(order) = completed_mode_order
+            && self.mode != order.target_mode()
+        {
+            self.change_mode.schedule_move_relock(order);
+            if self.state == SquadState::Moving {
+                self.state = SquadState::Idle;
+            }
+            self.cancel_idle_action();
+            return;
+        }
         if !self.begin_next_queued_move() && self.state == SquadState::Moving {
             self.state = SquadState::Idle;
         }
@@ -188,7 +226,15 @@ impl Squad {
         self.start_moving_to(order.target);
     }
 
-    pub(super) fn begin_next_queued_move(&mut self) -> bool {
+    pub(crate) fn active_move_mode_order(&self) -> Option<SquadModeOrder> {
+        self.orders.active_move.and_then(|order| order.mode_order)
+    }
+
+    pub(crate) fn has_queued_move_orders(&self) -> bool {
+        !self.orders.queued_moves.is_empty()
+    }
+
+    pub(crate) fn begin_next_queued_move(&mut self) -> bool {
         let Some(order) = self.orders.queued_moves.pop_front() else {
             return false;
         };
@@ -196,7 +242,7 @@ impl Squad {
         true
     }
 
-    fn resume_active_move(&mut self) -> bool {
+    pub(super) fn resume_active_move(&mut self) -> bool {
         let Some(order) = self.orders.active_move else {
             return self.begin_next_queued_move();
         };
@@ -219,6 +265,7 @@ impl Squad {
         self.attack_range = 0.0;
         self.attack_ability_id = None;
         self.ability_used_unit_ids.clear();
+        self.change_mode.set_attack_order(None);
     }
 }
 

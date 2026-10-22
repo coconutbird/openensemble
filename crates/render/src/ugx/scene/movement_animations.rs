@@ -12,6 +12,9 @@ pub(super) enum MovementAnimation {
     Walk,
     Jog,
     Run,
+    TurnLeft,
+    TurnRight,
+    WalkIdle,
 }
 
 impl MovementAnimation {
@@ -21,7 +24,17 @@ impl MovementAnimation {
             Self::Walk => "Walk",
             Self::Jog => "Jog",
             Self::Run => "Run",
+            Self::TurnLeft => "TurnLeft",
+            Self::TurnRight => "TurnRight",
+            Self::WalkIdle => "WalkIdle",
         }
+    }
+
+    pub(super) const fn is_motion(self) -> bool {
+        matches!(
+            self,
+            Self::Walk | Self::Jog | Self::Run | Self::TurnLeft | Self::TurnRight
+        )
     }
 }
 
@@ -30,6 +43,8 @@ pub(super) struct MovementAnimationProfile {
     desired_velocity: f32,
     maximum_velocity: f32,
     no_action_override_move: bool,
+    turn_in_place: bool,
+    ik_transition_to_idle: bool,
 }
 
 impl MovementAnimationProfile {
@@ -43,11 +58,26 @@ impl MovementAnimationProfile {
             desired_velocity,
             maximum_velocity,
             no_action_override_move: has_flag(proto, "NoActionOverrideMove"),
+            turn_in_place: has_flag(proto, "TurnInPlace"),
+            ik_transition_to_idle: has_flag(proto, "IKTransitionToIdle"),
         }
     }
 
     pub(super) fn select(self, unit: &Unit, previous: MovementAnimation) -> MovementAnimation {
+        if self.turn_in_place
+            && let Some(direction) = unit.turn_in_place_direction()
+        {
+            return match direction {
+                sim::TurnInPlaceDirection::Left => MovementAnimation::TurnLeft,
+                sim::TurnInPlaceDirection::Right => MovementAnimation::TurnRight,
+            };
+        }
         if !unit.has_active_move_action() {
+            if self.ik_transition_to_idle
+                && (previous.is_motion() || previous == MovementAnimation::WalkIdle)
+            {
+                return MovementAnimation::WalkIdle;
+            }
             return MovementAnimation::Idle;
         }
 
@@ -102,7 +132,7 @@ fn has_flag(proto: &ProtoObject, name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use glam::Vec3;
-    use pipeline::database::hw1::ProtoObject;
+    use pipeline::database::hw1::{Database, ProtoObject};
 
     use super::{MovementAnimation, MovementAnimationProfile};
 
@@ -206,6 +236,74 @@ mod tests {
         assert_eq!(
             profile.lower_body_track(&unit, MovementAnimation::Walk, Some("Attack")),
             Some(MovementAnimation::Walk)
+        );
+    }
+
+    #[test]
+    fn turn_in_place_flag_projects_the_authoritative_source_direction() {
+        let proto = ProtoObject {
+            name: "turner".to_owned(),
+            dbid: Some(7),
+            object_class: Some("Unit".to_owned()),
+            flags: vec!["TurnInPlace".to_owned()],
+            velocity: Some(10.0),
+            turn_rate: Some(90.0),
+            ..ProtoObject::default()
+        };
+        let profile = MovementAnimationProfile::from_proto(&proto);
+        let mut database = Database::new();
+        database.objects.push(proto);
+        let mut world = sim::World::new();
+        world.init_players(1);
+        let unit_id = sim::spawn_object_at(&mut world, &database, 1, 7, Vec3::ZERO, Vec3::Z)
+            .expect("turn-in-place unit");
+        assert!(world.get_unit_mut(unit_id).unwrap().move_to(Vec3::X * 10.0));
+
+        world.update_entities(0.05);
+
+        assert_eq!(
+            profile.select(world.get_unit(unit_id).unwrap(), MovementAnimation::Idle),
+            MovementAnimation::TurnLeft
+        );
+    }
+
+    #[test]
+    fn ik_transition_to_idle_requests_walk_idle_until_motion_resumes() {
+        let profile = MovementAnimationProfile::from_proto(&ProtoObject {
+            flags: vec!["IKTransitionToIdle".to_owned()],
+            velocity: Some(10.0),
+            max_velocity: Some(15.0),
+            ..ProtoObject::default()
+        });
+        let idle = sim::Unit::default();
+
+        assert_eq!(
+            profile.select(&idle, MovementAnimation::Idle),
+            MovementAnimation::Idle
+        );
+        assert_eq!(
+            profile.select(&idle, MovementAnimation::Walk),
+            MovementAnimation::WalkIdle
+        );
+        assert_eq!(
+            profile.select(&idle, MovementAnimation::TurnRight),
+            MovementAnimation::WalkIdle
+        );
+        assert_eq!(
+            profile.select(&idle, MovementAnimation::WalkIdle),
+            MovementAnimation::WalkIdle
+        );
+        assert_eq!(
+            profile.select(&moving_unit(1.0), MovementAnimation::WalkIdle),
+            MovementAnimation::Walk
+        );
+    }
+
+    #[test]
+    fn ordinary_units_stop_directly_on_idle() {
+        assert_eq!(
+            profile().select(&sim::Unit::default(), MovementAnimation::Run),
+            MovementAnimation::Idle
         );
     }
 }

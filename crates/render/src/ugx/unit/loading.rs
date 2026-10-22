@@ -7,6 +7,7 @@ use pipeline::source::{AssetSource, StdFileProvider};
 
 use super::animation_tracks::{AnimationExitAction, LoadedAnimationSegment, LoadedAnimationTrack};
 use super::animations::{AnimationSelection, load_animation, select_animation};
+use super::auxiliary_animations::selected_request_index;
 use super::instance_attachment::{self, InstanceAttachment};
 use super::paths::canonical_model_path;
 use super::{
@@ -28,6 +29,7 @@ struct ActiveAnimation<'model> {
 struct ActiveAnimations<'model> {
     action: ActiveAnimation<'model>,
     movement: Option<ActiveAnimation<'model>>,
+    action_clock: super::ActionAnimationClock,
 }
 
 #[derive(Clone, Copy)]
@@ -47,6 +49,7 @@ pub(super) struct AttachmentOwner<'model> {
     pub(super) local_transform: Mat4,
     pub(super) instance_index: usize,
     animation_selections: ActiveAnimationSelections<'model>,
+    auxiliary_animation_index: Option<usize>,
     pub(super) depth: usize,
 }
 
@@ -76,6 +79,7 @@ impl AttachmentOwner<'_> {
                 .animation_selections
                 .movement
                 .and_then(AnimationSelection::asset_index),
+            auxiliary_animation_index: self.auxiliary_animation_index,
         }
     }
 }
@@ -91,7 +95,19 @@ pub(super) fn load_model_definition(
 ) -> Result<LoadedUnit, UnitLoadError> {
     let canonical_path = canonical_model_path(path);
     let model = load_cached_model(source, context.cache, &definition.name, &canonical_path)?;
-    let active = load_active_animations(source, context, definition, parent, depth);
+    let explicit_auxiliary_animation =
+        selected_request_index(&context.auxiliary_animations, &definition.name, None);
+    let auxiliary_animation_index = explicit_auxiliary_animation
+        .or_else(|| parent.and_then(|parent| parent.auxiliary_animation_index));
+    let active = load_active_animations(
+        source,
+        context,
+        definition,
+        parent,
+        depth,
+        auxiliary_animation_index,
+        explicit_auxiliary_animation.is_some(),
+    );
     let action_pose = active
         .action
         .track
@@ -133,6 +149,7 @@ pub(super) fn load_model_definition(
                 animation.track.definition_indices.as_slice()
             }),
         },
+        auxiliary_animation_index,
         depth,
     };
     let mut children = load_persistent_attachments(source, context, owner)?;
@@ -143,6 +160,7 @@ pub(super) fn load_model_definition(
             model,
             pose,
             action_animation: active.action.track,
+            action_clock: active.action_clock,
             movement_animation: active.movement.map(|animation| animation.track),
             local_transform,
             attachment: instance_attachment,
@@ -159,17 +177,35 @@ fn load_active_animations<'model>(
     definition: &'model VisualModel,
     parent: Option<ParentAttachment<'_>>,
     depth: usize,
+    auxiliary_animation_index: Option<usize>,
+    auxiliary_starts_here: bool,
 ) -> ActiveAnimations<'model> {
-    let synchronized = parent.is_some_and(|parent| parent.attachment.sync_anims.unwrap_or(false));
-    let requested_action = context
-        .animation_type
-        .clone()
-        .unwrap_or_else(|| "Idle".to_owned());
-    let exact_action_asset = (depth == 0)
-        .then(|| context.animation_asset.clone())
-        .flatten();
-    let action_clock = context.uses_simulation_clock;
-    let action_roll = context.animation_roll;
+    let synchronized = !auxiliary_starts_here
+        && parent.is_some_and(|parent| parent.attachment.sync_anims.unwrap_or(false));
+    let auxiliary = auxiliary_animation_index
+        .and_then(|index| context.auxiliary_animations.get(index))
+        .cloned();
+    let requested_action = auxiliary.as_ref().map_or_else(
+        || {
+            context
+                .animation_type
+                .clone()
+                .unwrap_or_else(|| "Idle".to_owned())
+        },
+        |request| request.animation_type.clone(),
+    );
+    let exact_action_asset = auxiliary.as_ref().map_or_else(
+        || {
+            (depth == 0)
+                .then(|| context.animation_asset.clone())
+                .flatten()
+        },
+        |request| Some(request.animation_asset.clone()),
+    );
+    let uses_simulation_clock = auxiliary.is_some() || context.uses_simulation_clock;
+    let action_roll = auxiliary
+        .as_ref()
+        .map_or(context.animation_roll, |request| request.animation_roll);
     let action = load_active_animation(
         source,
         context,
@@ -181,29 +217,43 @@ fn load_active_animations<'model>(
             preferred_index: synchronized
                 .then(|| parent.and_then(|parent| parent.action_asset_index))
                 .flatten(),
-            uses_simulation_clock: action_clock,
+            uses_simulation_clock,
             animation_roll: action_roll,
         },
     );
     let movement_roll = context.movement_animation_roll;
-    let movement = context.movement_animation_type.clone().map(|requested| {
-        load_active_animation(
-            source,
-            context,
-            definition,
-            depth,
-            TrackRequest {
-                animation_type: &requested,
-                exact_asset: None,
-                preferred_index: synchronized
-                    .then(|| parent.and_then(|parent| parent.movement_asset_index))
-                    .flatten(),
-                uses_simulation_clock: false,
-                animation_roll: movement_roll,
-            },
-        )
+    let movement = auxiliary
+        .is_none()
+        .then(|| context.movement_animation_type.clone())
+        .flatten()
+        .map(|requested| {
+            load_active_animation(
+                source,
+                context,
+                definition,
+                depth,
+                TrackRequest {
+                    animation_type: &requested,
+                    exact_asset: None,
+                    preferred_index: synchronized
+                        .then(|| parent.and_then(|parent| parent.movement_asset_index))
+                        .flatten(),
+                    uses_simulation_clock: false,
+                    animation_roll: movement_roll,
+                },
+            )
+        });
+    let action_clock = auxiliary.map_or(super::ActionAnimationClock::Placement, |request| {
+        super::ActionAnimationClock::Auxiliary {
+            action_name: request.action_name,
+            duration_seconds: request.duration_seconds,
+        }
     });
-    ActiveAnimations { action, movement }
+    ActiveAnimations {
+        action,
+        movement,
+        action_clock,
+    }
 }
 
 fn load_active_animation<'model>(
@@ -483,6 +533,7 @@ fn load_model_file(
             model,
             pose,
             action_animation: LoadedAnimationTrack::default(),
+            action_clock: super::ActionAnimationClock::default(),
             movement_animation: None,
             local_transform,
             attachment: Some(InstanceAttachment::new(

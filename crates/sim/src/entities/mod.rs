@@ -31,18 +31,21 @@ pub use projectiles::Projectile;
 pub use squads::{
     AmbientLifeBehavior, JoinKind, JoinMergeType, PowerTransportPhase, RecoveryType,
     RepairOtherPhase, Squad, SquadArchetype, SquadBoardState, SquadCarpetBombPhase,
-    SquadContainmentState, SquadCryoState, SquadDetonatePhase, SquadFormation, SquadGarrison,
-    SquadMergeState, SquadMode, SquadPowerTransport, SquadPullPhase, SquadRecovery, SquadShields,
-    SquadState, SquadTrainedAirBirth, SquadTransportFlyIn, TransportFlyInPhase,
+    SquadChangeModePhase, SquadContainmentState, SquadCryoState, SquadDetonatePhase,
+    SquadFormation, SquadGarrison, SquadMergeState, SquadMode, SquadPowerTransport, SquadPullPhase,
+    SquadRecovery, SquadShields, SquadState, SquadTrainedAirBirth, SquadTransportFlyIn,
+    TransportFlyInPhase,
 };
+pub(crate) use squads::{SquadChangeModeResume, SquadModeOrder};
 pub use units::{
     AIR_TRAFFIC_LANDING_SPOT_COUNT, AirTrafficControl, AirTrafficLandingSpot, AircraftCrashPhase,
     BombPhase, BuildingProduction, CapturePhase, ConstructionKind, ConstructionProgress,
     ConstructionTask, EnergyShieldPhase, EnergyShieldPresentationKind, FlightControllerKind,
     GatherPhase, GroundMovePhase, HealPhase, InfectionExposure, InfectionPhase, RallyPoint,
     ResearchProgress, ResearchTask, ShieldCoverage, TowerWallAction, TrainedSquadBirth,
-    TrainingKind, TrainingProgress, TrainingRecharge, TrainingTask, Unit, UnitActions,
-    UnitAmmunition, UnitArchetype, UnitDataScalar, UnitDetonatePhase, UnitEnergyShieldAction,
-    UnitGarrison, UnitKind, UnitShields, UnitState, UnitVisualMeshMask,
+    TrainingKind, TrainingProgress, TrainingRecharge, TrainingTask, TurnInPlaceDirection,
+    TurretAttackKind, TurretAttackState, Unit, UnitActions, UnitAmmunition, UnitArchetype,
+    UnitChangeModePhase, UnitDataScalar, UnitDetonatePhase, UnitEnergyShieldAction, UnitGarrison,
+    UnitKind, UnitShields, UnitState, UnitTurretCombat, UnitVisualMeshMask,
 };
-pub(crate) use units::{AttackAdvance, UnitScalarModifiers};
+pub(crate) use units::{AttackActionResult, AttackAdvance, TurretAttackPhase, UnitScalarModifiers};

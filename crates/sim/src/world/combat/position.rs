@@ -1,9 +1,11 @@
 //! Ground-position variant of retail's shared ranged attack executor.
 
-use super::helpers::{scaled_launch_damage, selected_range, xz_distance_squared};
+use super::helpers::{scaled_launch_damage, selected_range};
+use super::range::{AttackRange, AttackRangeRelation};
 use super::{ConcreteTargetSnapshot, FireEvent, World, hardpoints};
+use crate::entities::{AttackActionResult, AttackAdvance};
 use crate::entity_id::EntityId;
-use crate::gameplay::{AttackAnimationEventKind, GameplayCatalog};
+use crate::gameplay::{AttackAnimationEventKind, AttackProfile, GameplayCatalog};
 use glam::Vec3;
 
 /// Result of advancing one unit's attack against a ground position.
@@ -39,7 +41,13 @@ impl World {
             return PositionAttackStatus::Unavailable;
         };
         let range = selected_range(0.0, attacker.authored_range, attacker.range_scalar);
-        if xz_distance_squared(attacker.position, target.position) > range * range {
+        if AttackRange::new(profile.min_range, range).relation(
+            attacker.position,
+            attacker.obstruction_radius,
+            target.position,
+            0.0,
+        ) != AttackRangeRelation::Within
+        {
             self.stop_unit_firing(&[attacker_id]);
             return PositionAttackStatus::Waiting;
         }
@@ -108,11 +116,31 @@ impl World {
             Some(event)
         });
         self.resolve_fire_events(fire_events.collect(), gameplay);
-        if advance.completed_cycles > 0 {
-            PositionAttackStatus::Completed
-        } else {
-            PositionAttackStatus::Waiting
+        let status = position_attack_status(&advance, profile);
+        if advance.result.is_some()
+            && let Some(unit) = self.units.get_mut(attacker_id)
+        {
+            unit.combat.reset();
         }
+        status
+    }
+}
+
+fn position_attack_status(
+    advance: &AttackAdvance,
+    profile: &AttackProfile,
+) -> PositionAttackStatus {
+    if profile.allows_opportunity_completion() {
+        match advance.result {
+            Some(AttackActionResult::Done) => return PositionAttackStatus::Completed,
+            Some(AttackActionResult::Failed) => return PositionAttackStatus::Unavailable,
+            None => {}
+        }
+    }
+    if advance.completed_cycles > 0 {
+        PositionAttackStatus::Completed
+    } else {
+        PositionAttackStatus::Waiting
     }
 }
 

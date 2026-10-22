@@ -47,6 +47,9 @@ impl World {
             return;
         };
         self.update_power_visual_lifetimes();
+        if let Some(gameplay) = gameplay {
+            self.grant_secondary_turret_scan_tokens(gameplay);
+        }
         if let Some(database) = database {
             self.update_active_powers(dt, database, gameplay);
             self.resolve_pending_rage_kills(Some(database));
@@ -87,6 +90,7 @@ impl World {
             self.update_heals(dt, database, gameplay);
         }
         if let Some(gameplay) = gameplay {
+            self.update_change_modes(dt, gameplay);
             self.update_gathering(dt, gameplay);
             self.update_ambient_life(dt, gameplay);
             self.update_wanders(dt, gameplay);

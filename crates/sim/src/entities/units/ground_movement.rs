@@ -78,37 +78,38 @@ impl UnitGroundMove {
         turn_rate_degrees: f32,
         reverse: bool,
         dt: f32,
-    ) {
+    ) -> bool {
         if !valid_step(dt) || self.phase == GroundMovePhase::Inactive {
-            return;
+            return false;
         }
         if self.phase == GroundMovePhase::Failed {
             base.velocity = Vec3::ZERO;
-            return;
+            return false;
         }
         if self.phase == GroundMovePhase::Pathing {
             self.retry_attempts = self.retry_attempts.saturating_add(1);
             if self.retry_attempts > MAX_RETRY_ATTEMPTS {
                 self.phase = GroundMovePhase::Failed;
                 base.velocity = Vec3::ZERO;
-                return;
+                return false;
             }
             self.phase = GroundMovePhase::Working;
         }
         let Some(target) = self.target else {
             self.cancel();
             base.velocity = Vec3::ZERO;
-            return;
+            return false;
         };
         let to_target = planar(target - base.position);
         let distance = to_target.length();
         if distance < ACTION_COMPLETE_EPSILON {
             finish_at_target(self, base, target);
-            return;
+            return false;
         }
 
         let direction = to_target / distance;
         let desired_facing = if reverse { -direction } else { direction };
+        let turning = source_turning_flag(base.forward, desired_facing);
         let velocity = if self.squad_action_working {
             self.action_velocity
         } else {
@@ -126,12 +127,13 @@ impl UnitGroundMove {
         let travel_direction = if reverse { -facing } else { facing };
         if distance_change >= distance && travel_direction.dot(direction) > 0.999 {
             finish_at_target(self, base, target);
-            return;
+            return false;
         }
 
         base.set_forward(facing);
         base.position += travel_direction * distance_change;
         base.velocity = travel_direction * (distance_change / dt);
+        turning
     }
 
     pub(crate) const fn phase(self) -> GroundMovePhase {
@@ -183,6 +185,7 @@ impl Unit {
             self.base.velocity = Vec3::ZERO;
         }
         self.ground_move.cancel();
+        self.set_turning_in_place(false);
     }
 
     pub(crate) fn advance_squad_ground_move(&mut self, dt: f32) {
@@ -192,13 +195,14 @@ impl Unit {
         } else {
             self.speed
         } * self.effective_velocity_scalar();
-        self.ground_move.advance(
+        let turning = self.ground_move.advance(
             &mut self.base,
             desired_velocity,
             self.turn_rate_degrees,
             reverse,
             dt,
         );
+        self.set_turning_in_place(turning);
     }
 
     /// Current per-unit ground movement phase owned by the squad action.
@@ -285,6 +289,23 @@ fn signed_angle(current: Vec3, desired: Vec3) -> f32 {
     cross_y.atan2(dot)
 }
 
+pub(super) fn source_turning_flag(current: Vec3, desired: Vec3) -> bool {
+    angle_around_y(desired) - angle_around_y(current) >= 5.0_f32.to_radians()
+}
+
+fn angle_around_y(vector: Vec3) -> f32 {
+    let vector = normalized_planar_or(vector, Vec3::Z);
+    if vector.x > ANGLE_EPSILON {
+        vector.z.clamp(-1.0, 1.0).acos()
+    } else if vector.x < -ANGLE_EPSILON {
+        std::f32::consts::TAU - vector.z.clamp(-1.0, 1.0).acos()
+    } else if vector.z < 0.0 {
+        std::f32::consts::PI
+    } else {
+        0.0
+    }
+}
+
 fn rotate_planar(vector: Vec3, angle: f32) -> Vec3 {
     let (sin, cos) = angle.sin_cos();
     Vec3::new(
@@ -342,6 +363,27 @@ mod tests {
         assert_factor(20.0, 0.5);
         assert_factor(40.0, 0.75);
         assert_factor(60.0, 1.0);
+    }
+
+    #[test]
+    fn source_move_turning_flag_keeps_its_unwrapped_direction_bug() {
+        assert!(source_turning_flag(Vec3::Z, Vec3::X));
+        assert!(!source_turning_flag(Vec3::X, Vec3::Z));
+    }
+
+    #[test]
+    fn source_move_turning_flag_preserves_the_default_left_animation_bit() {
+        let mut unit = Unit::default();
+        unit.configure_turn_in_place(true);
+        unit.base.set_forward(Vec3::Z);
+        unit.prepare_squad_ground_move(Vec3::X * 10.0, 10.0, true);
+
+        unit.advance_squad_ground_move(0.05);
+
+        assert_eq!(
+            unit.turn_in_place_direction(),
+            Some(crate::TurnInPlaceDirection::Left)
+        );
     }
 
     #[test]

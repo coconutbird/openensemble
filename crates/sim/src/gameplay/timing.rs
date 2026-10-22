@@ -1,6 +1,6 @@
 //! Retail attack timing derived from visual animation tags and UAX durations.
 
-use super::{RangedAction, unit_attacks::uses_ranged_attack_executor};
+use super::{RangedAction, unit_attacks::uses_attack_timing};
 use num_traits::ToPrimitive;
 use pipeline::database::hw1::tactics::{Action, TacticData, Weapon};
 use pipeline::database::hw1::visual::{Anim, Model, Visual};
@@ -177,6 +177,15 @@ impl AttackAmmunition {
     }
 }
 
+/// Retail ranged-action flags that control unit and squad completion.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AttackControlProfile {
+    /// Whether one completed animation reports `Done` instead of looping in place.
+    pub dont_loop_attack_animation: bool,
+    /// Whether the weapon's DPS ramp drains shields and makes its unit opportunity monitored.
+    pub shield_drain: bool,
+}
+
 /// Immutable attack values computed using retail's `computeAttackInfo` rules.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttackProfile {
@@ -211,6 +220,8 @@ pub struct AttackProfile {
     pub targets_foot_of_unit: bool,
     /// Whether persistent Dodge and Deflect actions may react to its projectile.
     pub projectile_reactions: ProjectileReactionFlags,
+    /// Minimum authored distance from the attacker's edge to the target center.
+    pub min_range: f32,
     /// Maximum authored weapon range.
     pub max_range: f32,
     /// Maximum target velocity considered by launch-time projectile leading.
@@ -219,6 +230,8 @@ pub struct AttackProfile {
     pub accuracy: AttackAccuracyProfile,
     /// Base damage applied for each Attack tag before live modifiers.
     pub damage_per_attack: f32,
+    /// Ranged-action completion and squad-opportunity monitoring flags.
+    pub control: AttackControlProfile,
     /// Ammunition consumption and depleted-action completion behavior.
     pub ammunition: AttackAmmunition,
     /// Weighted attack-animation variants in visual order.
@@ -249,6 +262,18 @@ pub struct PullAttackProfile {
 }
 
 impl AttackProfile {
+    /// Return whether retail lets this unit attack complete its squad opportunity.
+    #[must_use]
+    pub const fn allows_opportunity_completion(&self) -> bool {
+        self.control.dont_loop_attack_animation || self.control.shield_drain
+    }
+
+    /// Return whether a completed animation ends and restarts the unit opportunity.
+    #[must_use]
+    pub const fn dont_loop_attack_animation(&self) -> bool {
+        self.control.dont_loop_attack_animation
+    }
+
     /// Return retail's maximum Attack-tag count across animation variants.
     #[must_use]
     pub fn maximum_attacks_per_animation(&self) -> u32 {
@@ -309,13 +334,13 @@ pub(super) fn load_attack_profiles(
         profiles: BTreeMap::new(),
         issues: Vec::new(),
     };
-    let ranged_actions = tactics
+    let attack_actions = tactics
         .actions
         .iter()
-        .filter(|action| uses_ranged_attack_executor(action))
+        .filter(|action| uses_attack_timing(action))
         .filter_map(|action| resolve_action(tactics, action))
         .collect::<Vec<_>>();
-    if ranged_actions.is_empty() {
+    if attack_actions.is_empty() {
         return loaded;
     }
 
@@ -323,7 +348,7 @@ pub(super) fn load_attack_profiles(
         Ok(visual) => visual,
         Err(reason) => {
             loaded.issues.extend(
-                ranged_actions
+                attack_actions
                     .into_iter()
                     .map(|action| (action.action.name.clone(), reason.clone())),
             );
@@ -340,7 +365,7 @@ pub(super) fn load_attack_profiles(
         }
     });
 
-    for ranged in ranged_actions {
+    for ranged in attack_actions {
         match build_attack_profile(object, &visual, ranged, source, cache) {
             Ok(mut profile) => {
                 if profile.pull.is_some() {
@@ -471,19 +496,13 @@ fn build_attack_profile(
         friendly_fire: ranged.weapon.allow_friendly_fire == Some(true),
         targets_foot_of_unit: ranged.weapon.targets_foot_of_unit == Some(true),
         projectile_reactions: projectile_reaction_flags(ranged.weapon),
+        min_range: finite_nonnegative(ranged.weapon.min_range),
         max_range: finite_nonnegative(ranged.weapon.max_range),
         max_velocity_lead: finite_nonnegative(ranged.weapon.max_velocity_lead),
         accuracy: attack_accuracy_profile(ranged.weapon),
         damage_per_attack,
-        ammunition: if ranged.weapon.uses_ammo == Some(true) {
-            if ranged.action.stop_attacking_when_ammo_depleted == Some(true) {
-                AttackAmmunition::CompleteWhenDepleted
-            } else {
-                AttackAmmunition::FailWhenDepleted
-            }
-        } else {
-            AttackAmmunition::None
-        },
+        control: attack_control_profile(ranged.action, ranged.weapon),
+        ammunition: attack_ammunition(ranged.action, ranged.weapon),
         animations: variants,
         pre_attack_cooldown: cooldown_range(
             ranged.weapon.pre_attack_cooldown_min,
@@ -497,6 +516,28 @@ fn build_attack_profile(
         visual_ammo,
         uses_height_bonus_damage: ranged.weapon.enable_height_bonus_damage == Some(true),
     })
+}
+
+fn attack_control_profile(action: &Action, weapon: &Weapon) -> AttackControlProfile {
+    AttackControlProfile {
+        dont_loop_attack_animation: action.dont_loop_attack_anim == Some(true),
+        shield_drain: weapon
+            .dps_ramp
+            .as_ref()
+            .and_then(|ramp| ramp.shield_drain)
+            .unwrap_or(false),
+    }
+}
+
+fn attack_ammunition(action: &Action, weapon: &Weapon) -> AttackAmmunition {
+    if weapon.uses_ammo != Some(true) {
+        return AttackAmmunition::None;
+    }
+    if action.stop_attacking_when_ammo_depleted == Some(true) {
+        AttackAmmunition::CompleteWhenDepleted
+    } else {
+        AttackAmmunition::FailWhenDepleted
+    }
 }
 
 fn load_profile_animations(

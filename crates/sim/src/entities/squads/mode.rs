@@ -3,7 +3,7 @@
 /// A squad's current behavior mode.
 ///
 /// Discriminants match `BSquadAI` and the one-byte `BWorkCommand` field.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[repr(u8)]
 pub enum SquadMode {
     /// Ordinary movement and combat.

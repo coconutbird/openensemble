@@ -19,6 +19,7 @@ mod animation_events;
 mod animation_tracks;
 mod animations;
 mod attachment_only;
+mod auxiliary_animations;
 mod error;
 mod ik;
 mod instance_attachment;
@@ -36,6 +37,8 @@ use animation_tracks::{LoadedAnimationTrack, RenderedAnimationTrack};
 use animations::AnimationAssetCache;
 #[cfg(test)]
 use animations::canonical_animation_path;
+pub(super) use auxiliary_animations::AuxiliaryAnimationRequest;
+use auxiliary_animations::{ActionAnimationClock, OwnedAuxiliaryAnimationRequest};
 pub(super) use ik::{UnitAnimationFrame, UnitIkProfile};
 use instance_attachment::{AttachmentAnchor, InstanceAttachment};
 use paths::{canonical_art_path, canonical_model_path, model_asset_path};
@@ -47,6 +50,7 @@ struct UnitInstance {
     model: Arc<Model>,
     pose: ModelPose,
     action_animation: LoadedAnimationTrack,
+    action_clock: ActionAnimationClock,
     movement_animation: Option<LoadedAnimationTrack>,
     local_transform: Mat4,
     attachment: Option<InstanceAttachment>,
@@ -278,6 +282,12 @@ impl Unit {
             animation_roll: animation.animation_roll,
             movement_animation_type: animation.movement_animation_type.map(str::to_owned),
             movement_animation_roll: animation.movement_animation_roll,
+            auxiliary_animations: animation
+                .auxiliary_animations
+                .iter()
+                .copied()
+                .map(OwnedAuxiliaryAnimationRequest::from)
+                .collect(),
             cache,
             next_instance_index: 0,
         };
@@ -366,9 +376,12 @@ impl Unit {
         movement_animation: Option<&'unit str>,
     ) -> impl Iterator<Item = &'unit UnitAttachment> {
         self.attachments.iter().filter(move |attachment| {
-            attachment
-                .trigger
-                .matches_animations(action_animation, movement_animation)
+            auxiliary_animations::loaded_attachment_matches(
+                self,
+                attachment,
+                action_animation,
+                movement_animation,
+            )
         })
     }
 
@@ -398,6 +411,7 @@ struct UnitLoadContext<'visual, 'cache> {
     animation_roll: u64,
     movement_animation_type: Option<String>,
     movement_animation_roll: u64,
+    auxiliary_animations: Vec<OwnedAuxiliaryAnimationRequest>,
     cache: &'cache mut UnitAssetCache,
     next_instance_index: usize,
 }
@@ -410,6 +424,7 @@ pub(super) struct UnitAnimationRequest<'animation> {
     pub(super) animation_roll: u64,
     pub(super) movement_animation_type: Option<&'animation str>,
     pub(super) movement_animation_roll: u64,
+    pub(super) auxiliary_animations: &'animation [AuxiliaryAnimationRequest<'animation>],
 }
 
 #[derive(Clone, Copy)]
@@ -420,6 +435,7 @@ struct ParentAttachment<'instance> {
     attachment: &'instance Attachment,
     action_asset_index: Option<usize>,
     movement_asset_index: Option<usize>,
+    auxiliary_animation_index: Option<usize>,
 }
 
 fn load_named_model(
@@ -561,6 +577,7 @@ struct RenderedUnitInstance {
     model: Arc<Model>,
     pose: ModelPose,
     action_animation: RenderedAnimationTrack,
+    action_clock: ActionAnimationClock,
     movement_animation: Option<RenderedAnimationTrack>,
     attachment: Option<InstanceAttachment>,
     renderer: Renderer,
@@ -707,6 +724,7 @@ impl UnitRenderer {
                     action_animation: RenderedAnimationTrack::from_loaded(
                         &instance.action_animation,
                     ),
+                    action_clock: instance.action_clock.clone(),
                     movement_animation: instance
                         .movement_animation
                         .as_ref()
@@ -787,19 +805,6 @@ impl UnitRenderer {
                 visual_state,
             );
         }
-    }
-
-    pub(super) fn presentation_animation_duration(&self) -> f32 {
-        self.instances
-            .iter()
-            .find_map(|instance| {
-                instance
-                    .movement_animation
-                    .as_ref()
-                    .and_then(RenderedAnimationTrack::presentation_duration)
-                    .or_else(|| instance.action_animation.presentation_duration())
-            })
-            .unwrap_or_default()
     }
 
     fn animation_event(
@@ -953,6 +958,20 @@ impl UnitRenderer {
 
     pub(in crate::ugx) fn active_movement_animation_type(&self) -> Option<&str> {
         self.active_movement_animation.as_deref()
+    }
+
+    pub(in crate::ugx) fn attachment_matches_animations(
+        &self,
+        attachment: &UnitAttachment,
+        action_animation: Option<&str>,
+        movement_animation: Option<&str>,
+    ) -> bool {
+        auxiliary_animations::rendered_attachment_matches(
+            self,
+            attachment,
+            action_animation,
+            movement_animation,
+        )
     }
 }
 

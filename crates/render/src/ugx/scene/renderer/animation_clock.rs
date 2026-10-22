@@ -1,5 +1,7 @@
 //! Monotonic renderer-owned time for unscripted presentation animations.
 
+use super::super::movement_animations::MovementAnimation;
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct PresentationAnimationClock {
     phase: f32,
@@ -27,10 +29,34 @@ impl PresentationAnimationClock {
         self.last_frame_time = Some(frame_time_seconds);
         self.phase
     }
+
+    pub(super) fn rebase_movement(
+        &mut self,
+        previous: Option<MovementAnimation>,
+        next: Option<MovementAnimation>,
+        idle_transition_complete: bool,
+    ) {
+        if previous == next {
+            return;
+        }
+        let preserve_position = matches!(next, Some(MovementAnimation::WalkIdle))
+            || previous.is_some_and(MovementAnimation::is_motion)
+                && next.is_some_and(MovementAnimation::is_motion)
+            || previous == Some(MovementAnimation::WalkIdle)
+                && next.is_some_and(MovementAnimation::is_motion)
+                && !idle_transition_complete;
+        self.phase = if preserve_position {
+            self.phase.rem_euclid(1.0)
+        } else {
+            0.0
+        };
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::ugx::scene::movement_animations::MovementAnimation;
+
     use super::PresentationAnimationClock;
 
     fn assert_near(actual: f32, expected: f32) {
@@ -61,5 +87,52 @@ mod tests {
         clock.sample(5.0, 2.0);
         assert_near(clock.sample(6.0, 2.0), 0.5);
         assert_near(clock.sample(7.0, 4.0), 0.75);
+    }
+
+    #[test]
+    fn movement_changes_preserve_only_source_synchronized_positions() {
+        let mut clock = PresentationAnimationClock::default();
+        clock.sample(5.0, 1.0);
+        clock.sample(7.25, 1.0);
+
+        clock.rebase_movement(
+            Some(MovementAnimation::Walk),
+            Some(MovementAnimation::Jog),
+            true,
+        );
+        assert_near(clock.sample(7.25, 1.0), 0.25);
+        clock.rebase_movement(
+            Some(MovementAnimation::Jog),
+            Some(MovementAnimation::WalkIdle),
+            false,
+        );
+        assert_near(clock.sample(7.25, 1.0), 0.25);
+        clock.rebase_movement(
+            Some(MovementAnimation::WalkIdle),
+            Some(MovementAnimation::Walk),
+            false,
+        );
+        assert_near(clock.sample(7.25, 1.0), 0.25);
+    }
+
+    #[test]
+    fn completed_idle_handoffs_and_direct_stops_restart_at_zero() {
+        let mut clock = PresentationAnimationClock::default();
+        clock.sample(5.0, 1.0);
+        clock.sample(5.75, 1.0);
+        clock.rebase_movement(
+            Some(MovementAnimation::WalkIdle),
+            Some(MovementAnimation::Walk),
+            true,
+        );
+        assert_near(clock.sample(5.75, 1.0), 0.0);
+
+        clock.sample(6.25, 1.0);
+        clock.rebase_movement(
+            Some(MovementAnimation::Walk),
+            Some(MovementAnimation::Idle),
+            true,
+        );
+        assert_near(clock.sample(6.25, 1.0), 0.0);
     }
 }

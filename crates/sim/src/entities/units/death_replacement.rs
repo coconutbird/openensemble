@@ -111,6 +111,7 @@ impl Unit {
         self.accuracy_scalar = source.accuracy_scalar;
         self.dodge_scalar = source.dodge_scalar;
         self.work_rate_scalar = source.work_rate_scalar;
+        self.authored_line_of_sight = source.authored_line_of_sight;
         self.line_of_sight_scalar = source.line_of_sight_scalar;
         self.velocity_scalar = source.velocity_scalar;
         self.weapon_range_scalar = source.weapon_range_scalar;

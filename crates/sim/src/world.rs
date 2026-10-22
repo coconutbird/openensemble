@@ -19,6 +19,7 @@ mod authored_children;
 mod bomb;
 mod bounds;
 mod capture;
+mod change_mode;
 mod charge;
 mod checksum;
 mod child_damage;
@@ -77,6 +78,7 @@ mod shields;
 pub(crate) mod sockets;
 mod spatial;
 mod spirit_bond;
+mod squad_ai;
 mod squad_carpet_bomb;
 mod team;
 mod technology;
@@ -93,6 +95,7 @@ mod visibility;
 mod wander;
 
 pub use bounds::WorldBounds;
+pub(crate) use combat::SquadAttackContext;
 pub use construction::{ConstructionError, ConstructionQueueResult};
 pub use custom_commands::{CustomCommand, CustomCommandFlags};
 pub use design_lines::DesignLineId;
@@ -106,6 +109,7 @@ pub use health::UnitHealth;
 pub use hitch::HitchError;
 pub use object_costs::ObjectCostError;
 pub use objectives::ObjectiveState;
+pub(crate) use orders::SquadMoveContext;
 pub use powers::{
     CarpetBomb, CarpetBombingPhase, CarpetBombingPowerError, CarpetBombingPowerExecution,
     CarpetBombingPowerInvocation, CleansingPowerError, CleansingPowerExecution,
@@ -366,6 +370,7 @@ impl World {
         squad.set_position(position);
         squad.set_leash_position(position, true);
         self.squads.insert(id, squad);
+        self.register_squad_ai_squad(player_id, id);
         id
     }
 
@@ -400,6 +405,7 @@ impl World {
             }
         }
         if let Some(player) = self.get_player_mut(squad.base.player_id) {
+            player.remove_squad_ai_squad(id);
             player.revoke_first_power_from_squad(id);
             player.release_population(&squad.population_costs);
         }
@@ -499,6 +505,7 @@ impl World {
         }
         self.prepare_remove_unit_garrison(id);
         self.detach_unit_socket_refs(id);
+        self.remove_unit_goto_base_references(id);
         let unit = self.units.remove(id)?;
         self.remove_hint_callouts_for_entity(id);
         self.refund_production_for_removed_unit(&unit);

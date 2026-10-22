@@ -57,7 +57,9 @@ struct SweetSpotIkProfile {
 #[derive(Clone, Copy)]
 pub(in crate::ugx) struct UnitAnimationFrame<'frame> {
     pub(in crate::ugx) simulation_position: Option<f32>,
-    pub(in crate::ugx) presentation_phase: f32,
+    pub(in crate::ugx) action_presentation_phase: f32,
+    pub(in crate::ugx) movement_presentation_phase: f32,
+    pub(in crate::ugx) movement_on_action_track: bool,
     pub(in crate::ugx) unit_transform: Mat4,
     pub(in crate::ugx) source_owner_id: u64,
     pub(in crate::ugx) world: &'frame SimWorld,
@@ -281,6 +283,12 @@ impl UnitIkRuntime {
         }
     }
 
+    fn idle_transition_complete(&self) -> bool {
+        self.ground
+            .iter()
+            .all(|node| !node.flags.contains(GroundIkFlags::IDLE_TRANSITIONING))
+    }
+
     fn initialize_ground(
         &mut self,
         instances: &[RenderedUnitInstance],
@@ -429,17 +437,37 @@ impl UnitRenderer {
         self.ik.clone_from(&previous.ik);
     }
 
+    pub(in crate::ugx) fn ik_idle_transition_complete(&self) -> bool {
+        self.ik.idle_transition_complete()
+    }
+
+    pub(in crate::ugx) fn action_presentation_animation_duration(&self) -> f32 {
+        self.instances
+            .iter()
+            .find_map(|instance| instance.action_animation.presentation_duration())
+            .unwrap_or_default()
+    }
+
+    pub(in crate::ugx) fn movement_presentation_animation_duration(&self) -> f32 {
+        self.instances
+            .iter()
+            .find_map(|instance| {
+                instance
+                    .movement_animation
+                    .as_ref()
+                    .and_then(RenderedAnimationTrack::presentation_duration)
+            })
+            .unwrap_or_default()
+    }
+
     pub(in crate::ugx) fn update_animation(
         &mut self,
         queue: &wgpu::Queue,
         frame: UnitAnimationFrame<'_>,
     ) -> Vec<UnitAnimationEvent> {
         self.unit_transform = frame.unit_transform;
-        let (action_position, movement_position, crossed) = sample_tracks(
-            &mut self.instances,
-            frame.simulation_position,
-            frame.presentation_phase,
-        );
+        let (action_position, movement_position, crossed) =
+            sample_tracks(&mut self.instances, &frame);
         self.active_action_animation = self.instances.first().and_then(|instance| {
             instance
                 .action_animation
@@ -505,25 +533,30 @@ impl UnitRenderer {
 
 fn sample_tracks(
     instances: &mut [RenderedUnitInstance],
-    simulation_position: Option<f32>,
-    presentation_phase: f32,
+    frame: &UnitAnimationFrame<'_>,
 ) -> (Option<f32>, Option<f32>, Vec<(usize, VisualTag)>) {
     let mut action_position = None;
     let mut movement_position = None;
     let mut crossed = Vec::new();
     for (instance_index, instance) in instances.iter_mut().enumerate() {
         let model = &instance.model;
+        let simulation_position = instance.action_clock.position(frame);
+        let action_presentation_phase = if frame.movement_on_action_track {
+            frame.movement_presentation_phase
+        } else {
+            frame.action_presentation_phase
+        };
         let action = instance.action_animation.sample(
             |bone| model.bind_local_transform(bone),
             simulation_position,
-            presentation_phase,
+            action_presentation_phase,
             instance.visible,
         );
         let movement = instance.movement_animation.as_mut().map(|track| {
             track.sample(
                 |bone| model.bind_local_transform(bone),
                 None,
-                presentation_phase,
+                frame.movement_presentation_phase,
                 instance.visible,
             )
         });
