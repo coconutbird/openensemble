@@ -820,6 +820,11 @@ values plus Spartan XP thresholds from the mounted database, then grants one XP
 to the captured Scorpion and confirms the proportional Board split commits to
 both authoritative squads without duplication.
 
+The scenario-layered database is a mod extension, not retail behavior. The
+engine loads the database once at boot: `BGame_setup` (`0x140232EE0`) is the
+only caller of `BDatabase_setup`. No shipped scenario ERA has `data\*` files, so
+the layering does not change shipped results.
+
 The non-ignored `scenario-database-layering` test builds encrypted synthetic
 `root.era` and scenario archives. It proves that scenario-local `gamedata.xml`,
 `abilities.xml`, `objects.xml`, `powers.xml`, and `squads.xml` replace their base

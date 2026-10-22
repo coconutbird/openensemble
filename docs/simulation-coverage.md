@@ -162,7 +162,7 @@ gaps are in the execution.
 | Skulls | `skulls.xml` `0x1411b8508` | Missing | The `ActivateSkull` command is not executed. |
 | Fatalities | `fatalityData.xml` `0x1411a6f50` | Missing | |
 | Corpse handling | `deathmanager.xml` `0x1411a55d0` | Missing | |
-| Game modes | `gamemodes.xml` `0x1411a53b8` | Missing | The sim does not read game modes. |
+| Game modes | `gamemodes.xml` `0x1411a53b8`, `BGameMode_load` @ `0x140240e70` | Missing | `Database::game_modes` holds the table, but the sim does not read it. |
 | Save games | `BWorld_writeSavegame` @ `0x1405d47e0`, `BWorld_readSavegame` @ `0x1405d8530` | Missing | |
 
 ## Not started

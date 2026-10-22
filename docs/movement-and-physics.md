@@ -27,6 +27,8 @@ UnitSceneRenderer reads position/facing from sim::World
 
 The scenario ERA is pushed before `Database::load`, so a database table stored
 in the scenario participates in the pipeline's last-loaded-wins resolution.
+This is a mod extension: retail loads the database once at boot (`BGame_setup`
+`0x140232EE0`), and no shipped scenario ERA has `data\*` files.
 The sim then resolves supported vehicle physics through that same layered
 source. A scenario-local `.physics`, `.blueprint`, or `.shp` therefore changes
 the authoritative spawn configuration rather than only presentation data. The
