@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 
 use glam::Vec3;
+use half::f16;
 use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad};
 
 /// The retail default of a missing `SubSelectSort` (`0x7FFFFFFF`).
@@ -91,16 +92,20 @@ pub(crate) struct BarStyle {
     pub(crate) offset: Vec3,
 }
 
-/// The selection decal shape of a squad (protosquad `<Selection>`).
+/// The selection decal shape of a squad: the decal list icon of the protosquad, else the
+/// protosquad `<Selection>` (`BSquad_drawSelectionDecal`, `0x1403ABEA0`).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct DecalShape {
-    /// Half width (`RadiusX`).
+    /// Half width: icon `SizeX`, else `RadiusX`.
     pub(crate) radius_x: f32,
-    /// Half length (`RadiusZ`).
+    /// Half length: icon `SizeZ`, else `RadiusZ`.
     pub(crate) radius_z: f32,
-    /// Height after the terrain conform (`YOffset`).
+    /// Height after the terrain conform: icon `SizeY`, else `YOffset`.
     pub(crate) y_offset: f32,
-    /// Offset along the squad forward direction (`ZOffset`).
+    /// The icon `Offset` of the center along the squad right, up and forward axes.
+    pub(crate) offset: Vec3,
+    /// Offset along the squad forward direction (`ZOffset`). Retail applies only a positive
+    /// value, also with an icon.
     pub(crate) z_offset: f32,
 }
 
@@ -163,7 +168,12 @@ impl ClientCatalog {
     /// same name gets an implicit protosquad: one member, the object `SelectedRadiusX/Z` as the
     /// decal size, the object `SubSelectSort`, and the object HP bar with the default offset of
     /// twice `ObstructionRadiusY` above the object.
-    pub(crate) fn new(database: &Database) -> Self {
+    ///
+    /// `civ` is the civilization name of the local player. Retail loads only the decal list of
+    /// that civilization (`BUIManager_initFlashDecals`, `0x1404C73B0`), and the icon of a
+    /// protosquad in that list replaces its `<Selection>` decal size.
+    pub(crate) fn new(database: &Database, civ: Option<&str>) -> Self {
+        let icons = decal_icons(database, civ);
         let objects = database
             .objects
             .iter()
@@ -172,12 +182,12 @@ impl ClientCatalog {
         let mut squads: HashMap<String, SquadInfo> = database
             .squads
             .iter()
-            .map(|squad| (squad.name.clone(), squad_info(squad)))
+            .map(|squad| (squad.name.clone(), squad_info(squad, &icons)))
             .collect();
         for object in &database.objects {
             squads
                 .entry(object.name.clone())
-                .or_insert_with(|| implicit_squad_info(object));
+                .or_insert_with(|| implicit_squad_info(object, &icons));
         }
         let hp_bar_sizes = database
             .hp_bars
@@ -294,16 +304,63 @@ fn object_info(object: &ProtoObject) -> ObjectInfo {
     }
 }
 
-fn squad_info(squad: &ProtoSquad) -> SquadInfo {
+/// The decal shapes of the decal list icons of `civ`, by owner name in ASCII lower case.
+///
+/// `BFlashUIDecals_bindDecalIndices` (`0x14021E710`) binds each `uniticon`, `clumpdecal` and
+/// `staticdecal` icon to its owner, and `BFlashUIDecals_findIconIndex` (`0x1404C7F10`) gives the
+/// first icon of a protosquad. An implicit protosquad has the name of its object. The owner
+/// compare ignores ASCII case (`BNameMap_find`, `0x14008C7E0`). `BFlashMovieIcon_load`
+/// (`0x1402307B0`) stores the sizes and the offset as half floats. The shapes have no
+/// `ZOffset`; [`decal_shape`] takes it from the protosquad.
+fn decal_icons(database: &Database, civ: Option<&str>) -> HashMap<String, DecalShape> {
+    let mut icons = HashMap::new();
+    let Some(list) = civ.and_then(|civ| database.decal_list(civ)) else {
+        return icons;
+    };
+    let half = |value: f32| f16::from_f32(value).to_f32();
+    for (owner, icon) in list.owner_icons() {
+        icons.entry(owner.to_ascii_lowercase()).or_insert_with(|| {
+            let [size_x, size_y, size_z] = icon.size().map(half);
+            let offset = icon.offset();
+            DecalShape {
+                radius_x: size_x,
+                radius_z: size_z,
+                y_offset: size_y,
+                offset: Vec3::new(half(offset.x), half(offset.y), half(offset.z)),
+                z_offset: 0.0,
+            }
+        });
+    }
+    icons
+}
+
+/// Returns the decal shape of the protosquad `name`: its decal list icon with the `ZOffset` of
+/// `selection`, else `selection`.
+fn decal_shape(
+    icons: &HashMap<String, DecalShape>,
+    name: &str,
+    selection: DecalShape,
+) -> DecalShape {
+    icons
+        .get(&name.to_ascii_lowercase())
+        .map_or(selection, |icon| DecalShape {
+            z_offset: selection.z_offset,
+            ..*icon
+        })
+}
+
+fn squad_info(squad: &ProtoSquad, icons: &HashMap<String, DecalShape>) -> SquadInfo {
     let selection = squad.selection.clone().unwrap_or_default();
+    let selection = DecalShape {
+        radius_x: selection.radius_x.unwrap_or(0.0),
+        radius_z: selection.radius_z.unwrap_or(0.0),
+        y_offset: selection.y_offset.unwrap_or(0.0),
+        offset: Vec3::ZERO,
+        z_offset: selection.z_offset.unwrap_or(0.0),
+    };
     SquadInfo {
         sub_select_sort: squad.sub_select_sort.unwrap_or(DEFAULT_SUB_SELECT_SORT),
-        decal: DecalShape {
-            radius_x: selection.radius_x.unwrap_or(0.0),
-            radius_z: selection.radius_z.unwrap_or(0.0),
-            y_offset: selection.y_offset.unwrap_or(0.0),
-            z_offset: selection.z_offset.unwrap_or(0.0),
-        },
+        decal: decal_shape(icons, &squad.name, selection),
         hp_bar: squad.hp_bar.as_ref().and_then(|bar| {
             Some(BarStyle {
                 name: bar.style.clone()?,
@@ -330,7 +387,7 @@ fn squad_info(squad: &ProtoSquad) -> SquadInfo {
     }
 }
 
-fn implicit_squad_info(object: &ProtoObject) -> SquadInfo {
+fn implicit_squad_info(object: &ProtoObject, icons: &HashMap<String, DecalShape>) -> SquadInfo {
     let hp_bar = object
         .hp_bar
         .as_ref()
@@ -352,17 +409,20 @@ fn implicit_squad_info(object: &ProtoObject) -> SquadInfo {
                 offset,
             })
         });
+    let selection = DecalShape {
+        radius_x: object.selected_radius_x.unwrap_or(0.0),
+        radius_z: object.selected_radius_z.unwrap_or(0.0),
+        ..DecalShape::default()
+    };
     SquadInfo {
         sub_select_sort: object.sub_select_sort.unwrap_or(DEFAULT_SUB_SELECT_SORT),
-        decal: DecalShape {
-            radius_x: object.selected_radius_x.unwrap_or(0.0),
-            radius_z: object.selected_radius_z.unwrap_or(0.0),
-            y_offset: 0.0,
-            z_offset: 0.0,
-        },
+        decal: decal_shape(icons, &object.name, selection),
         hp_bar,
         always_show_hp_bar: false,
         always_render_selection_decal: false,
         members: vec![(object.name.clone(), 1)],
     }
 }
+
+#[cfg(test)]
+mod tests;

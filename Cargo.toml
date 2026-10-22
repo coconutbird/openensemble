@@ -83,6 +83,7 @@ log = { workspace = true }
 env_logger = { workspace = true }
 anyhow = { workspace = true }
 glam = { workspace = true }
+half = { workspace = true }
 num-traits = { workspace = true }
 egui = { workspace = true }
 zerocopy = { workspace = true }
@@ -103,6 +104,7 @@ name = "terrain_viewer"
 path = "src/bin/terrain_viewer/main.rs"
 
 [dev-dependencies]
+test-support = { workspace = true }
 
 [workspace.lints.rust]
 warnings = { level = "deny", priority = -2 }

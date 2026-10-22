@@ -38,6 +38,7 @@ fn catalog() -> ClientCatalog {
                 radius_x: 3.0,
                 radius_z: 4.0,
                 y_offset: 0.5,
+                offset: Vec3::ZERO,
                 z_offset: 1.0,
             },
             hp_bar: Some(BarStyle {
@@ -153,6 +154,59 @@ fn selected_squads_get_base_decals_and_the_hover_gets_the_bright_one() {
 }
 
 #[test]
+fn the_hq_decal_uses_the_icon_size_and_offset_of_the_decal_list() {
+    use pipeline::database::hw1::flashdecals::{CivDecalList, FlashDecalList, FlashIcon};
+    use pipeline::database::hw1::{Database, ProtoObject, Vector3};
+
+    let mut database = Database::new();
+    database.objects.push(ProtoObject {
+        name: "unsc_bldg_command_03".to_owned(),
+        ..ProtoObject::default()
+    });
+    database.decal_lists.push(CivDecalList {
+        civ: "UNSC".to_owned(),
+        path: String::new(),
+        list: FlashDecalList {
+            icons: vec![FlashIcon {
+                kind: Some("uniticon".to_owned()),
+                owner: Some("unsc_bldg_command_03".to_owned()),
+                size_x: Some(37.0),
+                size_y: Some(2.0),
+                size_z: Some(37.0),
+                offset: Some(Vector3 {
+                    x: 3.0,
+                    y: -1.5,
+                    z: 0.0,
+                }),
+                ..FlashIcon::default()
+            }],
+            ..FlashDecalList::default()
+        },
+    });
+    let mut catalog = ClientCatalog::new(&database, Some("UNSC"));
+    catalog.set_selection_color(1, GREEN);
+    let mut world = world();
+    let command = squad(
+        &mut world,
+        1,
+        "unsc_bldg_command_03",
+        &[Vec3::new(10.0, 4.0, 20.0)],
+    );
+    let mut selection = Selection::default();
+    selection.select_squad(&world, command);
+    selection.rebuild_squads(&world, |_| 0);
+
+    let (decals, _) = build(&world, &catalog, &selection, None);
+    assert_eq!(decals.len(), 1);
+    let decal = decals[0];
+    assert!((decal.radius_x - 37.0).abs() < f32::EPSILON);
+    assert!((decal.radius_z - 37.0).abs() < f32::EPSILON);
+    assert!((decal.y_offset - 2.0).abs() < f32::EPSILON);
+    // Offset (3, -1.5, 0) along right, up and forward. Forward is X, so right is -Z.
+    assert_eq!(decal.center, Vec3::new(10.0, 2.5, 17.0));
+}
+
+#[test]
 fn recent_damage_shows_the_squad_bar_with_the_protosquad_ratio() {
     let mut world = world();
     let mut catalog = catalog();
@@ -177,7 +231,7 @@ fn recent_damage_shows_the_squad_bar_with_the_protosquad_ratio() {
         ..Default::default()
     });
     assert_eq!(
-        ClientCatalog::new(&database).hp_bar_size("UNSC_Health"),
+        ClientCatalog::new(&database, None).hp_bar_size("UNSC_Health"),
         Some([8.0, 2.0])
     );
     catalog.insert_hp_bar_size("UNSC_Health", [8.0, 2.0]);

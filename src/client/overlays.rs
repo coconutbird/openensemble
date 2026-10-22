@@ -1,7 +1,9 @@
 //! The selection decals and the HP bars of a frame.
 //!
 //! - Decals: `BUser_renderSelectionAndHover` (`0x1405872D0`) and `BSquad_drawSelectionDecal`
-//!   (`0x1403ABEA0`).
+//!   (`0x1403ABEA0`). The intensity comes from the caller: `BaseDecalIntensity` or
+//!   `SelectionDecalIntensity`. The decal list icon intensities do not change it: only
+//!   `BWorld_drawPlacementDecal` (`0x1405CE810`) reads an icon intensity.
 //! - Bars: `BSquad_renderUIOverlays` (`0x140398330`), `BHPBar_renderSquadHPBar`
 //!   (`0x140044080`) and `BHPBar_renderUnitHPBar` (`0x140043530`).
 
@@ -109,9 +111,11 @@ fn member_center(world: &World, squad: &Squad) -> Option<Vec3> {
     (count > 0).then(|| sum / f32::from(count))
 }
 
-/// Makes the decal of `squad`, like `BSquad_drawSelectionDecal`: the protosquad `<Selection>`
-/// size, `ZOffset` along the squad forward direction and `YOffset` after the terrain conform,
-/// in the owner selection colour with opacity 1.
+/// Makes the decal of `squad`, like `BSquad_drawSelectionDecal`: the catalog decal shape (the
+/// decal list icon or the protosquad `<Selection>`), in the owner selection colour with full
+/// opacity. The icon `Offset` moves the center along the squad right, up and forward axes. A
+/// positive `ZOffset` then moves it along the forward direction. The size and `YOffset` apply
+/// after the terrain conform.
 ///
 /// Sub-select groups (opacity `SubSelectDecalAlpha` 0.4) are not modelled.
 fn squad_decal(
@@ -126,8 +130,14 @@ fn squad_decal(
     let horizontal = Vec3::new(forward.x, 0.0, forward.z)
         .try_normalize()
         .unwrap_or(Vec3::Z);
+    let right = Vec3::Y.cross(horizontal);
+    let mut center =
+        center + right * shape.offset.x + Vec3::Y * shape.offset.y + horizontal * shape.offset.z;
+    if shape.z_offset > 0.0 {
+        center += horizontal * shape.z_offset;
+    }
     Some(SelectionDecal {
-        center: center + horizontal * shape.z_offset,
+        center,
         forward,
         radius_x: shape.radius_x,
         radius_z: shape.radius_z,

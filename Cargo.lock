@@ -2293,6 +2293,7 @@ dependencies = [
  "egui",
  "env_logger",
  "glam",
+ "half",
  "log",
  "num-traits",
  "pipeline",
@@ -2300,6 +2301,7 @@ dependencies = [
  "pollster",
  "render",
  "sim",
+ "test-support",
  "zerocopy",
 ]
 

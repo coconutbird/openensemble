@@ -168,7 +168,7 @@ mod tests {
     }
 
     fn ratios_of(world: &World, database: &Database, squad_id: EntityId) -> Option<SquadBarRatios> {
-        let catalog = ClientCatalog::new(database);
+        let catalog = ClientCatalog::new(database, None);
         squad_bar_ratios(world, &catalog, world.squads.get(squad_id)?)
     }
 

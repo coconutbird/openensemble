@@ -151,7 +151,7 @@ mod tests {
         building.max_hitpoints = 1_000.0;
         building.hitpoints = 500.0;
 
-        let catalog = ClientCatalog::new(&database);
+        let catalog = ClientCatalog::new(&database, None);
         let rows = selection_rows(
             &world,
             &database,

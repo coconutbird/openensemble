@@ -184,13 +184,13 @@ impl Client {
         self.local_player = local_player;
         if let Some(content) = &session.content {
             let database = &content.database;
-            self.catalog = ClientCatalog::new(database);
-            self.hp_bar_styles = openensemble::session::hp_bar_styles(database);
             let civ = world
                 .get_player(local_player)
                 .and_then(|player| usize::try_from(player.civ_id).ok())
                 .and_then(|civ| database.civs.get(civ))
                 .map(|civ| civ.name.as_str());
+            self.catalog = ClientCatalog::new(database, civ);
+            self.hp_bar_styles = openensemble::session::hp_bar_styles(database);
             self.drag_box_color = interaction::drag_box_color(civ);
         }
         self.session = Some(session);
