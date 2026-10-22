@@ -269,6 +269,7 @@ pub(crate) fn configure_unit_from_player_proto(
         .prototype_ground_vehicle_physics(effective_name)
         .cloned();
     let flight_controller = world.prototype_flight_controller(effective_name);
+    let object_types = world.prototype_declared_object_types(effective_name);
     let Some(unit) = world.get_unit_mut(unit_id) else {
         return;
     };
@@ -280,6 +281,7 @@ pub(crate) fn configure_unit_from_player_proto(
     configure_unit_traits(
         unit,
         proto,
+        object_types,
         adjusted_hitpoints,
         shield_coverage,
         shield_settings,
@@ -325,6 +327,7 @@ fn ammunition_settings(
 fn configure_unit_traits(
     unit: &mut crate::entities::Unit,
     proto: &ProtoObject,
+    object_types: Vec<String>,
     hitpoints: Option<f32>,
     shield_coverage: ShieldCoverage,
     shield_settings: (f32, f32, f32),
@@ -350,7 +353,7 @@ fn configure_unit_traits(
         proto.child_object_damage_taken_scalar,
         prototype_has_flag(proto, "ChildForDamageTakenScalar"),
     );
-    super::garrison::configure_unit(unit, proto);
+    super::garrison::configure_unit(unit, proto, object_types);
     configure_unit_resource(unit, proto);
     unit.configure_capture_target(prototype_has_flag(proto, "Capturable"), proto.build_points);
     if let Some(hitpoints) = hitpoints {

@@ -181,6 +181,7 @@ mod tests {
             object_types: vec!["Building".to_owned(), "UNSC".to_owned()],
             ..ProtoObject::default()
         });
+        crate::prototypes::declare_authored_object_types(&mut database);
         let mut world = World::new();
         world.configure_prototype_catalogs(&database);
         world.init_players(2);

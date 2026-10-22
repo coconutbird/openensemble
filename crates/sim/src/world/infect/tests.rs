@@ -216,7 +216,7 @@ fn infect_tactic(action: Action) -> TacticData {
 }
 
 fn database(conversion_limit: Option<i32>) -> Database {
-    Database {
+    let mut database = Database {
         objects: vec![
             unit_object("spore", 1, 1.0, 20.0, true, conversion_limit),
             unit_object("victim", 2, 100.0, 2.0, false, None),
@@ -244,7 +244,9 @@ fn database(conversion_limit: Option<i32>) -> Database {
             ..GameData::default()
         }),
         ..Database::default()
-    }
+    };
+    crate::prototypes::declare_authored_object_types(&mut database);
+    database
 }
 
 fn unit_object(

@@ -4,13 +4,16 @@ use glam::Vec3;
 use pipeline::database::hw1::squads::{UnitEntry, UnitsWrapper};
 use pipeline::database::hw1::tactics::TacticData;
 use pipeline::database::hw1::techs::{EffectTarget, EffectsWrapper, TechEffect};
-use pipeline::database::hw1::{Database, GameData, ProtoObject, Squad as ProtoSquad, Tech};
+use pipeline::database::hw1::{
+    Database, GameData, ObjectType, ProtoObject, Squad as ProtoSquad, Tech,
+};
 use sim::{GameplayCatalog, World, spawn_squad_at, squad_prototype_id};
 
 #[test]
 fn proto_unit_transform_updates_live_and_future_members_without_changing_logical_identity() {
     let database = unit_transform_database();
     let mut world = World::new();
+    world.configure_prototype_catalogs(&database);
     world.init_players(1);
     let squad_proto_id = squad_prototype_id(&database, "test_logical_squad").unwrap();
     let first = spawn_squad_at(
@@ -115,6 +118,9 @@ fn unit_transform_database() -> Database {
                 )],
             }),
             ..Tech::default()
+        }],
+        object_types: vec![ObjectType {
+            name: "Upgraded".to_owned(),
         }],
         ..Database::default()
     }

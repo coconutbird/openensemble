@@ -4,8 +4,12 @@ use crate::entities::Unit;
 use num_traits::ToPrimitive;
 use pipeline::database::hw1::ProtoObject;
 
-pub(super) fn configure_unit(unit: &mut Unit, proto: &ProtoObject) {
-    unit.object_types = normalized_values(&proto.object_types);
+/// Configure the object types, the flying flag and the containment of a unit. `object_types`
+/// are the declared types of its proto ([`World::prototype_declared_object_types`]).
+///
+/// [`World::prototype_declared_object_types`]: crate::World
+pub(super) fn configure_unit(unit: &mut Unit, proto: &ProtoObject, object_types: Vec<String>) {
+    unit.object_types = object_types;
     unit.flying = proto
         .movement_type
         .as_deref()

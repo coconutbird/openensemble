@@ -121,6 +121,8 @@ const SCENARIO_OBJECTS: &str = r#"<Objects>
     </Object>
 </Objects>"#;
 
+const SCENARIO_OBJECT_TYPES: &str = "<ObjectTypes><ObjectType>CanCryo</ObjectType></ObjectTypes>";
+
 const SCENARIO_POWERS: &str = r#"<Powers>
     <Power name="ScenarioCryo">
         <Attributes>
@@ -255,6 +257,7 @@ fn scenario_database_tables_win_before_authoritative_simulation_is_built() {
             ("data\\civs.xml.xmb", SCENARIO_CIVS),
             ("data\\leaders.xml.xmb", SCENARIO_LEADERS),
             ("data\\objects.xml.xmb", SCENARIO_OBJECTS),
+            ("data\\objecttypes.xml.xmb", SCENARIO_OBJECT_TYPES),
             ("data\\powers.xml.xmb", SCENARIO_POWERS),
             ("data\\squads.xml.xmb", SCENARIO_SQUADS),
             ("data\\techs.xml.xmb", SCENARIO_TECHS),

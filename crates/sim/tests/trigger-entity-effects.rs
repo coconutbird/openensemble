@@ -3,7 +3,9 @@
 use pipeline::database::hw1::gamedata::PopsWrapper;
 use pipeline::database::hw1::objects::PopulationAmount;
 use pipeline::database::hw1::squads::{UnitEntry, UnitsWrapper};
-use pipeline::database::hw1::{Civ, Database, GameData, ProtoObject, Squad as ProtoSquad};
+use pipeline::database::hw1::{
+    Civ, Database, GameData, ObjectType, ProtoObject, Squad as ProtoSquad,
+};
 use sim::trigger::{
     Condition, ConditionType, Effect, EffectType, Trigger, TriggerScript, TriggerValue, TriggerVar,
     VarType,
@@ -195,6 +197,7 @@ fn create_squads_preserves_duplicate_prototypes_and_retail_list_outputs() {
 fn create_squads_uses_capacity_aware_multi_carrier_fly_in() {
     let database = transport_database();
     let mut world = trigger_world();
+    world.configure_prototype_catalogs(&database);
     world.get_player_mut(1).unwrap().civ_id = 0;
     let mut script = TriggerScript::default();
     script.add_variable(proto_squad_list(
@@ -491,6 +494,9 @@ fn entity_database() -> Database {
 fn transport_database() -> Database {
     let mut database = entity_database();
     database.objects[2].object_types = vec!["Transportable".to_owned()];
+    database.object_types.push(ObjectType {
+        name: "Transportable".to_owned(),
+    });
     database.objects[2].population = vec![PopulationAmount {
         population_type: Some("Unit".to_owned()),
         amount: 1.0,

@@ -452,7 +452,7 @@ fn rage_impact_tactics() -> TacticData {
 }
 
 fn database() -> Database {
-    Database {
+    let mut database = Database {
         objects: objects(),
         squads: squads(),
         powers: vec![rage_power(), disruption_power()],
@@ -467,7 +467,9 @@ fn database() -> Database {
             ..GameData::default()
         }),
         ..Database::default()
-    }
+    };
+    crate::prototypes::declare_authored_object_types(&mut database);
+    database
 }
 
 fn objects() -> Vec<ProtoObject> {

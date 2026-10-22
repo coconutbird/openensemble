@@ -313,7 +313,7 @@ fn set_repair_ticks(database: &mut Database, ticks: i32) {
 }
 
 fn database() -> Database {
-    Database {
+    let mut database = Database {
         objects: vec![
             object("repair_field", 1, 0.0, 0.0, &[]),
             object("repair_attachment", 2, 0.0, 0.0, &[]),
@@ -340,7 +340,9 @@ fn database() -> Database {
             ..GameData::default()
         }),
         ..Database::default()
-    }
+    };
+    crate::prototypes::declare_authored_object_types(&mut database);
+    database
 }
 
 fn repair_power() -> Power {

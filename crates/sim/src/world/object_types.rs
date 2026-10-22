@@ -5,17 +5,25 @@ use crate::entity_id::{EntityClass, EntityId};
 use crate::gameplay::GameplayCatalog;
 use crate::prototypes::{proto_id, proto_squads};
 use crate::sync::SyncChecksum;
-use pipeline::database::hw1::{Database, ProtoObject};
+use pipeline::database::hw1::{Database, ObjectType, ObjectTypeIndex, ProtoObject};
 
 impl World {
     /// Project the proto object types and the engine proto squad table (with
     /// merged and implicit squads) into the world, keyed by proto ID.
-    pub(crate) fn configure_prototype_catalogs(&mut self, database: &Database) {
+    ///
+    /// Like `BProtoObject_load` and `BDatabase_setupDecomposedObjectTypes`, a proto keeps only
+    /// the `<ObjectType>` names that `objecttypes.xml` declares. An undeclared name (such as
+    /// `Icon`) or an object name does not become a type of the proto.
+    pub fn configure_prototype_catalogs(&mut self, database: &Database) {
+        let index = database.object_type_index();
         self.prototype_object_types = database
             .objects
             .iter()
             .enumerate()
-            .map(|(index, prototype)| (proto_id(index), object_type_names(prototype)))
+            .map(|(position, prototype)| {
+                let names = object_type_names(prototype, &index, &database.object_types);
+                (proto_id(position), names)
+            })
             .collect();
         self.prototype_squads = proto_squads(database)
             .map(|(id, entry)| (id, (entry.name().trim().to_owned(), entry.size(database))))
@@ -85,6 +93,22 @@ impl World {
         self.prototype_object_types
             .get(&prototype_id)
             .map(|types| contains_type(types, object_type))
+    }
+
+    /// Return the declared object types of the named proto object, without its own name.
+    ///
+    /// A unit uses the types of its effective (player-transformed) proto, like the type test of
+    /// the engine on the player proto object.
+    pub(crate) fn prototype_declared_object_types(&self, prototype_name: &str) -> Vec<String> {
+        self.prototype_object_types
+            .values()
+            .find(|names| {
+                names
+                    .first()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(prototype_name.trim()))
+            })
+            .map(|names| names.iter().skip(1).cloned().collect())
+            .unwrap_or_default()
     }
 
     pub(crate) fn prototype_name_is_object_type(
@@ -204,11 +228,16 @@ impl World {
     }
 }
 
-fn object_type_names(prototype: &ProtoObject) -> Vec<String> {
+/// Return the proto name followed by its declared object types in type ID order.
+fn object_type_names(
+    prototype: &ProtoObject,
+    index: &ObjectTypeIndex,
+    object_types: &[ObjectType],
+) -> Vec<String> {
     let mut names = Vec::with_capacity(prototype.object_types.len() + 1);
     add_type(&mut names, &prototype.name);
-    for object_type in &prototype.object_types {
-        add_type(&mut names, object_type);
+    for type_index in index.types_of(prototype) {
+        add_type(&mut names, &object_types[type_index].name);
     }
     names
 }
@@ -240,7 +269,7 @@ mod tests {
             name: "unsc_inf_marine_01".to_owned(),
             dbid: Some(17),
             object_class: Some("Unit".to_owned()),
-            object_types: vec!["Infantry".to_owned(), "UNSC".to_owned()],
+            object_types: vec!["Infantry".to_owned(), "UNSC".to_owned(), "Icon".to_owned()],
             ..ProtoObject::default()
         });
         database.squads.push(ProtoSquad {
@@ -255,6 +284,12 @@ mod tests {
             }),
             ..ProtoSquad::default()
         });
+        // `objecttypes.xml` declares Infantry and UNSC but not Icon.
+        for name in ["Infantry", "UNSC"] {
+            database.object_types.push(ObjectType {
+                name: name.to_owned(),
+            });
+        }
         let mut world = World::new();
         let empty_checksum = world.checksum();
         world.configure_prototype_catalogs(&database);
@@ -264,6 +299,12 @@ mod tests {
         assert!(world.prototype_is_object_type(0, "infantry"));
         assert!(!world.prototype_is_object_type(0, "Vehicle"));
         assert!(!world.prototype_is_object_type(17, "infantry"));
+        // `BProtoObject_load` drops an undeclared type name.
+        assert!(!world.prototype_is_object_type(0, "Icon"));
+        assert_eq!(
+            world.prototype_declared_object_types("unsc_inf_marine_01"),
+            ["Infantry", "UNSC"]
+        );
         world.init_players(1);
         let squad_id = world.create_squad(1);
         world.get_squad_mut(squad_id).unwrap().proto_squad_id = 0;

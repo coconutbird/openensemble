@@ -34,6 +34,27 @@ pub(crate) fn proto_id(index: usize) -> i32 {
     i32::try_from(index).unwrap_or(-1)
 }
 
+/// Declare each object type that the objects of a test database name, in first-use order, as
+/// the shipped `objecttypes.xml` does for the shipped objects.
+#[cfg(test)]
+pub(crate) fn declare_authored_object_types(database: &mut Database) {
+    for object in &database.objects {
+        for name in &object.object_types {
+            let declared = database
+                .object_types
+                .iter()
+                .any(|object_type| object_type.name.eq_ignore_ascii_case(name.trim()));
+            if !declared {
+                database
+                    .object_types
+                    .push(pipeline::database::hw1::ObjectType {
+                        name: name.trim().to_owned(),
+                    });
+            }
+        }
+    }
+}
+
 /// Find the object prototype with this proto ID (its load-order index).
 pub(crate) fn object_by_id(database: &Database, id: i32) -> Option<&ProtoObject> {
     usize::try_from(id)

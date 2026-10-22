@@ -542,6 +542,7 @@ mod tests {
     fn authored_socket_entities_keep_order_transform_and_prototype_types() {
         let database = socket_database();
         let mut world = World::new();
+        world.configure_prototype_catalogs(&database);
         let parent_id = world.create_building_at(1, Vec3::new(10.0, 0.0, 20.0));
         world
             .get_unit_mut(parent_id)
@@ -728,7 +729,7 @@ mod tests {
     }
 
     fn socket_database() -> Database {
-        Database {
+        let mut database = Database {
             objects: vec![
                 ProtoObject {
                     name: "parent".to_owned(),
@@ -745,7 +746,9 @@ mod tests {
                 socket_prototype("turret_socket", "TurretSocket"),
             ],
             ..Database::default()
-        }
+        };
+        crate::prototypes::declare_authored_object_types(&mut database);
+        database
     }
 
     fn one_time_spawn_database() -> Database {

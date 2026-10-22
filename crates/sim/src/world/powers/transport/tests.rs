@@ -490,7 +490,7 @@ fn input_command(
 }
 
 fn database() -> Database {
-    Database {
+    let mut database = Database {
         objects: vec![carrier(), infantry(), vehicle()],
         squads: vec![
             squad("infantry_squad", 100, "infantry"),
@@ -504,7 +504,9 @@ fn database() -> Database {
         }],
         game_data: Some(game_data()),
         ..Database::default()
-    }
+    };
+    crate::prototypes::declare_authored_object_types(&mut database);
+    database
 }
 
 fn game_data() -> GameData {

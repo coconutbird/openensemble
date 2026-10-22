@@ -595,6 +595,7 @@ fn contained_world_with_units() -> (World, EntityId, EntityId, EntityId, EntityI
         object_types: vec!["Infantry".to_owned(), "UNSC".to_owned()],
         ..ProtoObject::default()
     });
+    crate::prototypes::declare_authored_object_types(&mut database);
     world.configure_prototype_catalogs(&database);
     world.init_players(2);
     let container_squad = world.create_squad_at(0, Vec3::ZERO);
@@ -647,6 +648,7 @@ fn roster_condition_fixture() -> (World, TriggerScript) {
         dbid: Some(71),
         ..ProtoSquad::default()
     });
+    crate::prototypes::declare_authored_object_types(&mut database);
     let mut world = World::new();
     world.configure_prototype_catalogs(&database);
     world.init_players(2);
