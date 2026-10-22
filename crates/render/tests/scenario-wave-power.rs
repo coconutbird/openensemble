@@ -1,3 +1,7 @@
+//! Checks that the renderer shows the wave power, its marines and captured marines from sim state.
+//!
+//! The tests need a local Halo Wars DE installation.
+
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use pipeline::source::{AssetSource, StdFileProvider};

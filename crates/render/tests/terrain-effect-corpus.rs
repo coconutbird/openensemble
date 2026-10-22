@@ -27,8 +27,8 @@ fn impact_route_asset_paths_are_enumerated() {
                 .map(|effect| effect.frames.len())
         );
     }
-    assert!(!assets.particle_paths().is_empty());
-    assert!(!assets.light_paths().is_empty());
+    assert_ne!(assets.particle_paths(), Vec::<String>::new());
+    assert_ne!(assets.light_paths(), Vec::<String>::new());
 }
 
 #[test]
@@ -117,8 +117,8 @@ fn audit_impact_effects(source: &mut InstalledSource) -> ImpactAudit {
         impact_assets.issues()
     );
     assert_eq!(impact_assets.loaded_effect_count(), impact_routes.len() + 1);
-    assert!(!impact_assets.particle_paths().is_empty());
-    assert!(!impact_assets.light_paths().is_empty());
+    assert_ne!(impact_assets.particle_paths(), Vec::<String>::new());
+    assert_ne!(impact_assets.light_paths(), Vec::<String>::new());
 
     ImpactAudit {
         prototype_count: impact_effects.len(),

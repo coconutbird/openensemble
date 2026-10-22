@@ -98,6 +98,7 @@ impl UnitPlacement {
         self.animation_asset.as_deref()
     }
 
+    /// Return `true` when the animation advances with the simulation clock.
     #[must_use]
     pub const fn animation_uses_simulation_clock(&self) -> bool {
         self.animation_uses_simulation_clock

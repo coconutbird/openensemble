@@ -1,3 +1,7 @@
+//! Checks that the disruption bomber, field and pulses project from authoritative sim objects.
+//!
+//! The test needs a local Halo Wars DE installation.
+
 use glam::Vec3;
 use render::ugx::UnitScene;
 use sim::{

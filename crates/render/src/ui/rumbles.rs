@@ -51,7 +51,7 @@ mod tests {
             active_ids: BTreeSet::from([4, 9]),
         };
         let changes = adapter.synchronize(&world, 1);
-        assert!(changes.started.is_empty());
+        assert_eq!(changes.started, Vec::<RumbleRequest>::new());
         assert_eq!(changes.stopped, [4, 9]);
         assert_eq!(adapter.synchronize(&world, 1), RumbleProjection::default());
     }

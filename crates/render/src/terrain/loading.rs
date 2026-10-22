@@ -735,10 +735,15 @@ pub fn load_road_textures(
 
 /// Road texture data (albedo, normal, specular).
 pub struct RoadTextures {
+    /// Width of the albedo texture, in pixels.
     pub width: u32,
+    /// Height of the albedo texture, in pixels.
     pub height: u32,
+    /// Decoded RGBA8 albedo pixels.
     pub albedo_pixels: Vec<u8>,
+    /// Decoded RGBA8 normal pixels, or flat 128 values if the normal map is missing.
     pub normal_pixels: Vec<u8>,
+    /// Decoded RGBA8 specular pixels, or zeros if the specular map is missing.
     pub specular_pixels: Vec<u8>,
 }
 

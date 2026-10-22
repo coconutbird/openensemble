@@ -78,7 +78,7 @@ pub struct FoliageSetResources {
 
 /// Foliage uniform parameters (must match shader struct).
 #[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Copy, Clone, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub struct FoliageParamsUniform {
     /// `terrain_info`: `num_verts_per_axis`, `tile_scale`, `chunk_offset_x`, `chunk_offset_z`
     pub terrain_info: [f32; 4],
@@ -153,7 +153,7 @@ impl FallbackFoliageWorldResources {
 
 /// Per-chunk uniform data (must match shader `ChunkInfo` struct).
 #[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Copy, Clone, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub struct ChunkInfoUniform {
     /// Chunk offset: mMinXVert, mMinZVert from quad node
     pub chunk_offset: [f32; 2],

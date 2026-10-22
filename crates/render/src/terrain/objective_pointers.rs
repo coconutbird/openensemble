@@ -68,6 +68,9 @@ mod tests {
     #[test]
     fn invalid_viewports_do_not_project() {
         let world = World::new();
-        assert!(project_objective_pointers(&world, 1, Mat4::IDENTITY, [0.0, 720.0]).is_empty());
+        assert_eq!(
+            project_objective_pointers(&world, 1, Mat4::IDENTITY, [0.0, 720.0]),
+            [] as [ProjectedObjectivePointer; 0]
+        );
     }
 }

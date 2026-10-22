@@ -1,3 +1,5 @@
+//! Build script for `render`: compiles the WESL terrain shaders to WGSL in `OUT_DIR`.
+
 use wesl::Wesl;
 
 fn main() {

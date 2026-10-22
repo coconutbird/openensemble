@@ -1,3 +1,7 @@
+//! Checks that a `PHXscn03` hint callout projects from the sim and the localized content.
+//!
+//! The test needs a local Halo Wars DE installation.
+
 use glam::{Mat4, Vec3};
 use render::terrain::project_hint_callouts;
 use sim::{HintCalloutAnchor, load_scenario_from_game_dir};
@@ -30,7 +34,7 @@ fn campaign_callout_projects_from_authoritative_sim_and_localized_content() {
         .content
         .resolve_string(callout.string_id())
         .expect("localized callout text");
-    assert!(!text.trim().is_empty());
+    assert_ne!(text.trim(), "");
 
     let projected = project_hint_callouts(
         &loaded.simulation.world,

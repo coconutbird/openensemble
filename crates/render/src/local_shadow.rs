@@ -10,6 +10,7 @@ use std::mem::size_of;
 use std::num::NonZeroU64;
 
 use glam::{Mat4, Vec3, Vec4};
+use zerocopy::IntoBytes;
 
 use crate::lighting::{LocalLight, LocalLightSet, LocalLightShape, LocalShadow};
 use crate::wgpu;
@@ -83,7 +84,7 @@ struct Allocation {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, Default, zerocopy::IntoBytes, zerocopy::Immutable)]
 struct PassUniform {
     transform: [[f32; 4]; 4],
     params: [u32; 4],
@@ -336,7 +337,7 @@ fn clear_layer(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
 fn upload_passes(queue: &wgpu::Queue, buffer: &wgpu::Buffer, stride: u32, passes: &[PlannedPass]) {
     for (index, pass) in passes.iter().enumerate() {
         let offset = u64::from(stride) * index as u64;
-        queue.write_buffer(buffer, offset, bytemuck::bytes_of(&pass.uniform));
+        queue.write_buffer(buffer, offset, pass.uniform.as_bytes());
     }
 }
 

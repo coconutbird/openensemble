@@ -3,6 +3,7 @@ use num_traits::ToPrimitive;
 use render::terrain::GPU_TESS_SHADER;
 use render::wgpu;
 use wgpu::util::DeviceExt;
+use zerocopy::IntoBytes;
 
 use super::{PatchMesh, TessellationBuildConfig};
 use crate::dynamic_alpha::DynamicTerrainAlphaTexture;
@@ -82,7 +83,7 @@ pub(super) fn create_rgb10a2_texture(
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
-        bytemuck::cast_slice(values),
+        values.as_bytes(),
         wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(width * 4),
@@ -104,7 +105,7 @@ pub(super) fn create_rgb10a2_texture(
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            bytemuck::cast_slice(&mip),
+            mip.as_bytes(),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(mip_width * 4),
@@ -567,7 +568,7 @@ pub(super) fn create_expanded_patch_buffer(
     let vertices = expand_patch_mesh(patch_mesh);
     let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Tess Expanded Vertex Buffer"),
-        contents: bytemuck::cast_slice(&vertices),
+        contents: vertices.as_bytes(),
         usage: wgpu::BufferUsages::VERTEX,
     });
     let count =

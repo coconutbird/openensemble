@@ -1,3 +1,7 @@
+//! Checks that the renderer plays the change-mode clip that the sim selects.
+//!
+//! The test needs a local Halo Wars DE installation.
+
 use glam::Vec3;
 use render::ugx::{UnitPlacement, UnitScene, simulation_proto_names};
 use sim::{

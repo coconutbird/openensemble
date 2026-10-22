@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::mem;
 
 use wgpu::util::DeviceExt;
+use zerocopy::IntoBytes;
 
 use crate::gpu::texture_entry;
 
@@ -135,7 +136,7 @@ pub(super) fn create_material_bind_group(
     let packed = PackedParticleMaterial::from_material(material);
     let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Particle Material Uniform"),
-        contents: bytemuck::bytes_of(&packed),
+        contents: packed.as_bytes(),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     Ok(device.create_bind_group(&wgpu::BindGroupDescriptor {

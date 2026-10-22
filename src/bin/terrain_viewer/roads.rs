@@ -4,6 +4,7 @@ use num_traits::ToPrimitive;
 use render::terrain::{LightingParams, ROADS_SHADER, RawXtdData};
 use render::wgpu::util::DeviceExt;
 use render::{RenderPhase, WorldRenderer, wgpu};
+use zerocopy::IntoBytes;
 
 use crate::gpu::xtd_packed_to_world;
 
@@ -46,7 +47,7 @@ pub struct RoadResourceInput<'a> {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Copy, Clone, zerocopy::IntoBytes, zerocopy::Immutable)]
 struct RoadParamsUniform {
     terrain_values: [f32; 4],
     position_mid: [f32; 4],
@@ -154,7 +155,7 @@ fn create_road_vertex_buffer(
     }
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Road Vertex Buffer"),
-        contents: bytemuck::cast_slice(&vertex_data),
+        contents: vertex_data.as_bytes(),
         usage: wgpu::BufferUsages::VERTEX,
     })
 }
@@ -222,7 +223,7 @@ fn create_packed_terrain_texture(
     });
     queue.write_texture(
         texture.as_image_copy(),
-        bytemuck::cast_slice(words),
+        words.as_bytes(),
         wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(size * 4),
@@ -559,7 +560,7 @@ pub fn create_road_resources(
     let params = RoadParamsUniform::new(input.raw_terrain, input.bump_power);
     let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Road Params Buffer"),
-        contents: bytemuck::bytes_of(&params),
+        contents: params.as_bytes(),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
     let (world_layout, world_bind_group) =
@@ -615,7 +616,7 @@ impl RoadResources {
         bump_power: f32,
     ) {
         self.params.apply_lighting(lighting, bump_power);
-        queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&self.params));
+        queue.write_buffer(&self.params_buffer, 0, self.params.as_bytes());
     }
 }
 

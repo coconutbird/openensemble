@@ -1,3 +1,7 @@
+//! Checks that the renderer shows only the live ODST pod and the revealed sim members.
+//!
+//! The test needs a local Halo Wars DE installation.
+
 use glam::Vec3;
 use pipeline::source::{AssetSource, StdFileProvider};
 use render::ugx::UnitScene;

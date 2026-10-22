@@ -1,3 +1,7 @@
+//! Checks that spawned marines and projectiles join the authoritative render roster.
+//!
+//! The test needs a local Halo Wars DE installation.
+
 use render::ugx::UnitScene;
 use sim::entities::squads::marine::MARINE_SQUAD_NAME;
 use sim::{

@@ -91,7 +91,7 @@ impl Default for VisualState {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub(super) struct SceneUniform {
     view_projection: [[f32; 4]; 4],
     model: [[f32; 4]; 4],
@@ -195,7 +195,7 @@ impl SceneUniform {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub(super) struct MaterialUniform {
     pub(super) tint: [f32; 4],
     pub(super) specular: [f32; 4],

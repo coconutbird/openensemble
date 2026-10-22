@@ -2,6 +2,7 @@ use super::{PackedPatchInstance, TerrainPatchImage};
 use crate::wgpu;
 use std::mem;
 use wgpu::util::DeviceExt;
+use zerocopy::IntoBytes;
 
 pub(super) fn create_instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
     let byte_size = capacity
@@ -81,7 +82,7 @@ pub(super) fn create_uint_2d_fallback(
             view_formats: &[],
         },
         wgpu::util::TextureDataOrder::LayerMajor,
-        bytemuck::bytes_of(&value),
+        value.as_bytes(),
     );
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }

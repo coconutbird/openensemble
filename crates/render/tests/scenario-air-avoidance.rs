@@ -1,3 +1,7 @@
+//! Checks that the renderer shows the kamikaze clip and dive pitch of a crashing aircraft.
+//!
+//! The test needs a local Halo Wars DE installation.
+
 use glam::Vec3;
 use render::ugx::{UnitScene, simulation_proto_names};
 use sim::{

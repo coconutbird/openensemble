@@ -14,7 +14,7 @@
 /// ```
 #[must_use]
 pub fn mip_level_count(width: u32, height: u32) -> u32 {
-    (u32::BITS - width.max(height).leading_zeros()).max(1)
+    width.max(height).bit_width().max(1)
 }
 
 /// Generate mipmaps for an RGBA image on CPU.

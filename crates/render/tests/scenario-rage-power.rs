@@ -1,3 +1,7 @@
+//! Checks that the rage hand and teleport attachments project only from sim objects.
+//!
+//! The test needs a local Halo Wars DE installation.
+
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use pipeline::source::{AssetSource, StdFileProvider};

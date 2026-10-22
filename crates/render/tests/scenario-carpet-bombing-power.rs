@@ -1,3 +1,7 @@
+//! Checks that the renderer shows carpet bombing impacts and explosions only from live sim state.
+//!
+//! The test needs a local Halo Wars DE installation.
+
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use pipeline::source::{AssetSource, StdFileProvider};
@@ -90,7 +94,7 @@ fn renderer_projects_carpet_bomber_impacts_and_explosions_only_from_live_sim_sta
                 .then_some(id)
         })
         .collect::<Vec<_>>();
-    assert!(!explosion_ids.is_empty());
+    assert_ne!(explosion_ids, Vec::<EntityId>::new());
     sync_scene(&mut scene, &mut content, &mut source, &simulation.world);
     assert!(
         explosion_ids

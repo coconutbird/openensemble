@@ -210,7 +210,7 @@ impl Material {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub(super) struct Vertex {
     pub(super) position: [f32; 3],
     pub(super) normal: [f32; 3],

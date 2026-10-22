@@ -281,12 +281,13 @@ impl UnitSceneRenderer {
             .iter()
             .map(|placement| {
                 let mut previous_placement = previous.remove(&placement.entity_id());
+                let fresh_clock = PresentationAnimationClock::default();
                 let (animation_clock, mut movement_animation_clock, previous_movement, complete) =
                     previous_placement
                         .as_ref()
                         .filter(|rendered| same_visual(rendered, placement))
                         .map_or(
-                            (Default::default(), Default::default(), None, true),
+                            (fresh_clock, fresh_clock, None, true),
                             |rendered| {
                                 (
                                     rendered.animation_clock,

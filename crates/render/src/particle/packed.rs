@@ -9,7 +9,7 @@ use super::{
 };
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub(super) struct PackedParticleInstance {
     pub(super) position_rotation: [f32; 4],
     pub(super) axis_half_length: [f32; 4],
@@ -26,7 +26,7 @@ pub(super) struct PackedParticleInstance {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, Default, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub(super) struct PackedParticleScene {
     view_projection: [[f32; 4]; 4],
     world_to_view: [[f32; 4]; 4],
@@ -66,7 +66,7 @@ impl PackedParticleScene {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub(super) struct PackedParticleMaterial {
     pub(super) flags: [u32; 4],
     hdr_scales: [f32; 4],

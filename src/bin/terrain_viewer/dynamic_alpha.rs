@@ -4,6 +4,7 @@ use glam::Vec2;
 use render::terrain::DynamicTerrainAlphaMask;
 use render::ugx::{AnimationTerrainAlpha, AnimationTerrainAlphaShape};
 use render::wgpu;
+use zerocopy::IntoBytes;
 
 pub(crate) struct DynamicTerrainAlphaTexture {
     texture: wgpu::Texture,
@@ -86,7 +87,7 @@ impl DynamicTerrainAlphaTexture {
     fn upload(&self, queue: &wgpu::Queue) {
         queue.write_texture(
             self.texture.as_image_copy(),
-            bytemuck::cast_slice(self.mask.words()),
+            self.mask.words().as_bytes(),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(self.mask.words_per_row() * 4),

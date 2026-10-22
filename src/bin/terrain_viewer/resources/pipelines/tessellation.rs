@@ -6,6 +6,7 @@ use render::local_shadow::LocalShadowMap;
 use render::terrain::{GpuTessParams, LightingParams, NORMALIZED_TERRAIN_Y_OFFSET, TerrainParams};
 use render::wgpu;
 use wgpu::util::DeviceExt;
+use zerocopy::IntoBytes;
 
 use super::{
     CameraResources, CompositorInputs, TerrainSamplers, create_camera_resources,
@@ -287,7 +288,7 @@ fn create_instance_buffer(
     let instances = create_patch_instances(raw_data, patches_x, patches_z);
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Tess Instance Buffer"),
-        contents: bytemuck::cast_slice(&instances),
+        contents: instances.as_bytes(),
         usage: wgpu::BufferUsages::VERTEX,
     })
 }

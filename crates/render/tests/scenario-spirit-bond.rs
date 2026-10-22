@@ -1,3 +1,7 @@
+//! Checks that the renderer shows the sim-owned hunter bond and both of its endpoints.
+//!
+//! The test needs a local Halo Wars DE installation.
+
 use glam::Vec3;
 use render::ugx::{UnitScene, simulation_entity_secondary_transform};
 use sim::{EntityId, load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id};

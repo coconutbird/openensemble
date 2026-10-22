@@ -8,6 +8,7 @@
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use num_traits::ToPrimitive;
 use wgpu::util::DeviceExt;
+use zerocopy::IntoBytes;
 
 use crate::terrain::LightingParams;
 
@@ -582,7 +583,7 @@ impl LocalLightBuffer {
         let packed = pack_lights(lights);
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Shared Local Lights"),
-            contents: bytemuck::cast_slice(&packed),
+            contents: packed.as_bytes(),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
         Self { buffer }
@@ -597,7 +598,7 @@ impl LocalLightBuffer {
     /// Replaces the whole fixed-size payload.
     pub fn update(&self, queue: &wgpu::Queue, lights: &LocalLightSet) {
         let packed = pack_lights(lights);
-        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&packed));
+        queue.write_buffer(&self.buffer, 0, packed.as_bytes());
     }
 
     /// Returns the storage buffer shared by renderer bind groups.
@@ -619,7 +620,7 @@ pub enum LocalLightError {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, Default, zerocopy::IntoBytes, zerocopy::Immutable)]
 struct PackedLocalLight {
     position_and_omni: [f32; 4],
     color_and_omni: [f32; 4],

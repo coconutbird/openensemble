@@ -14,6 +14,7 @@ use num_traits::ToPrimitive;
 use pipeline::ddx::DdxTexture;
 use pipeline::source::{AssetSource, StdFileProvider};
 use wgpu::util::DeviceExt;
+use zerocopy::IntoBytes;
 
 use crate::{RenderPhase, WorldRenderer};
 
@@ -308,12 +309,12 @@ impl TerrainPatchRenderer {
         let (domain, indices) = patch_grid();
         let domain_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Terrain Patch Domain Grid"),
-            contents: bytemuck::cast_slice(&domain),
+            contents: domain.as_bytes(),
             usage: wgpu::BufferUsages::VERTEX,
         });
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Terrain Patch Domain Indices"),
-            contents: bytemuck::cast_slice(&indices),
+            contents: indices.as_bytes(),
             usage: wgpu::BufferUsages::INDEX,
         });
         let subdivisions = u32::from(PATCH_SUBDIVISIONS);
@@ -345,8 +346,8 @@ impl TerrainPatchRenderer {
         let camera = CameraUniform {
             view_proj: view_projection.to_cols_array_2d(),
         };
-        queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&camera));
-        queue.write_buffer(&self.lighting_buffer, 0, bytemuck::bytes_of(lighting));
+        queue.write_buffer(&self.camera_buffer, 0, camera.as_bytes());
+        queue.write_buffer(&self.lighting_buffer, 0, lighting.as_bytes());
     }
 
     /// Replaces resolved patch instances, growing the GPU stream as needed.
@@ -377,7 +378,7 @@ impl TerrainPatchRenderer {
             .copied()
             .map(TerrainPatchInstance::packed)
             .collect::<Vec<_>>();
-        queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&packed));
+        queue.write_buffer(&self.instance_buffer, 0, packed.as_bytes());
         Ok(())
     }
 
@@ -441,7 +442,7 @@ pub enum TerrainPatchError {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, Default, zerocopy::IntoBytes, zerocopy::Immutable)]
 struct PackedPatchInstance {
     position: [f32; 4],
     axis_v_and_axis_u_x: [f32; 4],
@@ -451,7 +452,7 @@ struct PackedPatchInstance {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, Default, zerocopy::IntoBytes, zerocopy::Immutable)]
 struct PackedPatchParams {
     terrain_info: [f32; 4],
     terrain_origin: [f32; 4],
@@ -695,18 +696,18 @@ fn create_world_bind_group(
 ) -> (wgpu::Buffer, wgpu::Buffer, wgpu::BindGroup) {
     let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Terrain Patch Camera Uniform"),
-        contents: bytemuck::bytes_of(&CameraUniform::default()),
+        contents: CameraUniform::default().as_bytes(),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
     let patch_params = PackedPatchParams::new(world, material);
     let patch_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Terrain Patch Parameters"),
-        contents: bytemuck::bytes_of(&patch_params),
+        contents: patch_params.as_bytes(),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let lighting_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Terrain Patch Lighting Uniform"),
-        contents: bytemuck::bytes_of(&LightingParams::default()),
+        contents: LightingParams::default().as_bytes(),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 

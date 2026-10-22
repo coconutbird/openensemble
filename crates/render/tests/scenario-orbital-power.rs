@@ -1,3 +1,7 @@
+//! Checks that the renderer shows orbital beams, the effect and moving debris from live sim state.
+//!
+//! The test needs a local Halo Wars DE installation.
+
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use pipeline::source::{AssetSource, StdFileProvider};

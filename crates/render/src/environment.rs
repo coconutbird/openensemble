@@ -261,7 +261,7 @@ fn validate_dimensions(width: u32, height: u32, mip_count: u32) -> Result<(), St
     if width != height {
         return Err(format!("cubemap is not square: {width}x{height}"));
     }
-    let maximum_mips = u32::BITS - width.leading_zeros();
+    let maximum_mips = width.bit_width();
     if mip_count == 0 || mip_count > maximum_mips {
         return Err(format!(
             "cubemap has {mip_count} mip levels; {width}x{height} permits at most {maximum_mips}"

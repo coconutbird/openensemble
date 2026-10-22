@@ -1,3 +1,7 @@
+//! Checks that the renderer plays the combat clips that the sim selects, including turret clips.
+//!
+//! The tests need a local Halo Wars DE installation.
+
 use glam::Vec3;
 use render::ugx::{UnitScene, simulation_proto_names};
 use sim::{

@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use glam::Mat4;
 use wgpu::util::DeviceExt;
+use zerocopy::IntoBytes;
 
 use super::model::{BlendMode, Image, Material, MaterialFeature, Model};
 use crate::environment::EnvironmentMap;
@@ -578,7 +579,7 @@ impl SharedResources {
             MaterialUniform::from_material(material, environment_available, environment_hdr_scale);
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("UGX Material Uniform: {}", material.name)),
-            contents: bytemuck::bytes_of(&uniform),
+            contents: uniform.as_bytes(),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let textures = MaterialTextureViews::new(self, device, queue, material);
@@ -687,12 +688,12 @@ impl SharedResources {
             .map(|section| GpuSection {
                 vertex_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("UGX Section Vertices"),
-                    contents: bytemuck::cast_slice(&section.vertices),
+                    contents: section.vertices.as_bytes(),
                     usage: wgpu::BufferUsages::VERTEX,
                 }),
                 index_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("UGX Section Indices"),
-                    contents: bytemuck::cast_slice(&section.indices),
+                    contents: section.indices.as_bytes(),
                     usage: wgpu::BufferUsages::INDEX,
                 }),
                 index_count: section.index_count,
@@ -851,13 +852,13 @@ impl Renderer {
         let scene_uniform = SceneUniform::new(model_transform, shared.terrain_heightfield_info);
         let scene_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("UGX Scene Uniform"),
-            contents: bytemuck::bytes_of(&scene_uniform),
+            contents: scene_uniform.as_bytes(),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let identity_joints = vec![Mat4::IDENTITY.to_cols_array_2d(); model.joint_count];
         let joint_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("UGX Matrix Palette"),
-            contents: bytemuck::cast_slice(&identity_joints),
+            contents: identity_joints.as_bytes(),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
         let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -946,7 +947,7 @@ impl Renderer {
             self.shared.terrain_heightfield_info,
             visual_state,
         );
-        queue.write_buffer(&self.scene_buffer, 0, bytemuck::bytes_of(&uniform));
+        queue.write_buffer(&self.scene_buffer, 0, uniform.as_bytes());
     }
 
     /// Replaces the skinning palette used by the vertex shader.
@@ -968,6 +969,6 @@ impl Renderer {
             .iter()
             .map(Mat4::to_cols_array_2d)
             .collect::<Vec<_>>();
-        queue.write_buffer(&self.joint_buffer, 0, bytemuck::cast_slice(&columns));
+        queue.write_buffer(&self.joint_buffer, 0, columns.as_bytes());
     }
 }

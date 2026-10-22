@@ -4,6 +4,7 @@
 
 use num_traits::ToPrimitive;
 use render::wgpu;
+use zerocopy::IntoBytes;
 
 use crate::types::TerrainChunkGrid;
 use crate::viewer::TerrainViewer;
@@ -58,7 +59,7 @@ impl TerrainViewer {
 
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Chunk Layers Buffer"),
-            contents: bytemuck::cast_slice(&layer_data),
+            contents: layer_data.as_bytes(),
             usage: wgpu::BufferUsages::STORAGE,
         })
     }
@@ -93,7 +94,7 @@ impl TerrainViewer {
 
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Texture Scales Buffer"),
-            contents: bytemuck::cast_slice(&scale_data),
+            contents: scale_data.as_bytes(),
             usage: wgpu::BufferUsages::STORAGE,
         })
     }
@@ -132,7 +133,7 @@ impl TerrainViewer {
 
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Chunk Decal Layers Buffer"),
-            contents: bytemuck::cast_slice(&layer_data),
+            contents: layer_data.as_bytes(),
             usage: wgpu::BufferUsages::STORAGE,
         })
     }
@@ -163,7 +164,7 @@ impl TerrainViewer {
 
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Decal Instances Buffer"),
-            contents: bytemuck::cast_slice(&data),
+            contents: data.as_bytes(),
             usage: wgpu::BufferUsages::STORAGE,
         })
     }
@@ -188,7 +189,7 @@ impl TerrainViewer {
 
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Decal UV Scales Buffer"),
-            contents: bytemuck::cast_slice(&data),
+            contents: data.as_bytes(),
             usage: wgpu::BufferUsages::STORAGE,
         })
     }

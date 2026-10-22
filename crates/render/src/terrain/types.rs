@@ -33,8 +33,11 @@ pub struct TerrainHeightfield<'a> {
 /// Albedo atlas data decoded from XTT file.
 #[derive(Clone)]
 pub struct AlbedoData {
+    /// Atlas width, in pixels.
     pub width: u32,
+    /// Atlas height, in pixels.
     pub height: u32,
+    /// Decoded albedo atlas pixels.
     pub pixels: Vec<u8>,
 }
 
@@ -171,26 +174,37 @@ pub struct FoliageSet {
     pub num_blade_types: u32,
     /// Number of vertices per blade (typically 10).
     pub num_verts_per_blade: u32,
-    /// Blade vertex data stored as line texture format:
-    /// positions.xyz + uv.x stored in positions texture
-    /// normals.xyz + runtime (source-inverted) uv.y stored in normals texture
+    /// Blade vertex positions for the positions line texture.
+    ///
+    /// `xyz` is the position and `w` is `uv.x`.
     pub blade_positions: Vec<[f32; 4]>,
+    /// Blade vertex normals for the normals line texture.
+    ///
+    /// `xyz` is the normal and `w` is the runtime (source-inverted) `uv.y`.
     pub blade_normals: Vec<[f32; 4]>,
-    /// Albedo/diffuse texture (RGBA).
+    /// Width of the albedo (diffuse) texture, in pixels.
     pub albedo_width: u32,
+    /// Height of the albedo (diffuse) texture, in pixels.
     pub albedo_height: u32,
+    /// Albedo (diffuse) texture pixels (RGBA).
     pub albedo_pixels: Vec<u8>,
-    /// Normal map texture (RGBA).
+    /// Width of the normal map, in pixels.
     pub normal_width: u32,
+    /// Height of the normal map, in pixels.
     pub normal_height: u32,
+    /// Normal map pixels (RGBA).
     pub normal_pixels: Vec<u8>,
-    /// Specular texture (RGBA).
+    /// Width of the specular texture, in pixels.
     pub specular_width: u32,
+    /// Height of the specular texture, in pixels.
     pub specular_height: u32,
+    /// Specular texture pixels (RGBA).
     pub specular_pixels: Vec<u8>,
-    /// Opacity texture (RGBA).
+    /// Width of the opacity texture, in pixels.
     pub opacity_width: u32,
+    /// Height of the opacity texture, in pixels.
     pub opacity_height: u32,
+    /// Opacity texture pixels (RGBA).
     pub opacity_pixels: Vec<u8>,
 }
 
@@ -294,8 +308,11 @@ pub struct RawXtdData {
 /// Per-patch terrain tessellation metadata decoded from the XTD tess chunk.
 #[derive(Clone)]
 pub struct TerrainTessellationData {
+    /// Number of tessellation patches along the X axis.
     pub patches_x: u32,
+    /// Number of tessellation patches along the Z axis.
     pub patches_z: u32,
+    /// Tessellation level (0 to 3) of each patch, in row-major order (X changes fastest).
     pub levels: Vec<u8>,
 }
 
@@ -303,8 +320,11 @@ pub struct TerrainTessellationData {
 /// Dimensions are stored explicitly because XTD assets define both axes.
 #[derive(Clone)]
 pub struct AoTextureData {
+    /// AO values, one byte for each texel.
     pub values: Vec<u8>,
+    /// Texture width, in texels.
     pub width: u32,
+    /// Texture height, in texels.
     pub height: u32,
 }
 
@@ -313,8 +333,11 @@ pub struct AoTextureData {
 /// Used for terrain transparency (holes, cliff edges).
 #[derive(Clone)]
 pub struct AlphaTextureData {
+    /// Alpha values, one byte for each texel.
     pub values: Vec<u8>,
+    /// Texture width, in texels.
     pub width: u32,
+    /// Texture height, in texels.
     pub height: u32,
 }
 
@@ -323,6 +346,8 @@ pub struct AlphaTextureData {
 pub struct LightingTextureData {
     /// Row-major RGBA8 pixels.
     pub pixels: Vec<u8>,
+    /// Texture width, in pixels.
     pub width: u32,
+    /// Texture height, in pixels.
     pub height: u32,
 }

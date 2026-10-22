@@ -1,3 +1,7 @@
+//! Reports the low-alpha regions of the static terrain alpha map in `blood_gulch`.
+//!
+//! The test needs a local Halo Wars DE installation.
+
 use std::collections::VecDeque;
 
 #[test]

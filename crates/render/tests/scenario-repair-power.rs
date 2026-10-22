@@ -1,3 +1,7 @@
+//! Checks that the repair field attachment and the reinforced member project from sim state.
+//!
+//! The test needs a local Halo Wars DE installation.
+
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use pipeline::source::{AssetSource, StdFileProvider};

@@ -62,7 +62,7 @@ env_logger = "0.11"
 # Binary parsing (useful for game formats)
 byteorder = "1.5"
 binrw = "0.15"
-bytemuck = { version = "1.19", features = ["derive"] }
+zerocopy = { version = "0.8", features = ["derive"] }
 
 # XML parsing
 quick-xml = "0.37"
@@ -99,7 +99,7 @@ anyhow = { workspace = true }
 glam = { workspace = true }
 num-traits = { workspace = true }
 egui = { workspace = true }
-bytemuck = { workspace = true }
+zerocopy = { workspace = true }
 pollster = { workspace = true }
 dotenvy = "0.15"
 png = "0.17"

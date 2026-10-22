@@ -1,3 +1,7 @@
+//! Checks that the renderer loads only the animation that the sim selects in `PHXscn03`.
+//!
+//! The test needs a local Halo Wars DE installation.
+
 use render::ugx::{UnitScene, simulation_proto_names};
 use sim::load_scenario_from_game_dir;
 
@@ -35,7 +39,7 @@ fn phx03_renderer_loads_only_the_animation_selected_by_authoritative_sim_state()
         .simulation
         .world
         .update_triggers_with_gameplay(&loaded.content.database, &loaded.simulation.gameplay);
-    assert!(update.unsupported_effect_types.is_empty());
+    assert_eq!(update.unsupported_effect_types, Vec::<u16>::new());
     assert!(!scene.roster_matches(&loaded.simulation.world));
     assert!(scene.sync_world(
         &mut loaded.source,

@@ -2314,7 +2314,6 @@ name = "openensemble"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bytemuck",
  "data",
  "dotenvy",
  "egui",
@@ -2329,6 +2328,7 @@ dependencies = [
  "render",
  "sim",
  "xcore",
+ "zerocopy",
 ]
 
 [[package]]
@@ -2721,7 +2721,6 @@ name = "render"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bytemuck",
  "egui",
  "egui-wgpu",
  "egui-winit",
@@ -2740,6 +2739,7 @@ dependencies = [
  "wgpu",
  "winit",
  "xcore",
+ "zerocopy",
 ]
 
 [[package]]
@@ -2933,6 +2933,7 @@ dependencies = [
  "pipeline",
  "quick-xml 0.37.5",
  "thiserror 2.0.18",
+ "zerocopy",
 ]
 
 [[package]]

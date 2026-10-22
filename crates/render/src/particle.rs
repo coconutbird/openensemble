@@ -11,6 +11,7 @@ use num_traits::ToPrimitive;
 use pipeline::ddx::DdxTexture;
 use pipeline::source::{AssetSource, StdFileProvider};
 use wgpu::util::DeviceExt;
+use zerocopy::IntoBytes;
 
 use crate::{RenderPhase, WorldRenderer};
 
@@ -616,7 +617,7 @@ impl ParticleRenderer {
         let scene_uniform = PackedParticleScene::default();
         let scene_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Particle Scene Uniform"),
-            contents: bytemuck::bytes_of(&scene_uniform),
+            contents: scene_uniform.as_bytes(),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -673,7 +674,7 @@ impl ParticleRenderer {
     /// Updates camera, depth reconstruction, and light-volume addressing.
     pub fn update_scene(&self, queue: &wgpu::Queue, scene: &ParticleScene) {
         let packed = PackedParticleScene::from_scene(scene);
-        queue.write_buffer(&self.scene_buffer, 0, bytemuck::bytes_of(&packed));
+        queue.write_buffer(&self.scene_buffer, 0, packed.as_bytes());
     }
 
     /// Uploads resolved particle instances, growing the vertex buffer when
@@ -705,7 +706,7 @@ impl ParticleRenderer {
             .copied()
             .map(ParticleInstance::packed)
             .collect::<Vec<_>>();
-        queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&packed));
+        queue.write_buffer(&self.instance_buffer, 0, packed.as_bytes());
         Ok(())
     }
 

@@ -8,6 +8,7 @@
 
 use glam::Vec3;
 use wgpu::util::DeviceExt;
+use zerocopy::IntoBytes;
 
 use crate::lighting::{LocalLight, LocalLightShape};
 use crate::terrain::LightingParams;
@@ -50,13 +51,13 @@ impl LocalLightVolume {
         let params = PackedVolumeParams::empty();
         let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Local Light Volume Parameters"),
-            contents: bytemuck::bytes_of(&params),
+            contents: params.as_bytes(),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let empty_lights = vec![PackedBufferedLight::default(); MAX_BUFFERED_LIGHTS];
         let lights_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Local Light Volume Lights"),
-            contents: bytemuck::cast_slice(&empty_lights),
+            contents: empty_lights.as_bytes(),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
         let layout = create_layout(device);
@@ -122,14 +123,14 @@ impl LocalLightVolume {
         let params = transform.map_or_else(PackedVolumeParams::empty, |value| {
             PackedVolumeParams::new(value, valid.len())
         });
-        queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
+        queue.write_buffer(&self.params_buffer, 0, params.as_bytes());
         if !valid.is_empty() {
             let packed = valid
                 .iter()
                 .copied()
                 .map(PackedBufferedLight::from_light)
                 .collect::<Vec<_>>();
-            queue.write_buffer(&self.lights_buffer, 0, bytemuck::cast_slice(&packed));
+            queue.write_buffer(&self.lights_buffer, 0, packed.as_bytes());
         }
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -230,7 +231,7 @@ impl VolumeTransform {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, zerocopy::IntoBytes, zerocopy::Immutable)]
 struct PackedVolumeParams {
     world_low: [f32; 4],
     world_extent: [f32; 4],
@@ -256,7 +257,7 @@ impl PackedVolumeParams {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, Default, zerocopy::IntoBytes, zerocopy::Immutable)]
 struct PackedBufferedLight {
     position_and_radius: [f32; 4],
     color_and_omni_mul: [f32; 4],

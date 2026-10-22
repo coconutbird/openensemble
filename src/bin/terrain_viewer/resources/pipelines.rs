@@ -11,6 +11,7 @@ use render::gpu::{
 use render::terrain::{CompositeBindings, CompositingConfig, CompositorResources};
 use render::wgpu;
 use wgpu::util::DeviceExt;
+use zerocopy::{Immutable, IntoBytes};
 
 use crate::types::TerrainChunkGrid;
 use crate::viewer::TerrainViewer;
@@ -69,14 +70,14 @@ fn create_camera_resources(device: &wgpu::Device) -> CameraResources {
     }
 }
 
-fn create_uniform_buffer<T: bytemuck::Pod>(
+fn create_uniform_buffer<T: IntoBytes + Immutable>(
     device: &wgpu::Device,
     label: &str,
     value: &T,
 ) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(label),
-        contents: bytemuck::bytes_of(value),
+        contents: value.as_bytes(),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     })
 }

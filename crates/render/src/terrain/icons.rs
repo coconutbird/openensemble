@@ -90,6 +90,9 @@ mod tests {
         }
         assert_eq!(projected[0].color_override, Some([255, 128, 0]));
         assert!(projected[0].target_on_screen);
-        assert!(project_icon_objects(&world, 2, Mat4::IDENTITY, [1_000.0, 500.0]).is_empty());
+        assert_eq!(
+            project_icon_objects(&world, 2, Mat4::IDENTITY, [1_000.0, 500.0]),
+            [] as [ProjectedIconObject; 0]
+        );
     }
 }

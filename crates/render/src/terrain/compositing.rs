@@ -6,15 +6,19 @@
 
 use num_traits::ToPrimitive;
 use wgpu;
+use zerocopy::IntoBytes;
 
 use crate::gpu::{
     buffer_entry, buffer_layout_entry, filtering_sampler_layout_entry, texture_entry,
     texture_layout_entry,
 };
 
+/// Camera distance bands that select a terrain chunk LOD level.
 #[derive(Debug, Clone)]
 pub struct LodConfig {
+    /// Upper camera distance for LOD levels 0 to 3, in world units.
     pub distance_thresholds: [f32; 4],
+    /// Texture size scale for LOD levels 0 to 3 (1.0 is full size).
     pub size_multipliers: [f32; 4],
 }
 
@@ -28,6 +32,9 @@ impl Default for LodConfig {
 }
 
 impl LodConfig {
+    /// Creates a config with the distance limits of LOD levels 0, 1 and 2.
+    ///
+    /// LOD level 3 has no distance limit. The size multipliers keep their default values.
     #[must_use]
     pub fn with_distances(d0: f32, d1: f32, d2: f32) -> Self {
         Self {
@@ -36,6 +43,7 @@ impl LodConfig {
         }
     }
 
+    /// Returns the LOD level (0 to 3) for a camera distance in world units.
     #[must_use]
     pub fn lod_for_distance(&self, distance: f32) -> u8 {
         for (index, &threshold) in self.distance_thresholds.iter().enumerate() {
@@ -47,12 +55,18 @@ impl LodConfig {
     }
 }
 
+/// Size and chunk layout of the composited unique terrain atlases.
 #[derive(Debug, Clone)]
 pub struct CompositingConfig {
+    /// Width and height of one chunk in the atlas at mip 0, in pixels (a power of two).
     pub chunk_texture_size: u32,
+    /// Number of terrain chunks along the X axis.
     pub chunks_x: u32,
+    /// Number of terrain chunks along the Z axis.
     pub chunks_z: u32,
+    /// Atlas width at mip 0, in pixels (`chunks_x * chunk_texture_size`).
     pub atlas_width: u32,
+    /// Atlas height at mip 0, in pixels (`chunks_z * chunk_texture_size`).
     pub atlas_height: u32,
 }
 
@@ -97,11 +111,13 @@ impl CompositingConfig {
         })
     }
 
+    /// Returns the number of chunks in the atlas (`chunks_x * chunks_z`).
     #[must_use]
     pub fn total_chunks(&self) -> u32 {
         self.chunks_x * self.chunks_z
     }
 
+    /// Returns the number of atlas mip levels, down to one pixel for each chunk.
     #[must_use]
     pub fn mip_level_count(&self) -> u32 {
         self.chunk_texture_size.ilog2() + 1
@@ -136,35 +152,64 @@ mod config_tests {
     }
 }
 
+/// Per-chunk, per-mip uniform for the composite shader.
+///
+/// The layout matches `CompositeParams` in `terrain_composite.wesl`.
 #[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Copy, Clone, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub struct CompositeParams {
+    /// Index of the chunk in the atlas, in row-major order (`z * chunks_x + x`).
     pub chunk_index: u32,
+    /// Number of texture layers that the chunk blends (1 to 8).
     pub num_layers: u32,
+    /// Debug view: 0 is normal, 1 is chunk UV, 2 is grid position, 3 is low alpha,
+    /// 4 is base layer only, 5 is tiling UV.
     pub debug_mode: u32,
+    /// Number of decal layers that the chunk blends (0 to 8).
     pub num_decal_layers: u32,
+    /// Destination mip level, also used as the source sample LOD.
     pub lod_level: u32,
+    /// 1 when the shader decodes HDR source textures, else 0.
     pub hdr_mode: u32,
+    /// Scale applied to decoded HDR albedo.
     pub hdr_scale: f32,
+    /// Number of terrain chunks along the X axis.
     pub chunks_x: u32,
 }
 
+/// GPU resources that the composite shader reads.
 pub struct CompositeBindings<'a> {
+    /// Terrain albedo texture array (binding 1).
     pub terrain_array: &'a wgpu::TextureView,
+    /// Alpha atlas with the blend weights of layers 1 to 4 (binding 2).
     pub alpha_atlas: &'a wgpu::TextureView,
+    /// Texture layer indices, eight entries for each chunk (binding 3).
     pub chunk_layers: &'a wgpu::Buffer,
+    /// UV tiling scale for each terrain texture (binding 4).
     pub texture_scales: &'a wgpu::Buffer,
+    /// Sampler for the terrain texture arrays (binding 5).
     pub terrain_sampler: &'a wgpu::Sampler,
+    /// Sampler for the alpha atlases and the decal textures (binding 6).
     pub alpha_sampler: &'a wgpu::Sampler,
+    /// Alpha atlas with the blend weights of layers 5 to 7 (binding 7).
     pub alpha_atlas_hi: &'a wgpu::TextureView,
+    /// Decal alpha atlas with the coverage of decal layers 0 to 3 (binding 8).
     pub decal_alpha_atlas: &'a wgpu::TextureView,
+    /// Decal instance indices, eight entries for each chunk (binding 9).
     pub chunk_decal_layers: &'a wgpu::Buffer,
+    /// Decal instances: rotation, center and texture index (binding 10).
     pub decal_instances: &'a wgpu::Buffer,
+    /// UV scale for each decal instance (binding 11).
     pub decal_uv_scales: &'a wgpu::Buffer,
+    /// Terrain normal texture array (binding 12).
     pub normal_array: &'a wgpu::TextureView,
+    /// Decal alpha atlas with the coverage of decal layers 4 to 7 (binding 13).
     pub decal_alpha_atlas_hi: &'a wgpu::TextureView,
+    /// Decal diffuse texture array (binding 14).
     pub decal_diffuse_array: &'a wgpu::TextureView,
+    /// Decal opacity texture array (binding 15).
     pub decal_opacity_array: &'a wgpu::TextureView,
+    /// Terrain specular texture array (binding 16).
     pub specular_array: &'a wgpu::TextureView,
 }
 
@@ -380,6 +425,7 @@ fn index_usize(index: u32) -> usize {
     usize::try_from(index).expect("GPU resource index must fit usize")
 }
 
+/// GPU atlases, pipeline and dirty state of the unique terrain compositor.
 pub struct CompositorResources {
     _albedo_atlas: wgpu::Texture,
     albedo_atlas_view: wgpu::TextureView,
@@ -393,6 +439,7 @@ pub struct CompositorResources {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     params_buffer: wgpu::Buffer,
+    /// Atlas size and chunk layout.
     pub config: CompositingConfig,
     dirty_chunks: Vec<bool>,
     chunk_lod: Vec<u8>,
@@ -445,6 +492,7 @@ impl CompositorResources {
         }
     }
 
+    /// Creates the composite bind group from the supplied source resources.
     #[must_use]
     pub fn create_bind_group(
         &self,
@@ -541,7 +589,7 @@ impl CompositorResources {
                 queue.write_buffer(
                     &self.params_buffer,
                     self.params_offset(chunk_index, mip),
-                    bytemuck::bytes_of(&params),
+                    params.as_bytes(),
                 );
             }
         }
@@ -612,6 +660,9 @@ impl CompositorResources {
         );
     }
 
+    /// Sets the HDR albedo scale, or `None` for LDR sources.
+    ///
+    /// A changed value marks all chunks dirty.
     pub fn set_hdr_scale(&mut self, hdr_scale: Option<f32>) {
         if self.hdr_scale != hdr_scale {
             self.hdr_scale = hdr_scale;
@@ -619,10 +670,12 @@ impl CompositorResources {
         }
     }
 
+    /// Marks all chunks for a rebuild on the next composite.
     pub fn mark_all_dirty(&mut self) {
         self.dirty_chunks.fill(true);
     }
 
+    /// Marks one chunk for a rebuild. An out-of-range index has no effect.
     pub fn mark_chunk_dirty(&mut self, chunk_index: u32) {
         if let Ok(index) = usize::try_from(chunk_index)
             && let Some(dirty) = self.dirty_chunks.get_mut(index)
@@ -631,11 +684,13 @@ impl CompositorResources {
         }
     }
 
+    /// Returns the composited albedo atlas with all mip levels.
     #[must_use]
     pub fn albedo_atlas_view(&self) -> &wgpu::TextureView {
         &self.albedo_atlas_view
     }
 
+    /// Returns the composited normal atlas with all mip levels.
     #[must_use]
     pub fn normal_atlas_view(&self) -> &wgpu::TextureView {
         &self.normal_atlas_view
@@ -647,6 +702,9 @@ impl CompositorResources {
         &self.specular_atlas_view
     }
 
+    /// Updates the LOD level of each chunk from the camera position.
+    ///
+    /// Returns `true` if the LOD level of a chunk changed.
     pub fn update_lod(
         &mut self,
         camera_pos: [f32; 3],
@@ -673,6 +731,7 @@ impl CompositorResources {
         any_changed
     }
 
+    /// Returns the number of chunks that wait for a rebuild.
     #[must_use]
     pub fn dirty_chunk_count(&self) -> usize {
         self.dirty_chunks.iter().filter(|&&dirty| dirty).count()

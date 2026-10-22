@@ -9,6 +9,7 @@ use render::postprocess::{ToneMapResources, ToneMapSettings};
 use render::terrain::{LightingParams, RawXtdData, TerrainParams, TerrainPatchWorldBindings};
 use render::ugx::RendererResources;
 use render::{Application3D, RenderContext, RenderPhase, WorldRenderer, wgpu};
+use zerocopy::IntoBytes;
 
 use super::TerrainViewer;
 use crate::capture::{
@@ -247,7 +248,7 @@ impl TerrainViewer {
         queue.write_buffer(
             &gpu.camera_buffer,
             0,
-            bytemuck::cast_slice(&view_projection.to_cols_array()),
+            view_projection.to_cols_array().as_bytes(),
         );
 
         let params = TerrainParams {
@@ -258,7 +259,7 @@ impl TerrainViewer {
             bump_power: self.bump_power,
             padding: 0.0,
         };
-        queue.write_buffer(&gpu.params_buffer, 0, bytemuck::bytes_of(&params));
+        queue.write_buffer(&gpu.params_buffer, 0, params.as_bytes());
     }
 
     fn update_lighting(
@@ -316,7 +317,7 @@ impl TerrainViewer {
         gpu.light_volume.apply_to_lighting(&mut params);
         gpu.local_lights.update(queue, &self.local_lights);
         if let Some(lighting_buffer) = &gpu.lighting_buffer {
-            queue.write_buffer(lighting_buffer, 0, bytemuck::bytes_of(&params));
+            queue.write_buffer(lighting_buffer, 0, params.as_bytes());
         }
         if let Some(foliage) = &mut self.foliage_resources {
             foliage.update_frame(queue, &params, self.render_time_seconds);

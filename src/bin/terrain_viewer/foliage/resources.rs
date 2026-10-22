@@ -6,6 +6,7 @@ use num_traits::ToPrimitive;
 use render::terrain::LightingParams;
 use render::wgpu;
 use render::wgpu::util::DeviceExt;
+use zerocopy::IntoBytes;
 
 use super::FoliageConfig;
 use crate::gpu::xtd_packed_to_world;
@@ -195,7 +196,7 @@ impl FoliageResources {
         let (material_sampler, blade_sampler) = create_foliage_samplers(device);
         let material_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("Foliage Material Params: {}", set.name)),
-            contents: bytemuck::cast_slice(&[set.backside_shadow_scalar, 0.0, 0.0, 0.0]),
+            contents: [set.backside_shadow_scalar, 0.0, 0.0, 0.0].as_bytes(),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let material_bind_group = create_foliage_material_bind_group(
@@ -317,7 +318,7 @@ impl FoliageResources {
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
-                bytemuck::cast_slice(data),
+                data.as_bytes(),
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(width * 16), // 4 floats * 4 bytes
@@ -362,7 +363,7 @@ impl FoliageResources {
                 .expect("foliage vertex count must fit f32"),
             blade_data_offset: 0.0,
         };
-        queue.write_buffer(&buffer, 0, bytemuck::bytes_of(&default_chunk));
+        queue.write_buffer(&buffer, 0, default_chunk.as_bytes());
         self.chunk_info_buffer = Some(buffer);
     }
 
@@ -438,7 +439,7 @@ impl FoliageResources {
         };
         let num_verts_per_blade = first_set.num_verts_per_blade;
         let params = initial_foliage_params(terrain_data, first_set, &self.config);
-        queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
+        queue.write_buffer(&self.params_buffer, 0, params.as_bytes());
         self.params = Some(params);
 
         let num_verts = terrain_data.num_verts_per_axis;
@@ -704,7 +705,7 @@ impl FoliageResources {
                     .to_f32()
                     .expect("foliage blade offset must fit f32"),
             };
-            let bytes = bytemuck::bytes_of(&chunk_info);
+            let bytes = chunk_info.as_bytes();
             chunk_data[byte_offset..byte_offset + bytes.len()].copy_from_slice(bytes);
 
             let active_blades =
@@ -778,7 +779,7 @@ impl FoliageResources {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            bytemuck::cast_slice(&data),
+            data.as_bytes(),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(width * 8),
@@ -867,7 +868,7 @@ impl FoliageResources {
         params.blackmap_params2 = lighting.blackmap_params2;
         params.local_light_params = lighting.local_light_params;
         params.blackmap_uv_scales = lighting.blackmap_uv_scales;
-        queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(params));
+        queue.write_buffer(&self.params_buffer, 0, params.as_bytes());
     }
 
     /// Overrides distance fading for a deterministic overview capture.
@@ -879,7 +880,7 @@ impl FoliageResources {
         };
         params.foliage_info[2] = start;
         params.foliage_info[3] = end;
-        queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(params));
+        queue.write_buffer(&self.params_buffer, 0, params.as_bytes());
     }
 
     /// Create a heightmap texture from terrain position data.
@@ -914,7 +915,7 @@ impl FoliageResources {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            bytemuck::cast_slice(&world_positions),
+            world_positions.as_bytes(),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(num_verts * 4),
@@ -951,6 +952,6 @@ mod tests {
 
     #[test]
     fn foliage_index_buffer_rejects_geometry_that_cannot_match_the_oracle() {
-        assert!(parse_foliage_index_buffer(&[0x0002_0014], 8).is_empty());
+        assert_eq!(parse_foliage_index_buffer(&[0x0002_0014], 8), [] as [[u32; 2]; 0]);
     }
 }

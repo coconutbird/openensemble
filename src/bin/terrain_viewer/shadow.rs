@@ -4,6 +4,7 @@ use glam::{Mat4, Vec3};
 use render::local_shadow::{LOCAL_SHADOW_DEPTH_BIAS, LOCAL_SHADOW_FORMAT, LocalShadowMap};
 use render::terrain::NORMALIZED_TERRAIN_Y_OFFSET;
 use render::{RenderPhase, WorldRenderer, wgpu};
+use zerocopy::IntoBytes;
 
 const SHADOW_MAP_SIZE: u32 = 2048;
 pub const SHADOW_CASCADE_COUNT: u32 = 4;
@@ -39,7 +40,7 @@ struct TerrainShadowGeometry {
 
 /// Shadow params uniform; mirrored by `shadow_depth.wesl`.
 #[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Copy, Clone, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub struct ShadowParamsUniform {
     pub terrain_info: [f32; 4],
     pub mid: [f32; 4],
@@ -392,7 +393,7 @@ impl ShadowResources {
             ],
             range: [setup.range[0], setup.range[1], setup.range[2], 0.0],
         };
-        queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
+        queue.write_buffer(&self.params_buffer, 0, params.as_bytes());
 
         self.params_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Shadow Params Bind Group"),
@@ -471,7 +472,7 @@ impl ShadowResources {
 
     pub fn update_light_vp(&self, queue: &wgpu::Queue) {
         for (buffer, matrix) in self.light_vp_buffers.iter().zip(&self.light_vps) {
-            queue.write_buffer(buffer, 0, bytemuck::cast_slice(&matrix.to_cols_array()));
+            queue.write_buffer(buffer, 0, matrix.to_cols_array().as_bytes());
         }
     }
 

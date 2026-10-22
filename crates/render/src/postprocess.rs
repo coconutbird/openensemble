@@ -1,8 +1,8 @@
 //! HDR scene target and the tone-map path used by the PC renderer.
 
-use bytemuck::{Pod, Zeroable};
 use pipeline::hw1::LightSetData;
 use wgpu::util::DeviceExt;
+use zerocopy::{Immutable, IntoBytes};
 
 /// Linear HDR format used before presentation.
 pub const HDR_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -53,7 +53,7 @@ impl From<&LightSetData> for ToneMapSettings {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, IntoBytes, Immutable)]
 struct ToneMapUniform {
     output_size: [u32; 2],
     enabled: u32,
@@ -83,7 +83,7 @@ impl ToneMapUniform {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, IntoBytes, Immutable)]
 struct ReductionUniform {
     source_size: [u32; 2],
     source_is_scene: u32,
@@ -129,7 +129,7 @@ impl ToneMapResources {
         let tone_layout = create_tone_layout(device);
         let settings_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Tone Map Settings"),
-            contents: bytemuck::bytes_of(&ToneMapUniform::new(size, ToneMapSettings::default())),
+            contents: ToneMapUniform::new(size, ToneMapSettings::default()).as_bytes(),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let reduction_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -231,7 +231,7 @@ impl ToneMapResources {
     /// Updates scenario tone-map parameters.
     pub fn update(&self, queue: &wgpu::Queue, settings: ToneMapSettings) {
         let uniform = ToneMapUniform::new(self.targets.size, settings);
-        queue.write_buffer(&self.settings_buffer, 0, bytemuck::bytes_of(&uniform));
+        queue.write_buffer(&self.settings_buffer, 0, uniform.as_bytes());
     }
 
     /// Reduces scene luminance and presents the tone-mapped result.
@@ -534,7 +534,7 @@ fn create_reduction_bindings(
         };
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Tone Map Reduction Uniform"),
-            contents: bytemuck::bytes_of(&uniform),
+            contents: uniform.as_bytes(),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let source_view = if index == 0 {

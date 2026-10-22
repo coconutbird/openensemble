@@ -17,7 +17,7 @@ pub const NORMALIZED_TERRAIN_Y_OFFSET: f32 = 1.0 / 2048.0;
 /// Controls rendering options like debug mode and texture scaling.
 /// Must match the `TerrainParams` struct in WGSL shaders.
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub struct TerrainParams {
     /// Terrain size in world units [width, depth].
     pub terrain_size: [f32; 2],
@@ -46,16 +46,12 @@ impl Default for TerrainParams {
     }
 }
 
-// SAFETY: TerrainParams is repr(C) with all f32 fields
-unsafe impl bytemuck::Pod for TerrainParams {}
-unsafe impl bytemuck::Zeroable for TerrainParams {}
-
 /// GPU tessellation shader parameters.
 ///
 /// Contains data needed to decode packed positions/normals in the vertex shader.
 /// Must match the `TessParams` struct in WGSL shaders.
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub struct GpuTessParams {
     /// Position decoding minimum [x, y, z] and normalized Y bias in `w`.
     pub mid: [f32; 4],
@@ -81,15 +77,11 @@ impl Default for GpuTessParams {
     }
 }
 
-// SAFETY: GpuTessParams is repr(C) with all f32 fields
-unsafe impl bytemuck::Pod for GpuTessParams {}
-unsafe impl bytemuck::Zeroable for GpuTessParams {}
-
 /// Camera uniform for shaders.
 ///
 /// Contains the view-projection matrix.
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub struct CameraUniform {
     /// Combined view-projection matrix.
     pub view_proj: [[f32; 4]; 4],
@@ -108,10 +100,6 @@ impl Default for CameraUniform {
     }
 }
 
-// SAFETY: CameraUniform is repr(C) with all f32 fields
-unsafe impl bytemuck::Pod for CameraUniform {}
-unsafe impl bytemuck::Zeroable for CameraUniform {}
-
 /// Lighting parameters for terrain shaders.
 ///
 /// Contains directional light, SH fill lighting, fog, AO, shadow,
@@ -119,7 +107,7 @@ unsafe impl bytemuck::Zeroable for CameraUniform {}
 /// Matches the original Halo Wars cbShared lighting fields.
 /// Must match the `LightingParams` struct in WGSL shaders.
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub struct LightingParams {
     /// Direction TO light in world space [x, y, z, enabled].
     pub dir_light_vec: [f32; 4],
@@ -347,10 +335,6 @@ fn fog_density_squared(density: f32, intensity: f32) -> f32 {
 fn color4(color: [f32; 3]) -> [f32; 4] {
     [color[0], color[1], color[2], 0.0]
 }
-
-// SAFETY: LightingParams is repr(C) with all f32 fields
-unsafe impl bytemuck::Pod for LightingParams {}
-unsafe impl bytemuck::Zeroable for LightingParams {}
 
 #[cfg(test)]
 mod tests {
