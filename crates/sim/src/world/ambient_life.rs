@@ -14,11 +14,11 @@ use num_traits::ToPrimitive;
 
 const LEAVING_MAP_DISTANCE: f32 = 20_000.0;
 
-#[derive(Debug, Clone)]
-struct AmbientContext {
+#[derive(Debug, Clone, Copy)]
+struct AmbientContext<'catalog> {
     player_id: PlayerId,
     leader_id: EntityId,
-    profile: AmbientLifeProfile,
+    profile: &'catalog AmbientLifeProfile,
 }
 
 impl World {
@@ -46,30 +46,30 @@ impl World {
             self.disconnect_ambient_life(squad_id);
             return;
         }
-        self.initialize_ambient_life(squad_id, &context.profile);
+        self.initialize_ambient_life(squad_id, context.profile);
         if self.start_ambient_life(squad_id) || !self.reconcile_ambient_child(squad_id) {
             return;
         }
-        self.update_ambient_opportunity_timer(squad_id, elapsed_ms, gameplay, &context.profile);
-        self.update_ambient_behavior(squad_id, elapsed_ms, &context.profile);
+        self.update_ambient_opportunity_timer(squad_id, elapsed_ms, gameplay, context.profile);
+        self.update_ambient_behavior(squad_id, elapsed_ms, context.profile);
     }
 
-    fn ambient_context(
+    fn ambient_context<'catalog>(
         &self,
         squad_id: EntityId,
-        gameplay: &GameplayCatalog,
-    ) -> Option<AmbientContext> {
+        gameplay: &'catalog GameplayCatalog,
+    ) -> Option<AmbientContext<'catalog>> {
         let squad = self.squads.get(squad_id).filter(|squad| squad.is_alive())?;
         let leader_id = *squad.unit_ids.first()?;
         let leader = self.units.get(leader_id).filter(|unit| unit.is_alive())?;
         Some(AmbientContext {
             player_id: squad.base.player_id,
             leader_id,
-            profile: gameplay.ambient_life(&leader.proto_object_name)?.clone(),
+            profile: gameplay.ambient_life(&leader.proto_object_name)?,
         })
     }
 
-    fn ambient_action_enabled(&self, context: &AmbientContext) -> bool {
+    fn ambient_action_enabled(&self, context: &AmbientContext<'_>) -> bool {
         let Some(leader) = self.units.get(context.leader_id) else {
             return false;
         };

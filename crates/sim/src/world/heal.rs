@@ -8,8 +8,8 @@ use crate::gameplay::{GameplayCatalog, HealActionProfile};
 use pipeline::database::hw1::Database;
 
 #[derive(Debug, Clone)]
-struct HealUpdateContext {
-    profile: HealActionProfile,
+struct HealUpdateContext<'catalog> {
+    profile: &'catalog HealActionProfile,
     target_squad_id: Option<EntityId>,
     enabled: bool,
     work_rate: f32,
@@ -87,13 +87,13 @@ impl World {
         }
     }
 
-    fn heal_update_context(
+    fn heal_update_context<'catalog>(
         &self,
         unit_id: EntityId,
-        gameplay: &GameplayCatalog,
-    ) -> Option<HealUpdateContext> {
+        gameplay: &'catalog GameplayCatalog,
+    ) -> Option<HealUpdateContext<'catalog>> {
         let unit = self.units.get(unit_id).filter(|unit| unit.is_alive())?;
-        let profile = gameplay.heal(&unit.proto_object_name)?.clone();
+        let profile = gameplay.heal(&unit.proto_object_name)?;
         let target_squad_id = self.heal_target_squad(unit, profile.heal_target());
         let authored_enabled = !profile.starts_disabled();
         let (player_enabled, work_rate) = self.get_player(unit.base.player_id).map_or(
