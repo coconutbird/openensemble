@@ -41,49 +41,6 @@ pub struct AlbedoData {
     pub pixels: Vec<u8>,
 }
 
-/// A single terrain texture loaded from ERA.
-#[derive(Clone)]
-pub struct TerrainTexture {
-    /// Texture name (e.g., "`grass_01`").
-    pub name: String,
-    /// Width in pixels.
-    pub width: u32,
-    /// Height in pixels.
-    pub height: u32,
-    /// RGBA pixel data.
-    pub pixels: Vec<u8>,
-    /// U scale from XTT.
-    pub u_scale: i32,
-    /// V scale from XTT.
-    pub v_scale: i32,
-}
-
-/// A normal map texture loaded from ERA (_nm.ddx files).
-#[derive(Clone)]
-pub struct NormalMapTexture {
-    /// Texture name (e.g., "`grass_01`").
-    pub name: String,
-    /// Width in pixels.
-    pub width: u32,
-    /// Height in pixels.
-    pub height: u32,
-    /// RGBA pixel data (normal map encoded as RGB, A may be height/unused).
-    pub pixels: Vec<u8>,
-}
-
-/// A specular map texture loaded from ERA (`_sp.ddx` files).
-#[derive(Clone)]
-pub struct SpecularMapTexture {
-    /// Texture name (for example, `grass_01`).
-    pub name: String,
-    /// Width in pixels.
-    pub width: u32,
-    /// Height in pixels.
-    pub height: u32,
-    /// RGBA pixel data. RGB stores the colored specular response.
-    pub pixels: Vec<u8>,
-}
-
 /// Splat data for a single terrain chunk.
 #[derive(Clone)]
 pub struct ChunkSplatData {

@@ -36,7 +36,6 @@ pub use icons::{ProjectedIconObject, project_icon_objects};
 pub use loading::{
     RoadTextures, extract_chunk_splat_data, extract_decal_data, extract_foliage_chunks,
     extract_road_data, load_decal_textures, load_foliage_sets, load_road_textures,
-    load_terrain_textures,
 };
 pub use mesh::TerrainMesh;
 pub use objective_pointers::{ProjectedObjectivePointer, project_objective_pointers};
@@ -54,8 +53,8 @@ pub use shaders::{
 pub use texture::{generate_mipmaps, mip_dimensions, mip_level_count};
 pub use types::{
     AlbedoData, AlphaTextureData, AoTextureData, ChunkDecalData, ChunkSplatData, DecalInstance,
-    DecalTexture, FoliageBladeVertex, FoliageQNChunk, FoliageSet, NormalMapTexture, RawXtdData,
-    RoadChunkData, SpecularMapTexture, TerrainHeightfield, TerrainTessellationData, TerrainTexture,
+    DecalTexture, FoliageBladeVertex, FoliageQNChunk, FoliageSet, RawXtdData, RoadChunkData,
+    TerrainHeightfield, TerrainTessellationData,
 };
 pub use uniforms::{
     CameraUniform, GpuTessParams, LightingParams, NORMALIZED_TERRAIN_Y_OFFSET, TerrainParams,

@@ -1,8 +1,8 @@
-//! Terrain texture and data loading from ERA archives.
+//! Terrain decal, foliage and road loading from ERA archives.
 //!
-//! Provides reusable functions for loading terrain textures, decals, and foliage
+//! Provides reusable functions for loading terrain decals, foliage and roads
 //! from Halo Wars ERA archives. These functions can be used by both the viewer
-//! and the engine.
+//! and the engine. `pipeline::hw1::terrain` loads the terrain splat textures.
 //!
 //! Uses parallel loading for maximum performance:
 //! - Parallel ERA decompression via memory-mapped archives
@@ -10,238 +10,14 @@
 
 use super::types::{
     ChunkDecalData, ChunkSplatData, DecalInstance, DecalTexture, FoliageQNChunk, FoliageSet,
-    NormalMapTexture, RoadChunkData, SpecularMapTexture, TerrainTexture,
+    RoadChunkData,
 };
 use pipeline::ddx::DdxTexture;
+use pipeline::hw1::terrain::terrain_texture_path;
 use pipeline::source::{AssetSource, StdFileProvider};
 use pipeline::xtd::XtdVisualChunk;
-use pipeline::xtt::{ActiveDecalInfo, ActiveTextureInfo, FoliageSetInfo, XttFile};
+use pipeline::xtt::{ActiveDecalInfo, FoliageSetInfo, XttFile};
 use rayon::prelude::*;
-
-fn decode_terrain_texture(
-    index: usize,
-    data: Option<&[u8]>,
-    texture: &ActiveTextureInfo,
-) -> TerrainTexture {
-    if let Some(bytes) = data
-        && let Ok(ddx) = DdxTexture::from_bytes(bytes)
-        && let Ok(image) = ddx.decode_to_rgba()
-    {
-        log::info!(
-            "Loaded terrain texture [{index}]: {} ({}x{})",
-            texture.filename,
-            image.width,
-            image.height
-        );
-        return TerrainTexture {
-            name: texture.filename.clone(),
-            width: image.width,
-            height: image.height,
-            pixels: image.pixels,
-            u_scale: texture.u_scale,
-            v_scale: texture.v_scale,
-        };
-    }
-
-    log::warn!(
-        "Failed to load texture [{index}]: {} - using placeholder",
-        texture.filename
-    );
-    create_placeholder_texture(&texture.filename)
-}
-
-fn fallback_texel_count(diffuse: &TerrainTexture, map_kind: &str) -> usize {
-    diffuse
-        .width
-        .checked_mul(diffuse.height)
-        .and_then(|count| usize::try_from(count).ok())
-        .unwrap_or_else(|| panic!("{map_kind} dimensions must fit usize"))
-}
-
-fn decode_normal_map(
-    index: usize,
-    data: Option<&[u8]>,
-    texture: &ActiveTextureInfo,
-    diffuse: &TerrainTexture,
-) -> NormalMapTexture {
-    let decoded = data.and_then(|bytes| {
-        DdxTexture::from_bytes(bytes).ok().and_then(|ddx| {
-            ddx.decode_to_rgba().ok().map(|image| {
-                log::info!(
-                    "Loaded normal map: {} ({}x{})",
-                    texture.filename,
-                    image.width,
-                    image.height
-                );
-                NormalMapTexture {
-                    name: texture.filename.clone(),
-                    width: image.width,
-                    height: image.height,
-                    pixels: image.pixels,
-                }
-            })
-        })
-    });
-    decoded.unwrap_or_else(|| {
-        log::warn!(
-            "Failed to load normal map [{}]: {} - using a flat normal",
-            index,
-            texture.filename,
-        );
-        let texel_count = fallback_texel_count(diffuse, "normal-map");
-        NormalMapTexture {
-            name: texture.filename.clone(),
-            width: diffuse.width,
-            height: diffuse.height,
-            pixels: [128_u8, 128, 255, 255].repeat(texel_count),
-        }
-    })
-}
-
-fn decode_specular_map(
-    index: usize,
-    data: Option<&[u8]>,
-    texture: &ActiveTextureInfo,
-    diffuse: &TerrainTexture,
-) -> SpecularMapTexture {
-    let decoded = data.and_then(|bytes| {
-        DdxTexture::from_bytes(bytes).ok().and_then(|ddx| {
-            ddx.decode_to_rgba().ok().map(|image| {
-                log::info!(
-                    "Loaded specular map: {} ({}x{})",
-                    texture.filename,
-                    image.width,
-                    image.height
-                );
-                SpecularMapTexture {
-                    name: texture.filename.clone(),
-                    width: image.width,
-                    height: image.height,
-                    pixels: image.pixels,
-                }
-            })
-        })
-    });
-    decoded.unwrap_or_else(|| {
-        log::warn!(
-            "Failed to load specular map [{index}]: {} - disabling specular for this layer",
-            texture.filename,
-        );
-        let texel_count = fallback_texel_count(diffuse, "specular-map");
-        SpecularMapTexture {
-            name: texture.filename.clone(),
-            width: diffuse.width,
-            height: diffuse.height,
-            pixels: [0_u8, 0, 0, 255].repeat(texel_count),
-        }
-    })
-}
-
-fn terrain_texture_path(texture: &ActiveTextureInfo, suffix: &str) -> String {
-    format!(
-        "art/terrain/{}_{suffix}.ddx",
-        texture.filename.replace('\\', "/")
-    )
-}
-
-/// Load terrain diffuse, normal, and specular maps from an asset source.
-///
-/// Uses parallel loading for both ERA decompression and DDX decoding.
-/// Returns (`terrain_textures`, `normal_textures`, `specular_textures`).
-/// Textures are loaded in the same order as `active_textures` to maintain index alignment.
-pub fn load_terrain_textures(
-    source: &mut AssetSource<StdFileProvider>,
-    active_textures: &[ActiveTextureInfo],
-) -> (
-    Vec<TerrainTexture>,
-    Vec<NormalMapTexture>,
-    Vec<SpecularMapTexture>,
-) {
-    if active_textures.is_empty() {
-        return (Vec::new(), Vec::new(), Vec::new());
-    }
-
-    log::info!(
-        "Loading terrain textures in parallel ({} total)",
-        active_textures.len()
-    );
-
-    let diffuse_paths: Vec<String> = active_textures
-        .iter()
-        .map(|texture| terrain_texture_path(texture, "df"))
-        .collect();
-    let normal_paths: Vec<String> = active_textures
-        .iter()
-        .map(|texture| terrain_texture_path(texture, "nm"))
-        .collect();
-    let specular_paths: Vec<String> = active_textures
-        .iter()
-        .map(|texture| terrain_texture_path(texture, "sp"))
-        .collect();
-
-    let all_paths: Vec<&str> = diffuse_paths
-        .iter()
-        .chain(normal_paths.iter())
-        .chain(specular_paths.iter())
-        .map(std::string::String::as_str)
-        .collect();
-    let all_data: Vec<Option<Vec<u8>>> =
-        all_paths.iter().map(|p| source.resolve_exact(p)).collect();
-    let (diffuse_data, remaining_data) = all_data.split_at(active_textures.len());
-    let (normal_data, specular_data) = remaining_data.split_at(active_textures.len());
-
-    let terrain_textures: Vec<TerrainTexture> = diffuse_data
-        .par_iter()
-        .zip(active_textures.par_iter())
-        .enumerate()
-        .map(|(index, (data, texture))| decode_terrain_texture(index, data.as_deref(), texture))
-        .collect();
-    let normal_textures: Vec<NormalMapTexture> = normal_data
-        .par_iter()
-        .zip(active_textures.par_iter())
-        .enumerate()
-        .map(|(index, (data, texture))| {
-            decode_normal_map(index, data.as_deref(), texture, &terrain_textures[index])
-        })
-        .collect();
-    let specular_textures: Vec<SpecularMapTexture> = specular_data
-        .par_iter()
-        .zip(active_textures.par_iter())
-        .enumerate()
-        .map(|(index, (data, texture))| {
-            decode_specular_map(index, data.as_deref(), texture, &terrain_textures[index])
-        })
-        .collect();
-
-    log::info!(
-        "Loaded {} terrain textures, {} normal maps, {} specular maps",
-        terrain_textures.len(),
-        normal_textures.len(),
-        specular_textures.len()
-    );
-
-    (terrain_textures, normal_textures, specular_textures)
-}
-
-/// Create a magenta placeholder texture for missing textures.
-fn create_placeholder_texture(name: &str) -> TerrainTexture {
-    let placeholder_size = 64u32;
-    let mut pixels = vec![0u8; (placeholder_size * placeholder_size * 4) as usize];
-    for i in 0..(placeholder_size * placeholder_size) as usize {
-        pixels[i * 4] = 255; // R
-        pixels[i * 4 + 1] = 0; // G
-        pixels[i * 4 + 2] = 255; // B (magenta)
-        pixels[i * 4 + 3] = 255; // A
-    }
-    TerrainTexture {
-        name: format!("placeholder_{name}"),
-        width: placeholder_size,
-        height: placeholder_size,
-        pixels,
-        u_scale: 1,
-        v_scale: 1,
-    }
-}
 
 /// Load decal textures (diffuse and opacity) from an asset source.
 ///
@@ -263,11 +39,11 @@ pub fn load_decal_textures(
     // Build all paths (diffuse + opacity for each decal)
     let diffuse_paths: Vec<String> = active_decals
         .iter()
-        .map(|d| format!("art/terrain/{}_df.ddx", d.filename.replace('\\', "/")))
+        .map(|d| terrain_texture_path(&d.filename, "df"))
         .collect();
     let opacity_paths: Vec<String> = active_decals
         .iter()
-        .map(|d| format!("art/terrain/{}_op.ddx", d.filename.replace('\\', "/")))
+        .map(|d| terrain_texture_path(&d.filename, "op"))
         .collect();
 
     // Combine all paths for a single parallel read

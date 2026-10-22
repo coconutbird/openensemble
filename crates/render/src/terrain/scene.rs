@@ -4,6 +4,7 @@
 //! from the ERA asset source in parallel, replacing the scattered extract/load
 //! calls that were previously spread across the terrain viewer.
 
+use pipeline::hw1::terrain::{TerrainTextures, load_terrain_textures};
 use pipeline::source::{AssetSource, StdFileProvider};
 use pipeline::xtd::XtdFile;
 use pipeline::xtt::XttFile;
@@ -12,8 +13,8 @@ use super::TerrainMesh;
 use super::loading;
 use super::types::{
     AlbedoData, AlphaTextureData, AoTextureData, ChunkDecalData, ChunkSplatData, DecalInstance,
-    DecalTexture, FoliageQNChunk, FoliageSet, LightingTextureData, NormalMapTexture, RawXtdData,
-    RoadChunkData, SpecularMapTexture, TerrainTessellationData, TerrainTexture,
+    DecalTexture, FoliageQNChunk, FoliageSet, LightingTextureData, RawXtdData, RoadChunkData,
+    TerrainTessellationData,
 };
 
 /// All decoded terrain data needed for rendering.
@@ -31,12 +32,8 @@ pub struct TerrainScene {
     // -- XTT data --
     /// Decoded albedo atlas from XTT.
     pub albedo: Option<AlbedoData>,
-    /// Terrain diffuse textures loaded from ERA.
-    pub terrain_textures: Vec<TerrainTexture>,
-    /// Normal map textures loaded from ERA.
-    pub normal_textures: Vec<NormalMapTexture>,
-    /// Colored specular map textures loaded from ERA.
-    pub specular_textures: Vec<SpecularMapTexture>,
+    /// Terrain diffuse, normal and specular maps loaded from ERA, in XTT order.
+    pub terrain_textures: TerrainTextures,
     /// Per-chunk splat layer data.
     pub chunk_splat_data: Vec<ChunkSplatData>,
     /// Decal textures loaded from ERA.
@@ -60,9 +57,7 @@ pub struct TerrainScene {
 #[derive(Default)]
 struct XttAssets {
     albedo: Option<AlbedoData>,
-    terrain_textures: Vec<TerrainTexture>,
-    normal_textures: Vec<NormalMapTexture>,
-    specular_textures: Vec<SpecularMapTexture>,
+    terrain_textures: TerrainTextures,
     chunk_splat_data: Vec<ChunkSplatData>,
     decal_textures: Vec<DecalTexture>,
     decal_instances: Vec<DecalInstance>,
@@ -111,8 +106,6 @@ impl TerrainScene {
         let XttAssets {
             albedo,
             terrain_textures,
-            normal_textures,
-            specular_textures,
             chunk_splat_data,
             decal_textures,
             decal_instances,
@@ -131,8 +124,6 @@ impl TerrainScene {
             raw_xtd_data,
             albedo,
             terrain_textures,
-            normal_textures,
-            specular_textures,
             chunk_splat_data,
             decal_textures,
             decal_instances,
@@ -246,21 +237,18 @@ impl TerrainScene {
         let road_chunks = loading::extract_road_data(xtt);
 
         // Load textures from ERA (requires asset source)
-        let (terrain_textures, normal_textures, specular_textures, decal_textures, foliage_sets) =
-            if let Some(src) = source {
-                let (tex, nrm, spec) = loading::load_terrain_textures(src, &xtt.active_textures);
-                let dec = loading::load_decal_textures(src, &xtt.active_decals);
-                let fol = loading::load_foliage_sets(src, &xtt.foliage.sets);
-                (tex, nrm, spec, dec, fol)
-            } else {
-                (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new())
-            };
+        let (terrain_textures, decal_textures, foliage_sets) = if let Some(src) = source {
+            let textures = load_terrain_textures(src, &xtt.active_textures);
+            let decals = loading::load_decal_textures(src, &xtt.active_decals);
+            let foliage = loading::load_foliage_sets(src, &xtt.foliage.sets);
+            (textures, decals, foliage)
+        } else {
+            (TerrainTextures::default(), Vec::new(), Vec::new())
+        };
 
         XttAssets {
             albedo,
             terrain_textures,
-            normal_textures,
-            specular_textures,
             chunk_splat_data,
             decal_textures,
             decal_instances,

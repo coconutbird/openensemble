@@ -2,10 +2,9 @@
 //!
 //! Creates GPU texture arrays and atlases from loaded terrain data.
 
-use render::terrain::{
-    DecalTexture, NormalMapTexture, SpecularMapTexture, TerrainTexture, generate_mipmaps,
-    mip_level_count,
-};
+use pipeline::hw1::terrain::TerrainImage;
+use render::gpu::{create_rgba_texture, upload_rgba_mip_chain, write_rgba_level};
+use render::terrain::{DecalTexture, mip_level_count};
 use render::wgpu;
 
 use crate::types::{AlbedoData, TerrainChunkGrid};
@@ -14,32 +13,6 @@ use crate::viewer::TerrainViewer;
 const ALPHA_CHUNK_SIZE: u32 = 64;
 const ALPHA_CHUNK_SIZE_USIZE: usize = 64;
 const ALPHA_CHANNEL_COUNT: usize = 4;
-const ALPHA_CHANNEL_COUNT_U32: u32 = 4;
-
-fn create_array_texture(
-    device: &wgpu::Device,
-    label: &str,
-    width: u32,
-    height: u32,
-    layers: u32,
-    mip_levels: u32,
-    format: wgpu::TextureFormat,
-) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
-        label: Some(label),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: layers,
-        },
-        mip_level_count: mip_levels,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    })
-}
 
 fn array_view(texture: &wgpu::Texture) -> wgpu::TextureView {
     texture.create_view(&wgpu::TextureViewDescriptor {
@@ -48,96 +21,50 @@ fn array_view(texture: &wgpu::Texture) -> wgpu::TextureView {
     })
 }
 
-fn upload_texture(
-    queue: &wgpu::Queue,
-    texture: &wgpu::Texture,
-    pixels: &[u8],
-    width: u32,
-    height: u32,
-    layer: u32,
-    mip_level: u32,
-) {
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture,
-            mip_level,
-            origin: wgpu::Origin3d {
-                x: 0,
-                y: 0,
-                z: layer,
-            },
-            aspect: wgpu::TextureAspect::All,
-        },
-        pixels,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(4 * width),
-            rows_per_image: Some(height),
-        },
-        wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-    );
-}
-
-fn upload_mip_chain(
-    queue: &wgpu::Queue,
-    texture: &wgpu::Texture,
-    pixels: &[u8],
-    width: u32,
-    height: u32,
-    layer: u32,
-) {
-    let mips = generate_mipmaps(pixels, width, height);
-    let mut mip_width = width;
-    let mut mip_height = height;
-
-    for (mip_level, mip_data) in mips.iter().enumerate() {
-        let mip_level = u32::try_from(mip_level).expect("mipmap count must fit in u32");
-        upload_texture(
-            queue, texture, mip_data, mip_width, mip_height, layer, mip_level,
-        );
-        mip_width = (mip_width / 2).max(1);
-        mip_height = (mip_height / 2).max(1);
-    }
-}
-
-fn create_terrain_array_from_layers(
+/// Creates a texture array with one layer for each image and a full mip chain.
+///
+/// The first image sets the dimensions of all layers.
+fn create_rgba_array<'a>(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    textures: &[TerrainTexture],
+    images: impl ExactSizeIterator<Item = &'a TerrainImage>,
+    label: &str,
+    format: wgpu::TextureFormat,
 ) -> (wgpu::Texture, wgpu::TextureView) {
-    let width = textures[0].width;
-    let height = textures[0].height;
-    let layers = u32::try_from(textures.len()).expect("terrain texture count must fit in u32");
-    let mip_levels = mip_level_count(width, height);
+    let layers = u32::try_from(images.len()).expect("texture layer count must fit in u32");
+    let mut images = images.peekable();
+    let first = images
+        .peek()
+        .expect("texture array needs at least one image");
+    let size = [first.width, first.height];
+    let mip_levels = mip_level_count(size[0], size[1]);
     log::info!(
-        "Creating terrain texture array: {width}x{height} x {layers} layers with {mip_levels} mip levels"
+        "Creating {label}: {}x{} x {layers} layers with {mip_levels} mip levels",
+        size[0],
+        size[1]
     );
 
-    let texture = create_array_texture(
-        device,
-        "Terrain Texture Array",
-        width,
-        height,
-        layers,
-        mip_levels,
-        wgpu::TextureFormat::Rgba8UnormSrgb,
-    );
-    for (layer, terrain_texture) in textures.iter().enumerate() {
-        let layer = u32::try_from(layer).expect("terrain texture index must fit in u32");
-        upload_mip_chain(
-            queue,
-            &texture,
-            &terrain_texture.pixels,
-            width,
-            height,
-            layer,
-        );
+    let texture = create_rgba_texture(device, label, size, layers, mip_levels, format);
+    for (layer, image) in images.enumerate() {
+        let layer = u32::try_from(layer).expect("texture layer index must fit in u32");
+        upload_rgba_mip_chain(queue, &texture, &image.pixels, size, layer);
     }
 
+    let view = array_view(&texture);
+    (texture, view)
+}
+
+/// Creates a one-layer texture array without mip levels.
+fn create_single_level_array(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    size: [u32; 2],
+    pixels: &[u8],
+    format: wgpu::TextureFormat,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = create_rgba_texture(device, label, size, 1, 1, format);
+    write_rgba_level(queue, &texture, pixels, size, 0, 0);
     let view = array_view(&texture);
     (texture, view)
 }
@@ -166,56 +93,14 @@ fn create_single_terrain_array(
             )
         },
     );
-    let texture = create_array_texture(
+    create_single_level_array(
         device,
+        queue,
         label,
-        width,
-        height,
-        1,
-        1,
+        [width, height],
+        pixels,
         wgpu::TextureFormat::Rgba8UnormSrgb,
-    );
-    upload_texture(queue, &texture, pixels, width, height, 0, 0);
-    let view = array_view(&texture);
-    (texture, view)
-}
-
-fn create_normal_array_from_layers(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    textures: &[NormalMapTexture],
-) -> (wgpu::Texture, wgpu::TextureView) {
-    let width = textures[0].width;
-    let height = textures[0].height;
-    let layers = u32::try_from(textures.len()).expect("normal texture count must fit in u32");
-    let mip_levels = mip_level_count(width, height);
-    log::info!(
-        "Creating normal map array: {width}x{height} x {layers} layers with {mip_levels} mip levels"
-    );
-
-    let texture = create_array_texture(
-        device,
-        "Normal Map Array",
-        width,
-        height,
-        layers,
-        mip_levels,
-        wgpu::TextureFormat::Rgba8Unorm,
-    );
-    for (layer, normal_texture) in textures.iter().enumerate() {
-        let layer = u32::try_from(layer).expect("normal texture index must fit in u32");
-        upload_mip_chain(
-            queue,
-            &texture,
-            &normal_texture.pixels,
-            width,
-            height,
-            layer,
-        );
-    }
-
-    let view = array_view(&texture);
-    (texture, view)
+    )
 }
 
 fn create_flat_normal_array(
@@ -223,56 +108,14 @@ fn create_flat_normal_array(
     queue: &wgpu::Queue,
 ) -> (wgpu::Texture, wgpu::TextureView) {
     log::info!("Using flat normal fallback texture");
-    let texture = create_array_texture(
+    create_single_level_array(
         device,
+        queue,
         "Normal Map Array (Fallback)",
-        1,
-        1,
-        1,
-        1,
+        [1, 1],
+        &[128, 128, 255, 255],
         wgpu::TextureFormat::Rgba8Unorm,
-    );
-    upload_texture(queue, &texture, &[128, 128, 255, 255], 1, 1, 0, 0);
-    let view = array_view(&texture);
-    (texture, view)
-}
-
-fn create_specular_array_from_layers(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    textures: &[SpecularMapTexture],
-) -> (wgpu::Texture, wgpu::TextureView) {
-    let width = textures[0].width;
-    let height = textures[0].height;
-    let layers = u32::try_from(textures.len()).expect("specular texture count must fit in u32");
-    let mip_levels = mip_level_count(width, height);
-    log::info!(
-        "Creating specular map array: {width}x{height} x {layers} layers with {mip_levels} mip levels"
-    );
-
-    let texture = create_array_texture(
-        device,
-        "Specular Map Array",
-        width,
-        height,
-        layers,
-        mip_levels,
-        wgpu::TextureFormat::Rgba8Unorm,
-    );
-    for (layer, specular_texture) in textures.iter().enumerate() {
-        let layer = u32::try_from(layer).expect("specular texture index must fit in u32");
-        upload_mip_chain(
-            queue,
-            &texture,
-            &specular_texture.pixels,
-            width,
-            height,
-            layer,
-        );
-    }
-
-    let view = array_view(&texture);
-    (texture, view)
+    )
 }
 
 fn create_black_specular_array(
@@ -280,18 +123,14 @@ fn create_black_specular_array(
     queue: &wgpu::Queue,
 ) -> (wgpu::Texture, wgpu::TextureView) {
     log::info!("Using black specular fallback texture");
-    let texture = create_array_texture(
+    create_single_level_array(
         device,
+        queue,
         "Specular Map Array (Fallback)",
-        1,
-        1,
-        1,
-        1,
+        [1, 1],
+        &[0, 0, 0, 255],
         wgpu::TextureFormat::Rgba8Unorm,
-    );
-    upload_texture(queue, &texture, &[0, 0, 0, 255], 1, 1, 0, 0);
-    let view = array_view(&texture);
-    (texture, view)
+    )
 }
 
 fn resize_rgba_nearest(
@@ -347,10 +186,10 @@ fn create_decal_array(
     } else {
         ("Decal Diffuse Array", wgpu::TextureFormat::Rgba8UnormSrgb)
     };
-    let texture = create_array_texture(device, label, width, height, layers, mip_levels, format);
+    let texture = create_rgba_texture(device, label, [width, height], layers, mip_levels, format);
     if textures.is_empty() {
         let fallback = [0_u8, 0, 0, 255];
-        upload_texture(queue, &texture, &fallback, 1, 1, 0, 0);
+        write_rgba_level(queue, &texture, &fallback, [1, 1], 0, 0);
     } else {
         for (layer, decal) in textures.iter().enumerate() {
             let source = if opacity {
@@ -359,12 +198,11 @@ fn create_decal_array(
                 &decal.diffuse_pixels
             };
             let pixels = resize_rgba_nearest(source, decal.width, decal.height, width, height);
-            upload_mip_chain(
+            upload_rgba_mip_chain(
                 queue,
                 &texture,
                 &pixels,
-                width,
-                height,
+                [width, height],
                 u32::try_from(layer).expect("decal layer index must fit u32"),
             );
         }
@@ -438,34 +276,15 @@ fn create_alpha_texture(
     chunk_grid: TerrainChunkGrid,
 ) -> (wgpu::Texture, wgpu::TextureView) {
     let (width, height) = alpha_atlas_dimensions(chunk_grid);
-    let texture = create_array_texture(
+    let texture = create_rgba_texture(
         device,
         label,
-        width,
-        height,
+        [width, height],
         1,
         1,
         wgpu::TextureFormat::Rgba8Unorm,
     );
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        atlas_data,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(ALPHA_CHANNEL_COUNT_U32 * width),
-            rows_per_image: Some(height),
-        },
-        wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-    );
+    write_rgba_level(queue, &texture, atlas_data, [width, height], 0, 0);
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     (texture, view)
 }
@@ -479,10 +298,17 @@ impl TerrainViewer {
         albedo: Option<&AlbedoData>,
     ) -> (wgpu::Texture, wgpu::TextureView) {
         let scene = self.scene.as_ref().expect("scene must be loaded");
-        if scene.terrain_textures.is_empty() {
+        let diffuse = &scene.terrain_textures.diffuse;
+        if diffuse.is_empty() {
             create_single_terrain_array(device, queue, albedo)
         } else {
-            create_terrain_array_from_layers(device, queue, &scene.terrain_textures)
+            create_rgba_array(
+                device,
+                queue,
+                diffuse.iter().map(|texture| &texture.image),
+                "Terrain Texture Array",
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+            )
         }
     }
 
@@ -493,10 +319,17 @@ impl TerrainViewer {
         queue: &wgpu::Queue,
     ) -> (wgpu::Texture, wgpu::TextureView) {
         let scene = self.scene.as_ref().expect("scene must be loaded");
-        if scene.normal_textures.is_empty() {
+        let normal = &scene.terrain_textures.normal;
+        if normal.is_empty() {
             create_flat_normal_array(device, queue)
         } else {
-            create_normal_array_from_layers(device, queue, &scene.normal_textures)
+            create_rgba_array(
+                device,
+                queue,
+                normal.iter(),
+                "Normal Map Array",
+                wgpu::TextureFormat::Rgba8Unorm,
+            )
         }
     }
 
@@ -507,10 +340,17 @@ impl TerrainViewer {
         queue: &wgpu::Queue,
     ) -> (wgpu::Texture, wgpu::TextureView) {
         let scene = self.scene.as_ref().expect("scene must be loaded");
-        if scene.specular_textures.is_empty() {
+        let specular = &scene.terrain_textures.specular;
+        if specular.is_empty() {
             create_black_specular_array(device, queue)
         } else {
-            create_specular_array_from_layers(device, queue, &scene.specular_textures)
+            create_rgba_array(
+                device,
+                queue,
+                specular.iter(),
+                "Specular Map Array",
+                wgpu::TextureFormat::Rgba8Unorm,
+            )
         }
     }
 

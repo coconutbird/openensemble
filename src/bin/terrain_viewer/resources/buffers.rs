@@ -74,7 +74,7 @@ impl TerrainViewer {
         // The original game stores these in g_LayerData[i].yz per-layer, but we store
         // them per-texture and look up by texture index in the shader.
         let scene = self.scene.as_ref().expect("scene must be loaded");
-        let terrain_textures = &scene.terrain_textures;
+        let terrain_textures = &scene.terrain_textures.diffuse;
         let num_textures = terrain_textures.len().max(1);
         let mut scale_data = vec![1.0f32; num_textures * 2]; // Default scale of 1.0
 
@@ -86,7 +86,7 @@ impl TerrainViewer {
             log::info!(
                 "Texture[{}] {} scale: ({}, {})",
                 i,
-                tex.name,
+                tex.image.name,
                 tex.u_scale,
                 tex.v_scale
             );
