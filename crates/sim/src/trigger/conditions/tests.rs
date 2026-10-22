@@ -588,7 +588,7 @@ fn contained_world_with_units() -> (World, EntityId, EntityId, EntityId, EntityI
     let passenger_unit = world.create_unit_at(1, Vec3::ZERO);
     assert!(world.attach_unit_to_squad(passenger_unit, passenger_squad));
     let passenger = world.get_unit_mut(passenger_unit).unwrap();
-    passenger.proto_object_id = 17;
+    passenger.proto_object_id = 0;
     passenger.proto_object_name = "unsc_inf_marine_01".to_owned();
     passenger.object_types = vec!["Infantry".to_owned(), "UNSC".to_owned()];
     world
@@ -634,20 +634,14 @@ fn roster_condition_fixture() -> (World, TriggerScript) {
     world.init_players(2);
 
     let marine = world.create_unit(1);
-    set_unit_type(&mut world, marine, 17, "unsc_inf_marine_01", "Infantry");
+    set_unit_type(&mut world, marine, 0, "unsc_inf_marine_01", "Infantry");
     let producer = world.create_building(1);
-    set_unit_type(
-        &mut world,
-        producer,
-        18,
-        "unsc_bldg_barracks_01",
-        "Building",
-    );
+    set_unit_type(&mut world, producer, 1, "unsc_bldg_barracks_01", "Building");
     enqueue_training(
         &mut world,
         producer,
         TrainingKind::Unit,
-        17,
+        0,
         "unsc_inf_marine_01",
     );
     enqueue_training(
@@ -658,20 +652,25 @@ fn roster_condition_fixture() -> (World, TriggerScript) {
         "unsc_marine_squad",
     );
     let marine_squad = world.create_squad(1);
-    world.get_squad_mut(marine_squad).unwrap().proto_squad_id = 70;
+    world.get_squad_mut(marine_squad).unwrap().proto_squad_id = 0;
     let other_squad = world.create_squad(1);
-    world.get_squad_mut(other_squad).unwrap().proto_squad_id = 71;
+    world.get_squad_mut(other_squad).unwrap().proto_squad_id = 1;
 
     (world, roster_script())
 }
 
 fn identity_condition_world() -> (World, EntityId) {
     let mut database = Database::new();
+    database.objects.push(ProtoObject {
+        name: "unsc_inf_marine_01".to_owned(),
+        ..ProtoObject::default()
+    });
     database.squads.push(ProtoSquad {
         name: "unsc_marine_squad".to_owned(),
         dbid: Some(70),
         units: Some(UnitsWrapper {
             entries: vec![UnitEntry {
+                proto_object: "unsc_inf_marine_01".to_owned(),
                 count: 2,
                 ..UnitEntry::default()
             }],
@@ -686,7 +685,7 @@ fn identity_condition_world() -> (World, EntityId) {
     player.leader_id = 7;
     player.state = PlayerState::Defeated;
     let squad_id = world.create_squad(1);
-    world.get_squad_mut(squad_id).unwrap().proto_squad_id = 70;
+    world.get_squad_mut(squad_id).unwrap().proto_squad_id = 0;
     let first_member = world.create_unit(1);
     assert!(world.attach_unit_to_squad(first_member, squad_id));
     (world, squad_id)
@@ -742,7 +741,7 @@ fn roster_script() -> TriggerScript {
         &mut script,
         7,
         VarType::ProtoSquad,
-        TriggerValue::ProtoSquad(70),
+        TriggerValue::ProtoSquad(0),
     );
     add_value(&mut script, 8, VarType::Integer, TriggerValue::Int(3));
     script

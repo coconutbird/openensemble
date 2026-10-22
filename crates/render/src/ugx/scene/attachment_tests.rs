@@ -24,7 +24,7 @@ fn attached_class_zero_visual_is_projected_only_from_live_sim_state() {
     let visuals = HashMap::new();
     let mut scene = super::UnitScene::load_world(&mut source, &world, &visuals, &database.objects);
     let attachment_id = world
-        .add_prototype_attachment_to_unit(&database, unit_id, 3883)
+        .add_prototype_attachment_to_unit(&database, unit_id, 0)
         .expect("retail's omitted ObjectClass default creates a class-zero visual");
 
     assert!(!scene.roster_matches(&world));

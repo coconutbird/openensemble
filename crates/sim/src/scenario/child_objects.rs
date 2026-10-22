@@ -3,7 +3,7 @@
 use super::{
     PlacedUnitKind, classify_proto_object, configure_unit_from_proto, find_proto_object,
     find_proto_squad, population,
-    prototypes::{database_id, is_class_zero_object, prototype_has_flag},
+    prototypes::{is_class_zero_object, prototype_has_flag},
 };
 use crate::entities::objects::is_icon_prototype;
 use crate::entities::units::AuthoredUnitChildKind;
@@ -304,7 +304,7 @@ fn materialize_associated_object(
         return;
     }
     let object_id = world.objects.allocate_id();
-    let prototype_id = database_id(prototype.dbid, prototype_index);
+    let prototype_id = crate::prototypes::proto_id(prototype_index);
     let object = if is_icon_prototype(prototype) {
         Object::new_icon(
             object_id,

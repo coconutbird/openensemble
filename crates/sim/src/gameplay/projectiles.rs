@@ -208,9 +208,7 @@ fn profile_from_object(index: usize, object: &ProtoObject) -> ProjectileProfile 
     let speed = positive_or(object.velocity, 1.0);
     let fuel = nonnegative_or_zero(object.fuel);
     ProjectileProfile {
-        proto_object_id: object
-            .dbid
-            .unwrap_or_else(|| i32::try_from(index).unwrap_or(-1)),
+        proto_object_id: crate::prototypes::proto_id(index),
         proto_object_name: object.name.clone(),
         speed,
         starting_speed: positive_or(object.starting_velocity, speed),
@@ -287,6 +285,10 @@ mod tests {
     fn projectile_profiles_are_case_insensitive_and_preserve_motion_flags() {
         let mut database = Database::new();
         database.objects.push(ProtoObject {
+            name: "other".to_owned(),
+            ..ProtoObject::default()
+        });
+        database.objects.push(ProtoObject {
             name: "Test_Rocket".to_owned(),
             dbid: Some(42),
             object_class: Some("Projectile".to_owned()),
@@ -313,7 +315,7 @@ mod tests {
 
         let profiles = collect_projectile_profiles(&database);
         let profile = profiles.get("test_rocket").expect("projectile profile");
-        assert_eq!(profile.proto_object_id, 42);
+        assert_eq!(profile.proto_object_id, 1);
         assert!((profile.speed - 65.0).abs() < f32::EPSILON);
         assert!((profile.starting_speed - 20.0).abs() < f32::EPSILON);
         assert!((profile.fuel - 1.0).abs() < f32::EPSILON);

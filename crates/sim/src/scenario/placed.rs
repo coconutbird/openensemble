@@ -3,16 +3,20 @@
 use super::prototypes::prototype_has_flag;
 use super::{
     PlacedUnitKind, ScenarioObject, classify_proto_object, configure_unit_from_proto,
-    create_scenario_squad, database_id, find_proto_object, find_proto_squad, is_class_zero_object,
-    refresh_squad_member_settings, scenario_forward, scenario_position, valid_nonnegative,
+    create_scenario_squad, is_class_zero_object, refresh_squad_member_settings, scenario_forward,
+    scenario_position, valid_nonnegative,
 };
 use crate::entities::objects::is_icon_prototype;
 use crate::entities::squads::marine::is_marine_squad;
 use crate::entities::squads::warthog::{WarthogSquadSpec, is_warthog_squad};
 use crate::entities::{IconObject, Object, SquadArchetype, SquadFormation};
 use crate::player::GAIA_PLAYER;
+use crate::prototypes::{
+    ProtoSquadEntry, ScenarioProto, object_by_id, object_squad_id, proto_id, representing_squad,
+    scenario_proto,
+};
 use crate::{EntityId, World};
-use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad};
+use pipeline::database::hw1::{Database, ProtoObject};
 
 #[derive(Debug, Clone, Copy)]
 struct ProtoObjectSquadPlacement {
@@ -22,15 +26,28 @@ struct ProtoObjectSquadPlacement {
     start_built: bool,
 }
 
+/// Create the entities of one placed `.scn` object.
+///
+/// The proto reference resolves as in `BScenario_loadObject`; see
+/// [`scenario_proto`]. An implicit proto squad places its object. The sim does
+/// not place merged squads.
 pub(super) fn create_scenario_object(
     world: &mut World,
     object: &ScenarioObject,
     database: &Database,
 ) -> Option<EntityId> {
-    if object.is_squad {
-        return Some(create_scenario_squad(world, object, database));
-    }
-    let (prototype_index, prototype) = find_proto_object(database, object.proto_name.trim())?;
+    let (prototype_index, prototype) =
+        match scenario_proto(database, &object.proto_name, Some(object.is_squad))? {
+            ScenarioProto::Squad(ProtoSquadEntry::Squad(_)) => {
+                return Some(create_scenario_squad(world, object, database));
+            }
+            ScenarioProto::Squad(ProtoSquadEntry::Merged { .. }) => return None,
+            ScenarioProto::Squad(ProtoSquadEntry::Implicit {
+                object_index,
+                object: proto,
+            }) => (object_index, proto),
+            ScenarioProto::Object(index, proto) => (index, proto),
+        };
     if is_class_zero_object(prototype) {
         return Some(create_class_zero_object(
             world,
@@ -64,7 +81,7 @@ fn create_class_zero_object(
     let owner = u8::try_from(placement.player).unwrap_or_default();
     let position = scenario_position(placement);
     let forward = scenario_forward(placement);
-    let prototype_id = database_id(prototype.dbid, prototype_index);
+    let prototype_id = proto_id(prototype_index);
     create_class_zero_object_at(world, owner, position, forward, prototype_id, prototype)
 }
 
@@ -116,15 +133,11 @@ pub(crate) fn create_trigger_unit_squad(
     start_built: bool,
 ) -> Option<(EntityId, EntityId)> {
     world.get_player(player_id)?;
-    let (prototype_index, prototype) = database
-        .objects
-        .iter()
-        .enumerate()
-        .find(|(index, prototype)| database_id(prototype.dbid, *index) == prototype_id)?;
+    let prototype = object_by_id(database, prototype_id)?;
     create_proto_object_squad(
         world,
         database,
-        prototype_index,
+        usize::try_from(prototype_id).ok()?,
         prototype,
         ProtoObjectSquadPlacement {
             player_id,
@@ -144,7 +157,14 @@ fn create_proto_object_squad(
 ) -> Option<(EntityId, EntityId)> {
     let kind = classify_proto_object(prototype)?;
     let squad_id = world.create_squad_at(placement.player_id, placement.position);
-    configure_synthetic_squad(world, squad_id, prototype, database, placement.forward);
+    configure_synthetic_squad(
+        world,
+        squad_id,
+        prototype_index,
+        prototype,
+        database,
+        placement.forward,
+    );
 
     let unit_id = match kind {
         PlacedUnitKind::Mobile => world.create_unit_at(placement.player_id, placement.position),
@@ -182,14 +202,20 @@ fn create_proto_object_squad(
     Some((squad_id, unit_id))
 }
 
+/// Configure a squad that holds one unit of a proto object.
+///
+/// The squad gets the proto squad ID that the engine stores on the proto
+/// object: the same-named one-unit squad, or else the implicit squad
+/// ([`object_squad_id`]).
 pub(super) fn configure_synthetic_squad(
     world: &mut World,
     squad_id: EntityId,
+    prototype_index: usize,
     prototype: &ProtoObject,
     database: &Database,
     forward: glam::Vec3,
 ) {
-    let proto_squad_id = synthetic_proto_squad_id(database, prototype);
+    let proto_squad_id = object_squad_id(database, prototype_index).unwrap_or(-1);
     let Some(squad) = world.get_squad_mut(squad_id) else {
         return;
     };
@@ -218,7 +244,9 @@ pub(super) fn configure_synthetic_squad(
         squad.leash_distance = spec.leash_distance;
         squad.configure_leash_profile(spec.leash_deadzone, spec.leash_recall_delay_ms);
     }
-    if let Some((_, proto)) = matching_proto_squad(database, &prototype.name) {
+    if let Some(proto) =
+        representing_squad(database, prototype_index).and_then(|index| database.squads.get(index))
+    {
         if let Some(aggro_distance) = valid_nonnegative(proto.aggro_distance) {
             squad.aggro_distance = aggro_distance;
         }
@@ -237,6 +265,7 @@ pub(crate) fn transform_synthetic_squad(
     world: &mut World,
     squad_id: EntityId,
     source_proto_object: &str,
+    target_index: usize,
     target: &ProtoObject,
     database: &Database,
 ) {
@@ -248,38 +277,6 @@ pub(crate) fn transform_synthetic_squad(
     }) else {
         return;
     };
-    configure_synthetic_squad(world, squad_id, target, database, forward);
+    configure_synthetic_squad(world, squad_id, target_index, target, database, forward);
     refresh_squad_member_settings(world, squad_id);
-}
-
-fn synthetic_proto_squad_id(database: &Database, prototype: &ProtoObject) -> i32 {
-    if let Some((index, squad)) = matching_proto_squad(database, &prototype.name) {
-        return database_id(squad.dbid, index);
-    }
-    let mut next_id = database.squads.len();
-    for candidate in &database.objects {
-        if classify_proto_object(candidate).is_none()
-            || matching_proto_squad(database, &candidate.name).is_some()
-        {
-            continue;
-        }
-        if candidate.name.eq_ignore_ascii_case(&prototype.name) {
-            return i32::try_from(next_id).unwrap_or(-1);
-        }
-        next_id += 1;
-    }
-    -1
-}
-
-fn matching_proto_squad<'a>(
-    database: &'a Database,
-    proto_object_name: &str,
-) -> Option<(usize, &'a ProtoSquad)> {
-    let (index, squad) = find_proto_squad(database, proto_object_name)?;
-    let units = squad.units.as_ref()?;
-    let [unit] = units.entries.as_slice() else {
-        return None;
-    };
-    (unit.count == 1 && unit.proto_object.eq_ignore_ascii_case(proto_object_name))
-        .then_some((index, squad))
 }

@@ -28,7 +28,7 @@ fn regular_death_transforms_the_same_entity_and_retains_its_squad() {
 
     let replacement = world.get_unit(source_id).expect("same replacement ID");
     assert_eq!(replacement.proto_object_name, "replacement");
-    assert_eq!(replacement.proto_object_id, 11);
+    assert_eq!(replacement.proto_object_id, 1);
     assert_eq!(replacement.state, UnitState::Idle);
     assert!(!replacement.is_alive());
     assert!(replacement.is_static_death_replacement());

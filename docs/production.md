@@ -180,9 +180,14 @@ descriptive names in `xgameFinal.exe.i64` before it was saved.
   separate future-count domains, matching retail player counters. Trigger and
   UI consumers therefore cannot accidentally count the members of a queued
   squad as individually queued units.
-- Scenario loading checksums a proto-squad identity catalog. Future squad
-  queries use it to match the database IDs held by trigger/live state against
-  runtime table indices held by production tasks without conflating the two.
+- All proto IDs are engine load-order indices (`BDatabase::setupProtoObjects`,
+  `BDatabase::setupProtoSquads`). The `dbid` attribute is only a save-game key
+  and is not unique, so the sim never uses it as an ID. The proto squad table
+  has the `<Squad>` records, then the `MergedSquads` squads, then one implicit
+  squad for each Squad, Building or Unit class object that no same-named
+  one-unit squad represents. A proto object name resolves to its implicit squad
+  in squad name lookups (`squad_prototype_id`). Scenario loading checksums this
+  table with the name and unit count of each proto squad.
 - Scenario archives are loaded before database parsing. Scenario-local tables
   therefore participate in last-loaded-wins resolution, and that exact layered
   database builds the sim world, production definitions, triggers, gameplay

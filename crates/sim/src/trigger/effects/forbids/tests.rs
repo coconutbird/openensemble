@@ -41,13 +41,13 @@ fn script(players: Vec<i32>) -> TriggerScript {
         &mut script,
         4,
         VarType::ProtoObjectList,
-        TriggerValue::ProtoObjectList(vec![101, 999]),
+        TriggerValue::ProtoObjectList(vec![0, 999]),
     );
     add_value(
         &mut script,
         5,
         VarType::ProtoSquadList,
-        TriggerValue::ProtoSquadList(vec![201, 999]),
+        TriggerValue::ProtoSquadList(vec![0, 999]),
     );
     script
 }
@@ -74,8 +74,8 @@ fn forbid_sets_every_valid_prototype_for_each_valid_player() {
     );
     for player_id in [1, 2] {
         let player = world.get_player(player_id).unwrap();
-        assert!(player.is_object_forbidden(&database, 101));
-        assert!(player.is_squad_forbidden(&database, 201));
+        assert!(player.is_object_forbidden(&database, 0));
+        assert!(player.is_squad_forbidden(&database, 0));
         assert!(player.is_technology_forbidden(&database, 0));
     }
 }
@@ -95,7 +95,7 @@ fn empty_player_list_is_an_applied_noop_and_database_is_required() {
         !world
             .get_player(1)
             .unwrap()
-            .is_object_forbidden(&database, 101)
+            .is_object_forbidden(&database, 0)
     );
     assert_eq!(
         set_forbidden(&effect(), &script, &mut world, None),

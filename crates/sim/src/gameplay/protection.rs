@@ -440,7 +440,7 @@ fn bubble_squad_profile(database: &Database, value: &str) -> Option<BubbleShield
     let members = bubble_members(database, squad);
     (!members.is_empty()).then(|| BubbleShieldSquadProfile {
         proto_squad_name: squad.name.clone(),
-        proto_squad_id: database_id(squad.dbid, squad_index),
+        proto_squad_id: crate::prototypes::proto_id(squad_index),
         members,
     })
 }
@@ -466,10 +466,6 @@ fn bubble_members(database: &Database, squad: &ProtoSquad) -> Vec<BubbleShieldMe
             })
         })
         .collect()
-}
-
-fn database_id(explicit: Option<i32>, index: usize) -> i32 {
-    explicit.unwrap_or_else(|| i32::try_from(index).unwrap_or(-1))
 }
 
 fn attribute(node: &Node, name: &str) -> Option<String> {

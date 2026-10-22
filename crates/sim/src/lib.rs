@@ -98,6 +98,7 @@ pub use simulation::{MS_PER_TICK, SimState, Simulation, TICK_RATE};
 pub use spawn::{
     MAX_SPAWN_BATCH, SpawnError, object_prototype_id, spawn_object_at, spawn_squad_at,
     spawn_squad_from_base, spawn_squad_from_base_by_name, spawn_squads_at, squad_prototype_id,
+    squad_prototype_name,
 };
 pub use sync::{SimpleChecksum, SyncChecksum};
 pub use time_sync::{ClientTimeHistory, TimeSync, TimingRecord};
@@ -125,6 +126,6 @@ pub use world::{
     RumbleRequest, ScenarioScoreInfo, ScreenFadeOverlay, ScreenFadeSequence, TechnologyError,
     TrainingError, TrainingQueueResult, TransportPowerError, TransportPowerExecution,
     TransportPowerInvocation, WaveCapturedObject, WaveFakeObject, WaveGravityBallState,
-    WavePowerError, WavePowerExecution, WavePowerInvocation, World, object_runtime_id,
-    power_prototype_id, squad_runtime_id, technology_prototype_id,
+    WavePowerError, WavePowerExecution, WavePowerInvocation, World, power_prototype_id,
+    technology_prototype_id,
 };

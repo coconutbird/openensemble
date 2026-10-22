@@ -3,16 +3,19 @@
 use glam::Vec3;
 use pipeline::database::hw1::squads::{UnitEntry, UnitsWrapper};
 use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad};
-use sim::entities::squads::marine::{MARINE_PROTO_SQUAD_ID, MARINE_SQUAD_NAME, MarineSquadSpec};
+use sim::entities::squads::marine::{MARINE_SQUAD_NAME, MarineSquadSpec};
 use sim::entities::units::marine::{
-    MARINE_HITPOINTS, MARINE_PHYSICS_REPLACEMENT_INFO, MARINE_PROTO_OBJECT_ID, MARINE_UNIT_NAME,
-    MarineUnitSpec,
+    MARINE_HITPOINTS, MARINE_PHYSICS_REPLACEMENT_INFO, MARINE_UNIT_NAME, MarineUnitSpec,
 };
 use sim::{
     Command, CommandEntry, CommandExecutor, CommandPayload, GroundMovePhase, OrderType,
     ScenarioData, SquadArchetype, SquadFormation, SquadState, UnitArchetype, WorkCommand, World,
     load_scenario_into_world,
 };
+
+/// Proto IDs are load-order indices; the Marine is first in each table.
+const MARINE_PROTO_OBJECT_ID: i32 = 0;
+const MARINE_PROTO_SQUAD_ID: i32 = 0;
 
 const MARINE_SCENARIO: &str = r#"<Scenario>
     <Players><Player Name="Cutter" Team="1" /></Players>
@@ -33,7 +36,6 @@ fn marine_database() -> Database {
     let mut database = Database::new();
     database.objects.push(ProtoObject {
         name: MARINE_UNIT_NAME.to_owned(),
-        dbid: Some(MARINE_PROTO_OBJECT_ID),
         object_class: Some("Squad".to_owned()),
         select_type: Some("Unit".to_owned()),
         movement_type: Some("Land".to_owned()),

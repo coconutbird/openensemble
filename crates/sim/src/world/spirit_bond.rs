@@ -147,9 +147,7 @@ impl World {
                     .enumerate()
                     .find(|(_, prototype)| prototype.name.eq_ignore_ascii_case(logical_name))
             })?;
-        let prototype_id = prototype
-            .dbid
-            .unwrap_or_else(|| i32::try_from(prototype_index).unwrap_or(-1));
+        let prototype_id = crate::prototypes::proto_id(prototype_index);
         let object_id = self.objects.allocate_id();
         let mut beam = Object::new_visual(
             object_id,

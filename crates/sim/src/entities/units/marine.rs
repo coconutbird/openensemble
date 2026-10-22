@@ -8,8 +8,6 @@ use glam::Vec3;
 
 /// Shipped proto-object name.
 pub const MARINE_UNIT_NAME: &str = "unsc_inf_marine_01";
-/// Shipped proto-object database ID.
-pub const MARINE_PROTO_OBJECT_ID: i32 = 148;
 /// Shipped physics-replacement profile.
 pub const MARINE_PHYSICS_REPLACEMENT_INFO: &str = "dude";
 /// Shipped maximum hit points.
@@ -56,7 +54,6 @@ mod tests {
     #[test]
     fn stock_profile_matches_shipped_data() {
         let spec = MarineUnitSpec::default();
-        assert_eq!(MARINE_PROTO_OBJECT_ID, 148);
         assert_close(MARINE_HITPOINTS, 720.0);
         assert_eq!(MARINE_PHYSICS_REPLACEMENT_INFO, "dude");
         assert_close(spec.max_speed, 10.0);

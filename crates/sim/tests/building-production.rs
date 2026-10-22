@@ -10,8 +10,8 @@ use pipeline::database::hw1::techs::{EffectTarget, EffectsWrapper, TechEffect};
 use pipeline::database::hw1::{Database, GameData, ProtoObject, Squad as ProtoSquad, Tech};
 use sim::{
     BuildingCommand, EntityId, MS_PER_TICK, Simulation, TechStatus, TrainingError, TrainingKind,
-    TrainingQueueResult, World, object_prototype_id, object_runtime_id, spawn_object_at,
-    squad_prototype_id, squad_runtime_id, technology_prototype_id,
+    TrainingQueueResult, World, object_prototype_id, spawn_object_at, squad_prototype_id,
+    technology_prototype_id,
 };
 use test_support::assert_close;
 
@@ -25,7 +25,7 @@ const DISABLE_MARINES: &str = "disable_test_marines";
 fn train_squad_command_pays_reserves_completes_and_releases_population() {
     let database = production_database(false);
     let (mut world, barracks_id) = production_world(&database, 3.0, 1_000.0);
-    let marine_id = squad_runtime_id(&database, MARINE).unwrap();
+    let marine_id = squad_prototype_id(&database, MARINE).unwrap();
     let squads_before = world.squads.len();
     let mut clock = Simulation::new();
 
@@ -85,7 +85,7 @@ fn train_squad_command_pays_reserves_completes_and_releases_population() {
 fn queue_accepts_a_prefix_and_cancellation_refunds_tail_then_current() {
     let database = production_database(false);
     let (mut world, barracks_id) = production_world(&database, 2.0, 250.0);
-    let marine_id = squad_runtime_id(&database, MARINE).unwrap();
+    let marine_id = squad_prototype_id(&database, MARINE).unwrap();
     let checksum_before = world.checksum();
 
     assert_eq!(
@@ -124,7 +124,7 @@ fn queue_accepts_a_prefix_and_cancellation_refunds_tail_then_current() {
 fn research_and_training_use_one_worker_and_building_loss_refunds_both() {
     let database = production_database(false);
     let (mut world, barracks_id) = production_world(&database, 3.0, 500.0);
-    let marine_id = squad_runtime_id(&database, MARINE).unwrap();
+    let marine_id = squad_prototype_id(&database, MARINE).unwrap();
     let upgrade_id = technology_prototype_id(&database, UPGRADE).unwrap();
 
     world
@@ -173,7 +173,7 @@ fn research_and_training_use_one_worker_and_building_loss_refunds_both() {
 fn train_unit_command_uses_runtime_object_ids() {
     let database = production_database(false);
     let (mut world, barracks_id) = production_world(&database, 3.0, 100.0);
-    let drone_id = object_runtime_id(&database, DRONE).unwrap();
+    let drone_id = object_prototype_id(&database, DRONE).unwrap();
     let units_before = world.units.len();
     let mut clock = Simulation::new();
 
@@ -217,7 +217,7 @@ fn train_unit_batch_escalates_against_future_counts_and_refunds_exact_prices() {
     drone.cost_escalation_object = vec![DRONE.to_owned()];
     drone.flags.push("LinearCostEscalation".to_owned());
     let (mut world, barracks_id) = production_world(&database, 10.0, 200.0);
-    let drone_id = object_runtime_id(&database, DRONE).unwrap();
+    let drone_id = object_prototype_id(&database, DRONE).unwrap();
 
     assert_close(
         world.object_cost(&database, 1, drone_id).unwrap().get(0),
@@ -262,21 +262,29 @@ fn exponential_object_cost_rounds_to_the_nearest_ten_after_live_counts() {
     drone.costs[0].amount = 100.0;
     drone.cost_escalation = Some(1.15);
     let (mut world, _barracks_id) = production_world(&database, 10.0, 1_000.0);
-    let runtime_id = object_runtime_id(&database, DRONE).unwrap();
     let prototype_id = object_prototype_id(&database, DRONE).unwrap();
 
     assert_close(
-        world.object_cost(&database, 1, runtime_id).unwrap().get(0),
+        world
+            .object_cost(&database, 1, prototype_id)
+            .unwrap()
+            .get(0),
         100.0,
     );
     spawn_object_at(&mut world, &database, 1, prototype_id, Vec3::X, Vec3::Z).unwrap();
     assert_close(
-        world.object_cost(&database, 1, runtime_id).unwrap().get(0),
+        world
+            .object_cost(&database, 1, prototype_id)
+            .unwrap()
+            .get(0),
         120.0,
     );
     spawn_object_at(&mut world, &database, 1, prototype_id, Vec3::NEG_X, Vec3::Z).unwrap();
     assert_close(
-        world.object_cost(&database, 1, runtime_id).unwrap().get(0),
+        world
+            .object_cost(&database, 1, prototype_id)
+            .unwrap()
+            .get(0),
         130.0,
     );
 }
@@ -296,7 +304,7 @@ fn instant_training_spawns_now_and_locks_only_its_building_command() {
         .get_building_mut(barracks_id)
         .unwrap()
         .work_rate_scalar = 10.0;
-    let marine_id = squad_runtime_id(&database, MARINE).unwrap();
+    let marine_id = squad_prototype_id(&database, MARINE).unwrap();
     let squads_before = world.squads.len();
 
     assert_eq!(
@@ -380,7 +388,7 @@ fn instant_training_spawns_now_and_locks_only_its_building_command() {
 fn command_enable_and_train_limits_gate_authoritative_acceptance() {
     let database = production_database(true);
     let (mut world, barracks_id) = production_world(&database, 3.0, 500.0);
-    let marine_id = squad_runtime_id(&database, MARINE).unwrap();
+    let marine_id = squad_prototype_id(&database, MARINE).unwrap();
 
     let result = world
         .queue_training(1, barracks_id, &database, TrainingKind::Squad, marine_id, 2)
@@ -426,74 +434,44 @@ fn command_enable_and_train_limits_gate_authoritative_acceptance() {
 fn player_forbids_gate_new_squad_and_unit_training() {
     let database = production_database(false);
     let (mut world, barracks_id) = production_world(&database, 3.0, 500.0);
-    let marine_runtime_id = squad_runtime_id(&database, MARINE).unwrap();
-    let marine_forbid_id = squad_prototype_id(&database, MARINE).unwrap();
-    let drone_runtime_id = object_runtime_id(&database, DRONE).unwrap();
-    let drone_forbid_id = object_prototype_id(&database, DRONE).unwrap();
+    let marine_id = squad_prototype_id(&database, MARINE).unwrap();
+    let drone_id = object_prototype_id(&database, DRONE).unwrap();
     let initial_checksum = world.checksum();
 
     assert_eq!(
         world
             .get_player_mut(1)
             .unwrap()
-            .set_squad_forbidden(&database, marine_forbid_id, true),
+            .set_squad_forbidden(&database, marine_id, true),
         Some(true)
     );
     assert_ne!(world.checksum(), initial_checksum);
     assert!(matches!(
-        world.queue_training(
-            1,
-            barracks_id,
-            &database,
-            TrainingKind::Squad,
-            marine_runtime_id,
-            1,
-        ),
+        world.queue_training(1, barracks_id, &database, TrainingKind::Squad, marine_id, 1,),
         Err(TrainingError::CommandUnavailable { .. })
     ));
 
     world
         .get_player_mut(1)
         .unwrap()
-        .set_squad_forbidden(&database, marine_forbid_id, false);
+        .set_squad_forbidden(&database, marine_id, false);
     assert_eq!(
         world
-            .queue_training(
-                1,
-                barracks_id,
-                &database,
-                TrainingKind::Squad,
-                marine_runtime_id,
-                1,
-            )
+            .queue_training(1, barracks_id, &database, TrainingKind::Squad, marine_id, 1,)
             .unwrap()
             .accepted,
         1
     );
     world
-        .cancel_training(
-            1,
-            barracks_id,
-            &database,
-            TrainingKind::Squad,
-            marine_runtime_id,
-            1,
-        )
+        .cancel_training(1, barracks_id, &database, TrainingKind::Squad, marine_id, 1)
         .unwrap();
 
     world
         .get_player_mut(1)
         .unwrap()
-        .set_object_forbidden(&database, drone_forbid_id, true);
+        .set_object_forbidden(&database, drone_id, true);
     assert!(matches!(
-        world.queue_training(
-            1,
-            barracks_id,
-            &database,
-            TrainingKind::Unit,
-            drone_runtime_id,
-            1,
-        ),
+        world.queue_training(1, barracks_id, &database, TrainingKind::Unit, drone_id, 1,),
         Err(TrainingError::CommandUnavailable { .. })
     ));
 }

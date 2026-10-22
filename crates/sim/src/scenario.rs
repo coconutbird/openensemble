@@ -61,9 +61,7 @@ pub(crate) use units::{
 pub use coordinates::ScenarioPositionAxes;
 pub use pipeline::hw1::scenario::{ScenarioData, ScenarioObject, ScenarioPlayer, ScenarioPosition};
 pub(crate) use prototypes::{PlacedUnitKind, classify_proto_object};
-use prototypes::{
-    creates_base, database_id, find_proto_object, find_proto_squad, is_class_zero_object,
-};
+use prototypes::{creates_base, find_proto_object, find_proto_squad, is_class_zero_object};
 
 /// Result of loading a scenario into a world.
 ///
@@ -576,7 +574,7 @@ fn create_squad_from_prototype_internal(
     if let Some(squad) = world.get_squad_mut(squad_id) {
         squad.base.set_forward(forward);
         squad.proto_squad_id =
-            logical_proto.map_or(-1, |(index, squad)| database_id(squad.dbid, index));
+            logical_proto.map_or(-1, |(index, _)| crate::prototypes::proto_id(index));
         proto_name.clone_into(&mut squad.proto_squad_name);
         squad.set_veterancy_level(veterancy_level.unwrap_or_default());
         squad.archetype = if is_warthog_squad(proto_name) {

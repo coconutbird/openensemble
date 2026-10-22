@@ -10,8 +10,6 @@ use glam::Vec3;
 pub const WARTHOG_UNIT_NAME: &str = "unsc_veh_warthog_01";
 /// `PhysicsInfo` key selected by the Warthog proto object.
 pub const WARTHOG_PHYSICS_INFO: &str = "warthog";
-/// Shipped proto-object database ID.
-pub const WARTHOG_PROTO_OBJECT_ID: i32 = 156;
 /// Shipped maximum hit points.
 pub const WARTHOG_HITPOINTS: f32 = 2_369.0;
 

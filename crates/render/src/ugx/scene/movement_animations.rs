@@ -255,7 +255,7 @@ mod tests {
         database.objects.push(proto);
         let mut world = sim::World::new();
         world.init_players(1);
-        let unit_id = sim::spawn_object_at(&mut world, &database, 1, 7, Vec3::ZERO, Vec3::Z)
+        let unit_id = sim::spawn_object_at(&mut world, &database, 1, 0, Vec3::ZERO, Vec3::Z)
             .expect("turn-in-place unit");
         assert!(world.get_unit_mut(unit_id).unwrap().move_to(Vec3::X * 10.0));
 

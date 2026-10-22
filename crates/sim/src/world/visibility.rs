@@ -344,11 +344,7 @@ fn revealer_prototype(database: &Database) -> Option<(i32, &ProtoObject)> {
         .iter()
         .enumerate()
         .find(|(_, prototype)| prototype.name.eq_ignore_ascii_case(REVEALER_PROTO_NAME))
-        .and_then(|(index, prototype)| {
-            i32::try_from(index)
-                .ok()
-                .map(|index| (prototype.dbid.unwrap_or(index), prototype))
-        })
+        .map(|(index, prototype)| (crate::prototypes::proto_id(index), prototype))
 }
 
 #[cfg(test)]

@@ -5,8 +5,9 @@
 //! scenario-layered database while exposing the same effective state.
 
 use super::Player;
+use crate::prototypes::{object_by_id, squad_by_id};
 use crate::sync::SyncChecksum;
-use pipeline::database::hw1::{Database, ProtoObject, Squad, Tech};
+use pipeline::database::hw1::{Database, Tech};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Default)]
@@ -147,32 +148,10 @@ fn set_override(
     true
 }
 
-fn object_by_id(database: &Database, id: i32) -> Option<&ProtoObject> {
-    database
-        .objects
-        .iter()
-        .enumerate()
-        .find(|(index, prototype)| database_id(prototype.dbid, *index) == id)
-        .map(|(_, prototype)| prototype)
-}
-
-fn squad_by_id(database: &Database, id: i32) -> Option<&Squad> {
-    database
-        .squads
-        .iter()
-        .enumerate()
-        .find(|(index, prototype)| database_id(prototype.dbid, *index) == id)
-        .map(|(_, prototype)| prototype)
-}
-
 fn technology_by_id(database: &Database, id: i32) -> Option<&Tech> {
     usize::try_from(id)
         .ok()
         .and_then(|index| database.techs.get(index))
-}
-
-fn database_id(explicit: Option<i32>, index: usize) -> i32 {
-    explicit.unwrap_or_else(|| i32::try_from(index).unwrap_or(-1))
 }
 
 fn has_flag(flags: &[String], expected: &str) -> bool {

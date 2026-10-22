@@ -136,7 +136,7 @@ mod tests {
             .create_icon_object(
                 &database,
                 1,
-                42,
+                0,
                 Vec3::new(10.0, 0.0, 20.0),
                 Some([255, 128, 0]),
                 false,
@@ -148,7 +148,7 @@ mod tests {
         assert!(!world.is_icon_visible_to_player(icon_id, 2));
 
         let public_id = world
-            .create_icon_object(&database, 1, 42, Vec3::ZERO, None, true)
+            .create_icon_object(&database, 1, 0, Vec3::ZERO, None, true)
             .unwrap();
         assert!(world.is_icon_visible_to_player(public_id, 2));
     }

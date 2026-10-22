@@ -6,7 +6,7 @@ use render::ugx::UnitScene;
 use sim::entities::squads::marine::MARINE_SQUAD_NAME;
 use sim::{
     BuildingCommand, LoadedGameScenario, MS_PER_TICK, Simulation, configure_player_leader,
-    object_prototype_id, spawn_object_at, spawn_squad_at, squad_prototype_id, squad_runtime_id,
+    object_prototype_id, spawn_object_at, spawn_squad_at, squad_prototype_id,
 };
 
 /// Run with:
@@ -110,17 +110,12 @@ fn train_real_marine_squad(
         glam::Vec3::Z,
     )
     .expect("real database should spawn a Barracks");
-    let marine_runtime_id = squad_runtime_id(database, MARINE_SQUAD_NAME)
-        .expect("real database should expose the Marine runtime squad ID");
+    let marine_proto_id = squad_prototype_id(database, MARINE_SQUAD_NAME)
+        .expect("real database should expose the Marine proto squad ID");
     let mut clock = Simulation::new();
     clock.game_time_ms = simulation.world.game_time_ms;
     clock.command_queue.enqueue_building(
-        BuildingCommand::train_squads(
-            i32::from(player_id),
-            vec![barracks_id],
-            marine_runtime_id,
-            1,
-        ),
+        BuildingCommand::train_squads(i32::from(player_id), vec![barracks_id], marine_proto_id, 1),
         clock.game_time_ms.saturating_add(MS_PER_TICK),
         u64::from(player_id),
     );

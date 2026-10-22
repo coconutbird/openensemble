@@ -69,7 +69,3 @@ pub(super) fn find_proto_squad<'a>(
         .enumerate()
         .find(|(_, proto)| proto.name.eq_ignore_ascii_case(name))
 }
-
-pub(super) fn database_id(explicit: Option<i32>, index: usize) -> i32 {
-    explicit.unwrap_or_else(|| i32::try_from(index).unwrap_or(-1))
-}

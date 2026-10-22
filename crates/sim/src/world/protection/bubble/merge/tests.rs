@@ -3,10 +3,9 @@ use crate::entities::{SquadArchetype, SquadFormation};
 use crate::player::PopulationCost;
 use crate::scenario::create_squad_from_prototype;
 use glam::Vec3;
-use pipeline::database::hw1::squads::{UnitEntry, UnitsWrapper};
+use pipeline::database::hw1::squads::{MergedSquads, UnitEntry, UnitsWrapper};
 use pipeline::database::hw1::tactics::{Action, DamageModifiers, JoinType, TacticData};
 use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad};
-use pipeline::xmb::Document;
 
 #[test]
 fn merge_moves_the_joiner_transforms_the_target_and_preserves_population() {
@@ -183,6 +182,10 @@ fn merge_gameplay() -> (Database, GameplayCatalog) {
             proto_squad("spartan_squad", "spartan", 1),
             proto_squad("marine_squad", "marine", 2),
         ],
+        merged_squads: vec![MergedSquads {
+            squad: "spartan_squad".to_owned(),
+            targets: vec!["marine_squad".to_owned()],
+        }],
         ..Database::default()
     };
     let gameplay = merge_catalog(
@@ -212,16 +215,7 @@ fn merge_catalog(database: &Database, damage_modifiers: DamageModifiers) -> Game
         }],
         ..TacticData::default()
     };
-    let mut gameplay = GameplayCatalog::from_tactics(database, [("spartan".to_owned(), tactics)]);
-    gameplay.load_test_merged_squads_document(
-        database,
-        &Document::from_xml(
-            "<Squads><MergedSquads>spartan_squad<MergedSquad>marine_squad</MergedSquad>\
-             </MergedSquads></Squads>",
-        )
-        .unwrap(),
-    );
-    gameplay
+    GameplayCatalog::from_tactics(database, [("spartan".to_owned(), tactics)])
 }
 
 fn proto_squad(name: &str, member: &str, count: i32) -> ProtoSquad {

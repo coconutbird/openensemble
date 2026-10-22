@@ -3,7 +3,8 @@
 use crate::entities::units::BuiltEconomyState;
 use crate::entity_id::EntityId;
 use crate::player::{MAX_RESOURCES, PlayerId};
-use crate::world::{TriggerTrainingRequest, World, squad_runtime_id};
+use crate::prototypes::squad_id;
+use crate::world::{TriggerTrainingRequest, World};
 use pipeline::database::hw1::{Database, ProtoObject};
 
 impl World {
@@ -35,7 +36,7 @@ impl World {
             .as_deref()
             .map(str::trim)
             .filter(|name| !name.is_empty())
-            .and_then(|name| squad_runtime_id(database, name))
+            .and_then(|name| squad_id(database, name))
         else {
             return;
         };

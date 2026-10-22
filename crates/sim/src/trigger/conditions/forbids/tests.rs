@@ -34,13 +34,13 @@ fn is_forbidden_ors_each_used_prototype_kind() {
         &mut script,
         2,
         VarType::ProtoSquad,
-        TriggerValue::ProtoSquad(201),
+        TriggerValue::ProtoSquad(0),
     );
     add_value(
         &mut script,
         3,
         VarType::ProtoObject,
-        TriggerValue::ProtoObject(101),
+        TriggerValue::ProtoObject(0),
     );
     add_value(&mut script, 4, VarType::Tech, TriggerValue::Tech(0));
     let all = Condition::new(1, ConditionType::IsForbidden)
@@ -53,12 +53,12 @@ fn is_forbidden_ors_each_used_prototype_kind() {
     world
         .get_player_mut(1)
         .unwrap()
-        .set_object_forbidden(&database, 101, false);
+        .set_object_forbidden(&database, 0, false);
     assert!(!is_forbidden(&all, &script, &world, Some(&database)));
     world
         .get_player_mut(1)
         .unwrap()
-        .set_squad_forbidden(&database, 201, true);
+        .set_squad_forbidden(&database, 0, true);
     assert!(is_forbidden(&all, &script, &world, Some(&database)));
 }
 
@@ -73,7 +73,7 @@ fn is_forbidden_requires_a_database_and_valid_player() {
         &mut script,
         2,
         VarType::ProtoObject,
-        TriggerValue::ProtoObject(101),
+        TriggerValue::ProtoObject(0),
     );
     let condition = Condition::new(1, ConditionType::IsForbidden)
         .with_input_at(1, 1)

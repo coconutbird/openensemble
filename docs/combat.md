@@ -488,9 +488,10 @@ example `unitactionrangedattack.cpp`, `damagehelper.cpp`, `projectile.cpp`,
 - FollowAttack uses the same persistent Join state and authored work range, but
   keeps its source operational and synchronized to the moving target rather
   than applying Follow's hidden/invulnerable connection contract.
-- Raw scenario-layered `MergedSquads` entries create the retail
-  `merged_{target}_{joining}` synthetic prototype identities after the typed
-  squad table. A compatible Merge transfers the joining unit into the target,
+- The `MergedSquads` groups of the scenario-layered `squads.xml`
+  (`Database::merged_squads`) create the retail `merged_{target}_{joining}`
+  proto squads. Their IDs follow the `<Squad>` records and come before the
+  implicit squads. A compatible Merge transfers the joining unit into the target,
   preserves population accounting, applies Join modifiers only to the original
   target members, and deterministically restores the source or target prototype
   when one side of the merged composition is eliminated. In

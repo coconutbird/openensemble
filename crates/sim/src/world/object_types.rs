@@ -3,29 +3,23 @@
 use super::World;
 use crate::entity_id::{EntityClass, EntityId};
 use crate::gameplay::GameplayCatalog;
+use crate::prototypes::{proto_id, proto_squads};
 use crate::sync::SyncChecksum;
 use pipeline::database::hw1::{Database, ProtoObject};
 
 impl World {
+    /// Project the proto object types and the engine proto squad table (with
+    /// merged and implicit squads) into the world, keyed by proto ID.
     pub(crate) fn configure_prototype_catalogs(&mut self, database: &Database) {
-        self.prototype_object_types.clear();
-        for (index, prototype) in database.objects.iter().enumerate() {
-            let prototype_id = prototype
-                .dbid
-                .unwrap_or_else(|| i32::try_from(index).unwrap_or(-1));
-            self.prototype_object_types
-                .insert(prototype_id, object_type_names(prototype));
-        }
-        self.prototype_squads.clear();
-        for (index, prototype) in database.squads.iter().enumerate() {
-            let prototype_id = prototype
-                .dbid
-                .unwrap_or_else(|| i32::try_from(index).unwrap_or(-1));
-            self.prototype_squads.insert(
-                prototype_id,
-                (prototype.name.trim().to_owned(), squad_size(prototype)),
-            );
-        }
+        self.prototype_object_types = database
+            .objects
+            .iter()
+            .enumerate()
+            .map(|(index, prototype)| (proto_id(index), object_type_names(prototype)))
+            .collect();
+        self.prototype_squads = proto_squads(database)
+            .map(|(id, entry)| (id, (entry.name().trim().to_owned(), entry.size(database))))
+            .collect();
     }
 
     pub(crate) fn configure_prototype_damage_profiles(&mut self, gameplay: &GameplayCatalog) {
@@ -105,19 +99,6 @@ impl World {
                     concrete_name.eq_ignore_ascii_case(prototype_name)
                         && contains_type(types, object_type)
                 })
-            })
-    }
-
-    pub(crate) fn queued_squad_matches_prototype(
-        &self,
-        expected_id: i32,
-        queued_runtime_id: i32,
-        queued_name: &str,
-    ) -> bool {
-        self.prototype_squads
-            .get(&expected_id)
-            .map_or(queued_runtime_id == expected_id, |(expected_name, _)| {
-                expected_name.eq_ignore_ascii_case(queued_name.trim())
             })
     }
 
@@ -232,14 +213,6 @@ fn object_type_names(prototype: &ProtoObject) -> Vec<String> {
     names
 }
 
-fn squad_size(prototype: &pipeline::database::hw1::Squad) -> u32 {
-    prototype.units.as_ref().map_or(0, |units| {
-        units.entries.iter().fold(0_u32, |total, entry| {
-            total.saturating_add(u32::try_from(entry.count.max(0)).unwrap_or(u32::MAX))
-        })
-    })
-}
-
 fn add_type(names: &mut Vec<String>, value: &str) {
     let value = value.trim();
     if value.is_empty() || contains_type(names, value) {
@@ -266,6 +239,7 @@ mod tests {
         database.objects.push(ProtoObject {
             name: "unsc_inf_marine_01".to_owned(),
             dbid: Some(17),
+            object_class: Some("Unit".to_owned()),
             object_types: vec!["Infantry".to_owned(), "UNSC".to_owned()],
             ..ProtoObject::default()
         });
@@ -274,6 +248,7 @@ mod tests {
             dbid: Some(70),
             units: Some(UnitsWrapper {
                 entries: vec![UnitEntry {
+                    proto_object: "unsc_inf_marine_01".to_owned(),
                     count: 2,
                     ..UnitEntry::default()
                 }],
@@ -284,14 +259,14 @@ mod tests {
         let empty_checksum = world.checksum();
         world.configure_prototype_catalogs(&database);
 
-        assert!(world.prototype_is_object_type(17, "UNSC_INF_MARINE_01"));
-        assert!(world.prototype_is_object_type(17, "infantry"));
-        assert!(!world.prototype_is_object_type(17, "Vehicle"));
-        assert!(world.queued_squad_matches_prototype(70, 0, "UNSC_MARINE_SQUAD"));
-        assert!(!world.queued_squad_matches_prototype(70, 1, "unsc_warthog_squad"));
+        // Proto IDs are table indices; the dbid values are not IDs.
+        assert!(world.prototype_is_object_type(0, "UNSC_INF_MARINE_01"));
+        assert!(world.prototype_is_object_type(0, "infantry"));
+        assert!(!world.prototype_is_object_type(0, "Vehicle"));
+        assert!(!world.prototype_is_object_type(17, "infantry"));
         world.init_players(1);
         let squad_id = world.create_squad(1);
-        world.get_squad_mut(squad_id).unwrap().proto_squad_id = 70;
+        world.get_squad_mut(squad_id).unwrap().proto_squad_id = 0;
         let first = world.create_unit(1);
         assert!(world.attach_unit_to_squad(first, squad_id));
         assert!(!world.squad_is_at_max_size(squad_id));
@@ -299,5 +274,39 @@ mod tests {
         assert!(world.attach_unit_to_squad(second, squad_id));
         assert!(world.squad_is_at_max_size(squad_id));
         assert_ne!(world.checksum(), empty_checksum);
+    }
+
+    #[test]
+    fn implicit_proto_squads_hold_one_unit() {
+        let database = Database {
+            objects: vec![
+                ProtoObject {
+                    name: "unsc_inf_marine_01".to_owned(),
+                    object_class: Some("Unit".to_owned()),
+                    ..ProtoObject::default()
+                },
+                ProtoObject {
+                    name: "unsc_bldg_barracks_01".to_owned(),
+                    object_class: Some("Building".to_owned()),
+                    ..ProtoObject::default()
+                },
+            ],
+            squads: vec![ProtoSquad {
+                name: "unsc_marine_squad".to_owned(),
+                ..ProtoSquad::default()
+            }],
+            ..Database::default()
+        };
+        let mut world = World::new();
+        world.configure_prototype_catalogs(&database);
+        world.init_players(1);
+        let squad_id = world.create_squad(1);
+        let squad = world.get_squad_mut(squad_id).unwrap();
+        // Squad 0 is the record; 1 and 2 are the implicit squads of objects 0 and 1.
+        squad.proto_squad_id = 2;
+        "unsc_bldg_barracks_01".clone_into(&mut squad.proto_squad_name);
+        let building = world.create_building(1);
+        assert!(world.attach_unit_to_squad(building, squad_id));
+        assert!(world.squad_is_at_max_size(squad_id));
     }
 }

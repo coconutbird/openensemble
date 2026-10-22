@@ -159,6 +159,7 @@ impl World {
                 self,
                 squad_id,
                 &request.source_name,
+                request.target_index,
                 target,
                 database,
             );

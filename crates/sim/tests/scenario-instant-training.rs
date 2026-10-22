@@ -1,7 +1,7 @@
 //! Checks that the shipped Sentinel store trains at once and then recharges.
 
 use glam::Vec3;
-use sim::{TrainingKind, object_prototype_id, spawn_object_at, squad_runtime_id};
+use sim::{TrainingKind, object_prototype_id, spawn_object_at, squad_prototype_id};
 
 const SENTINEL_STORE: &str = "hook_store_sentinel_01";
 const SENTINEL_SQUAD: &str = "for_air_sentinel_01";
@@ -26,7 +26,7 @@ fn shipped_sentinel_store_trains_immediately_then_recharges_in_sim_state() {
     }
     let store_prototype_id = object_prototype_id(&loaded.content.database, SENTINEL_STORE)
         .expect("layered database should expose the shipped sentinel store");
-    let sentinel_runtime_id = squad_runtime_id(&loaded.content.database, SENTINEL_SQUAD)
+    let sentinel_runtime_id = squad_prototype_id(&loaded.content.database, SENTINEL_SQUAD)
         .expect("layered database should expose the shipped sentinel squad");
     let store_id = spawn_object_at(
         &mut loaded.simulation.world,

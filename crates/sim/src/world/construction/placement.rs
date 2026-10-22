@@ -2,6 +2,7 @@
 
 use super::ConstructionError;
 use crate::entity::Entity;
+use crate::prototypes::{object_by_id, object_by_name_trim_query as object_by_name};
 use crate::world::sockets::{authored_socket_transform, socket_transform};
 use crate::{EntityId, World};
 use glam::Vec3;
@@ -28,7 +29,7 @@ pub(super) fn direct_build_transform(
     if !position.is_finite() {
         return Err(ConstructionError::InvalidTransform);
     }
-    let target = object_by_runtime_id(database, prototype_id)
+    let target = object_by_id(database, prototype_id)
         .ok_or(ConstructionError::PrototypeNotFound(prototype_id))?;
     if !socket_id.is_invalid()
         && let Some(socket) = world.get_unit(socket_id)
@@ -73,7 +74,7 @@ pub(super) fn find_build_other_socket(
     let builder = world
         .get_building(builder_id)
         .ok_or(ConstructionError::BuilderNotFound(builder_id))?;
-    let target = object_by_runtime_id(database, prototype_id)
+    let target = object_by_id(database, prototype_id)
         .ok_or(ConstructionError::PrototypeNotFound(prototype_id))?;
     let required_type = target
         .socket
@@ -195,19 +196,6 @@ fn socket_unavailable(builder_id: EntityId, prototype: &str) -> ConstructionErro
         builder_id,
         prototype: prototype.to_owned(),
     }
-}
-
-fn object_by_runtime_id(database: &Database, prototype_id: i32) -> Option<&ProtoObject> {
-    usize::try_from(prototype_id)
-        .ok()
-        .and_then(|index| database.objects.get(index))
-}
-
-fn object_by_name<'a>(database: &'a Database, name: &str) -> Option<&'a ProtoObject> {
-    database
-        .objects
-        .iter()
-        .find(|prototype| prototype.name.eq_ignore_ascii_case(name.trim()))
 }
 
 fn proto_has_type(prototype: &ProtoObject, expected: &str) -> bool {

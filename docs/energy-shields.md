@@ -10,7 +10,7 @@ disappears.
 
 `GameplayCatalog` creates `EnergyShieldActionProfile` values only for `EnergyShield` and
 `InfantryEnergyShield` actions named by a unit's `PersistentAction` list. External profiles retain
-the action name, start-disabled state, referenced proto-object database ID, and authored bone.
+the action name, start-disabled state, referenced proto-object ID (load-order index), and authored bone.
 Infantry profiles retain the action duration and retail's named `Shield` visual component.
 
 Scenario ERAs are mounted before database tables and tactics are parsed. Shield attachment

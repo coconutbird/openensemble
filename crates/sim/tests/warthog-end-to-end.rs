@@ -3,16 +3,16 @@
 use glam::Vec3;
 use pipeline::database::hw1::squads::{TurnRadius, UnitEntry, UnitsWrapper};
 use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad};
-use sim::entities::squads::warthog::{
-    WARTHOG_PROTO_SQUAD_ID, WARTHOG_SQUAD_NAME, WarthogSquadSpec,
-};
-use sim::entities::units::warthog::{
-    WARTHOG_HITPOINTS, WARTHOG_PROTO_OBJECT_ID, WARTHOG_UNIT_NAME, WarthogUnitSpec,
-};
+use sim::entities::squads::warthog::{WARTHOG_SQUAD_NAME, WarthogSquadSpec};
+use sim::entities::units::warthog::{WARTHOG_HITPOINTS, WARTHOG_UNIT_NAME, WarthogUnitSpec};
 use sim::{
     Command, CommandEntry, CommandExecutor, CommandPayload, MotionType, OrderType, ScenarioData,
     SquadArchetype, SquadState, UnitArchetype, WorkCommand, World, load_scenario_into_world,
 };
+
+/// Proto IDs are load-order indices; the Warthog is first in each table.
+const WARTHOG_PROTO_OBJECT_ID: i32 = 0;
+const WARTHOG_PROTO_SQUAD_ID: i32 = 0;
 
 const MOVEMENT_SCENARIO: &str = r#"<Scenario>
     <Players><Player Name="Cutter" Team="1" /></Players>
@@ -43,7 +43,6 @@ fn warthog_database() -> Database {
     let mut database = Database::new();
     database.objects.push(ProtoObject {
         name: WARTHOG_UNIT_NAME.to_owned(),
-        dbid: Some(WARTHOG_PROTO_OBJECT_ID),
         object_class: Some("Squad".to_owned()),
         select_type: Some("Unit".to_owned()),
         movement_type: Some("Land".to_owned()),
@@ -69,7 +68,6 @@ fn warthog_database() -> Database {
     });
     database.squads.push(ProtoSquad {
         name: WARTHOG_SQUAD_NAME.to_owned(),
-        dbid: Some(WARTHOG_PROTO_SQUAD_ID),
         units: Some(UnitsWrapper {
             entries: vec![UnitEntry {
                 proto_object: WARTHOG_UNIT_NAME.to_owned(),

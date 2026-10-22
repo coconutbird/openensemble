@@ -40,12 +40,13 @@ fn scn_player_lists_seed_distinct_authoritative_forbid_state() {
 
     apply_scenario_forbids(&mut world, &database, &document);
 
+    // Proto IDs are table indices; the authored `dbid` values are not IDs.
     let first = world.get_player(1).unwrap();
-    assert!(first.is_object_forbidden(&database, 101));
-    assert!(first.is_squad_forbidden(&database, 201));
+    assert!(first.is_object_forbidden(&database, 0));
+    assert!(first.is_squad_forbidden(&database, 0));
     assert!(first.is_technology_forbidden(&database, 0));
     let second = world.get_player(2).unwrap();
-    assert!(!second.is_object_forbidden(&database, 101));
-    assert!(!second.is_squad_forbidden(&database, 201));
+    assert!(!second.is_object_forbidden(&database, 0));
+    assert!(!second.is_squad_forbidden(&database, 0));
     assert!(!second.is_technology_forbidden(&database, 0));
 }

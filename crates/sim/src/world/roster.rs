@@ -57,13 +57,7 @@ impl World {
                 .filter(move |task| {
                     task.player_id() == player_id
                         && task.kind() == TrainingKind::Squad
-                        && prototype_id.is_none_or(|expected| {
-                            self.queued_squad_matches_prototype(
-                                expected,
-                                task.prototype_id(),
-                                task.prototype_name(),
-                            )
-                        })
+                        && prototype_id.is_none_or(|expected| task.prototype_id() == expected)
                 })
         }))
     }
@@ -155,8 +149,8 @@ mod tests {
         assert_eq!(world.player_future_unit_count(1, Some("Infantry")), 1);
         assert_eq!(world.player_future_unit_count(1, Some("Vehicle")), 0);
         assert_eq!(world.player_future_squad_count(1, None), 1);
-        assert_eq!(world.player_future_squad_count(1, Some(70)), 1);
-        assert_eq!(world.player_future_squad_count(1, Some(71)), 0);
+        assert_eq!(world.player_future_squad_count(1, Some(0)), 1);
+        assert_eq!(world.player_future_squad_count(1, Some(1)), 0);
 
         world.get_unit_mut(producer).unwrap().state = UnitState::Dead;
         assert_eq!(world.player_future_unit_count(1, None), 0);

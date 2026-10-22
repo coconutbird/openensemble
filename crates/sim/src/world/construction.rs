@@ -9,6 +9,7 @@ use crate::entities::units::{ProductionTask, TriggerCommandStateRef};
 use crate::entities::{ConstructionKind, ConstructionProgress, ConstructionTask};
 use crate::entity_id::EntityId;
 use crate::player::{PlayerId, PlayerTechState, PopulationCost, Resources};
+use crate::prototypes::{object_by_id, object_by_name_trim_query as object_by_name};
 use crate::scenario::create_unbuilt_building_from_prototype;
 use crate::scenario::population::{object_population_costs, object_population_type_id};
 use glam::Vec3;
@@ -37,7 +38,6 @@ pub struct ConstructionQueueResult {
 #[derive(Debug, Clone)]
 struct ConstructionDefinition {
     prototype_id: i32,
-    forbid_id: i32,
     prototype_name: String,
     total_points: f32,
     cost: Resources,
@@ -406,9 +406,6 @@ impl World {
         };
         let definition = ConstructionDefinition {
             prototype_id: task.prototype_id,
-            forbid_id: object_by_runtime_id(database, task.prototype_id)
-                .and_then(|prototype| prototype.dbid)
-                .unwrap_or(task.prototype_id),
             prototype_name: task.prototype_name.clone(),
             total_points: task.total_points,
             cost: task.cost,
@@ -562,7 +559,7 @@ impl World {
         if kind == ConstructionKind::BuildOther && !builder.is_building() {
             return Err(command_unavailable(builder_id, kind, definition));
         }
-        if player.is_object_forbidden(database, definition.forbid_id) {
+        if player.is_object_forbidden(database, definition.prototype_id) {
             return Err(command_unavailable(builder_id, kind, definition));
         }
         let Some(builder_prototype) = object_by_name(database, &builder.proto_object_name) else {
@@ -757,7 +754,7 @@ pub(super) fn construction_points(
     prototype_id: i32,
     technologies: Option<&PlayerTechState>,
 ) -> Option<f32> {
-    let prototype = object_by_runtime_id(database, prototype_id)?;
+    let prototype = object_by_id(database, prototype_id)?;
     let base = prototype.build_points.unwrap_or_default();
     let points = technologies.map_or(base, |state| state.build_points(&prototype.name, base));
     (points.is_finite() && points >= 0.0).then_some(points)
@@ -768,7 +765,7 @@ fn construction_definition(
     prototype_id: i32,
     technologies: Option<&PlayerTechState>,
 ) -> Result<ConstructionDefinition, ConstructionError> {
-    let prototype = object_by_runtime_id(database, prototype_id)
+    let prototype = object_by_id(database, prototype_id)
         .ok_or(ConstructionError::PrototypeNotFound(prototype_id))?;
     if !is_building_proto(prototype) {
         return Err(ConstructionError::PrototypeNotBuilding(
@@ -778,7 +775,6 @@ fn construction_definition(
     validate_object_population(database, prototype)?;
     Ok(ConstructionDefinition {
         prototype_id,
-        forbid_id: prototype.dbid.unwrap_or(prototype_id),
         prototype_name: prototype.name.clone(),
         total_points: valid_build_points(prototype, technologies)?,
         cost: Resources::new(),
@@ -899,19 +895,6 @@ fn command_unavailable(
         kind,
         prototype: definition.prototype_name.clone(),
     }
-}
-
-fn object_by_runtime_id(database: &Database, prototype_id: i32) -> Option<&ProtoObject> {
-    usize::try_from(prototype_id)
-        .ok()
-        .and_then(|index| database.objects.get(index))
-}
-
-fn object_by_name<'a>(database: &'a Database, name: &str) -> Option<&'a ProtoObject> {
-    database
-        .objects
-        .iter()
-        .find(|prototype| prototype.name.eq_ignore_ascii_case(name.trim()))
 }
 
 fn is_building_proto(prototype: &ProtoObject) -> bool {

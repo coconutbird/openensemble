@@ -1,8 +1,8 @@
 //! Player-prototype-aware unit creation and configuration.
 
 use super::prototypes::{
-    PlacedUnitKind, classify_proto_object, creates_base, database_id, find_proto_object,
-    is_class_zero_object, prototype_has_flag,
+    PlacedUnitKind, classify_proto_object, creates_base, find_proto_object, is_class_zero_object,
+    prototype_has_flag,
 };
 use super::{population, valid_nonnegative};
 use crate::entities::squads::marine::MarineSquadSpec;
@@ -12,6 +12,7 @@ use crate::entities::units::warthog::{WarthogUnitSpec, is_warthog_unit};
 use crate::entities::{ShieldCoverage, SquadArchetype, UnitArchetype, UnitScalarModifiers};
 use crate::physics::{BoxCollider, PhysicsBody};
 use crate::player::{GAIA_PLAYER, PlayerId};
+use crate::prototypes::proto_id;
 use crate::{EntityId, World};
 use glam::Vec3;
 use pipeline::database::hw1::{Database, ProtoObject};
@@ -61,7 +62,7 @@ pub(crate) fn create_object_from_prototype(
     proto_name: &str,
     database: &Database,
 ) -> Option<EntityId> {
-    let (logical_index, logical_proto) = find_proto_object(database, proto_name)?;
+    let (logical_index, _) = find_proto_object(database, proto_name)?;
     let effective_name = resolved_unit_prototype_name(world, player_id, proto_name);
     let (_, proto) = find_proto_object(database, &effective_name)?;
     if is_class_zero_object(proto) {
@@ -70,7 +71,7 @@ pub(crate) fn create_object_from_prototype(
             player_id,
             position,
             forward,
-            database_id(logical_proto.dbid, logical_index),
+            proto_id(logical_index),
             proto,
         ));
     }
@@ -83,7 +84,7 @@ pub(crate) fn create_object_from_prototype(
         world,
         unit_id,
         proto_name,
-        database_id(logical_proto.dbid, logical_index),
+        proto_id(logical_index),
         &effective_name,
         proto,
     );
@@ -111,7 +112,14 @@ pub(crate) fn create_unit_squad_from_prototype(
     let (_, effective_proto) = find_proto_object(database, &effective_name)?;
     let kind = classify_proto_object(effective_proto)?;
     let squad_id = world.create_squad_at(player_id, position);
-    super::placed::configure_synthetic_squad(world, squad_id, logical_proto, database, forward);
+    super::placed::configure_synthetic_squad(
+        world,
+        squad_id,
+        logical_index,
+        logical_proto,
+        database,
+        forward,
+    );
     let unit_id = match kind {
         PlacedUnitKind::Mobile => world.create_unit_at(player_id, position),
         PlacedUnitKind::Building => world.create_building_at(player_id, position),
@@ -120,7 +128,7 @@ pub(crate) fn create_unit_squad_from_prototype(
         world,
         unit_id,
         proto_name,
-        database_id(logical_proto.dbid, logical_index),
+        proto_id(logical_index),
         &effective_name,
         effective_proto,
     );
@@ -148,7 +156,7 @@ pub(crate) fn create_unbuilt_building_from_prototype(
     proto_name: &str,
     database: &Database,
 ) -> Option<EntityId> {
-    let (logical_index, logical_proto) = find_proto_object(database, proto_name)?;
+    let (logical_index, _) = find_proto_object(database, proto_name)?;
     let effective_name = resolved_unit_prototype_name(world, player_id, proto_name);
     let (_, proto) = find_proto_object(database, &effective_name)?;
     if classify_proto_object(proto) != Some(PlacedUnitKind::Building) {
@@ -159,7 +167,7 @@ pub(crate) fn create_unbuilt_building_from_prototype(
         world,
         unit_id,
         proto_name,
-        database_id(logical_proto.dbid, logical_index),
+        proto_id(logical_index),
         &effective_name,
         proto,
     );
@@ -178,7 +186,7 @@ fn configure_unit(
     effective_name: &str,
     database: &Database,
 ) {
-    let Some((logical_index, logical_proto)) = find_proto_object(database, logical_name) else {
+    let Some((logical_index, _)) = find_proto_object(database, logical_name) else {
         configure_unknown_unit(world, unit_id, logical_name);
         return;
     };
@@ -189,7 +197,7 @@ fn configure_unit(
         world,
         unit_id,
         logical_name,
-        database_id(logical_proto.dbid, logical_index),
+        proto_id(logical_index),
         effective_name,
         effective_proto,
     );
@@ -220,7 +228,7 @@ pub(crate) fn configure_unit_from_proto(
         world,
         unit_id,
         proto_name,
-        database_id(proto.dbid, proto_index),
+        proto_id(proto_index),
         proto_name,
         proto,
     );

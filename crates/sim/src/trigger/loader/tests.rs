@@ -183,6 +183,11 @@ fn prototype_lists_resolve_names_with_retail_multiplicity() {
         dbid: Some(101),
         ..ProtoObject::default()
     });
+    database.objects.push(ProtoObject {
+        name: "base".to_owned(),
+        object_class: Some("Building".to_owned()),
+        ..ProtoObject::default()
+    });
     database.squads.push(Squad {
         name: "marine_squad".to_owned(),
         dbid: Some(201),
@@ -203,11 +208,29 @@ fn prototype_lists_resolve_names_with_retail_multiplicity() {
             VarType::ProtoSquadList,
             context,
         ),
-        TriggerValue::ProtoSquadList(vec![201, 201])
+        TriggerValue::ProtoSquadList(vec![0, 0])
     );
     assert_eq!(
         parse_var_value("marine,marine", VarType::ProtoObjectList, context),
-        TriggerValue::ProtoObjectList(vec![101, 101])
+        TriggerValue::ProtoObjectList(vec![0, 0])
+    );
+    // `BTriggerVar_loadValueFromText` resolves names only: a number is an
+    // unknown name, and an object name resolves to its implicit squad.
+    assert_eq!(
+        parse_var_value("101", VarType::ProtoObject, context),
+        TriggerValue::ProtoObject(-1)
+    );
+    assert_eq!(
+        parse_var_value("0", VarType::ProtoSquad, context),
+        TriggerValue::ProtoSquad(-1)
+    );
+    assert_eq!(
+        parse_var_value("base", VarType::ProtoSquad, context),
+        TriggerValue::ProtoSquad(1)
+    );
+    assert_eq!(
+        parse_var_value("base,missing", VarType::ProtoSquadList, context),
+        TriggerValue::ProtoSquadList(vec![1, -1])
     );
     assert_eq!(
         parse_var_value("upgrade_a,UPGRADE_A", VarType::TechList, context),

@@ -26,7 +26,19 @@ const SAMPLE_SCENARIO: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 #[test]
 fn test_load_into_world() {
     let scenario = ScenarioData::from_xml_str(SAMPLE_SCENARIO).unwrap();
-    let db = Database::new();
+    let db = Database {
+        squads: vec![
+            ProtoSquad {
+                name: "unsc_inf_marine_01".to_owned(),
+                ..ProtoSquad::default()
+            },
+            ProtoSquad {
+                name: "cov_inf_grunt_01".to_owned(),
+                ..ProtoSquad::default()
+            },
+        ],
+        ..Database::default()
+    };
     let loaded = load_scenario_into_world(&scenario, &db);
 
     assert_eq!(loaded.world.player_count(), 3);
@@ -51,6 +63,35 @@ fn test_load_into_world() {
 }
 
 #[test]
+fn unresolved_scenario_names_are_skipped_like_the_engine() {
+    // `BScenario_loadObject` skips an object whose name does not resolve.
+    let scenario = ScenarioData::from_xml_str(
+        r#"<Scenario>
+            <Players><Player Name="P1" Team="1" /></Players>
+            <Objects>
+                <Object IsSquad="true" Player="1" ID="1">missing_squad</Object>
+                <Object Player="1" ID="2">missing_object</Object>
+                <Object IsSquad="true" Player="1" ID="3">rock</Object>
+            </Objects>
+        </Scenario>"#,
+    )
+    .unwrap();
+    let db = Database {
+        objects: vec![ProtoObject {
+            name: "rock".to_owned(),
+            ..ProtoObject::default()
+        }],
+        ..Database::default()
+    };
+
+    let loaded = load_scenario_into_world(&scenario, &db);
+
+    assert!(loaded.world.squads.is_empty());
+    assert!(loaded.world.objects.is_empty());
+    assert!((1..=3).all(|id| loaded.get_entity_id(id).is_none()));
+}
+
+#[test]
 fn loads_squad_members_buildings_and_base_anchors() {
     use pipeline::database::hw1::squads::{UnitEntry, UnitsWrapper};
 
@@ -60,6 +101,7 @@ fn loads_squad_members_buildings_and_base_anchors() {
             <Objects>
                 <Object IsSquad="true" Player="1" ID="10">marine_squad</Object>
                 <Object Player="1" ID="20" Position="5,0,7">unsc_base</Object>
+                <Object IsSquad="true" Player="1" ID="30" Position="9,0,7">unsc_base</Object>
             </Objects>
         </Scenario>"#,
     )
@@ -99,6 +141,10 @@ fn loads_squad_members_buildings_and_base_anchors() {
     let loaded = load_scenario_into_world(&scenario, &db);
     let squad_id = loaded.get_entity_id(10).unwrap();
     let building_squad_id = loaded.get_entity_id(20).unwrap();
+    let implicit_squad = loaded
+        .world
+        .get_squad(loaded.get_entity_id(30).unwrap())
+        .unwrap();
     let squad = loaded.world.get_squad(squad_id).unwrap();
     let building_squad = loaded.world.get_squad(building_squad_id).unwrap();
     let building = loaded
@@ -106,16 +152,23 @@ fn loads_squad_members_buildings_and_base_anchors() {
         .get_building(building_squad.unit_ids[0])
         .unwrap();
 
-    assert_eq!(squad.proto_squad_id, 303);
+    // Proto IDs are table indices. Squad 0 is the record; the implicit squads
+    // of `marine` and `unsc_base` follow it (`setupProtoSquads`).
+    assert_eq!(squad.proto_squad_id, 0);
     assert_eq!(squad.unit_ids.len(), 2);
     assert!((squad.leash_distance - 45.0).abs() < f32::EPSILON);
     assert!((squad.leash_deadzone() - 15.0).abs() < f32::EPSILON);
     assert_eq!(squad.leash_recall_delay_ms(), 2_500);
     assert_eq!(building_squad.proto_squad_name, "unsc_base");
+    assert_eq!(building_squad.proto_squad_id, 2);
     assert_eq!(building_squad.unit_ids.len(), 1);
-    assert_eq!(building.proto_object_id, 202);
+    assert_eq!(building.proto_object_id, 1);
+    // `IsSquad="true"` with an object name places the implicit squad.
+    assert_eq!(implicit_squad.proto_squad_id, 2);
+    assert_eq!(implicit_squad.proto_squad_name, "unsc_base");
+    assert_eq!(implicit_squad.unit_ids.len(), 1);
     assert!((building.hitpoints - 1_000.0).abs() < f32::EPSILON);
-    assert_eq!(loaded.world.bases().count(), 1);
+    assert_eq!(loaded.world.bases().count(), 2);
     assert!(building.base_id.is_some());
 }
 
@@ -188,12 +241,18 @@ fn loads_implicit_class_zero_visual_objects_and_preserves_scenario_mapping() {
     )
     .unwrap();
     let database = Database {
-        objects: vec![ProtoObject {
-            name: "env_harvest_forebridge_01".to_owned(),
-            dbid: Some(2308),
-            visual: Some("environment\\harvest\\forebridge_01\\forebridge_01.vis".to_owned()),
-            ..ProtoObject::default()
-        }],
+        objects: vec![
+            ProtoObject {
+                name: "other".to_owned(),
+                ..ProtoObject::default()
+            },
+            ProtoObject {
+                name: "env_harvest_forebridge_01".to_owned(),
+                dbid: Some(2308),
+                visual: Some("environment\\harvest\\forebridge_01\\forebridge_01.vis".to_owned()),
+                ..ProtoObject::default()
+            },
+        ],
         ..Database::default()
     };
 
@@ -203,7 +262,7 @@ fn loads_implicit_class_zero_visual_objects_and_preserves_scenario_mapping() {
 
     assert_eq!(entity_id.class(), Some(crate::EntityClass::Object));
     assert!(object.is_visual());
-    assert_eq!(object.proto_object_id, 2308);
+    assert_eq!(object.proto_object_id, 1);
     assert_eq!(object.proto_object_name, "env_harvest_forebridge_01");
     assert_eq!(object.base.position, Vec3::new(7.0, 2.0, 5.0));
     assert_eq!(object.base.forward, Vec3::NEG_X);

@@ -1,7 +1,7 @@
 //! Deterministic whole-squad planning shared by retail transport entry points.
 
 use crate::entity::Entity;
-use crate::prototypes::database_id;
+use crate::prototypes::squad_by_id;
 use crate::scenario::population::squad_population_amounts;
 use crate::{EntityId, World};
 use glam::Vec3;
@@ -158,12 +158,8 @@ fn transport_population(world: &World, database: &Database, squad_id: EntityId) 
     let Some(squad) = world.get_squad(squad_id) else {
         return 0.0;
     };
-    database
-        .squads
-        .iter()
-        .enumerate()
-        .find(|(index, prototype)| database_id(prototype.dbid, *index) == squad.proto_squad_id)
-        .and_then(|(_, prototype)| {
+    squad_by_id(database, squad.proto_squad_id)
+        .and_then(|prototype| {
             squad_population_amounts(database, prototype)
                 .into_iter()
                 .next()

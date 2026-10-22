@@ -7,12 +7,12 @@ fn persistent_shield_profiles_preserve_external_and_infantry_inputs() {
     let database = Database {
         objects: vec![
             ProtoObject {
-                name: "shield_fx".to_owned(),
-                dbid: Some(71),
+                name: "carrier".to_owned(),
                 ..ProtoObject::default()
             },
             ProtoObject {
-                name: "carrier".to_owned(),
+                name: "shield_fx".to_owned(),
+                dbid: Some(71),
                 ..ProtoObject::default()
             },
         ],
@@ -28,7 +28,7 @@ fn persistent_shield_profiles_preserve_external_and_infantry_inputs() {
         profiles[0].visual(),
         &EnergyShieldVisualProfile::Attachment {
             prototype_name: "shield_fx".to_owned(),
-            prototype_id: Some(71),
+            prototype_id: Some(1),
             bone_name: Some("bone_chair".to_owned()),
         }
     );

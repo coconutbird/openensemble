@@ -64,7 +64,8 @@ fn assert_transformed_member(
     ammunition: f32,
 ) {
     let unit = world.get_unit(unit_id).unwrap();
-    assert_eq!(unit.proto_object_id, 70);
+    // The logical proto object `test_base_member` is index 0 (not dbid 70).
+    assert_eq!(unit.proto_object_id, 0);
     assert_eq!(unit.logical_proto_object_name(), "test_base_member");
     assert_eq!(unit.proto_object_name, "test_upgraded_member");
     assert!(nearly_equal(unit.max_hitpoints, 200.0));

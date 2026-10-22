@@ -56,12 +56,12 @@ fn fixture() -> (Database, GameplayCatalog, World, crate::EntityId) {
     let unit_id = world.create_unit(1);
     {
         let squad = world.get_squad_mut(squad_id).unwrap();
-        squad.proto_squad_id = 21;
+        squad.proto_squad_id = 0;
         squad.proto_squad_name = "test_squad".to_owned();
     }
     {
         let unit = world.get_unit_mut(unit_id).unwrap();
-        unit.proto_object_id = 11;
+        unit.proto_object_id = 0;
         unit.proto_object_name = "test_unit".to_owned();
         unit.hitpoints = 50.0;
         unit.max_hitpoints = 100.0;
@@ -125,7 +125,7 @@ fn prototype_analysis_uses_full_health_and_typed_copy_id_decodes() {
     let mut script = TriggerScript::new(1);
     script.add_variable(
         TriggerVar::new(1, VarType::ProtoSquadList)
-            .with_value(TriggerValue::ProtoSquadList(vec![21])),
+            .with_value(TriggerValue::ProtoSquadList(vec![0])),
     );
     script.add_variable(TriggerVar::new(2, VarType::Player).with_value(TriggerValue::Player(1)));
     script.add_variable(

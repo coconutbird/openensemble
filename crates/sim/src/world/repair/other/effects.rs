@@ -5,7 +5,7 @@ use crate::entities::Object;
 use crate::entity_id::EntityId;
 use crate::gameplay::RepairOtherActionProfile;
 use crate::player::PlayerId;
-use crate::prototypes::{database_id, object_entry_by_name_trim_both};
+use crate::prototypes::{object_entry_by_name_trim_both, proto_id};
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 
@@ -197,7 +197,7 @@ impl World {
         let (index, prototype) = object_entry_by_name_trim_both(database, &effective_name)
             .or_else(|| object_entry_by_name_trim_both(database, logical_name))?;
         Some((
-            database_id(prototype.dbid, index),
+            proto_id(index),
             prototype.name.clone(),
             clean_name(prototype.beam_head.as_deref()),
             clean_name(prototype.beam_tail.as_deref()),

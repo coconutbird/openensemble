@@ -2,8 +2,6 @@
 
 /// Shipped proto-squad name.
 pub const WARTHOG_SQUAD_NAME: &str = "unsc_veh_warthog_01";
-/// Shipped proto-squad database ID.
-pub const WARTHOG_PROTO_SQUAD_ID: i32 = 885;
 
 /// Squad-level pathing configuration from `squads.xml`.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -46,7 +44,6 @@ mod tests {
         assert_close(spec.turn_radius, 0.0);
         assert_close(spec.min_turn_radius, 1.5);
         assert_close(spec.max_turn_radius, 4.0);
-        assert_eq!(WARTHOG_PROTO_SQUAD_ID, 885);
     }
 
     #[test]

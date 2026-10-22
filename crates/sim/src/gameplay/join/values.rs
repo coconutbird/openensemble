@@ -1,5 +1,6 @@
 //! Scenario-layered database values consumed by retail Join actions.
 
+use crate::prototypes::proto_id;
 use pipeline::database::hw1::tactics::ProtoObjectRef;
 use pipeline::database::hw1::{Database, ProtoObject};
 use std::collections::BTreeMap;
@@ -36,7 +37,7 @@ impl JoinDatabaseProfiles {
                 (
                     object.name.to_ascii_lowercase(),
                     JoinAttachmentProfile {
-                        proto_object_id: database_id(object, index),
+                        proto_object_id: proto_id(index),
                         proto_object_name: object.name.clone(),
                     },
                 )
@@ -65,12 +66,6 @@ fn is_attachment_object(object: &ProtoObject) -> bool {
         .is_none_or(|class| class.trim().eq_ignore_ascii_case("Object"))
 }
 
-fn database_id(object: &ProtoObject, index: usize) -> i32 {
-    object
-        .dbid
-        .unwrap_or_else(|| i32::try_from(index).unwrap_or(-1))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -78,11 +73,18 @@ mod tests {
     #[test]
     fn omitted_object_class_uses_retail_class_zero_attachment_default() {
         let database = Database {
-            objects: vec![ProtoObject {
-                name: "fx_hijacked".to_owned(),
-                dbid: Some(3883),
-                ..ProtoObject::default()
-            }],
+            objects: vec![
+                ProtoObject {
+                    name: "other".to_owned(),
+                    object_class: Some("Unit".to_owned()),
+                    ..ProtoObject::default()
+                },
+                ProtoObject {
+                    name: "fx_hijacked".to_owned(),
+                    dbid: Some(3883),
+                    ..ProtoObject::default()
+                },
+            ],
             ..Database::default()
         };
         let action = crate::gameplay::join::JoinActionProfile::from_action(
@@ -99,7 +101,7 @@ mod tests {
             .resolve_attachment(action.attachment())
             .expect("an omitted ObjectClass retains retail's class-zero default");
 
-        assert_eq!(attachment.proto_object_id(), 3883);
+        assert_eq!(attachment.proto_object_id(), 1);
         assert_eq!(attachment.proto_object_name(), "fx_hijacked");
     }
 }

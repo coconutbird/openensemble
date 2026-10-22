@@ -277,14 +277,7 @@ impl World {
                     .enumerate()
                     .find(|(_, prototype)| prototype.name.eq_ignore_ascii_case(logical_name))
             })
-            .map(|(index, prototype)| {
-                (
-                    prototype
-                        .dbid
-                        .unwrap_or_else(|| i32::try_from(index).unwrap_or(-1)),
-                    prototype.name.clone(),
-                )
-            })
+            .map(|(index, prototype)| (crate::prototypes::proto_id(index), prototype.name.clone()))
     }
 
     fn finish_cloak(

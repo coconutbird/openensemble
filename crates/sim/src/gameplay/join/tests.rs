@@ -1,9 +1,9 @@
 use super::*;
+use pipeline::database::hw1::squads::MergedSquads;
 use pipeline::database::hw1::tactics::{
     DamageModifiers, JoinType, TacticData, TacticRules, TargetRule,
 };
 use pipeline::database::hw1::{Database, ProtoObject, Squad};
-use pipeline::xmb::Document;
 
 #[test]
 fn target_rules_select_distinct_merge_and_board_profiles() {
@@ -69,20 +69,16 @@ fn missing_or_unknown_join_fields_keep_retail_follow_ground_defaults() {
 }
 
 #[test]
-fn catalog_can_install_a_scenario_layered_merged_squad_table() {
+fn catalog_builds_the_merged_squad_table_from_the_database() {
     let database = Database {
         squads: vec![squad("spartan"), squad("marine")],
+        merged_squads: vec![MergedSquads {
+            squad: "spartan".to_owned(),
+            targets: vec!["marine".to_owned()],
+        }],
         ..Database::default()
     };
-    let mut gameplay = GameplayCatalog::from_tactics(&database, []);
-    gameplay.load_test_merged_squads_document(
-        &database,
-        &Document::from_xml(
-            "<Squads><MergedSquads>spartan<MergedSquad>marine</MergedSquad>\
-             </MergedSquads></Squads>",
-        )
-        .unwrap(),
-    );
+    let gameplay = GameplayCatalog::from_tactics(&database, []);
 
     let merged = gameplay
         .merged_squad_profile("SPARTAN", "MARINE")

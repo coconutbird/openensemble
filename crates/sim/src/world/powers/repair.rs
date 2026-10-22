@@ -681,16 +681,8 @@ fn resolve_ticks(
 }
 
 fn prototype_id(database: &Database, name: &str) -> Option<i32> {
-    database
-        .objects
-        .iter()
-        .enumerate()
-        .find(|(_, prototype)| prototype.name.trim().eq_ignore_ascii_case(name.trim()))
-        .map(|(index, prototype)| {
-            prototype
-                .dbid
-                .unwrap_or_else(|| i32::try_from(index).unwrap_or(-1))
-        })
+    crate::prototypes::object_entry_by_name_trim_both(database, name)
+        .map(|(index, _)| crate::prototypes::proto_id(index))
 }
 
 fn hash_optional_string(checksum: &mut SyncChecksum, value: Option<&str>) {

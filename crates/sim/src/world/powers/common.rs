@@ -319,9 +319,7 @@ pub(super) fn create_power_visual(
     else {
         return EntityId::INVALID;
     };
-    let prototype_id = prototype
-        .dbid
-        .unwrap_or_else(|| i32::try_from(prototype_index).unwrap_or(-1));
+    let prototype_id = crate::prototypes::proto_id(prototype_index);
     let object_id = world.objects.allocate_id();
     world.objects.insert(
         object_id,

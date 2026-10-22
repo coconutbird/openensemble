@@ -9,7 +9,7 @@ use pipeline::database::hw1::objects::{
 use pipeline::database::hw1::{Database, GameData, ProtoObject, Vector3};
 use sim::{
     BuildingCommand, ConstructionError, ConstructionKind, EntityId, MS_PER_TICK, Simulation, World,
-    object_prototype_id, object_runtime_id, spawn_object_at,
+    object_prototype_id, spawn_object_at,
 };
 use test_support::assert_close;
 
@@ -24,7 +24,7 @@ const PARKING: &str = "test_parking_lot";
 fn direct_build_command_pays_constructs_and_defers_cap_addition() {
     let database = construction_database();
     let (mut world, builder_id) = construction_world(&database);
-    let target_id = object_runtime_id(&database, DIRECT).unwrap();
+    let target_id = object_prototype_id(&database, DIRECT).unwrap();
     let mut clock = Simulation::new();
 
     enqueue(
@@ -95,7 +95,7 @@ fn built_resource_and_rate_contributions_start_at_completion_and_end_on_removal(
         value: 5.0,
     });
     let (mut world, builder_id) = construction_world(&database);
-    let target_id = object_runtime_id(&database, DIRECT).unwrap();
+    let target_id = object_prototype_id(&database, DIRECT).unwrap();
     let building_id = world
         .start_build(
             1,
@@ -128,7 +128,7 @@ fn built_resource_and_rate_contributions_start_at_completion_and_end_on_removal(
 fn direct_build_cancel_refunds_and_removes_the_unfinished_target() {
     let database = construction_database();
     let (mut world, builder_id) = construction_world(&database);
-    let target_id = object_runtime_id(&database, DIRECT).unwrap();
+    let target_id = object_prototype_id(&database, DIRECT).unwrap();
     let building_id = world
         .start_build(
             1,
@@ -160,7 +160,7 @@ fn direct_build_uses_live_escalation_and_refunds_the_paid_quote() {
     direct.cost_escalation_object = vec![DIRECT.to_owned()];
     direct.flags.push("LinearCostEscalation".to_owned());
     let (mut world, builder_id) = construction_world(&database);
-    let target_id = object_runtime_id(&database, DIRECT).unwrap();
+    let target_id = object_prototype_id(&database, DIRECT).unwrap();
 
     let first = world
         .start_build(
@@ -207,7 +207,6 @@ fn coop_building_quote_includes_the_configured_partners_live_group() {
     direct.cost_escalation = Some(50.0);
     direct.cost_escalation_object = vec![DIRECT.to_owned()];
     direct.flags.push("LinearCostEscalation".to_owned());
-    let runtime_id = object_runtime_id(&database, DIRECT).unwrap();
     let prototype_id = object_prototype_id(&database, DIRECT).unwrap();
     let mut world = World::new();
     world.init_players(2);
@@ -219,13 +218,19 @@ fn coop_building_quote_includes_the_configured_partners_live_group() {
     spawn_object_at(&mut world, &database, 2, prototype_id, Vec3::ZERO, Vec3::Z).unwrap();
 
     assert_close(
-        world.object_cost(&database, 1, runtime_id).unwrap().get(0),
+        world
+            .object_cost(&database, 1, prototype_id)
+            .unwrap()
+            .get(0),
         100.0,
     );
     world.set_coop(true);
     world.get_player_mut(1).unwrap().set_coop_player_id(Some(2));
     assert_close(
-        world.object_cost(&database, 1, runtime_id).unwrap().get(0),
+        world
+            .object_cost(&database, 1, prototype_id)
+            .unwrap()
+            .get(0),
         150.0,
     );
 }
@@ -234,7 +239,7 @@ fn coop_building_quote_includes_the_configured_partners_live_group() {
 fn build_other_uses_socket_transform_and_releases_future_pop_on_completion() {
     let database = construction_database();
     let (mut world, builder_id) = construction_world(&database);
-    let target_id = object_runtime_id(&database, SOCKET_BUILDING).unwrap();
+    let target_id = object_prototype_id(&database, SOCKET_BUILDING).unwrap();
     let mut clock = Simulation::new();
 
     enqueue(
@@ -275,7 +280,7 @@ fn build_other_uses_socket_transform_and_releases_future_pop_on_completion() {
 #[test]
 fn only_promoted_build_other_materializes_its_auto_parking_lot() {
     let database = auto_parking_database();
-    let target_id = object_runtime_id(&database, SOCKET_BUILDING).unwrap();
+    let target_id = object_prototype_id(&database, SOCKET_BUILDING).unwrap();
     let (mut world, builder_id) = construction_world(&database);
 
     world
@@ -301,7 +306,7 @@ fn only_promoted_build_other_materializes_its_auto_parking_lot() {
     assert!(parking.base.forward.abs_diff_eq(-Vec3::Z, 1.0e-6));
 
     let (mut direct_world, direct_builder_id) = construction_world(&database);
-    let direct_id = object_runtime_id(&database, DIRECT).unwrap();
+    let direct_id = object_prototype_id(&database, DIRECT).unwrap();
     let direct_building_id = direct_world
         .start_build(
             1,
@@ -331,7 +336,7 @@ fn only_promoted_build_other_materializes_its_auto_parking_lot() {
 fn canceling_active_build_other_refunds_and_frees_its_socket() {
     let database = construction_database();
     let (mut world, builder_id) = construction_world(&database);
-    let target_id = object_runtime_id(&database, SOCKET_BUILDING).unwrap();
+    let target_id = object_prototype_id(&database, SOCKET_BUILDING).unwrap();
 
     world
         .queue_build_other(1, builder_id, &database, target_id)
@@ -354,7 +359,7 @@ fn canceling_active_build_other_refunds_and_frees_its_socket() {
 fn manual_build_waits_for_external_build_points() {
     let database = construction_database();
     let (mut world, builder_id) = construction_world(&database);
-    let target_id = object_runtime_id(&database, MANUAL).unwrap();
+    let target_id = object_prototype_id(&database, MANUAL).unwrap();
     let building_id = world
         .start_build(
             1,
@@ -379,7 +384,7 @@ fn manual_build_waits_for_external_build_points() {
 fn destroyed_direct_construction_does_not_refund_its_cost() {
     let database = construction_database();
     let (mut world, builder_id) = construction_world(&database);
-    let target_id = object_runtime_id(&database, DIRECT).unwrap();
+    let target_id = object_prototype_id(&database, DIRECT).unwrap();
     let building_id = world
         .start_build(
             1,
@@ -403,7 +408,7 @@ fn construction_progress_is_part_of_the_deterministic_checksum() {
     let database = construction_database();
     let (mut left, left_builder) = construction_world(&database);
     let (mut right, right_builder) = construction_world(&database);
-    let target_id = object_runtime_id(&database, DIRECT).unwrap();
+    let target_id = object_prototype_id(&database, DIRECT).unwrap();
 
     let left_target = left
         .start_build(
@@ -439,14 +444,13 @@ fn construction_progress_is_part_of_the_deterministic_checksum() {
 fn player_object_forbids_gate_new_construction() {
     let database = construction_database();
     let (mut world, builder_id) = construction_world(&database);
-    let runtime_id = object_runtime_id(&database, DIRECT).unwrap();
-    let forbid_id = object_prototype_id(&database, DIRECT).unwrap();
+    let prototype_id = object_prototype_id(&database, DIRECT).unwrap();
 
     assert_eq!(
         world
             .get_player_mut(1)
             .unwrap()
-            .set_object_forbidden(&database, forbid_id, true),
+            .set_object_forbidden(&database, prototype_id, true),
         Some(true)
     );
     assert!(matches!(
@@ -454,7 +458,7 @@ fn player_object_forbids_gate_new_construction() {
             1,
             builder_id,
             &database,
-            runtime_id,
+            prototype_id,
             Vec3::new(12.0, 0.0, 8.0),
             EntityId::INVALID,
         ),
@@ -464,14 +468,14 @@ fn player_object_forbids_gate_new_construction() {
     world
         .get_player_mut(1)
         .unwrap()
-        .set_object_forbidden(&database, forbid_id, false);
+        .set_object_forbidden(&database, prototype_id, false);
     assert!(
         world
             .start_build(
                 1,
                 builder_id,
                 &database,
-                runtime_id,
+                prototype_id,
                 Vec3::new(12.0, 0.0, 8.0),
                 EntityId::INVALID,
             )

@@ -58,7 +58,7 @@ fn obstruction_unit_uses_code_mapping_static_collider_and_retail_outputs() {
     assert_eq!(unit_list(&script, 18), &[created]);
     let obstruction = world.get_unit(created).expect("obstruction unit");
     assert_eq!(obstruction.base.player_id, 0);
-    assert_eq!(obstruction.proto_object_id, 41);
+    assert_eq!(obstruction.proto_object_id, 0);
     assert_eq!(obstruction.proto_object_name, "sys_obstruction");
     assert_eq!(obstruction.base.position, Vec3::new(10.0, 2.0, 30.0));
     assert_eq!(obstruction.base.forward, Vec3::new(0.6, 0.0, 0.8));

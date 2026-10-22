@@ -79,7 +79,7 @@ mod tests {
         world.get_player_mut(1).unwrap().team_id = 1;
         world.get_player_mut(2).unwrap().team_id = 2;
         let icon_id = world
-            .create_icon_object(&database, 1, 42, Vec3::ZERO, Some([255, 128, 0]), false)
+            .create_icon_object(&database, 1, 0, Vec3::ZERO, Some([255, 128, 0]), false)
             .unwrap();
 
         let projected = project_icon_objects(&world, 1, Mat4::IDENTITY, [1_000.0, 500.0]);

@@ -228,7 +228,7 @@ impl GameplayCatalog {
         let damage_type_exemplars =
             analysis::collect_damage_type_exemplars(database, &damage_type_profiles);
         let target_traits = selection::collect_target_traits(database, &damage_type_profiles);
-        let (shield_bubble_types, merged_squads) = load_squad_gameplay(database, source);
+        let shield_bubble_types = load_shield_bubble_types(database, source);
         let mut catalog = Self {
             referenced_tactic_count,
             weapon_damage_modifiers: collect_weapon_damage_modifiers(database),
@@ -272,7 +272,7 @@ impl GameplayCatalog {
             hero_revival: revival::hero_profile(database),
             plasma_subshields: protection::collect_plasma_subshields(database),
             shield_bubble_types,
-            merged_squads,
+            merged_squads: join::MergedSquadProfiles::from_database(database),
             join_database: join::JoinDatabaseProfiles::from_database(database),
             veterancy: veterancy::VeterancyCatalog::from_database(database),
             ..Self::default()
@@ -394,6 +394,7 @@ impl GameplayCatalog {
             shield_regen_time: game_data_nonnegative(database, |data| data.shield_regen_time),
             hero_revival: revival::hero_profile(database),
             plasma_subshields: protection::collect_plasma_subshields(database),
+            merged_squads: join::MergedSquadProfiles::from_database(database),
             join_database: join::JoinDatabaseProfiles::from_database(database),
             veterancy: veterancy::VeterancyCatalog::from_database(database),
             ..Self::default()
@@ -786,17 +787,14 @@ fn collect_tactic_action_profiles(catalog: &mut GameplayCatalog, database: &Data
         ambient_life::collect_ambient_life_spawners(database, &catalog.objects);
 }
 
-fn load_squad_gameplay(
+fn load_shield_bubble_types(
     database: &Database,
     source: &mut AssetSource<StdFileProvider>,
-) -> (protection::ShieldBubbleTypes, join::MergedSquadProfiles) {
-    let Some(document) = source.read_xmb("data\\squads.xml") else {
-        return Default::default();
-    };
-    (
-        protection::ShieldBubbleTypes::from_document(database, &document),
-        join::MergedSquadProfiles::from_document(database, &document),
-    )
+) -> protection::ShieldBubbleTypes {
+    source
+        .read_xmb("data\\squads.xml")
+        .map(|document| protection::ShieldBubbleTypes::from_document(database, &document))
+        .unwrap_or_default()
 }
 
 impl ObjectGameplay {

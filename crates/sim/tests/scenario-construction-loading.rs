@@ -3,10 +3,7 @@
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use pipeline::database::hw1::objects::ChildObjectType;
-use sim::{
-    ConstructionKind, EntityId, PlayerId, World, object_prototype_id, object_runtime_id,
-    spawn_object_at,
-};
+use sim::{ConstructionKind, EntityId, PlayerId, World, object_prototype_id, spawn_object_at};
 
 const COMMAND_CENTER: &str = "unsc_bldg_command_01";
 const REACTOR: &str = "unsc_bldg_reactor_01";
@@ -53,8 +50,8 @@ fn builds_real_command_center_through_blood_gulch_power_socket() {
         .unwrap()
         .resources
         .amounts = [100_000.0; 4];
-    let target_id = object_runtime_id(&loaded.content.database, COMMAND_CENTER)
-        .expect("real database should expose the command-center runtime ID");
+    let target_id = object_prototype_id(&loaded.content.database, COMMAND_CENTER)
+        .expect("real database should expose the command-center proto ID");
     let bases_before = loaded.simulation.world.bases().count();
 
     loaded
@@ -168,9 +165,9 @@ fn assert_real_base_child_damage_protection(
         .get_building(command_center_id)
         .unwrap()
         .associated_sockets()[0];
-    let supply_pad_runtime_id = object_runtime_id(database, SUPPLY_PAD).unwrap();
+    let supply_pad_proto_id = object_prototype_id(database, SUPPLY_PAD).unwrap();
     world
-        .queue_build_other(player_id, socket_id, database, supply_pad_runtime_id)
+        .queue_build_other(player_id, socket_id, database, supply_pad_proto_id)
         .expect("retail base socket should accept its supply-pad command");
     let _promoted = world.update_production(0.05, database);
     let supply_pad_id = world
@@ -399,8 +396,8 @@ fn real_reactor_quote_uses_the_scenario_layered_object_database() {
         .first_key_value()
         .expect("Blood Gulch should assign a player base")
         .0;
-    let runtime_id = object_runtime_id(&loaded.content.database, REACTOR)
-        .expect("layered database should expose the retail reactor runtime ID");
+    let reactor_id = object_prototype_id(&loaded.content.database, REACTOR)
+        .expect("layered database should expose the retail reactor proto ID");
     let advanced_prototype_id = object_prototype_id(&loaded.content.database, ADVANCED_REACTOR)
         .expect("layered database should expose the retail advanced-reactor prototype ID");
     let supplies_id = loaded
@@ -438,7 +435,7 @@ fn real_reactor_quote_uses_the_scenario_layered_object_database() {
     let before = loaded
         .simulation
         .world
-        .object_cost(&loaded.content.database, player_id, runtime_id)
+        .object_cost(&loaded.content.database, player_id, reactor_id)
         .expect("retail reactor should have a valid quote");
 
     let advanced_reactor_id = spawn_object_at(
@@ -462,7 +459,7 @@ fn real_reactor_quote_uses_the_scenario_layered_object_database() {
     let after = loaded
         .simulation
         .world
-        .object_cost(&loaded.content.database, player_id, runtime_id)
+        .object_cost(&loaded.content.database, player_id, reactor_id)
         .expect("retail reactor should still have a valid quote");
 
     let escalation = after.get(supplies_id) - before.get(supplies_id);

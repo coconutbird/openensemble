@@ -297,7 +297,7 @@ mod tests {
         world.init_players(1);
         let unit_id = world.create_unit_at(1, Vec3::new(1.0, 2.0, 3.0));
         let attachment_id = world
-            .add_prototype_attachment_to_unit(&database, unit_id, 27)
+            .add_prototype_attachment_to_unit(&database, unit_id, 0)
             .unwrap();
 
         assert_eq!(attachment_id.class(), Some(EntityClass::Object));
@@ -334,7 +334,7 @@ mod tests {
             .add_prototype_attachment_to_unit_with_offset(
                 &database,
                 unit_id,
-                27,
+                0,
                 Vec3::new(2.0, 4.0, 0.0),
             )
             .unwrap();
@@ -359,7 +359,7 @@ mod tests {
             Vec3::new(10.0, 5.0, 18.0)
         );
 
-        assert_eq!(world.remove_unit_attachments_by_prototype(unit_id, 27), 1);
+        assert_eq!(world.remove_unit_attachments_by_prototype(unit_id, 0), 1);
         assert!(world.get_object(attachment_id).is_none());
         assert_eq!(
             world.entity_object_state(unit_id).unwrap().attachments(),

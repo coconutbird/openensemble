@@ -6,7 +6,7 @@ use crate::entities::units::TriggerCommandStateRef;
 use crate::entities::{TrainingKind, TrainingProgress, TrainingRecharge, TrainingTask};
 use crate::entity_id::EntityId;
 use crate::player::{PlayerId, PlayerTechState, PopulationCost, Resources};
-use crate::prototypes::object_by_name_trim_query;
+use crate::prototypes::{object_by_id, object_by_name_trim_query, squad_by_id};
 use crate::scenario::population::{
     object_population_costs, object_population_type_id, squad_population_costs,
 };
@@ -110,7 +110,7 @@ pub enum TrainingError {
 #[derive(Debug, Clone)]
 struct TrainingDefinition {
     kind: TrainingKind,
-    forbid_id: i32,
+    prototype_id: i32,
     prototype_name: String,
     total_points: f32,
     cost: Resources,
@@ -494,8 +494,8 @@ impl World {
             });
         }
         let forbidden = match definition.kind {
-            TrainingKind::Unit => player.is_object_forbidden(database, definition.forbid_id),
-            TrainingKind::Squad => player.is_squad_forbidden(database, definition.forbid_id),
+            TrainingKind::Unit => player.is_object_forbidden(database, definition.prototype_id),
+            TrainingKind::Squad => player.is_squad_forbidden(database, definition.prototype_id),
         };
         if forbidden {
             return Err(TrainingError::CommandUnavailable {
@@ -591,26 +591,6 @@ impl World {
     }
 }
 
-/// Resolve a squad's retail runtime table index by name.
-#[must_use]
-pub fn squad_runtime_id(database: &Database, name: &str) -> Option<i32> {
-    database
-        .squads
-        .iter()
-        .position(|prototype| prototype.name.eq_ignore_ascii_case(name.trim()))
-        .and_then(|index| i32::try_from(index).ok())
-}
-
-/// Resolve an object's retail runtime table index by name.
-#[must_use]
-pub fn object_runtime_id(database: &Database, name: &str) -> Option<i32> {
-    database
-        .objects
-        .iter()
-        .position(|prototype| prototype.name.eq_ignore_ascii_case(name.trim()))
-        .and_then(|index| i32::try_from(index).ok())
-}
-
 pub(super) fn training_points(
     database: &Database,
     kind: TrainingKind,
@@ -619,11 +599,11 @@ pub(super) fn training_points(
 ) -> Option<f32> {
     let points = match kind {
         TrainingKind::Unit => {
-            let prototype = object_by_runtime_id(database, prototype_id)?;
+            let prototype = object_by_id(database, prototype_id)?;
             let base = prototype.build_points?;
             technologies.map_or(base, |state| state.build_points(&prototype.name, base))
         }
-        TrainingKind::Squad => squad_by_runtime_id(database, prototype_id)?.build_points?,
+        TrainingKind::Squad => squad_by_id(database, prototype_id)?.build_points?,
     };
     (points.is_finite() && points >= 0.0).then_some(points)
 }
@@ -646,7 +626,7 @@ fn unit_training_definition(
     technologies: Option<&PlayerTechState>,
 ) -> Result<TrainingDefinition, TrainingError> {
     let prototype =
-        object_by_runtime_id(database, prototype_id).ok_or(TrainingError::PrototypeNotFound {
+        object_by_id(database, prototype_id).ok_or(TrainingError::PrototypeNotFound {
             kind: TrainingKind::Unit,
             prototype_id,
         })?;
@@ -656,7 +636,7 @@ fn unit_training_definition(
     validate_object_population(database, prototype)?;
     Ok(TrainingDefinition {
         kind: TrainingKind::Unit,
-        forbid_id: prototype.dbid.unwrap_or(prototype_id),
+        prototype_id,
         prototype_name: prototype.name.clone(),
         total_points: valid_unit_build_points(prototype, technologies)?,
         cost: Resources::new(),
@@ -670,7 +650,7 @@ fn squad_training_definition(
     prototype_id: i32,
 ) -> Result<TrainingDefinition, TrainingError> {
     let prototype =
-        squad_by_runtime_id(database, prototype_id).ok_or(TrainingError::PrototypeNotFound {
+        squad_by_id(database, prototype_id).ok_or(TrainingError::PrototypeNotFound {
             kind: TrainingKind::Squad,
             prototype_id,
         })?;
@@ -685,7 +665,7 @@ fn squad_training_definition(
     }
     Ok(TrainingDefinition {
         kind: TrainingKind::Squad,
-        forbid_id: prototype.dbid.unwrap_or(prototype_id),
+        prototype_id,
         prototype_name: prototype.name.clone(),
         total_points: valid_build_points(&prototype.name, prototype.build_points)?,
         cost: training_cost(database, prototype)?,
@@ -847,18 +827,6 @@ fn command_kind_matches(
                     .any(|prototype| prototype.name.eq_ignore_ascii_case(target))
         }
     }
-}
-
-fn object_by_runtime_id(database: &Database, prototype_id: i32) -> Option<&ProtoObject> {
-    usize::try_from(prototype_id)
-        .ok()
-        .and_then(|index| database.objects.get(index))
-}
-
-fn squad_by_runtime_id(database: &Database, prototype_id: i32) -> Option<&ProtoSquad> {
-    usize::try_from(prototype_id)
-        .ok()
-        .and_then(|index| database.squads.get(index))
 }
 
 fn has_flag(flags: &[String], expected: &str) -> bool {

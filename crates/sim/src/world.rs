@@ -135,9 +135,7 @@ pub use technology::TechnologyError;
 #[cfg(test)]
 pub(crate) use terrain::flat_test_terrain;
 pub use timers::{GameTimer, GameTimerAudience};
-pub use training::{
-    MAX_TRAIN_BATCH, TrainingError, TrainingQueueResult, object_runtime_id, squad_runtime_id,
-};
+pub use training::{MAX_TRAIN_BATCH, TrainingError, TrainingQueueResult};
 pub(crate) use training::{TriggerTrainingRequest, TriggerTrainingResult};
 pub(crate) use transports::{
     TransportGroupPlan, TransportGroupRequest, average_transport_position, plan_transport_groups,
@@ -203,9 +201,10 @@ pub struct World {
     sim_rng: SimRandom,
     /// Damage scalar applied to targets that have not completed construction.
     construction_damage_multiplier: f32,
-    /// Concrete and abstract object types keyed by live proto-object database ID.
+    /// Concrete and abstract object types keyed by proto object ID (load-order index).
     prototype_object_types: BTreeMap<i32, Vec<String>>,
-    /// Proto-squad name and maximum child count keyed by live database ID.
+    /// Name and maximum unit count of every engine proto squad (records, merged
+    /// and implicit squads), keyed by proto squad ID.
     prototype_squads: BTreeMap<i32, (String, u32)>,
     /// Scenario-layered integral shield coverage keyed by proto-object name.
     prototype_shield_coverages: BTreeMap<String, ShieldCoverage>,

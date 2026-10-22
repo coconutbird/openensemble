@@ -1,7 +1,7 @@
 //! Scenario-layered `MergedSquads` synthetic prototype mappings.
 
+use crate::prototypes::{merged_proto_squads, merged_squad_name};
 use pipeline::database::hw1::Database;
-use pipeline::xmb::Document;
 use std::collections::BTreeMap;
 
 /// Immutable synthetic proto-squad produced by a retail Merge join.
@@ -38,7 +38,7 @@ impl MergedSquadProfile {
         &self.proto_squad_name
     }
 
-    /// Appended retail proto-squad table index.
+    /// Engine proto squad ID: the merged squads follow the `<Squad>` records.
     #[must_use]
     pub const fn proto_squad_id(&self) -> i32 {
         self.proto_squad_id
@@ -46,43 +46,20 @@ impl MergedSquadProfile {
 }
 
 impl MergedSquadProfiles {
-    pub(crate) fn from_document(database: &Database, document: &Document) -> Self {
-        let Some(root) = document.root() else {
-            return Self::default();
-        };
+    pub(crate) fn from_database(database: &Database) -> Self {
         let mut profiles = BTreeMap::new();
-        let mut synthetic_index = database.squads.len();
-        for merged in root
-            .children
-            .iter()
-            .filter(|node| node.name.eq_ignore_ascii_case("MergedSquads"))
-        {
-            let Some(joining) = known_squad_name(database, &merged.text_string()) else {
-                continue;
-            };
-            for target in merged
-                .children
-                .iter()
-                .filter(|node| node.name.eq_ignore_ascii_case("MergedSquad"))
-            {
-                let Some(target) = known_squad_name(database, &target.text_string()) else {
-                    continue;
-                };
-                let Ok(proto_squad_id) = i32::try_from(synthetic_index) else {
-                    continue;
-                };
-                synthetic_index = synthetic_index.saturating_add(1);
-                let profile = MergedSquadProfile {
-                    proto_squad_name: format!("merged_{target}_{joining}"),
-                    joining_proto_squad_name: joining.clone(),
-                    target_proto_squad_name: target.clone(),
+        for (proto_squad_id, joining, target) in merged_proto_squads(database) {
+            profiles
+                .entry((
+                    joining.name.to_ascii_lowercase(),
+                    target.name.to_ascii_lowercase(),
+                ))
+                .or_insert_with(|| MergedSquadProfile {
+                    proto_squad_name: merged_squad_name(joining, target),
+                    joining_proto_squad_name: joining.name.clone(),
+                    target_proto_squad_name: target.name.clone(),
                     proto_squad_id,
-                };
-                profiles.insert(
-                    (joining.to_ascii_lowercase(), target.to_ascii_lowercase()),
-                    profile,
-                );
-            }
+                });
         }
         Self { profiles }
     }
@@ -99,33 +76,24 @@ impl MergedSquadProfiles {
     }
 }
 
-fn known_squad_name(database: &Database, value: &str) -> Option<String> {
-    let value = value.trim();
-    database
-        .squads
-        .iter()
-        .find(|squad| squad.name.eq_ignore_ascii_case(value))
-        .map(|squad| squad.name.clone())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use pipeline::database::hw1::Squad;
+    use pipeline::database::hw1::squads::MergedSquads;
 
     #[test]
-    fn raw_mapping_builds_retail_named_appended_profiles_in_file_order() {
+    fn profiles_use_retail_names_and_appended_ids_in_file_order() {
         let database = Database {
             squads: vec![squad("spartan"), squad("marine"), squad("odst")],
+            merged_squads: vec![MergedSquads {
+                squad: "spartan".to_owned(),
+                targets: vec!["marine".to_owned(), "odst".to_owned()],
+            }],
             ..Database::default()
         };
-        let document = Document::from_xml(
-            "<Squads><MergedSquads>spartan<MergedSquad>marine</MergedSquad>\
-             <MergedSquad>odst</MergedSquad></MergedSquads></Squads>",
-        )
-        .unwrap();
 
-        let profiles = MergedSquadProfiles::from_document(&database, &document);
+        let profiles = MergedSquadProfiles::from_database(&database);
         let marine = profiles.resolve("SPARTAN", "Marine").unwrap();
         assert_eq!(marine.proto_squad_name(), "merged_marine_spartan");
         assert_eq!(marine.proto_squad_id(), 3);
@@ -141,19 +109,23 @@ mod tests {
     }
 
     #[test]
-    fn unknown_squads_do_not_create_profiles_or_consume_runtime_ids() {
+    fn unknown_squads_do_not_create_profiles_or_consume_ids() {
         let database = Database {
             squads: vec![squad("spartan"), squad("marine")],
+            merged_squads: vec![
+                MergedSquads {
+                    squad: "missing".to_owned(),
+                    targets: vec!["marine".to_owned()],
+                },
+                MergedSquads {
+                    squad: "spartan".to_owned(),
+                    targets: vec!["missing".to_owned(), "marine".to_owned()],
+                },
+            ],
             ..Database::default()
         };
-        let document = Document::from_xml(
-            "<Squads><MergedSquads>missing<MergedSquad>marine</MergedSquad></MergedSquads>\
-             <MergedSquads>spartan<MergedSquad>missing</MergedSquad>\
-             <MergedSquad>marine</MergedSquad></MergedSquads></Squads>",
-        )
-        .unwrap();
 
-        let profiles = MergedSquadProfiles::from_document(&database, &document);
+        let profiles = MergedSquadProfiles::from_database(&database);
         assert!(profiles.resolve("missing", "marine").is_none());
         assert!(profiles.resolve("spartan", "missing").is_none());
         assert_eq!(

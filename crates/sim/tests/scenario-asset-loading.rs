@@ -21,8 +21,7 @@ use sim::{
     LoadedGameScenario, MS_PER_TICK, PlayerId, RecoveryType, ScenarioAssetLoadError,
     ShieldCoverage, Simulation, SquadMode, TechStatus, TrainingKind, WorkCommand,
     configure_player_leader, load_scenario_from_game_dir, object_prototype_id, spawn_object_at,
-    spawn_squad_at, spawn_squad_from_base_by_name, squad_prototype_id, squad_runtime_id,
-    technology_prototype_id,
+    spawn_squad_at, spawn_squad_from_base_by_name, squad_prototype_id, technology_prototype_id,
 };
 
 const DATABASE_PATHS: [&str; 10] = [
@@ -100,15 +99,12 @@ struct BarracksTrainingFixture {
     live_squad_count_before: u32,
     future_squad_count_before: u32,
     barracks_id: sim::EntityId,
-    marine_database_id: i32,
     marine_id: i32,
 }
 
 fn prepare_real_barracks_training(loaded: &mut LoadedGameScenario) -> BarracksTrainingFixture {
-    let marine_id = squad_runtime_id(&loaded.content.database, MARINE_SQUAD_NAME)
-        .expect("real database should expose the Marine runtime squad ID");
-    let marine_database_id = squad_prototype_id(&loaded.content.database, MARINE_SQUAD_NAME)
-        .expect("real database should expose the Marine database squad ID");
+    let marine_id = squad_prototype_id(&loaded.content.database, MARINE_SQUAD_NAME)
+        .expect("real database should expose the Marine proto squad ID");
     let unit_population_id = loaded
         .content
         .database
@@ -158,11 +154,11 @@ fn prepare_real_barracks_training(loaded: &mut LoadedGameScenario) -> BarracksTr
     let live_squad_count_before = loaded
         .simulation
         .world
-        .player_squad_count(player_id, Some(marine_database_id));
+        .player_squad_count(player_id, Some(marine_id));
     let future_squad_count_before = loaded
         .simulation
         .world
-        .player_future_squad_count(player_id, Some(marine_database_id));
+        .player_future_squad_count(player_id, Some(marine_id));
     BarracksTrainingFixture {
         player_id,
         unit_population_id,
@@ -170,7 +166,6 @@ fn prepare_real_barracks_training(loaded: &mut LoadedGameScenario) -> BarracksTr
         live_squad_count_before,
         future_squad_count_before,
         barracks_id,
-        marine_database_id,
         marine_id,
     }
 }
@@ -253,7 +248,7 @@ fn assert_real_training_reserved(loaded: &LoadedGameScenario, fixture: &Barracks
         loaded
             .simulation
             .world
-            .player_future_squad_count(fixture.player_id, Some(fixture.marine_database_id)),
+            .player_future_squad_count(fixture.player_id, Some(fixture.marine_id)),
         fixture.future_squad_count_before + 1
     );
     let progress = loaded
@@ -344,14 +339,14 @@ fn assert_real_trained_squad(
         loaded
             .simulation
             .world
-            .player_squad_count(fixture.player_id, Some(fixture.marine_database_id)),
+            .player_squad_count(fixture.player_id, Some(fixture.marine_id)),
         fixture.live_squad_count_before + 1
     );
     assert_eq!(
         loaded
             .simulation
             .world
-            .player_future_squad_count(fixture.player_id, Some(fixture.marine_database_id)),
+            .player_future_squad_count(fixture.player_id, Some(fixture.marine_id)),
         fixture.future_squad_count_before
     );
 }

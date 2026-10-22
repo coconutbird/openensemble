@@ -5,7 +5,7 @@ use crate::entity_id::EntityId;
 use crate::player::{
     AppliedPrototypeTransform, AppliedSquadTransform, AppliedUnitTransform, PlayerId,
 };
-use crate::prototypes::{database_id, object_entry_by_name_trim_query, squad_by_name_trim_query};
+use crate::prototypes::{object_entry_by_name_trim_query, proto_id, squad_by_name_trim_query};
 use crate::scenario::{
     add_squad_member_from_prototype, configure_unit_from_player_proto,
     refresh_squad_member_settings,
@@ -149,8 +149,7 @@ impl World {
         database: &Database,
         logical_target: &str,
     ) {
-        let Some((logical_index, logical_proto)) =
-            object_entry_by_name_trim_query(database, logical_target)
+        let Some((logical_index, _)) = object_entry_by_name_trim_query(database, logical_target)
         else {
             return;
         };
@@ -178,7 +177,7 @@ impl World {
             self,
             unit_id,
             logical_target,
-            database_id(logical_proto.dbid, logical_index),
+            proto_id(logical_index),
             &effective_target,
             effective_proto,
         );
@@ -473,8 +472,7 @@ impl World {
         {
             return;
         }
-        let Some((logical_index, logical_proto)) =
-            object_entry_by_name_trim_query(database, &transform.from)
+        let Some((logical_index, _)) = object_entry_by_name_trim_query(database, &transform.from)
         else {
             return;
         };
@@ -483,7 +481,7 @@ impl World {
         else {
             return;
         };
-        let logical_id = database_id(logical_proto.dbid, logical_index);
+        let logical_id = proto_id(logical_index);
         let unit_ids = transformed_unit_ids(self, player_id, transform);
         let mut squads = Vec::new();
         for unit_id in unit_ids {

@@ -4,8 +4,6 @@ use glam::Vec3;
 
 /// Shipped proto-squad name.
 pub const MARINE_SQUAD_NAME: &str = "unsc_inf_marine_01";
-/// Shipped proto-squad database ID.
-pub const MARINE_PROTO_SQUAD_ID: i32 = 877;
 
 /// Squad-level values from the stock Marine record.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -74,7 +72,6 @@ mod tests {
     #[test]
     fn stock_profile_matches_shipped_data() {
         let spec = MarineSquadSpec::default();
-        assert_eq!(MARINE_PROTO_SQUAD_ID, 877);
         assert_eq!(spec.member_count, 4);
         assert_close(spec.leash_distance, 55.0);
         assert_close(spec.aggro_distance, 35.0);

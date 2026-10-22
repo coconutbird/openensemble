@@ -263,15 +263,6 @@ impl GameplayCatalog {
             .is_some_and(|kind| kind.eq_ignore_ascii_case("Join"))
             .then(|| JoinActionProfile::from_action(action))
     }
-
-    #[cfg(test)]
-    pub(crate) fn load_test_merged_squads_document(
-        &mut self,
-        database: &pipeline::database::hw1::Database,
-        document: &pipeline::xmb::Document,
-    ) {
-        self.merged_squads = MergedSquadProfiles::from_document(database, document);
-    }
 }
 
 fn unique_join_action<'a>(

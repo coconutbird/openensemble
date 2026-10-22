@@ -131,14 +131,14 @@ fn get_cost_honors_input_priority_and_player_squad_transforms() {
         &mut script,
         2,
         VarType::ProtoSquad,
-        TriggerValue::ProtoSquad(7),
+        TriggerValue::ProtoSquad(0),
     );
     add_value(&mut script, 3, VarType::Tech, TriggerValue::Tech(0));
     add_value(
         &mut script,
         4,
         VarType::ProtoObject,
-        TriggerValue::ProtoObject(9),
+        TriggerValue::ProtoObject(0),
     );
     add_value(
         &mut script,
@@ -200,13 +200,13 @@ fn get_pop_matches_version_one_unit_and_version_two_last_nonzero_rules() {
         &mut script,
         1,
         VarType::ProtoObject,
-        TriggerValue::ProtoObject(21),
+        TriggerValue::ProtoObject(0),
     );
     add_value(
         &mut script,
         2,
         VarType::ProtoSquad,
-        TriggerValue::ProtoSquad(31),
+        TriggerValue::ProtoSquad(0),
     );
     add_value(&mut script, 3, VarType::Float, TriggerValue::Float(-1.0));
     add_value(&mut script, 4, VarType::Bool, TriggerValue::Bool(false));

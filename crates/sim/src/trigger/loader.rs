@@ -656,25 +656,25 @@ fn parse_var_value(text: &str, var_type: VarType, context: TriggerLoadContext<'_
     }
 }
 
+/// Resolve a `ProtoObject` value with the object name map, as
+/// `BTriggerScript::loadTriggerVars` does (`sub_14048B280` calls
+/// `sub_1400348D0`). The engine never reads a number here, so a numeric text is
+/// a name too. An unknown name gives `-1`.
 fn parse_proto_object(text: &str, context: TriggerLoadContext<'_>) -> i32 {
-    text.parse()
-        .ok()
-        .or_else(|| {
-            context
-                .database
-                .and_then(|database| crate::spawn::object_prototype_id(database, text))
-        })
+    context
+        .database
+        .and_then(|database| crate::spawn::object_prototype_id(database, text))
         .unwrap_or(-1)
 }
 
+/// Resolve a `ProtoSquad` value with the squad name map, which also holds the
+/// object names of the implicit squads (`sub_14048B280` calls
+/// `sub_140034930`). The engine never reads a number here. An unknown name
+/// gives `-1`.
 fn parse_proto_squad(text: &str, context: TriggerLoadContext<'_>) -> i32 {
-    text.parse()
-        .ok()
-        .or_else(|| {
-            context
-                .database
-                .and_then(|database| crate::spawn::squad_prototype_id(database, text))
-        })
+    context
+        .database
+        .and_then(|database| crate::spawn::squad_prototype_id(database, text))
         .unwrap_or(-1)
 }
 

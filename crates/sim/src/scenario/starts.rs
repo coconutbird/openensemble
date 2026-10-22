@@ -228,7 +228,7 @@ mod tests {
 
         assert_eq!(base.player_id, 1);
         assert_eq!(anchor.proto_object_name, "unsc_main_base");
-        assert_eq!(anchor.proto_object_id, 200);
+        assert_eq!(anchor.proto_object_id, 1);
         assert!(
             base.position
                 .abs_diff_eq(Vec3::new(12.0, 3.0, 34.0), 1.0e-6)

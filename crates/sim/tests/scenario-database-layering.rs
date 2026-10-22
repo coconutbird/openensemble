@@ -51,9 +51,7 @@ const SCENARIO_SQUADS: &str = r#"<Squads>
             <Unit count="2">scenario_death_member</Unit>
         </Units>
     </Squad>
-    <MergedSquads>scenario_joiner
-        <MergedSquad>scenario_target</MergedSquad>
-    </MergedSquads>
+    <MergedSquads>scenario_joiner<MergedSquad>scenario_target</MergedSquad></MergedSquads>
 </Squads>"#;
 
 const SCENARIO_OBJECTS: &str = r#"<Objects>
@@ -778,7 +776,11 @@ fn assert_layered_death_spawn_execution(loaded: &mut sim::LoadedGameScenario) {
     assert_eq!(spawned.base.player_id, 1);
     assert_eq!(spawned.base.position, source_position);
     assert_eq!(spawned.base.forward, glam::Vec3::X);
-    assert_eq!(spawned.proto_squad_id, 203);
+    assert_eq!(
+        Some(spawned.proto_squad_id),
+        sim::squad_prototype_id(&loaded.content.database, "scenario_death_spawn")
+    );
+    assert_ne!(spawned.proto_squad_id, 203, "dbid is not the proto ID");
     assert_eq!(spawned.unit_ids.len(), 2);
     assert!(spawned.unit_ids.iter().all(|unit_id| {
         loaded
@@ -820,7 +822,10 @@ fn assert_layered_death_replacement_execution(loaded: &mut sim::LoadedGameScenar
         .get_unit(source_id)
         .expect("death replacement retains the source entity ID");
     assert_eq!(replacement.proto_object_name, "scenario_replacement_target");
-    assert_eq!(replacement.proto_object_id, 107);
+    assert_eq!(
+        Some(replacement.proto_object_id),
+        sim::object_prototype_id(&loaded.content.database, "scenario_replacement_target")
+    );
     assert_eq!(replacement.base.position, position);
     assert_eq!(replacement.base.forward, glam::Vec3::X);
     assert_eq!(replacement.max_hitpoints.to_bits(), 333.0_f32.to_bits());

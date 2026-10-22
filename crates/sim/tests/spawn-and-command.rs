@@ -3,14 +3,15 @@
 use glam::Vec3;
 use pipeline::database::hw1::squads::{UnitEntry, UnitsWrapper};
 use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad};
-use sim::entities::squads::marine::{MARINE_PROTO_SQUAD_ID, MARINE_SQUAD_NAME, MarineSquadSpec};
-use sim::entities::units::marine::{
-    MARINE_HITPOINTS, MARINE_PROTO_OBJECT_ID, MARINE_UNIT_NAME, MarineUnitSpec,
-};
+use sim::entities::squads::marine::{MARINE_SQUAD_NAME, MarineSquadSpec};
+use sim::entities::units::marine::{MARINE_HITPOINTS, MARINE_UNIT_NAME, MarineUnitSpec};
 use sim::{
     GameCommand, MS_PER_TICK, Simulation, SquadArchetype, TeamRelation, WorkCommand, World,
     spawn_squad_from_base_by_name,
 };
+
+/// Proto squad ID (load-order index) of the Marine squad, first in the table.
+const MARINE_PROTO_SQUAD_ID: i32 = 0;
 
 fn marine_database() -> Database {
     let unit_spec = MarineUnitSpec::default();
@@ -18,7 +19,6 @@ fn marine_database() -> Database {
     let mut database = Database::new();
     database.objects.push(ProtoObject {
         name: MARINE_UNIT_NAME.to_owned(),
-        dbid: Some(MARINE_PROTO_OBJECT_ID),
         object_class: Some("Unit".to_owned()),
         select_type: Some("Unit".to_owned()),
         hitpoints: Some(MARINE_HITPOINTS),
@@ -32,7 +32,6 @@ fn marine_database() -> Database {
     });
     database.squads.push(ProtoSquad {
         name: MARINE_SQUAD_NAME.to_owned(),
-        dbid: Some(MARINE_PROTO_SQUAD_ID),
         formation_type: Some("Flock".to_owned()),
         units: Some(UnitsWrapper {
             entries: vec![UnitEntry {

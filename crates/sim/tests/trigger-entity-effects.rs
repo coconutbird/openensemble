@@ -10,13 +10,18 @@ use sim::trigger::{
 };
 use sim::{Entity, EntityId, TriggerVec3, World, spawn_object_at, spawn_squad_at};
 
+/// Proto IDs are load-order indices in `entity_database`; `dbid` is not an ID.
+const WARTHOG_OBJECT: i32 = 0;
+const BUILDING_OBJECT: i32 = 1;
+const TEST_SQUAD: i32 = 0;
+
 #[test]
 fn create_object_writes_retail_outputs_and_honors_no_physics() {
     let database = entity_database();
     let mut world = trigger_world();
     let retained = world.create_unit(1);
     let mut script = TriggerScript::default();
-    script.add_variable(proto_object(0, 101));
+    script.add_variable(proto_object(0, WARTHOG_OBJECT));
     script.add_variable(location(1, 10.0, 2.0, 20.0));
     script.add_variable(player(2, 1));
     script.add_variable(object(3, EntityId::INVALID).as_output());
@@ -62,14 +67,14 @@ fn create_squad_and_create_unit_share_database_backed_spawn_state() {
     let database = entity_database();
     let mut world = trigger_world();
     let mut script = TriggerScript::default();
-    script.add_variable(proto_squad(0, 201));
+    script.add_variable(proto_squad(0, TEST_SQUAD));
     script.add_variable(location(1, 3.0, 0.0, 4.0));
     script.add_variable(player(2, 1));
     script.add_variable(squad(3, EntityId::INVALID).as_output());
     script.add_variable(empty_squad_list(4));
     script.add_variable(boolean(5, true));
     script.add_variable(vector(6, -1.0, 0.0, 0.0));
-    script.add_variable(proto_object(7, 102));
+    script.add_variable(proto_object(7, BUILDING_OBJECT));
     script.add_variable(location(8, 30.0, 0.0, 40.0));
     script.add_variable(boolean(9, false));
     script.add_variable(unit(10, EntityId::INVALID).as_output());
@@ -144,7 +149,7 @@ fn create_squads_preserves_duplicate_prototypes_and_retail_list_outputs() {
     let mut world = trigger_world();
     let retained = world.create_squad(1);
     let mut script = TriggerScript::default();
-    script.add_variable(proto_squad_list(0, vec![201, 201]));
+    script.add_variable(proto_squad_list(0, vec![TEST_SQUAD, TEST_SQUAD]));
     script.add_variable(player(1, 1));
     script.add_variable(location(2, 3.0, 0.0, 4.0));
     script.add_variable(vector(3, -1.0, 0.0, 0.0));
@@ -192,7 +197,10 @@ fn create_squads_uses_capacity_aware_multi_carrier_fly_in() {
     let mut world = trigger_world();
     world.get_player_mut(1).unwrap().civ_id = 0;
     let mut script = TriggerScript::default();
-    script.add_variable(proto_squad_list(0, vec![201, 201, 201]));
+    script.add_variable(proto_squad_list(
+        0,
+        vec![TEST_SQUAD, TEST_SQUAD, TEST_SQUAD],
+    ));
     script.add_variable(player(1, 1));
     script.add_variable(location(2, 0.0, 0.0, 0.0));
     script.add_variable(vector(3, 1.0, 0.0, 0.0));
@@ -281,14 +289,21 @@ fn kill_and_destroy_preserve_the_retail_lifecycle_distinction() {
         &mut world,
         &database,
         1,
-        201,
+        TEST_SQUAD,
         glam::Vec3::ZERO,
         glam::Vec3::Z,
     )
     .unwrap();
     let killed_members = world.get_squad(killed_squad).unwrap().unit_ids.clone();
-    let destroyed_unit =
-        spawn_object_at(&mut world, &database, 1, 101, glam::Vec3::X, glam::Vec3::Z).unwrap();
+    let destroyed_unit = spawn_object_at(
+        &mut world,
+        &database,
+        1,
+        WARTHOG_OBJECT,
+        glam::Vec3::X,
+        glam::Vec3::Z,
+    )
+    .unwrap();
     let mut script = TriggerScript::default();
     script.add_variable(squad(0, killed_squad));
     script.add_variable(unit(1, destroyed_unit));
@@ -408,7 +423,7 @@ fn create_squad_fly_in_without_civ_transport_keeps_retail_ground_fallback() {
     let database = entity_database();
     let mut world = trigger_world();
     let mut script = TriggerScript::default();
-    script.add_variable(proto_squad(0, 201));
+    script.add_variable(proto_squad(0, TEST_SQUAD));
     script.add_variable(location(1, 0.0, 0.0, 0.0));
     script.add_variable(player(2, 1));
     script.add_variable(location(3, 20.0, 10.0, 20.0));

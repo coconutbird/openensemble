@@ -1,4 +1,9 @@
 use super::*;
+use pipeline::database::hw1::{ProtoObject, Squad};
+
+const ALLOWED_OBJECT: i32 = 0;
+const FORBIDDEN_OBJECT: i32 = 1;
+const ALLOWED_SQUAD: i32 = 0;
 
 fn database() -> Database {
     let mut database = Database::new();
@@ -31,28 +36,31 @@ fn effective_flags_layer_player_overrides_on_authored_data() {
     let database = database();
     let mut player = Player::new(1);
 
-    assert!(!player.is_object_forbidden(&database, 101));
-    assert!(player.is_object_forbidden(&database, 102));
-    assert!(!player.is_squad_forbidden(&database, 201));
+    assert!(!player.is_object_forbidden(&database, ALLOWED_OBJECT));
+    assert!(player.is_object_forbidden(&database, FORBIDDEN_OBJECT));
+    assert!(!player.is_squad_forbidden(&database, ALLOWED_SQUAD));
     assert!(player.is_technology_forbidden(&database, 0));
 
     assert_eq!(
-        player.set_object_forbidden(&database, 101, true),
+        player.set_object_forbidden(&database, ALLOWED_OBJECT, true),
         Some(true)
     );
     assert_eq!(
-        player.set_object_forbidden(&database, 102, false),
+        player.set_object_forbidden(&database, FORBIDDEN_OBJECT, false),
         Some(true)
     );
-    assert_eq!(player.set_squad_forbidden(&database, 201, true), Some(true));
+    assert_eq!(
+        player.set_squad_forbidden(&database, ALLOWED_SQUAD, true),
+        Some(true)
+    );
     assert_eq!(
         player.set_technology_forbidden(&database, 0, false),
         Some(true)
     );
 
-    assert!(player.is_object_forbidden(&database, 101));
-    assert!(!player.is_object_forbidden(&database, 102));
-    assert!(player.is_squad_forbidden(&database, 201));
+    assert!(player.is_object_forbidden(&database, ALLOWED_OBJECT));
+    assert!(!player.is_object_forbidden(&database, FORBIDDEN_OBJECT));
+    assert!(player.is_squad_forbidden(&database, ALLOWED_SQUAD));
     assert!(!player.is_technology_forbidden(&database, 0));
 }
 
@@ -62,11 +70,12 @@ fn setting_the_effective_value_is_idempotent_and_invalid_ids_are_ignored() {
     let mut player = Player::new(1);
 
     assert_eq!(
-        player.set_object_forbidden(&database, 101, false),
+        player.set_object_forbidden(&database, ALLOWED_OBJECT, false),
         Some(false)
     );
-    assert_eq!(player.set_object_forbidden(&database, 999, true), None);
-    assert_eq!(player.set_squad_forbidden(&database, 999, true), None);
+    // The `dbid` values are save-game keys, not proto IDs.
+    assert_eq!(player.set_object_forbidden(&database, 101, true), None);
+    assert_eq!(player.set_squad_forbidden(&database, 201, true), None);
     assert_eq!(player.set_technology_forbidden(&database, 999, true), None);
-    assert!(!player.is_object_forbidden(&database, 999));
+    assert!(!player.is_object_forbidden(&database, 101));
 }

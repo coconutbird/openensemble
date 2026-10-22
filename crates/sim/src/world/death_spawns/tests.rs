@@ -24,7 +24,7 @@ fn regular_death_spawns_the_authored_squad_and_destroy_bypasses_it() {
     assert_eq!(squad.base.player_id, 1);
     assert_eq!(squad.base.position, position);
     assert_eq!(squad.base.forward, Vec3::X);
-    assert_eq!(squad.proto_squad_id, 20);
+    assert_eq!(squad.proto_squad_id, SPAWN_SQUAD_ID);
     assert_eq!(squad.proto_squad_name, "spawn_squad");
     assert_eq!(squad.unit_ids.len(), 2);
     assert!(squad.unit_ids.iter().all(|unit_id| {
@@ -50,13 +50,13 @@ fn maximum_count_is_checked_against_the_dying_player_before_spawn() {
 
     assert!(world.kill_unit(first_source, false));
     update(&mut world, &database);
-    assert_eq!(world.player_squad_count(1, Some(20)), 1);
+    assert_eq!(world.player_squad_count(1, Some(SPAWN_SQUAD_ID)), 1);
 
     assert!(world.kill_squad(existing, true));
     let second_source = spawn_source(&mut world, &database, Vec3::Y);
     assert!(world.kill_unit(second_source, false));
     update(&mut world, &database);
-    assert_eq!(world.player_squad_count(1, Some(20)), 1);
+    assert_eq!(world.player_squad_count(1, Some(SPAWN_SQUAD_ID)), 1);
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn check_position_attribute_presence_suppresses_out_of_terrain_spawn() {
     let inside = spawn_source(&mut world, &database, Vec3::new(5.0, 0.0, 5.0));
     assert!(world.kill_unit(inside, false));
     update(&mut world, &database);
-    assert_eq!(world.player_squad_count(1, Some(20)), 1);
+    assert_eq!(world.player_squad_count(1, Some(SPAWN_SQUAD_ID)), 1);
 }
 
 #[test]
@@ -133,7 +133,7 @@ fn death_spawn_technology_assignment_is_player_specific_and_reversible() {
     let active_source = spawn_source(&mut world, &database, Vec3::X);
     assert!(world.kill_unit(active_source, false));
     update(&mut world, &database);
-    assert_eq!(world.player_squad_count(1, Some(20)), 1);
+    assert_eq!(world.player_squad_count(1, Some(SPAWN_SQUAD_ID)), 1);
 
     assert!(
         world
@@ -143,7 +143,7 @@ fn death_spawn_technology_assignment_is_player_specific_and_reversible() {
     let inactive_again = spawn_source(&mut world, &database, Vec3::Y);
     assert!(world.kill_unit(inactive_again, false));
     update(&mut world, &database);
-    assert_eq!(world.player_squad_count(1, Some(20)), 1);
+    assert_eq!(world.player_squad_count(1, Some(SPAWN_SQUAD_ID)), 1);
 }
 
 #[test]
@@ -158,9 +158,9 @@ fn death_spawn_resolution_is_deterministic_and_one_shot() {
     }
 
     assert_eq!(first.checksum(), second.checksum());
-    assert_eq!(first.player_squad_count(1, Some(20)), 1);
+    assert_eq!(first.player_squad_count(1, Some(SPAWN_SQUAD_ID)), 1);
     update(&mut first, &database);
-    assert_eq!(first.player_squad_count(1, Some(20)), 1);
+    assert_eq!(first.player_squad_count(1, Some(SPAWN_SQUAD_ID)), 1);
 }
 
 #[test]
@@ -210,6 +210,9 @@ fn hero_death_spawn_enters_the_existing_downed_hero_lifecycle() {
             })
     );
 }
+
+/// Proto squad ID (table index) of `spawn_squad`; its `dbid` 20 is not an ID.
+const SPAWN_SQUAD_ID: i32 = 0;
 
 fn death_spawn_database(maximum_count: Option<i32>, member_flags: Vec<String>) -> Database {
     let mut database = Database::new();

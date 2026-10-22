@@ -88,7 +88,7 @@ impl World {
         else {
             return;
         };
-        let logical_id = database_id(logical_proto.dbid, logical_index);
+        let logical_id = crate::prototypes::proto_id(logical_index);
         if request.maximum_count > 0
             && self.player_squad_count(request.player_id, Some(logical_id))
                 >= u32::try_from(request.maximum_count).unwrap_or(u32::MAX)
@@ -169,10 +169,6 @@ fn find_proto_squad<'database>(
         .iter()
         .enumerate()
         .find(|(_, proto)| proto.name.eq_ignore_ascii_case(name))
-}
-
-fn database_id(explicit: Option<i32>, index: usize) -> i32 {
-    explicit.unwrap_or_else(|| i32::try_from(index).unwrap_or(-1))
 }
 
 fn squad_forces_gaia(proto: &ProtoSquad, database: &Database) -> bool {

@@ -32,7 +32,7 @@ fn revealer_uses_first_team_player_and_scenario_database_scalars() {
 
     assert_eq!(id.class(), Some(crate::EntityClass::Object));
     assert_eq!(object.base.player_id, 1);
-    assert_eq!(object.proto_object_id, 13);
+    assert_eq!(object.proto_object_id, 0);
     assert!((object.revealer().unwrap().line_of_sight_scalar() - 4.0).abs() < f32::EPSILON);
     assert!(world.is_position_revealed_to_team(3, Vec3::new(14.0, 100.0, 20.0)));
     assert!(!world.is_position_revealed_to_team(2, Vec3::new(10.0, 0.0, 20.0)));

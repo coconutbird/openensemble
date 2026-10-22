@@ -24,7 +24,7 @@ fn external_shield_raises_hits_lowers_and_removes_its_attachment() {
         shield_action(&world, unit_id).phase(),
         EnergyShieldPhase::Up
     );
-    assert_eq!(world.get_object(attachment_id).unwrap().proto_object_id, 71);
+    assert_eq!(world.get_object(attachment_id).unwrap().proto_object_id, 0);
     assert_eq!(animation_type(&world, attachment_id), "Idle");
 
     assert!(world.damage_unit(unit_id, 2.0));

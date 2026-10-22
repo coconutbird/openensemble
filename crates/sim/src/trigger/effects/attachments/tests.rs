@@ -35,7 +35,7 @@ fn version_five_expands_a_squad_into_unit_owned_icon_entities() {
         &mut script,
         2,
         VarType::ProtoObject,
-        TriggerValue::ProtoObject(1187),
+        TriggerValue::ProtoObject(0),
     );
     add(
         &mut script,
@@ -72,7 +72,7 @@ fn version_three_deduplicates_receiving_units_before_creation() {
         &mut script,
         2,
         VarType::ProtoObject,
-        TriggerValue::ProtoObject(1187),
+        TriggerValue::ProtoObject(0),
     );
     add(
         &mut script,
