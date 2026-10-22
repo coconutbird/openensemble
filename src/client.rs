@@ -6,7 +6,7 @@
 //! - `camera`: the RTS camera with the retail camera values.
 //! - `controls`: the keyboard and mouse camera controls.
 //! - `view`: the `WorldView` creation and the frame draw.
-//! - `hud`: the egui interface (now the frame-rate line).
+//! - `hud`: the egui interface: top bar, selection panel, building menu and F10 pause menu.
 //!
 //! - `selection`, `select`, `mouse`: the unit selection and its retail rules and bindings.
 //! - `catalog`, `pick`, `hover`: the proto data, the screen pick and the cursor hover.
@@ -40,6 +40,7 @@ use render::wgpu;
 
 use camera::RtsCamera;
 use controls::CameraControls;
+use hud::Hud;
 use selection::Selection;
 
 use catalog::ClientCatalog;
@@ -68,6 +69,8 @@ pub(crate) struct Client {
     local_player: sim::PlayerId,
     /// The units that the local player selected.
     pub(crate) selection: Selection,
+    /// The egui interface state of the local player.
+    hud: Hud,
     /// The client-owned RTS camera state.
     rts_camera: RtsCamera,
     /// The mouse state of the camera controls.
@@ -113,6 +116,7 @@ impl Client {
             load_error: None,
             local_player: 0,
             selection: Selection::default(),
+            hud: Hud::default(),
             rts_camera: RtsCamera::new(Vec3::ZERO),
             controls: CameraControls::default(),
             camera: Camera::default(),
@@ -237,6 +241,13 @@ impl Application for Client {
     }
 
     fn update(&mut self, input: &Input, ctx: &FrameContext) -> bool {
+        // Retail `Start` (F10) opens the pause menu. The game does not advance while it is open.
+        if !self.hud.update_pause(input) {
+            return false;
+        }
+        if self.hud.is_paused() {
+            return true;
+        }
         // Retail `Clear` (Escape) clears the selection (`BUser_clearSelection`, `0x1405B1A10`).
         if input.is_key_pressed(KeyCode::Escape) && !self.selection.is_empty() {
             log::debug!(

@@ -84,9 +84,17 @@ The root library (`src/lib.rs`) also holds the code that the executables share:
     kind of unit on the screen. `Q` selects the army on the screen, `E` the whole army.
   - A right click moves or attacks with the selected squads (`Shift` queues the order).
   - `Shift` makes the scroll and the zoom faster.
-  - `Escape` quits.
+  - `Escape` clears the selection.
+  - `F10` opens the pause menu with Resume and Quit. The game stops while the menu is open.
+    `Escape` or a click outside the menu resumes the game.
+  - In the building menu, a left click on an item queues one item. A right click cancels one
+    queued item. The hover text of an item shows the cost, the time and why the item is not
+    available.
 - The client camera uses the retail values of `startup\game.cfg` (yaw, pitch, zoom, field of
-  view, scroll, turn and zoom speeds). The client shows the frame rate in the top-left corner.
+  view, scroll, turn and zoom speeds).
+- The client HUD shows the resources, the populations, the game time and the frame rate at the
+  top left, the selected squads with their member count and health at the bottom left, and the
+  command menu and the production queue of a selected own building at the bottom right.
 - To open the terrain viewer on Blood Gulch, run `cargo run --release --bin terrain_viewer`.
 - To open a different scenario, add the scenario name or an `.xtd` path:
   `cargo run --release --bin terrain_viewer -- <SCENARIO>`.
