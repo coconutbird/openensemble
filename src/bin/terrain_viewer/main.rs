@@ -8,6 +8,7 @@
 
 mod camera;
 mod capture;
+mod frame_stats;
 mod viewer;
 
 use anyhow::{Context, Result, bail};

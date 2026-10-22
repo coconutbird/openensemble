@@ -21,6 +21,7 @@ use render::ui::SimulationTimerAdapter;
 use render::world_view::WorldView;
 
 use crate::capture::{CaptureConfig, CaptureState};
+use crate::frame_stats::FrameStats;
 
 struct TerrainLoadInputs {
     terrain: xtd::XtdFile,
@@ -81,6 +82,11 @@ pub struct TerrainViewer {
     pub ugx_roster_dirty: bool,
     /// Optional deterministic top-down capture-and-exit state.
     pub capture: Option<CaptureState>,
+    /// Frame, simulation and render timings for the information window and the log.
+    pub frame_stats: FrameStats,
+    /// Game time of the last trigger loop-guard warning, so that the log gets one warning per
+    /// second at most.
+    pub trigger_loop_warning_time_ms: Option<u32>,
 }
 
 impl TerrainViewer {
@@ -111,6 +117,8 @@ impl TerrainViewer {
             ugx_scene: None,
             ugx_roster_dirty: false,
             capture: None,
+            frame_stats: FrameStats::default(),
+            trigger_loop_warning_time_ms: None,
         }
     }
 

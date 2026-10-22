@@ -3,6 +3,8 @@
 //! Implements the `Application` trait: update (keyboard/mouse), UI (egui), clear color and the
 //! GPU callbacks.
 
+use std::time::Instant;
+
 use render::app::{Application, Color, FrameContext, RenderContext};
 use render::input::{Input, KeyCode};
 use render::wgpu;
@@ -141,12 +143,14 @@ impl TerrainViewer {
             asset_source: Some(source),
             ugx_scene: Some(scene),
             ugx_roster_dirty,
+            trigger_loop_warning_time_ms,
             ..
         } = self
         else {
             return;
         };
         simulation_clock.update_with_scenario(dt_seconds, simulation, &content.database);
+        warn_about_trigger_loops(&simulation.world, trigger_loop_warning_time_ms);
         if scene.roster_matches_with_gameplay(&simulation.world, &simulation.gameplay) {
             return;
         }
@@ -423,6 +427,9 @@ impl TerrainViewer {
     }
 
     fn draw_scene_information(&self, ui: &mut egui::Ui) {
+        if let Some(report) = self.frame_stats.last() {
+            ui.label(format!("Frames: {}", report.summary()));
+        }
         ui.label(format!(
             "Camera: ({:.1}, {:.1}, {:.1})",
             self.camera.position.x, self.camera.position.y, self.camera.position.z
@@ -551,12 +558,15 @@ impl Application for TerrainViewer {
             return self.load_error.is_none();
         }
         self.render_time_seconds += ctx.delta_time;
+        self.frame_stats.record_frame(ctx.delta_time);
         self.update_display_toggles(input);
         self.update_debug_keys(input);
         self.update_compositor_controls(input);
         self.update_bump_power(input);
         self.update_simulation_controls(input);
+        let started = Instant::now();
         self.advance_simulation(ctx.delta_time);
+        self.frame_stats.record_simulation(started.elapsed());
         let camera_state = self.synchronize_camera_presentation();
         self.camera.update(input, ctx.delta_time, camera_state);
         true
@@ -582,10 +592,32 @@ impl Application for TerrainViewer {
     }
 
     fn render_3d(&mut self, ctx: &mut RenderContext<'_>) {
+        let started = Instant::now();
         self.render_scene(ctx);
+        self.frame_stats.record_render(started.elapsed());
     }
 
     fn resize_gpu(&mut self, device: &wgpu::Device, width: u32, height: u32) {
         self.resize_gpu_resources(device, width, height);
     }
+}
+
+/// Logs a warning when the last trigger update crossed the evaluation warning limit.
+///
+/// A script that activates its own triggers again in one update (for example because an effect
+/// that it needs is not implemented) evaluates up to the loop guard in each tick. That makes each
+/// tick slow. The warning names the cause, at most one time for each second of game time.
+fn warn_about_trigger_loops(world: &sim::World, last_warning_ms: &mut Option<u32>) {
+    if !world.trigger_engine().performance_warning_reached() {
+        return;
+    }
+    let now = world.game_time_ms;
+    if last_warning_ms.is_some_and(|last| now.saturating_sub(last) < 1_000) {
+        return;
+    }
+    *last_warning_ms = Some(now);
+    log::warn!(
+        "Trigger update at {now} ms evaluated more conditions than the warning limit; a trigger \
+         script loops in one update"
+    );
 }

@@ -68,6 +68,9 @@ Otherwise, it uses the current directory.
 - To open a different scenario, add the scenario name or an `.xtd` path:
   `cargo run --release --bin terrain_viewer -- <SCENARIO>`.
 - To see the viewer options, run `cargo run --bin terrain_viewer -- --help`.
+- The viewer information window (`Tab`) shows the frame rate and the CPU time of the simulation
+  update and the render encode. The viewer logs a warning when the average frame takes more than
+  33 ms, or when a trigger script loops in one update.
 - To run the simulation without a window, run `cargo run --bin headless -- --ticks 1000`.
 
 ## Tests
