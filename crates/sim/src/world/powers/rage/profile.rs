@@ -2,8 +2,8 @@
 
 use super::super::NativePowerError;
 use super::super::common::{
-    optional_float, required_float, required_object_type, required_prototype, resource_id,
-    validate_level,
+    optional_float, required_float, required_nonnegative_float, required_object_type,
+    required_positive_float, required_prototype, resource_id, validate_level,
 };
 use crate::spawn::object_prototype_id;
 use pipeline::database::hw1::Database;
@@ -59,16 +59,20 @@ impl RageProfile {
             0
         };
         Ok(Self {
-            tick_length: positive(attributes, level, "TickLength")?,
+            tick_length: required_positive_float(attributes, level, "TickLength")?,
             supplies_per_tick: costs[0],
             supplies_per_tick_attacking: costs[1],
             supplies_per_jump: costs[2],
             supplies_resource_id,
-            damage_multiplier: positive(attributes, level, "DamageMultiplier")?,
-            damage_taken_multiplier: positive(attributes, level, "DamageTakenMultiplier")?,
-            speed_multiplier: positive(attributes, level, "SpeedMultiplier")?,
-            nudge_multiplier: nonnegative(attributes, level, "NudgeMultiplier")?,
-            scan_radius: positive(attributes, level, "ScanRadius")?,
+            damage_multiplier: required_positive_float(attributes, level, "DamageMultiplier")?,
+            damage_taken_multiplier: required_positive_float(
+                attributes,
+                level,
+                "DamageTakenMultiplier",
+            )?,
+            speed_multiplier: required_positive_float(attributes, level, "SpeedMultiplier")?,
+            nudge_multiplier: required_nonnegative_float(attributes, level, "NudgeMultiplier")?,
+            scan_radius: required_positive_float(attributes, level, "ScanRadius")?,
             teleport_time: movement[0],
             teleport_lateral_distance: movement[1],
             teleport_jump_distance: movement[2],
@@ -97,9 +101,9 @@ impl RageProfile {
 
 fn resolve_costs(attributes: &PowerAttributes, level: u32) -> Result<[f32; 3], NativePowerError> {
     Ok([
-        nonnegative(attributes, level, "SuppliesPerTick")?,
-        nonnegative(attributes, level, "SuppliesPerTickAttacking")?,
-        nonnegative(attributes, level, "SuppliesPerJump")?,
+        required_nonnegative_float(attributes, level, "SuppliesPerTick")?,
+        required_nonnegative_float(attributes, level, "SuppliesPerTickAttacking")?,
+        required_nonnegative_float(attributes, level, "SuppliesPerJump")?,
     ])
 }
 
@@ -112,10 +116,10 @@ fn resolve_movement(
         return Err(NativePowerError::InvalidData("DistanceVsAngleWeight"));
     }
     Ok([
-        positive(attributes, level, "TeleportTime")?,
-        nonnegative(attributes, level, "TeleportLateralDistance")?,
-        nonnegative(attributes, level, "TeleportJumpDistance")?,
-        nonnegative(attributes, level, "TimeBetweenRetarget")?,
+        required_positive_float(attributes, level, "TeleportTime")?,
+        required_nonnegative_float(attributes, level, "TeleportLateralDistance")?,
+        required_nonnegative_float(attributes, level, "TeleportJumpDistance")?,
+        required_nonnegative_float(attributes, level, "TimeBetweenRetarget")?,
         weight,
     ])
 }
@@ -125,7 +129,7 @@ fn validate_presentation_fields(
     level: u32,
 ) -> Result<(), NativePowerError> {
     for name in ["MotionBlurAmount", "MotionBlurDistance", "MotionBlurTime"] {
-        let _value = nonnegative(attributes, level, name)?;
+        let _value = required_nonnegative_float(attributes, level, name)?;
     }
     Ok(())
 }
@@ -173,28 +177,6 @@ fn named_prototype(
     let id = object_prototype_id(database, &prototype)
         .ok_or_else(|| NativePowerError::UnknownPrototype(prototype.clone()))?;
     Ok((prototype, id))
-}
-
-fn positive(
-    attributes: &PowerAttributes,
-    level: u32,
-    name: &'static str,
-) -> Result<f32, NativePowerError> {
-    let value = required_float(attributes, level, name)?;
-    (value > 0.0)
-        .then_some(value)
-        .ok_or(NativePowerError::InvalidData(name))
-}
-
-fn nonnegative(
-    attributes: &PowerAttributes,
-    level: u32,
-    name: &'static str,
-) -> Result<f32, NativePowerError> {
-    let value = required_float(attributes, level, name)?;
-    (value >= 0.0)
-        .then_some(value)
-        .ok_or(NativePowerError::InvalidData(name))
 }
 
 fn optional_nonnegative(

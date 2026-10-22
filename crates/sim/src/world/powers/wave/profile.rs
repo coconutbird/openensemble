@@ -2,8 +2,9 @@
 
 use super::super::NativePowerError;
 use super::super::common::{
-    optional_prototype, required_bool, required_float, required_int, required_prototype,
-    required_string, resource_id, seconds_to_milliseconds, validate_level,
+    optional_prototype, required_bool, required_float, required_int, required_nonnegative_float,
+    required_positive_float, required_prototype, required_string, resource_id,
+    seconds_to_milliseconds, validate_level,
 };
 use crate::sync::SyncChecksum;
 use pipeline::database::hw1::Database;
@@ -58,37 +59,61 @@ impl WaveProfile {
         level: u32,
     ) -> Result<Self, NativePowerError> {
         validate_level(attributes, level)?;
-        let tick_length = positive(attributes, level, "TickLength")?;
+        let tick_length = required_positive_float(attributes, level, "TickLength")?;
         let command_interval_ms = resolve_command_interval(attributes, level)?;
         let (minimum_ball_distance, maximum_ball_distance) =
             resolve_ball_distance_range(attributes, level)?;
         let ball_prototype = resolve_ball_prototype(database, attributes, level)?;
         Ok(Self {
             tick_length,
-            supplies_per_tick: nonnegative(attributes, level, "SuppliesPerTick")?,
+            supplies_per_tick: required_nonnegative_float(attributes, level, "SuppliesPerTick")?,
             supplies_resource_id: resource_id(database, "Supplies")
                 .ok_or(NativePowerError::InvalidData("Supplies"))?,
-            maximum_ball_speed_stagnant: nonnegative(attributes, level, "MaxBallSpeedStagnant")?,
-            maximum_ball_speed_pulling: nonnegative(attributes, level, "MaxBallSpeedPulling")?,
-            explode_time: nonnegative(attributes, level, "ExplodeTime")?,
-            pulling_range: nonnegative(attributes, level, "PullingRange")?,
-            explosion_force_on_debris: nonnegative(attributes, level, "ExplosionForceOnDebris")?,
-            health_to_capture: nonnegative(attributes, level, "HealthToCapture")?,
-            nudge_strength: nonnegative(attributes, level, "NudgeStrength")?,
-            initial_lateral_pull_strength: nonnegative(
+            maximum_ball_speed_stagnant: required_nonnegative_float(
+                attributes,
+                level,
+                "MaxBallSpeedStagnant",
+            )?,
+            maximum_ball_speed_pulling: required_nonnegative_float(
+                attributes,
+                level,
+                "MaxBallSpeedPulling",
+            )?,
+            explode_time: required_nonnegative_float(attributes, level, "ExplodeTime")?,
+            pulling_range: required_nonnegative_float(attributes, level, "PullingRange")?,
+            explosion_force_on_debris: required_nonnegative_float(
+                attributes,
+                level,
+                "ExplosionForceOnDebris",
+            )?,
+            health_to_capture: required_nonnegative_float(attributes, level, "HealthToCapture")?,
+            nudge_strength: required_nonnegative_float(attributes, level, "NudgeStrength")?,
+            initial_lateral_pull_strength: required_nonnegative_float(
                 attributes,
                 level,
                 "InitialLateralPullStrength",
             )?,
-            captured_radial_spacing: nonnegative(attributes, level, "CapturedRadialSpacing")?,
-            captured_spring_strength: nonnegative(attributes, level, "CapturedSpringStrength")?,
-            captured_spring_dampening: nonnegative(attributes, level, "CapturedSpringDampening")?,
-            captured_spring_rest_length: nonnegative(
+            captured_radial_spacing: required_nonnegative_float(
+                attributes,
+                level,
+                "CapturedRadialSpacing",
+            )?,
+            captured_spring_strength: required_nonnegative_float(
+                attributes,
+                level,
+                "CapturedSpringStrength",
+            )?,
+            captured_spring_dampening: required_nonnegative_float(
+                attributes,
+                level,
+                "CapturedSpringDampening",
+            )?,
+            captured_spring_rest_length: required_nonnegative_float(
                 attributes,
                 level,
                 "CapturedSpringRestLength",
             )?,
-            captured_minimum_lateral_speed: nonnegative(
+            captured_minimum_lateral_speed: required_nonnegative_float(
                 attributes,
                 level,
                 "CapturedMinLateralSpeed",
@@ -98,14 +123,18 @@ impl WaveProfile {
                 level,
                 "RipAttachmentChancePulling",
             )?,
-            pickup_object_rate: nonnegative(attributes, level, "PickupObjectRate")?,
-            debris_angular_damping: nonnegative(attributes, level, "DebrisAngularDamping")?,
-            maximum_explosion_damage_bank_per_captured: nonnegative(
+            pickup_object_rate: required_nonnegative_float(attributes, level, "PickupObjectRate")?,
+            debris_angular_damping: required_nonnegative_float(
+                attributes,
+                level,
+                "DebrisAngularDamping",
+            )?,
+            maximum_explosion_damage_bank_per_captured: required_nonnegative_float(
                 attributes,
                 level,
                 "MaxExplosionDamageBankPerCaptured",
             )?,
-            explosion_damage_bank_per_tick: nonnegative(
+            explosion_damage_bank_per_tick: required_nonnegative_float(
                 attributes,
                 level,
                 "ExplosionDamageBankPerTick",
@@ -207,7 +236,7 @@ fn resolve_command_interval(
     attributes: &PowerAttributes,
     level: u32,
 ) -> Result<u32, NativePowerError> {
-    let seconds = positive(attributes, level, "CommandInterval")?;
+    let seconds = required_positive_float(attributes, level, "CommandInterval")?;
     let milliseconds = seconds_to_milliseconds(seconds);
     (milliseconds > 0)
         .then_some(milliseconds)
@@ -218,8 +247,8 @@ fn resolve_ball_distance_range(
     attributes: &PowerAttributes,
     level: u32,
 ) -> Result<(f32, f32), NativePowerError> {
-    let minimum = nonnegative(attributes, level, "MinBallDistance")?;
-    let maximum = nonnegative(attributes, level, "MaxBallDistance")?;
+    let minimum = required_nonnegative_float(attributes, level, "MinBallDistance")?;
+    let maximum = required_nonnegative_float(attributes, level, "MaxBallDistance")?;
     (maximum >= minimum)
         .then_some((minimum, maximum))
         .ok_or(NativePowerError::InvalidData("MaxBallDistance"))
@@ -234,28 +263,6 @@ fn resolve_ball_prototype(
     is_unit_prototype(database, &prototype)
         .then_some(prototype)
         .ok_or(NativePowerError::InvalidData("BallObject"))
-}
-
-fn positive(
-    attributes: &PowerAttributes,
-    level: u32,
-    name: &'static str,
-) -> Result<f32, NativePowerError> {
-    let value = required_float(attributes, level, name)?;
-    (value > 0.0)
-        .then_some(value)
-        .ok_or(NativePowerError::InvalidData(name))
-}
-
-fn nonnegative(
-    attributes: &PowerAttributes,
-    level: u32,
-    name: &'static str,
-) -> Result<f32, NativePowerError> {
-    let value = required_float(attributes, level, name)?;
-    (value >= 0.0)
-        .then_some(value)
-        .ok_or(NativePowerError::InvalidData(name))
 }
 
 fn percentage_float(

@@ -450,6 +450,30 @@ pub(super) fn required_float(
     Ok(value)
 }
 
+/// Read a required float that must be greater than zero.
+pub(super) fn required_positive_float(
+    attributes: &PowerAttributes,
+    level: u32,
+    name: &'static str,
+) -> Result<f32, NativePowerError> {
+    let value = required_float(attributes, level, name)?;
+    (value > 0.0)
+        .then_some(value)
+        .ok_or(NativePowerError::InvalidData(name))
+}
+
+/// Read a required float that must be zero or greater.
+pub(super) fn required_nonnegative_float(
+    attributes: &PowerAttributes,
+    level: u32,
+    name: &'static str,
+) -> Result<f32, NativePowerError> {
+    let value = required_float(attributes, level, name)?;
+    (value >= 0.0)
+        .then_some(value)
+        .ok_or(NativePowerError::InvalidData(name))
+}
+
 pub(super) fn optional_float(
     attributes: &PowerAttributes,
     level: u32,

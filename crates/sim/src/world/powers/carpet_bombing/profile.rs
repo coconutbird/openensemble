@@ -3,7 +3,8 @@
 use super::{BOMB_TICK_SECONDS, MAX_AUTHORED_BOMB_CLUSTERS};
 use crate::world::powers::NativePowerError;
 use crate::world::powers::common::{
-    BomberProfile, optional_bool, required_float, required_int, required_prototype, validate_level,
+    BomberProfile, optional_bool, required_int, required_nonnegative_float,
+    required_positive_float, required_prototype, validate_level,
 };
 use num_traits::ToPrimitive;
 use pipeline::database::hw1::Database;
@@ -34,28 +35,29 @@ impl CarpetBombingProfile {
         level: u32,
     ) -> Result<Self, NativePowerError> {
         validate_level(attributes, level)?;
-        let initial_delay = nonnegative(attributes, level, "InitialDelay")?;
-        let fuse_time = nonnegative(attributes, level, "FuseTime")?;
+        let initial_delay = required_nonnegative_float(attributes, level, "InitialDelay")?;
+        let fuse_time = required_nonnegative_float(attributes, level, "FuseTime")?;
         let maximum_bomb_clusters = required_int(attributes, level, "MaxBombs")?;
         let maximum_bomb_clusters = u32::try_from(maximum_bomb_clusters.max(0))
             .map_err(|_| NativePowerError::InvalidData("MaxBombs"))?;
         if maximum_bomb_clusters > MAX_AUTHORED_BOMB_CLUSTERS {
             return Err(NativePowerError::InvalidData("MaxBombs"));
         }
-        let maximum_bomb_offset = positive(attributes, level, "MaxBombOffset")?;
-        let bomb_spacing = nonnegative(attributes, level, "BombSpacing")?;
+        let maximum_bomb_offset = required_positive_float(attributes, level, "MaxBombOffset")?;
+        let bomb_spacing = required_nonnegative_float(attributes, level, "BombSpacing")?;
         if maximum_bomb_offset <= bomb_spacing {
             return Err(NativePowerError::InvalidData("BombSpacing"));
         }
-        let length_multiplier = positive(attributes, level, "LengthMultiplier")?;
-        let wedge_length_multiplier = positive(attributes, level, "WedgeLengthMultiplier")?;
-        let wedge_minimum_offset = nonnegative(attributes, level, "WedgeMinOffset")?;
-        let nudge_multiplier = nonnegative(attributes, level, "NudgeMultiplier")?;
+        let length_multiplier = required_positive_float(attributes, level, "LengthMultiplier")?;
+        let wedge_length_multiplier =
+            required_positive_float(attributes, level, "WedgeLengthMultiplier")?;
+        let wedge_minimum_offset = required_nonnegative_float(attributes, level, "WedgeMinOffset")?;
+        let nudge_multiplier = required_nonnegative_float(attributes, level, "NudgeMultiplier")?;
         let bomber_prototype = required_prototype(database, attributes, level, "Bomber")?;
-        let flyin_distance = nonnegative(attributes, level, "BomberFlyinDistance")?;
-        let flyin_height = nonnegative(attributes, level, "BomberFlyinHeight")?;
-        let bomb_height = nonnegative(attributes, level, "BomberBombHeight")?;
-        let speed = positive(attributes, level, "BomberSpeed")?;
+        let flyin_distance = required_nonnegative_float(attributes, level, "BomberFlyinDistance")?;
+        let flyin_height = required_nonnegative_float(attributes, level, "BomberFlyinHeight")?;
+        let bomb_height = required_nonnegative_float(attributes, level, "BomberBombHeight")?;
+        let speed = required_positive_float(attributes, level, "BomberSpeed")?;
         let flyout_time =
             initial_delay + maximum_bomb_clusters.to_f32().unwrap_or(f32::MAX) * BOMB_TICK_SECONDS;
         Ok(Self {
@@ -82,31 +84,5 @@ impl CarpetBombingProfile {
             wedge_minimum_offset,
             nudge_multiplier,
         })
-    }
-}
-
-fn positive(
-    attributes: &PowerAttributes,
-    level: u32,
-    name: &'static str,
-) -> Result<f32, NativePowerError> {
-    let value = required_float(attributes, level, name)?;
-    if value > 0.0 {
-        Ok(value)
-    } else {
-        Err(NativePowerError::InvalidData(name))
-    }
-}
-
-fn nonnegative(
-    attributes: &PowerAttributes,
-    level: u32,
-    name: &'static str,
-) -> Result<f32, NativePowerError> {
-    let value = required_float(attributes, level, name)?;
-    if value >= 0.0 {
-        Ok(value)
-    } else {
-        Err(NativePowerError::InvalidData(name))
     }
 }
