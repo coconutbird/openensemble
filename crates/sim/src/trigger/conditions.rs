@@ -14,6 +14,7 @@ mod ammunition;
 mod command_state;
 mod dispatch;
 mod events;
+mod externals;
 mod forbids;
 mod game_settings;
 mod hitch;
@@ -581,19 +582,20 @@ fn player_in_state(condition: &Condition, script: &TriggerScript, world: &World)
         .is_some_and(|player| i32::from(player.state as u8) == expected)
 }
 
-fn compare_identity(condition: &Condition, script: &TriggerScript) -> bool {
+/// `CompareLeader` (476): retail compares the low bytes of both leader IDs as signed bytes
+/// with the six-way `BTriggerCondition_compareIntValues`.
+fn compare_leader(condition: &Condition, script: &TriggerScript) -> bool {
+    let low_byte = |value: i32| i8::from_le_bytes([value.to_le_bytes()[0]]);
     let Some(first) = value_at(condition, script, 1).and_then(as_i32) else {
         return false;
     };
-    let Some(operator @ (CompareOperator::Equal | CompareOperator::NotEqual)) =
-        operator_at(condition, script, 2)
-    else {
+    let Some(operator) = operator_at(condition, script, 2) else {
         return false;
     };
     let Some(second) = value_at(condition, script, 3).and_then(as_i32) else {
         return false;
     };
-    compare_ord(&first, operator, &second)
+    compare_ord(&low_byte(first), operator, &low_byte(second))
 }
 
 fn player_using_leader(condition: &Condition, script: &TriggerScript, world: &World) -> bool {
@@ -833,7 +835,6 @@ fn write_time(script: &mut TriggerScript, variable_id: VarId, value: u32) {
 fn write_trigger_value(script: &mut TriggerScript, variable_id: VarId, value: TriggerValue) {
     if let Some(variable) = script.get_variable_mut(variable_id) {
         variable.value = value;
-        variable.is_null = false;
     }
 }
 

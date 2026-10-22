@@ -51,8 +51,8 @@ impl World {
         self.projectiles.clear();
         self.bases.clear();
         self.next_base_id = 0;
-        self.trigger_engine = crate::trigger::TriggerEngine::new();
-        self.pending_building_command_events.clear();
+        self.triggers = super::triggers::WorldTriggers::default();
+        self.player_state_changes.clear();
     }
 
     /// Kill an entity, optionally removing it immediately.

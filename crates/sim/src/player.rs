@@ -9,11 +9,13 @@ mod powers;
 mod rally_points;
 mod research;
 mod squad_ai;
+mod state;
 mod technology;
 
 pub use powers::{PowerEntry, PowerEntryItem, ProtoPowerId};
 pub(crate) use powers::{PowerGrant, PowerRules};
 pub use research::{PlayerResearchState, TechStatus};
+pub use state::{PlayerStateChange, PlayerStateEvent};
 pub use technology::PlayerTechState;
 pub(crate) use technology::{
     AppliedPrototypeTransform, AppliedSquadTransform, AppliedUnitTransform, ProtoDataModification,
@@ -306,6 +308,8 @@ pub struct Player {
     pub research: PlayerResearchState,
     /// Retail's insertion-ordered squad-AI work rotation and cursors.
     squad_ai: squad_ai::PlayerSquadAiState,
+    /// Retail end-state fields that `set_player_state` writes.
+    end_state: state::PlayerEndState,
 }
 
 impl Player {
@@ -335,6 +339,7 @@ impl Player {
             powers: powers::PlayerPowerState::default(),
             research: PlayerResearchState::default(),
             squad_ai: squad_ai::PlayerSquadAiState::default(),
+            end_state: state::PlayerEndState::default(),
         }
     }
 

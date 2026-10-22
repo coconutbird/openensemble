@@ -4,7 +4,12 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 
 use super::effects::{ControlAction, EffectOutcome, execute_effect};
-use super::{INVALID_TRIGGER_SCRIPT_ID, TriggerId, TriggerScript, TriggerScriptId};
+use super::library::LibraryScript;
+use super::{
+    INVALID_TRIGGER_SCRIPT_ID, TriggerExternals, TriggerId, TriggerScript, TriggerScriptId,
+    TriggerScriptLibrary,
+};
+use crate::entity_id::EntityId;
 use crate::gameplay::GameplayCatalog;
 use crate::world::World;
 use pipeline::database::hw1::Database;
@@ -41,6 +46,10 @@ pub struct TriggerUpdate {
     pub unsupported_condition_types: Vec<u16>,
     /// Effect DBIDs encountered without an implementation.
     pub unsupported_effect_types: Vec<u16>,
+    /// Scripts that `LaunchScript` started, in launch order.
+    pub launched_scripts: Vec<TriggerScriptId>,
+    /// File names that `LaunchScript` asked for but the script library does not have.
+    pub missing_script_files: Vec<String>,
     /// Whether the deterministic safety limit stopped a same-tick trigger loop.
     pub infinite_loop_guard_reached: bool,
 }
@@ -72,6 +81,7 @@ impl TriggerUpdate {
 pub struct TriggerEngine {
     pub(crate) scripts: BTreeMap<TriggerScriptId, TriggerScript>,
     pub(crate) next_script_id: TriggerScriptId,
+    library: TriggerScriptLibrary,
     evaluate_count: u32,
     performance_warning_threshold: u32,
     infinite_loop_threshold: u32,
@@ -92,11 +102,14 @@ impl Default for TriggerEngine {
 
 impl TriggerEngine {
     /// Create an empty engine with retail-inspired diagnostic limits.
+    ///
+    /// Script IDs start at 0, like the retail `nextTriggerScriptID` after a game reset.
     #[must_use]
     pub fn new() -> Self {
         Self {
             scripts: BTreeMap::new(),
-            next_script_id: 1,
+            next_script_id: 0,
+            library: TriggerScriptLibrary::default(),
             evaluate_count: 0,
             performance_warning_threshold: 1_000,
             infinite_loop_threshold: 50_000,
@@ -104,6 +117,9 @@ impl TriggerEngine {
     }
 
     /// Add a script and return its stable runtime ID.
+    ///
+    /// A script with the invalid ID gets the next ID in creation order
+    /// (`BTriggerManager_createScriptFromNode`).
     pub fn add_script(&mut self, mut script: TriggerScript) -> TriggerScriptId {
         let id = if script.id == INVALID_TRIGGER_SCRIPT_ID {
             let id = self.next_script_id;
@@ -116,6 +132,48 @@ impl TriggerEngine {
         };
         self.scripts.insert(id, script);
         id
+    }
+
+    /// Read the parsed trigger script files that [`launch_script`](Self::launch_script) uses.
+    #[must_use]
+    pub fn script_library(&self) -> &TriggerScriptLibrary {
+        &self.library
+    }
+
+    /// Mutably access the script library. Fill it before the first tick.
+    pub fn script_library_mut(&mut self) -> &mut TriggerScriptLibrary {
+        &mut self.library
+    }
+
+    /// Create a script from a library file, set its externals and activate it.
+    ///
+    /// This follows `BTriggerManager_createScriptFromFile`, the `setExternal*` calls and
+    /// `BTriggerManager_activateScript`:
+    ///
+    /// - A file that is not in the library gives `None` and uses no script ID.
+    /// - A file that did not parse uses one script ID and gives `None`.
+    /// - Otherwise the script gets the next ID and the file name, and its start-active triggers
+    ///   become active. A script launched during an update first runs in the next update.
+    pub fn launch_script(
+        &mut self,
+        file_name: &str,
+        externals: TriggerExternals,
+        current_time: u32,
+    ) -> Option<TriggerScriptId> {
+        let mut script = match self.library.get(file_name) {
+            LibraryScript::Missing => return None,
+            LibraryScript::Invalid => {
+                self.next_script_id = self.next_script_id.wrapping_add(1);
+                return None;
+            }
+            LibraryScript::Parsed(script) => script.clone(),
+        };
+        script.id = INVALID_TRIGGER_SCRIPT_ID;
+        file_name.clone_into(&mut script.name);
+        script.externals = externals;
+        let id = self.add_script(script);
+        self.activate_script(id, current_time);
+        Some(id)
     }
 
     /// Remove a script.
@@ -150,15 +208,24 @@ impl TriggerEngine {
     pub fn active_trigger_count(&self) -> usize {
         self.scripts
             .values()
-            .flat_map(|script| &script.triggers)
-            .filter(|trigger| trigger.is_active)
-            .count()
+            .map(|script| script.active_triggers().len())
+            .sum()
     }
 
     /// Activate a script and all of its authored start-active triggers.
     pub fn activate_script(&mut self, id: TriggerScriptId, current_time: u32) {
         if let Some(script) = self.scripts.get_mut(&id) {
             script.activate(current_time);
+        }
+    }
+
+    /// Record a destroyed unit or squad for every active script.
+    ///
+    /// This follows `BTriggerManager_invalidateEntityID`. Each script removes the ID from its
+    /// list variables at the start of its next update.
+    pub fn invalidate_entity(&mut self, entity_id: EntityId) {
+        for script in self.scripts.values_mut() {
+            script.invalidate_entity(entity_id, false);
         }
     }
 
@@ -202,6 +269,10 @@ impl TriggerEngine {
         self.update_with_context(world, Some(database), Some(gameplay))
     }
 
+    /// Run one `BTriggerManager_update`.
+    ///
+    /// The script list is fixed at the start, so a script that an effect launches first runs
+    /// in the next update. A script marked for cleanup is deleted right after its update.
     fn update_with_context(
         &mut self,
         world: &mut World,
@@ -236,6 +307,7 @@ impl TriggerEngine {
         update
     }
 
+    /// Run one `BTriggerScript_update`.
     fn update_script(
         &mut self,
         script: &mut TriggerScript,
@@ -243,14 +315,14 @@ impl TriggerEngine {
         context: EvaluationContext<'_>,
         update: &mut TriggerUpdate,
     ) {
+        script.flush_invalid_entities();
         for trigger in &mut script.triggers {
             trigger.reset_evaluate_count();
         }
         let mut queue = script
-            .triggers
+            .active_triggers()
             .iter()
-            .filter(|trigger| trigger.is_active)
-            .map(|trigger| trigger.id)
+            .copied()
             .collect::<VecDeque<_>>();
 
         while let Some(trigger_id) = queue.pop_front() {
@@ -261,7 +333,7 @@ impl TriggerEngine {
             self.evaluate_queued_trigger(script, trigger_id, world, context, &mut queue, update);
         }
 
-        if !script.triggers.iter().any(|trigger| trigger.is_active) {
+        if script.active_triggers().is_empty() {
             script.marked_for_cleanup = true;
         }
     }
@@ -318,31 +390,66 @@ impl TriggerEngine {
         deactivate_trigger(script, trigger_id, queue);
         update.triggers_fired += 1;
         for effect in effects.iter() {
-            let (outcome, control) =
+            let (mut outcome, control) =
                 execute_effect(effect, script, world, context.database, context.gameplay);
+            if let Some(control) = control
+                && !self.apply_control(control, script, context.current_time, queue, update)
+            {
+                outcome = EffectOutcome::Skipped;
+            }
             update.record_effect(effect.raw_type, outcome);
-            apply_control(control, script, context.current_time, queue);
+            self.record_destroyed_entities(world, script);
         }
     }
-}
 
-fn apply_control(
-    control: Option<ControlAction>,
-    script: &mut TriggerScript,
-    current_time: u32,
-    queue: &mut VecDeque<TriggerId>,
-) {
-    match control {
-        Some(ControlAction::Activate(trigger_id)) => {
-            script.activate_trigger(trigger_id, current_time);
-            if !queue.contains(&trigger_id) {
-                queue.push_back(trigger_id);
+    /// Apply a schedule change of an effect. Return `false` if the change did nothing.
+    fn apply_control(
+        &mut self,
+        control: ControlAction,
+        script: &mut TriggerScript,
+        current_time: u32,
+        queue: &mut VecDeque<TriggerId>,
+        update: &mut TriggerUpdate,
+    ) -> bool {
+        match control {
+            ControlAction::Activate(trigger_id) => {
+                if script.get_trigger(trigger_id).is_none() {
+                    return false;
+                }
+                script.activate_trigger(trigger_id, current_time);
+                if !queue.contains(&trigger_id) {
+                    queue.push_back(trigger_id);
+                }
+            }
+            ControlAction::Deactivate(trigger_id) => {
+                deactivate_trigger(script, trigger_id, queue);
+            }
+            ControlAction::Shutdown => {
+                script.shut_down();
+                queue.clear();
+            }
+            ControlAction::Launch(launch) => {
+                let Some(script_id) =
+                    self.launch_script(&launch.file_name, launch.externals, current_time)
+                else {
+                    update.missing_script_files.push(launch.file_name);
+                    return false;
+                };
+                update.launched_scripts.push(script_id);
             }
         }
-        Some(ControlAction::Deactivate(trigger_id)) => {
-            deactivate_trigger(script, trigger_id, queue);
+        true
+    }
+
+    /// Move the units and squads that an effect destroyed into the scripts.
+    ///
+    /// The running script removes them at once. The other active scripts remove them at the
+    /// start of their next update (`BTriggerScript_invalidateEntityID`).
+    fn record_destroyed_entities(&mut self, world: &mut World, updating: &mut TriggerScript) {
+        for entity_id in world.take_destroyed_trigger_entities() {
+            updating.invalidate_entity(entity_id, true);
+            self.invalidate_entity(entity_id);
         }
-        None => {}
     }
 }
 
@@ -360,3 +467,6 @@ fn unique_add(values: &mut Vec<u16>, value: u16) {
         values.insert(index, value);
     }
 }
+
+#[cfg(test)]
+mod tests;

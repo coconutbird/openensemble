@@ -48,6 +48,29 @@ pub(super) fn destroy(effect: &Effect, script: &TriggerScript, world: &mut World
     EffectOutcome::Applied
 }
 
+/// `TimerSetPaused` (781, `BTriggerEffect_teTimerSetPaused`).
+///
+/// Retail finds the active timer with the ID in signature 1 and sets its paused bit from
+/// signature 2. It reads both values without a null check. An unknown ID changes nothing.
+pub(super) fn set_paused(
+    effect: &Effect,
+    script: &TriggerScript,
+    world: &mut World,
+) -> EffectOutcome {
+    let raw = |signature_id| {
+        effect
+            .variable_id(signature_id)
+            .and_then(|variable_id| script.get_variable(variable_id))
+            .map(|variable| &variable.value)
+    };
+    let (Some(TriggerValue::Int(timer_id)), Some(TriggerValue::Bool(paused))) = (raw(1), raw(2))
+    else {
+        return EffectOutcome::Skipped;
+    };
+    let _found = world.set_game_timer_paused(*timer_id, *paused);
+    EffectOutcome::Applied
+}
+
 fn audience(effect: &Effect, script: &TriggerScript) -> GameTimerAudience {
     if effect.version == 4 {
         return GameTimerAudience::PrimaryUser;

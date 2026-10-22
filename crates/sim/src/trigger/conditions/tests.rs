@@ -350,16 +350,34 @@ fn player_identity_and_squad_capacity_follow_retail_signatures() {
         &mut world,
         ConditionResult::False,
     );
-    let ordered_identity = Condition::new(35, ConditionType::CompareCiv)
+    // `BTriggerCondition_compareIntValues` gives CompareCiv all six operators: civ 4 < 7.
+    let ordered_civ = Condition::new(35, ConditionType::CompareCiv)
         .with_input_at(1, 3)
         .with_input_at(2, 6)
-        .with_input_at(3, 3);
-    assert_condition(
-        &ordered_identity,
-        &mut script,
-        &mut world,
-        ConditionResult::False,
-    );
+        .with_input_at(3, 5);
+    assert_condition(&ordered_civ, &mut script, &mut world, ConditionResult::True);
+}
+
+/// Retail case 476 compares the leader IDs as signed bytes: 200 becomes -56 and 261 becomes 5.
+#[test]
+fn compare_leader_uses_six_operators_on_signed_low_bytes() {
+    let mut world = World::new();
+    let mut script = TriggerScript::new(1);
+    add_value(&mut script, 1, VarType::Leader, TriggerValue::Int(200));
+    add_value(&mut script, 2, VarType::Leader, TriggerValue::Int(7));
+    add_value(&mut script, 3, VarType::Leader, TriggerValue::Int(261));
+    add_value(&mut script, 4, VarType::Operator, TriggerValue::Int(1));
+    add_value(&mut script, 5, VarType::Operator, TriggerValue::Int(5));
+    let compare = |first, operator, second| {
+        Condition::new(1, ConditionType::CompareLeader)
+            .with_input_at(1, first)
+            .with_input_at(2, operator)
+            .with_input_at(3, second)
+    };
+    let below = compare(1, 4, 2);
+    let above = compare(3, 5, 2);
+    assert_condition(&below, &mut script, &mut world, ConditionResult::True);
+    assert_condition(&above, &mut script, &mut world, ConditionResult::False);
 }
 
 #[test]

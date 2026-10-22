@@ -249,7 +249,8 @@ fn get_players_2_filters_in_roster_order_with_retail_relation_rules() {
     script.get_variable_mut(2).unwrap().value = TriggerValue::Bool(true);
     script.get_variable_mut(3).unwrap().value = TriggerValue::Bool(true);
     script.get_variable_mut(5).unwrap().value = TriggerValue::Int(0);
-    script.get_variable_mut(6).unwrap().is_null = true;
+    let nulled = script.variables.remove(&6).unwrap();
+    script.add_variable(nulled.null());
     assert_eq!(
         get_players_2(&effect, &mut script, &world),
         EffectOutcome::Applied

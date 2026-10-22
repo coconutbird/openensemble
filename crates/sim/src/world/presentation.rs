@@ -11,12 +11,14 @@ use crate::sync::SyncChecksum;
 mod callouts;
 mod camera_shakes;
 mod fades;
+mod messages;
 mod objective_pointers;
 mod rumbles;
 
 pub use callouts::{HintCallout, HintCalloutAnchor};
 pub use camera_shakes::CameraShake;
 pub use fades::{ScreenFadeOverlay, ScreenFadeSequence};
+pub use messages::TriggerMessage;
 pub use objective_pointers::ObjectivePointer;
 pub use rumbles::{RumbleMotor, RumbleRequest};
 
@@ -187,6 +189,7 @@ impl Default for PlayerPresentationState {
 pub(super) struct PresentationControlState {
     callouts: callouts::HintCalloutState,
     camera_shakes: camera_shakes::CameraShakeState,
+    messages: messages::TriggerMessageState,
     objective_pointers: objective_pointers::ObjectivePointerState,
     rumbles: rumbles::RumbleState,
     screen_fade: fades::ScreenFadeState,
@@ -203,6 +206,7 @@ impl Default for PresentationControlState {
         Self {
             callouts: callouts::HintCalloutState::default(),
             camera_shakes: camera_shakes::CameraShakeState::default(),
+            messages: messages::TriggerMessageState::default(),
             objective_pointers: objective_pointers::ObjectivePointerState::default(),
             rumbles: rumbles::RumbleState::default(),
             screen_fade: fades::ScreenFadeState::default(),
@@ -400,6 +404,7 @@ impl PresentationControlState {
     pub(super) fn hash_state(&self, checksum: &mut SyncChecksum) {
         self.callouts.hash_state(checksum);
         self.camera_shakes.hash_state(checksum);
+        self.messages.hash_state(checksum);
         self.objective_pointers.hash_state(checksum);
         self.rumbles.hash_state(checksum);
         self.hash_screen_fade(checksum);

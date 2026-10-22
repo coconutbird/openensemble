@@ -95,7 +95,6 @@ fn update_object_list(effect: &Effect, script: &mut TriggerScript, created: Opti
     if let Some(created) = created {
         values.push(created);
     }
-    variable.is_null = false;
 }
 
 #[cfg(test)]

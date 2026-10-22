@@ -615,7 +615,7 @@ fn describe_binding(binding: sim::trigger::VarBinding, script: &sim::TriggerScri
         variable.map(|variable| (
             &variable.name,
             variable.var_type,
-            variable.is_null,
+            variable.is_null(),
             &variable.value
         ))
     )

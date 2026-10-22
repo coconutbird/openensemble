@@ -1,7 +1,7 @@
 //! Retail first/last/random entity-list selection conditions.
 
 use super::{as_i32, value_at, write_trigger_value};
-use crate::trigger::{Condition, TriggerScript, TriggerValue};
+use crate::trigger::{Condition, TriggerScript, TriggerValue, TriggerVec3};
 use crate::{EntityId, World};
 
 #[derive(Debug, Clone, Copy)]
@@ -135,6 +135,109 @@ pub(super) fn can_get_one_location(
     };
     if let Some(output_id) = condition.variable_id(3) {
         write_trigger_value(script, output_id, TriggerValue::Vector(selected));
+    }
+    true
+}
+
+/// `CanRemoveOneLocation` (566, `BTriggerCondition_tcCanRemoveOneLocation`).
+pub(super) fn can_remove_one_location(
+    condition: &Condition,
+    script: &mut TriggerScript,
+    world: &mut World,
+) -> bool {
+    remove_one(condition, script, world, |value| match value {
+        TriggerValue::LocationList(values) | TriggerValue::VectorList(values) => {
+            Some(RemovableList::Vectors(values))
+        }
+        _ => None,
+    })
+}
+
+/// `CanRemoveOneFloat` (975, `BTriggerCondition_tcCanRemoveOneFloat`).
+pub(super) fn can_remove_one_float(
+    condition: &Condition,
+    script: &mut TriggerScript,
+    world: &mut World,
+) -> bool {
+    remove_one(condition, script, world, |value| match value {
+        TriggerValue::FloatList(values) => Some(RemovableList::Floats(values)),
+        _ => None,
+    })
+}
+
+enum RemovableList<'a> {
+    Vectors(&'a mut Vec<TriggerVec3>),
+    Floats(&'a mut Vec<f32>),
+}
+
+impl RemovableList<'_> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Vectors(values) => values.len(),
+            Self::Floats(values) => values.len(),
+        }
+    }
+
+    fn remove(self, index: usize, ordered: bool) -> TriggerValue {
+        match self {
+            Self::Vectors(values) => TriggerValue::Vector(take_at(values, index, ordered)),
+            Self::Floats(values) => TriggerValue::Float(take_at(values, index, ordered)),
+        }
+    }
+}
+
+fn take_at<T>(values: &mut Vec<T>, index: usize, ordered: bool) -> T {
+    if ordered {
+        values.remove(index)
+    } else {
+        values.swap_remove(index)
+    }
+}
+
+/// Remove one value from the list in signature 1 and write it to signature 3.
+///
+/// Retail reads the list and the list position in signature 2 without a null check. An empty
+/// list or an unknown position gives false. `First` and `Last` keep the order of the other
+/// values. `Random` takes a random index from the trigger stream and moves the last value into
+/// the free slot.
+fn remove_one(
+    condition: &Condition,
+    script: &mut TriggerScript,
+    world: &mut World,
+    list: impl FnOnce(&mut TriggerValue) -> Option<RemovableList<'_>>,
+) -> bool {
+    let raw = |script: &TriggerScript, signature_id| {
+        condition
+            .variable_id(signature_id)
+            .and_then(|variable_id| script.get_variable(variable_id))
+            .map(|variable| variable.value.clone())
+    };
+    let Some(TriggerValue::Int(position)) = raw(script, 2) else {
+        return false;
+    };
+    let Some(list) = condition
+        .variable_id(1)
+        .and_then(|variable_id| script.get_variable_mut(variable_id))
+        .and_then(|variable| list(&mut variable.value))
+    else {
+        return false;
+    };
+    let count = list.len();
+    if count == 0 {
+        return false;
+    }
+    let removed = match position {
+        0 => list.remove(0, true),
+        1 => list.remove(count - 1, true),
+        2 => {
+            let maximum = u32::try_from(count - 1).unwrap_or(u32::MAX);
+            let index = world.trigger_random_index(maximum) as usize;
+            list.remove(index, false)
+        }
+        _ => return false,
+    };
+    if let Some(output_id) = condition.variable_id(3) {
+        write_trigger_value(script, output_id, removed);
     }
     true
 }

@@ -467,7 +467,6 @@ fn write_squad_batch_outputs(effect: &Effect, script: &mut TriggerScript, create
         && let Some(variable) = script.get_variable_mut(variable_id)
     {
         variable.value = TriggerValue::SquadList(created.to_vec());
-        variable.is_null = false;
     }
     let clear_existing = bool_at(effect, script, 11).unwrap_or(false);
     if let Some(variable_id) = used_variable_id(effect, script, 10)
@@ -478,7 +477,6 @@ fn write_squad_batch_outputs(effect: &Effect, script: &mut TriggerScript, create
             values.clear();
         }
         values.extend_from_slice(created);
-        variable.is_null = false;
     }
 }
 

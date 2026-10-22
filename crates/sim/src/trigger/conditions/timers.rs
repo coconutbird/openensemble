@@ -28,12 +28,11 @@ fn write_optional_current_time(
     };
     let Some(variable) = script
         .get_variable_mut(variable_id)
-        .filter(|variable| !variable.is_null)
+        .filter(|variable| !variable.is_null())
     else {
         return;
     };
     variable.value = TriggerValue::Time(current_time_ms);
-    variable.is_null = false;
 }
 
 #[cfg(test)]

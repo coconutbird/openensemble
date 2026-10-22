@@ -47,7 +47,8 @@ fn create_uses_squad_unit_location_priority_and_writes_ids() {
         crate::HintCalloutAnchor::Entity(squad)
     );
 
-    script.get_variable_mut(3).unwrap().is_null = true;
+    let nulled = script.variables.remove(&3).unwrap();
+    script.add_variable(nulled.null());
     assert_eq!(
         create(&effect, &mut script, &mut world),
         EffectOutcome::Presentation
@@ -58,7 +59,8 @@ fn create_uses_squad_unit_location_priority_and_writes_ids() {
         crate::HintCalloutAnchor::Entity(unit)
     );
 
-    script.get_variable_mut(4).unwrap().is_null = true;
+    let nulled = script.variables.remove(&4).unwrap();
+    script.add_variable(nulled.null());
     assert_eq!(
         create(&effect, &mut script, &mut world),
         EffectOutcome::Presentation

@@ -60,7 +60,7 @@ fn write_optional(
     };
     if script
         .get_variable(variable_id)
-        .is_some_and(|variable| !variable.is_null)
+        .is_some_and(|variable| !variable.is_null())
     {
         write_trigger_value(script, variable_id, value);
     }

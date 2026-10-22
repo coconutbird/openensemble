@@ -39,9 +39,11 @@ fn automatic_slots_count_each_side_and_stop_at_the_maximum() {
 fn values_skip_missing_and_null_variables() {
     let mut script = TriggerScript::new(1);
     script.add_variable(TriggerVar::new(1, VarType::Integer).with_value(TriggerValue::Int(5)));
-    let mut null = TriggerVar::new(2, VarType::Integer).with_value(TriggerValue::Int(6));
-    null.is_null = true;
-    script.add_variable(null);
+    script.add_variable(
+        TriggerVar::new(2, VarType::Integer)
+            .with_value(TriggerValue::Int(6))
+            .null(),
+    );
     let inputs = [
         VarBinding::new(1, 1),
         VarBinding::new(2, 2),

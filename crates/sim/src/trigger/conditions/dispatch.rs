@@ -3,12 +3,12 @@
 use super::{
     Condition, ConditionResult, ConditionType, Database, PlayerType, TriggerScript, World,
     ammunition, can_pay_cost, check_diplomacy, check_resource_totals, command_state, compare_bool,
-    compare_cost, compare_elapsed, compare_f32, compare_i32, compare_identity,
+    compare_cost, compare_elapsed, compare_f32, compare_i32, compare_leader,
     compare_player_squad_count, compare_player_unit_count, compare_population, compare_string,
-    compare_time, contains_garrisoned, events, forbids, game_settings, has_garrisoned, hitch,
-    is_attacking, is_garrisoned, is_object_type, is_owned_by, is_proto_object, is_under_attack,
-    iterators, lifecycle, list_selection, player_in_state, player_is_gaia, player_type,
-    player_using_leader, queries, sockets, spatial, tech_status, time_reached, timers,
+    compare_time, contains_garrisoned, events, externals, forbids, game_settings, has_garrisoned,
+    hitch, is_attacking, is_garrisoned, is_object_type, is_owned_by, is_proto_object,
+    is_under_attack, iterators, lifecycle, list_selection, player_in_state, player_is_gaia,
+    player_type, player_using_leader, queries, sockets, spatial, tech_status, time_reached, timers,
 };
 
 pub(super) fn evaluate_condition_with_database(
@@ -48,6 +48,7 @@ fn evaluate_core_condition(
     let result = match condition.condition_type {
         ConditionType::CompareBool => compare_bool(condition, script),
         ConditionType::CompareCount
+        | ConditionType::CompareCiv
         | ConditionType::ComparePlayers
         | ConditionType::CompareTeams
         | ConditionType::CompareProtoSquad
@@ -99,9 +100,7 @@ fn evaluate_core_condition(
         ConditionType::IsProtoObject => is_proto_object(condition, script, world),
         ConditionType::IsObjectType => is_object_type(condition, script, world),
         ConditionType::PlayerInState => player_in_state(condition, script, world),
-        ConditionType::CompareCiv | ConditionType::CompareLeader => {
-            compare_identity(condition, script)
-        }
+        ConditionType::CompareLeader => compare_leader(condition, script),
         ConditionType::PlayerUsingLeader => player_using_leader(condition, script, world),
         ConditionType::CheckDiplomacy => check_diplomacy(condition, script, world),
         _ => return None,
@@ -156,6 +155,19 @@ fn evaluate_query_condition(
         }
         ConditionType::CanGetOneLocation => {
             list_selection::can_get_one_location(condition, script, world)
+        }
+        ConditionType::CanRemoveOneLocation => {
+            list_selection::can_remove_one_location(condition, script, world)
+        }
+        ConditionType::CanRemoveOneFloat => {
+            list_selection::can_remove_one_float(condition, script, world)
+        }
+        ConditionType::CanRetrieveExternals => externals::can_retrieve_externals(condition, script),
+        ConditionType::CanRetrieveExternalLocation => {
+            externals::can_retrieve_external_location(condition, script)
+        }
+        ConditionType::CanRetrieveExternalFloat => {
+            externals::can_retrieve_external_float(condition, script)
         }
         ConditionType::SquadLocationDistance => {
             spatial::squad_location_distance(condition, script, world)

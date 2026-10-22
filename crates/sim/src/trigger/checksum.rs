@@ -21,12 +21,15 @@ fn hash_script(checksum: &mut SyncChecksum, script: &TriggerScript) {
     checksum.hash_u32(u32::from(script.is_paused));
     checksum.hash_u32(u32::from(script.marked_for_cleanup));
     checksum.hash_string(&script.name);
+    hash_u32s(checksum, script.active_triggers());
+    script.externals.hash_state(checksum);
+    hash_entities(checksum, 49, script.pending_invalid_entities());
     checksum.hash_u32(u32::try_from(script.variables.len()).unwrap_or(u32::MAX));
     for (variable_id, variable) in &script.variables {
         checksum.hash_u32(*variable_id);
         checksum.hash_u32(variable.editor_id);
         checksum.hash_u32(variable.var_type as u32);
-        checksum.hash_u32(u32::from(variable.is_null));
+        checksum.hash_u32(u32::from(variable.is_null()));
         checksum.hash_u32(u32::from(variable.is_input));
         checksum.hash_u32(u32::from(variable.is_output));
         hash_value(checksum, &variable.value);
@@ -38,7 +41,6 @@ fn hash_script(checksum: &mut SyncChecksum, script: &TriggerScript) {
         checksum.hash_i32(trigger.group_id);
         checksum.hash_u32(u32::from(trigger.start_active));
         checksum.hash_u32(u32::from(trigger.is_conditional));
-        checksum.hash_u32(u32::from(trigger.is_active));
         checksum.hash_u32(trigger.activated_time);
         checksum.hash_u32(trigger.next_evaluate_time);
         checksum.hash_u32(trigger.evaluate_frequency);
@@ -95,6 +97,13 @@ fn hash_value(checksum: &mut SyncChecksum, value: &TriggerValue) {
         TriggerValue::Int(value) => hash_i32(checksum, 1, *value),
         TriggerValue::IntegerList(values) => hash_i32s(checksum, 40, values),
         TriggerValue::Float(value) => hash_f32(checksum, 2, *value),
+        TriggerValue::FloatList(values) => {
+            checksum.hash_u32(50);
+            checksum.hash_u32(u32::try_from(values.len()).unwrap_or(u32::MAX));
+            for value in values {
+                checksum.hash_f32(*value);
+            }
+        }
         TriggerValue::String(value) => {
             checksum.hash_u32(3);
             checksum.hash_string(value);
@@ -183,6 +192,13 @@ fn hash_value(checksum: &mut SyncChecksum, value: &TriggerValue) {
 fn hash_filter_set(checksum: &mut SyncChecksum, filter_set: &EntityFilterSet) {
     checksum.hash_u32(36);
     filter_set.hash_state(checksum);
+}
+
+fn hash_u32s(checksum: &mut SyncChecksum, values: &[u32]) {
+    checksum.hash_u32(u32::try_from(values.len()).unwrap_or(u32::MAX));
+    for value in values {
+        checksum.hash_u32(*value);
+    }
 }
 
 fn hash_i32(checksum: &mut SyncChecksum, tag: u32, value: i32) {

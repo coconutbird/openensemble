@@ -148,7 +148,6 @@ fn write_output_id(effect: &Effect, script: &mut TriggerScript, id: i32) {
         return;
     };
     variable.value = TriggerValue::Int(id);
-    variable.is_null = false;
 }
 
 #[cfg(test)]

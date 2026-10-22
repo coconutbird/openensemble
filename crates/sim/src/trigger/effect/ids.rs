@@ -204,6 +204,10 @@ pub enum EffectType {
     GetPlayers = 173,
     /// Gets the players that have a relation to a test player (version 2 only).
     GetPlayers2 = 431,
+    /// Gets the number of players in a player list.
+    PlayerListGetSize = 970,
+    /// Gets the NPC players with a name.
+    GetNPCPlayersByName = 943,
     /// Converts a player list to the list of their teams.
     PlayersToTeams = 432,
     /// Converts a team list to the list of their players.
@@ -702,6 +706,8 @@ pub enum EffectType {
     FadeToColor = 912,
     /// Plays a fade transition on the screen.
     FadeTransition = 922,
+    /// Shows a text message to players.
+    ShowMessage = 904,
 
     // Batch squad creation
     /// Creates many squads from a list of prototype squads.
@@ -754,6 +760,8 @@ pub enum EffectType {
     CreateTimer = 658,
     /// Removes a game timer.
     DestroyTimer = 659,
+    /// Pauses or resumes a game timer.
+    TimerSetPaused = 781,
 
     // Scenario world bounds
     /// Sets the playable bounds of the map.

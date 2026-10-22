@@ -18,9 +18,9 @@ pub(super) fn attach(
     let Some(source_id) = effect.variable_id(1) else {
         return EffectOutcome::Skipped;
     };
-    let source_is_valid = script
-        .get_variable(source_id)
-        .is_some_and(|variable| !variable.is_null && entity_list(kind, &variable.value).is_some());
+    let source_is_valid = script.get_variable(source_id).is_some_and(|variable| {
+        !variable.is_null() && entity_list(kind, &variable.value).is_some()
+    });
     if !source_is_valid {
         return EffectOutcome::Skipped;
     }
@@ -37,7 +37,7 @@ pub(super) fn attach_scalar(
     };
     let source_is_valid = script
         .get_variable(source_id)
-        .is_some_and(|variable| !variable.is_null && scalar_list_matches(&variable.value, kind));
+        .is_some_and(|variable| !variable.is_null() && scalar_list_matches(&variable.value, kind));
     if !source_is_valid {
         return EffectOutcome::Skipped;
     }
@@ -49,7 +49,7 @@ pub(super) fn attach_vector(effect: &Effect, script: &mut TriggerScript) -> Effe
         return EffectOutcome::Skipped;
     };
     let source_is_valid = script.get_variable(source_id).is_some_and(|variable| {
-        !variable.is_null
+        !variable.is_null()
             && matches!(
                 variable.value,
                 TriggerValue::LocationList(_) | TriggerValue::VectorList(_)
@@ -90,6 +90,5 @@ fn attach_to_iterator(
         return EffectOutcome::Skipped;
     };
     iterator.attach(source_id);
-    iterator_variable.is_null = false;
     EffectOutcome::Applied
 }

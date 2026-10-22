@@ -253,3 +253,47 @@ fn camera_v4_combines_players_and_preserves_one_shot_pose() {
 fn add_value(script: &mut TriggerScript, id: u32, var_type: VarType, value: TriggerValue) {
     script.add_variable(TriggerVar::new(id, var_type).with_value(value));
 }
+
+/// `BTriggerEffect_teShowMessage`: the targets are the list in signature 2 plus the player in
+/// signature 1. Retail divides the time in signature 6 by 1000 (whole seconds).
+#[test]
+fn show_message_targets_the_union_and_uses_whole_seconds() {
+    assert_eq!(EffectType::from_u16(904), Some(EffectType::ShowMessage));
+    let mut world = World::new();
+    world.init_players(3);
+    let mut script = TriggerScript::new(1);
+    let mut add = |id, var_type, value| {
+        script.add_variable(TriggerVar::new(id, var_type).with_value(value));
+    };
+    add(1, VarType::Player, TriggerValue::Player(3));
+    add(2, VarType::PlayerList, TriggerValue::PlayerList(vec![1]));
+    add(
+        3,
+        VarType::String,
+        TriggerValue::String("vo_alert".to_owned()),
+    );
+    add(4, VarType::Bool, TriggerValue::Bool(true));
+    add(5, VarType::LocStringID, TriggerValue::Int(24_100));
+    add(6, VarType::Time, TriggerValue::Time(4_999));
+    let effect = Effect::new(1, EffectType::ShowMessage)
+        .with_input_at(1, 1)
+        .with_input_at(2, 2)
+        .with_input_at(3, 3)
+        .with_input_at(4, 4)
+        .with_input_at(5, 5)
+        .with_input_at(6, 6);
+    assert_eq!(
+        show_message(&effect, &script, &mut world),
+        EffectOutcome::Presentation
+    );
+    for player_id in [1, 3] {
+        let message = world
+            .trigger_message(player_id)
+            .expect("message for target");
+        assert_eq!(message.string_id(), 24_100);
+        assert_eq!(message.sound(), Some("vo_alert"));
+        assert!(message.queue_sound());
+        assert_eq!(message.duration_seconds(), 4);
+    }
+    assert!(world.trigger_message(2).is_none());
+}

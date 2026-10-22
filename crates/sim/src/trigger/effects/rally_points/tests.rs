@@ -187,8 +187,9 @@ fn add_value(script: &mut TriggerScript, id: u32, var_type: VarType, value: Trig
 }
 
 fn add_null_unit(script: &mut TriggerScript, id: u32) {
-    let mut variable =
-        TriggerVar::new(id, VarType::Unit).with_value(TriggerValue::Unit(EntityId::INVALID));
-    variable.is_null = true;
-    script.add_variable(variable);
+    script.add_variable(
+        TriggerVar::new(id, VarType::Unit)
+            .with_value(TriggerValue::Unit(EntityId::INVALID))
+            .null(),
+    );
 }

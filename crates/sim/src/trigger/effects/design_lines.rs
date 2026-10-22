@@ -138,7 +138,7 @@ fn optional_design_line(
         return Ok(None);
     };
     let variable = script.get_variable(variable_id).ok_or(InvalidBinding)?;
-    if variable.is_null {
+    if variable.is_null() {
         return Ok(None);
     }
     match variable.value {
@@ -159,7 +159,7 @@ fn optional_design_line_list(
         return Ok(None);
     };
     let variable = script.get_variable(variable_id).ok_or(InvalidBinding)?;
-    if variable.is_null {
+    if variable.is_null() {
         return Ok(None);
     }
     match &variable.value {
@@ -177,7 +177,7 @@ fn optional_bool(
         return Ok(None);
     };
     let variable = script.get_variable(variable_id).ok_or(InvalidBinding)?;
-    if variable.is_null {
+    if variable.is_null() {
         return Ok(None);
     }
     match variable.value {

@@ -132,7 +132,6 @@ fn begin_building_command_state(
         return None;
     };
     state.begin();
-    variable.is_null = false;
     Some(TriggerCommandStateRef::new(script.id, variable_id))
 }
 
@@ -148,7 +147,6 @@ fn finish_building_command_state(
     };
     if let TriggerValue::BuildingCommandState(state) = &mut variable.value {
         state.finish();
-        variable.is_null = false;
     }
 }
 
@@ -169,7 +167,6 @@ fn record_immediate_training(
     for squad_id in &result.trained_squads {
         state.record_trained_squad(*squad_id);
     }
-    variable.is_null = false;
 }
 
 pub(super) fn clear_building_command_state(
@@ -187,7 +184,6 @@ pub(super) fn clear_building_command_state(
     };
     state.begin();
     state.finish();
-    variable.is_null = false;
     EffectOutcome::Applied
 }
 

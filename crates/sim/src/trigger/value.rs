@@ -711,6 +711,8 @@ pub enum TriggerValue {
     IntegerList(Vec<i32>),
     /// Floating-point value.
     Float(f32),
+    /// List of floating-point values.
+    FloatList(Vec<f32>),
     /// Text value.
     String(String),
 

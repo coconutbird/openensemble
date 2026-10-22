@@ -233,6 +233,7 @@ pub fn load_scenario_from_game_dir(
     design_lines::load_design_lines(&mut simulation.world, &design_lines);
     forbids::apply_scenario_forbids(&mut simulation.world, &content.database, &trigger_document);
     triggers::load_trigger_systems(&mut simulation, &content.database, &trigger_document)?;
+    triggers::preload_trigger_scripts(&mut simulation, &mut source, &content.database);
     let animation_requests = triggers::scripted_animation_requests(&simulation)
         .into_iter()
         .chain(animation_requests::trained_birth_animation_requests(

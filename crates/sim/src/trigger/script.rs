@@ -2,7 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use super::{Trigger, TriggerId, TriggerScriptId, TriggerValue, VarId, VarType};
+use super::{Trigger, TriggerExternals, TriggerId, TriggerScriptId, TriggerValue, VarId, VarType};
+use crate::entity_id::{EntityClass, EntityId};
 
 /// Type of trigger script.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -39,8 +40,9 @@ pub struct TriggerVar {
     /// The current value.
     pub value: TriggerValue,
 
-    /// Whether the authored variable is explicitly null/unused.
-    pub is_null: bool,
+    /// Whether the authored variable is null. Retail sets this flag only when it loads the
+    /// script (`BTriggerScript_loadTriggerVars`), so a write does not change it.
+    is_null: bool,
 
     /// Whether this variable is an input parameter.
     pub is_input: bool,
@@ -76,11 +78,12 @@ impl TriggerVar {
     #[must_use]
     pub fn with_value(mut self, value: TriggerValue) -> Self {
         self.value = value;
-        self.is_null = false;
         self
     }
 
-    /// Mark this typed variable as null/unused.
+    /// Mark this typed variable as null.
+    ///
+    /// Use this only while you build a script. The flag does not change after load.
     #[must_use]
     pub fn null(mut self) -> Self {
         self.is_null = true;
@@ -93,6 +96,12 @@ impl TriggerVar {
         self.is_output = true;
         self
     }
+
+    /// Return whether the authored variable is null.
+    #[must_use]
+    pub const fn is_null(&self) -> bool {
+        self.is_null
+    }
 }
 
 /// A trigger script containing variables and triggers.
@@ -101,7 +110,7 @@ pub struct TriggerScript {
     /// Unique ID for this script instance.
     pub id: TriggerScriptId,
 
-    /// Human-readable name.
+    /// Human-readable name. A script that the engine launches from a file has the file name.
     pub name: String,
 
     /// Type of script.
@@ -127,6 +136,15 @@ pub struct TriggerScript {
 
     /// Whether this script should be cleaned up.
     pub marked_for_cleanup: bool,
+
+    /// Active triggers in activation order (`BTriggerScript_activateTrigger`).
+    active_triggers: Vec<TriggerId>,
+
+    /// Inputs that the launcher of this script gives (`BTriggerScriptExternals`).
+    pub externals: TriggerExternals,
+
+    /// Destroyed entity IDs to remove from list variables at the start of the next update.
+    pending_invalid_entities: Vec<EntityId>,
 }
 
 impl Default for TriggerScript {
@@ -142,6 +160,9 @@ impl Default for TriggerScript {
             is_active: false,
             is_paused: false,
             marked_for_cleanup: false,
+            active_triggers: Vec::new(),
+            externals: TriggerExternals::default(),
+            pending_invalid_entities: Vec::new(),
         }
     }
 }
@@ -207,38 +228,108 @@ impl TriggerScript {
         }
     }
 
-    /// Activate this script.
+    /// Activate this script and its start-active triggers in trigger order.
+    ///
+    /// This follows `BTriggerManager_activateScript`.
     pub fn activate(&mut self, current_time: u32) {
         self.is_active = true;
         self.marked_for_cleanup = false;
-
-        // Activate all triggers that should start active
-        for trigger in &mut self.triggers {
-            if trigger.start_active {
-                trigger.on_activated(current_time);
-            }
+        let start_active = self
+            .triggers
+            .iter()
+            .filter(|trigger| trigger.start_active)
+            .map(|trigger| trigger.id)
+            .collect::<Vec<_>>();
+        for trigger_id in start_active {
+            self.activate_trigger(trigger_id, current_time);
         }
     }
 
-    /// Deactivate this script.
-    pub fn deactivate(&mut self) {
-        self.is_active = false;
-        for trigger in &mut self.triggers {
-            trigger.on_deactivated();
-        }
-    }
-
-    /// Activate a specific trigger.
+    /// Activate a trigger.
+    ///
+    /// This follows `BTriggerScript_activateTrigger`. The activation time changes also when the
+    /// trigger is already active. A newly active trigger goes to the end of the active list.
     pub fn activate_trigger(&mut self, trigger_id: TriggerId, current_time: u32) {
-        if let Some(trigger) = self.get_trigger_mut(trigger_id) {
-            trigger.on_activated(current_time);
+        let Some(trigger) = self.get_trigger_mut(trigger_id) else {
+            return;
+        };
+        trigger.activated_time = current_time;
+        if !self.active_triggers.contains(&trigger_id) {
+            self.active_triggers.push(trigger_id);
         }
     }
 
-    /// Deactivate a specific trigger.
+    /// Deactivate a trigger and remove it from the active list.
     pub fn deactivate_trigger(&mut self, trigger_id: TriggerId) {
-        if let Some(trigger) = self.get_trigger_mut(trigger_id) {
-            trigger.on_deactivated();
+        self.active_triggers
+            .retain(|active_id| *active_id != trigger_id);
+    }
+
+    /// Return whether a trigger is active.
+    #[must_use]
+    pub fn is_trigger_active(&self, trigger_id: TriggerId) -> bool {
+        self.active_triggers.contains(&trigger_id)
+    }
+
+    /// Return the active triggers in activation order.
+    #[must_use]
+    pub fn active_triggers(&self) -> &[TriggerId] {
+        &self.active_triggers
+    }
+
+    /// Stop the script after its current update (`Shutdown`, retail effect case `0x38`).
+    pub(super) fn shut_down(&mut self) {
+        self.marked_for_cleanup = true;
+        self.active_triggers.clear();
+    }
+
+    /// Record a destroyed entity, or remove it now if `updating` is true.
+    ///
+    /// This follows `BTriggerScript_invalidateEntityID`. An inactive script ignores the ID.
+    pub(super) fn invalidate_entity(&mut self, entity_id: EntityId, updating: bool) {
+        if !self.is_active {
+            return;
+        }
+        if updating {
+            self.remove_entity_from_lists(entity_id);
+        } else {
+            self.pending_invalid_entities.push(entity_id);
+        }
+    }
+
+    /// Remove the recorded destroyed entities from the list variables.
+    pub(super) fn flush_invalid_entities(&mut self) {
+        let pending = std::mem::take(&mut self.pending_invalid_entities);
+        for entity_id in pending {
+            self.remove_entity_from_lists(entity_id);
+        }
+    }
+
+    /// Return the destroyed entity IDs that the next update removes.
+    #[must_use]
+    pub fn pending_invalid_entities(&self) -> &[EntityId] {
+        &self.pending_invalid_entities
+    }
+
+    /// Remove the first copy of a unit ID from each non-null unit list, or of a squad ID from
+    /// each non-null squad list. Retail keeps the per-type lists only for `UnitList` and
+    /// `SquadList` variables.
+    fn remove_entity_from_lists(&mut self, entity_id: EntityId) {
+        let list_type = match entity_id.class() {
+            Some(EntityClass::Unit) => VarType::UnitList,
+            Some(EntityClass::Squad) => VarType::SquadList,
+            _ => return,
+        };
+        for variable in self.variables.values_mut() {
+            if variable.var_type != list_type || variable.is_null() {
+                continue;
+            }
+            if let TriggerValue::UnitList(values) | TriggerValue::SquadList(values) =
+                &mut variable.value
+                && let Some(index) = values.iter().position(|value| *value == entity_id)
+            {
+                values.remove(index);
+            }
         }
     }
 }

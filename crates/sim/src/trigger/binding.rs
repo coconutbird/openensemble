@@ -67,7 +67,7 @@ impl<'a> Bindings<'a> {
         let variable_id = self.variable_id(signature_id)?;
         script
             .get_variable(variable_id)
-            .is_some_and(|variable| !variable.is_null)
+            .is_some_and(|variable| !variable.is_null())
             .then_some(variable_id)
     }
 
@@ -79,7 +79,7 @@ impl<'a> Bindings<'a> {
         let variable_id = self.variable_id(signature_id)?;
         script
             .get_variable(variable_id)
-            .filter(|variable| !variable.is_null)
+            .filter(|variable| !variable.is_null())
             .map(|variable| &variable.value)
     }
 }

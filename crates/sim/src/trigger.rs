@@ -2,6 +2,7 @@
 //!
 //! `VanillaLoader` parses the `TriggerSystem` nodes of a scenario XMB into a `TriggerScript`.
 //! `TriggerEngine` runs the scripts deterministically in the fixed simulation tick.
+//! `TriggerScriptLibrary` keeps the parsed script files that the engine can launch.
 
 mod ai_analysis;
 mod binding;
@@ -12,6 +13,8 @@ mod definition;
 mod effect;
 mod effects;
 mod engine;
+mod externals;
+mod library;
 mod loader;
 mod script;
 mod value;
@@ -23,6 +26,8 @@ pub use condition::{Condition, ConditionType};
 pub use definition::{ConditionMode, Trigger};
 pub use effect::{Effect, EffectType};
 pub use engine::{ConditionResult, TriggerEngine, TriggerUpdate};
+pub use externals::TriggerExternals;
+pub use library::{LibraryScript, TriggerScriptLibrary, referenced_script_files};
 pub use loader::{LoadError, LoadResult, TriggerLoadContext, VanillaLoader};
 pub use script::{ScriptType, TriggerScript, TriggerVar};
 pub use value::{

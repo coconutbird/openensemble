@@ -37,6 +37,7 @@ pub(super) fn execute(
         }
         EffectType::SetMinimapSkirtMirroring => set_minimap_skirt_mirroring(effect, script, world),
         EffectType::LockPlayerUser => set_user_lock(effect, script, world),
+        EffectType::ShowMessage => show_message(effect, script, world),
         _ => return None,
     };
     Some(outcome)
@@ -334,6 +335,49 @@ fn set_user_lock(effect: &Effect, script: &TriggerScript, world: &mut World) -> 
         return EffectOutcome::Skipped;
     };
     world.set_player_user_lock(player_id, script.id, lock);
+    EffectOutcome::Presentation
+}
+
+/// `ShowMessage` (904, `BTriggerEffect_teShowMessage`).
+///
+/// Signature 5 is the string ID and signature 6 the time in milliseconds. Retail reads both
+/// without a null check. A non-null signature 3 is the sound, and then a non-null signature 4
+/// tells if the sound goes into the queue. The targets are the list in signature 2 and the
+/// player in signature 1. Without targets, every user sees the message.
+fn show_message(effect: &Effect, script: &TriggerScript, world: &mut World) -> EffectOutcome {
+    let raw = |slot| {
+        effect
+            .variable_id(slot)
+            .and_then(|variable_id| script.get_variable(variable_id))
+            .map(|variable| &variable.value)
+    };
+    let Some(TriggerValue::Int(string_id)) = raw(5) else {
+        return EffectOutcome::Skipped;
+    };
+    let duration_ms = match raw(6) {
+        Some(TriggerValue::Time(value)) => *value,
+        Some(TriggerValue::Int(value)) => value.cast_unsigned(),
+        _ => return EffectOutcome::Skipped,
+    };
+    let (sound, queue_sound) = match optional_value(effect, script, 3) {
+        Some(TriggerValue::String(sound)) => (
+            Some(sound.clone()),
+            bool_value(effect, script, 4).unwrap_or(false),
+        ),
+        _ => (None, false),
+    };
+    let Ok(players) = player_targets(effect, script, 1, 2) else {
+        return EffectOutcome::Skipped;
+    };
+    for player_id in user_targets_or_all(world, players) {
+        world.show_trigger_message(
+            player_id,
+            *string_id,
+            sound.clone(),
+            queue_sound,
+            duration_ms,
+        );
+    }
     EffectOutcome::Presentation
 }
 

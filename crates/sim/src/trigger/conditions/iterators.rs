@@ -75,7 +75,6 @@ pub(super) fn next_location(condition: &Condition, script: &mut TriggerScript) -
         return false;
     };
     output.value = TriggerValue::Vector(next);
-    output.is_null = false;
     true
 }
 
@@ -124,7 +123,6 @@ fn next_entity(condition: &Condition, script: &mut TriggerScript, kind: Iterator
         IteratorKind::Squad => TriggerValue::Squad(next),
         IteratorKind::Object => TriggerValue::Object(next),
     };
-    output.is_null = false;
     true
 }
 
@@ -135,7 +133,7 @@ fn source_values(
 ) -> Option<&[EntityId]> {
     let variable = script
         .get_variable(source_id)
-        .filter(|variable| !variable.is_null)?;
+        .filter(|variable| !variable.is_null())?;
     match (kind, &variable.value) {
         (IteratorKind::Unit, TriggerValue::UnitList(values))
         | (IteratorKind::Squad, TriggerValue::SquadList(values))
@@ -201,7 +199,6 @@ fn next_scalar(
         ScalarIteratorKind::Player => TriggerValue::Player(next),
         ScalarIteratorKind::Team => TriggerValue::Team(next),
     };
-    output.is_null = false;
     true
 }
 
@@ -209,7 +206,7 @@ fn next_scalar(
 fn iterator_value(script: &TriggerScript, iterator_id: u32) -> Option<&TriggerIterator> {
     script
         .get_variable(iterator_id)
-        .filter(|variable| !variable.is_null)
+        .filter(|variable| !variable.is_null())
         .and_then(|variable| match &variable.value {
             TriggerValue::Iterator(iterator) => Some(iterator),
             _ => None,
@@ -234,7 +231,7 @@ fn scalar_source_values(
 ) -> Option<&[i32]> {
     let variable = script
         .get_variable(source_id)
-        .filter(|variable| !variable.is_null)?;
+        .filter(|variable| !variable.is_null())?;
     match (kind, &variable.value) {
         (ScalarIteratorKind::Player, TriggerValue::PlayerList(values))
         | (ScalarIteratorKind::Team, TriggerValue::TeamList(values)) => Some(values),
@@ -245,7 +242,7 @@ fn scalar_source_values(
 fn vector_source_values(script: &TriggerScript, source_id: u32) -> Option<&[TriggerVec3]> {
     let variable = script
         .get_variable(source_id)
-        .filter(|variable| !variable.is_null)?;
+        .filter(|variable| !variable.is_null())?;
     match &variable.value {
         TriggerValue::LocationList(values) | TriggerValue::VectorList(values) => Some(values),
         _ => None,

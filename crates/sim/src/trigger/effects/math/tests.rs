@@ -232,7 +232,8 @@ fn as_float_uses_retail_versioned_priority_and_zero_default() {
         TriggerValue::Float(7.0)
     );
 
-    script.get_variable_mut(1).unwrap().is_null = true;
+    let nulled = script.variables.remove(&1).unwrap();
+    script.add_variable(nulled.null());
     assert_eq!(as_float(&effect, &mut script), EffectOutcome::Applied);
     assert_eq!(
         script.get_variable(4).unwrap().value,

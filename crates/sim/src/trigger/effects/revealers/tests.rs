@@ -177,7 +177,8 @@ fn version_three_empty_or_failed_creation_still_writes_outputs_and_unknown_versi
     let mut world = world();
     let mut script = script();
     script.get_variable_mut(1).unwrap().value = TriggerValue::Player(99);
-    script.get_variable_mut(2).unwrap().is_null = true;
+    let nulled = script.variables.remove(&2).unwrap();
+    script.add_variable(nulled.null());
     script.get_variable_mut(8).unwrap().value = TriggerValue::VectorList(Vec::new());
 
     assert_eq!(

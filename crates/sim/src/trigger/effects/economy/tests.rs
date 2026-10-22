@@ -159,14 +159,16 @@ fn get_cost_honors_input_priority_and_player_squad_transforms() {
     );
     assert_amounts(cost(&script, 5).amounts(), [0.0, 0.0, 60.0, 0.0]);
 
-    script.get_variable_mut(2).unwrap().is_null = true;
+    let nulled = script.variables.remove(&2).unwrap();
+    script.add_variable(nulled.null());
     assert_eq!(
         get_cost(&effect, &mut script, &world, Some(&database)),
         EffectOutcome::Applied
     );
     assert_amounts(cost(&script, 5).amounts(), [0.0, 0.0, 0.0, 9.0]);
 
-    script.get_variable_mut(3).unwrap().is_null = true;
+    let nulled = script.variables.remove(&3).unwrap();
+    script.add_variable(nulled.null());
     assert_eq!(
         get_cost(&effect, &mut script, &world, Some(&database)),
         EffectOutcome::Applied

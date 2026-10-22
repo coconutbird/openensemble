@@ -26,6 +26,7 @@ mod math;
 mod objectives;
 mod orders;
 mod ownership;
+mod players;
 mod powers;
 mod presentation;
 mod proto_data;
@@ -33,6 +34,7 @@ mod rally_points;
 mod relationships;
 mod resources;
 mod revealers;
+mod scripts;
 mod spatial;
 mod support;
 mod timers;
@@ -43,7 +45,7 @@ mod veterancy;
 
 pub(super) use dispatch::execute_effect;
 
-use super::{Effect, EffectType, TriggerId, TriggerScript, TriggerValue, VarId};
+use super::{Effect, EffectType, TriggerExternals, TriggerId, TriggerScript, TriggerValue, VarId};
 use crate::gameplay::GameplayCatalog;
 use crate::world::World;
 use pipeline::database::hw1::Database;
@@ -56,10 +58,22 @@ pub(super) enum EffectOutcome {
     Unsupported(u16),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Work that only the engine can do, because it changes the script schedule.
+#[derive(Debug, Clone, PartialEq)]
 pub(super) enum ControlAction {
     Activate(TriggerId),
     Deactivate(TriggerId),
+    /// `Shutdown` (56): delete the script after its update.
+    Shutdown,
+    /// `LaunchScript` (392): create and activate a script from a file.
+    Launch(ScriptLaunch),
+}
+
+/// A request to launch a trigger script file with external inputs.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct ScriptLaunch {
+    pub(super) file_name: String,
+    pub(super) externals: TriggerExternals,
 }
 
 fn execute_control_effect(
@@ -71,6 +85,8 @@ fn execute_control_effect(
         EffectType::TriggerDeactivate => {
             read_trigger(effect, script).map(ControlAction::Deactivate)
         }
+        EffectType::Shutdown => Some(ControlAction::Shutdown),
+        EffectType::LaunchScript => return Some(scripts::launch(effect, script)),
         _ => return None,
     };
     let outcome = if control.is_some() {
@@ -116,9 +132,9 @@ fn copy_value(effect: &Effect, script: &mut TriggerScript) -> EffectOutcome {
     let Some(destination_id) = effect.variable_id(2) else {
         return EffectOutcome::Skipped;
     };
+    // Retail copies the value without a null check (`BTriggerEffect_fire` case `0x55`).
     let Some(value) = script
         .get_variable(source_id)
-        .filter(|variable| !variable.is_null)
         .map(|variable| variable.value.clone())
     else {
         return EffectOutcome::Skipped;
@@ -135,7 +151,6 @@ pub(super) fn write_value(
         return EffectOutcome::Skipped;
     };
     destination.value = value;
-    destination.is_null = false;
     EffectOutcome::Applied
 }
 

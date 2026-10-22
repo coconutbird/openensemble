@@ -52,16 +52,8 @@ impl World {
         hash_squads(&mut checksum, &self.squads);
         hash_projectiles(&mut checksum, &self.projectiles);
         hash_bases(&mut checksum, &self.bases);
-        checksum.hash_u32(
-            u32::try_from(self.pending_building_command_events.len()).unwrap_or(u32::MAX),
-        );
-        for event in &self.pending_building_command_events {
-            checksum.hash_u32(event.state_ref.script_id);
-            checksum.hash_u32(event.state_ref.variable_id);
-            hash_optional_entity_id(&mut checksum, event.trained_squad);
-            checksum.hash_u32(u32::from(event.finish));
-        }
-        self.trigger_engine.hash_state(&mut checksum);
+        self.hash_player_state_changes(&mut checksum);
+        self.triggers.hash_state(&mut checksum);
         checksum.value()
     }
 
@@ -167,6 +159,7 @@ fn hash_players(checksum: &mut SyncChecksum, players: &[Player]) {
         player.hash_power_state(checksum);
         player.research.hash_state(checksum);
         player.hash_squad_ai_state(checksum);
+        player.hash_end_state(checksum);
     }
 }
 

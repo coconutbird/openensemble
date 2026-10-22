@@ -181,17 +181,17 @@ impl VanillaLoader {
             var.name = name_attr.value_string();
         }
 
-        // Check if null - leave value as default
-        if let Some(is_null_attr) = node.get_attribute("IsNull")
+        // Retail creates each variable with the default value of its type. For a null variable
+        // it does not read the authored text (`BTriggerScript_loadTriggerVars`). Parse empty text
+        // for a null variable, so that it keeps its runtime type instead of `Bool(false)`.
+        let text = if let Some(is_null_attr) = node.get_attribute("IsNull")
             && is_null_attr.value_string().eq_ignore_ascii_case("true")
         {
-            var.is_null = true;
-            return Ok(var);
-        }
-
-        // Parse even empty text so non-null containers and outputs retain their
-        // authored runtime type instead of falling back to `Bool(false)`.
-        let text = node.text_string();
+            var = var.null();
+            String::new()
+        } else {
+            node.text_string()
+        };
         var.value = parse_var_value(&text, var_type, context);
 
         Ok(var)
@@ -563,6 +563,11 @@ fn parse_var_value(text: &str, var_type: VarType, context: TriggerLoadContext<'_
         VarType::Integer => TriggerValue::Int(text.parse().unwrap_or(0)),
         VarType::IntegerList => TriggerValue::IntegerList(parse_i32_list(text)),
         VarType::Float => TriggerValue::Float(text.parse().unwrap_or(0.0)),
+        VarType::FloatList => TriggerValue::FloatList(
+            text.split(',')
+                .filter_map(|token| token.trim().parse().ok())
+                .collect(),
+        ),
         VarType::Time => TriggerValue::Time(text.parse().unwrap_or(0)),
         VarType::Operator => TriggerValue::Int(parse_compare_operator(text)),
         VarType::MathOperator => TriggerValue::Int(parse_math_operator(text)),

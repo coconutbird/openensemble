@@ -164,7 +164,6 @@ fn update_v2_object_list(effect: &Effect, script: &mut TriggerScript, created: E
     if !values.contains(&created) {
         values.push(created);
     }
-    variable.is_null = false;
 }
 
 fn update_v3_object_list(effect: &Effect, script: &mut TriggerScript, created: &[EntityId]) {
@@ -182,7 +181,6 @@ fn update_v3_object_list(effect: &Effect, script: &mut TriggerScript, created: &
         values.clear();
     }
     values.extend_from_slice(created);
-    variable.is_null = false;
 }
 
 #[cfg(test)]

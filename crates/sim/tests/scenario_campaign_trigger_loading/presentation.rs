@@ -112,7 +112,7 @@ pub(super) fn assert_hint_callout_state(scenario: &str, loaded: &LoadedGameScena
             .simulation
             .world
             .trigger_engine()
-            .get_script(1)
+            .get_script(0)
             .and_then(|script| script.get_variable(10301))
             .map(|variable| &variable.value);
         assert_eq!(output, Some(&TriggerValue::Int(0)));

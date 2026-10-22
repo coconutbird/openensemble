@@ -155,7 +155,7 @@ gaps are in the execution.
 | Fog of war and visibility | `BWorldVisibility_loadConfig` @ `0x1406d4d10`, `fogOfWar.xml` `0x1411daa68` | Partial | `world/visibility.rs` tests unit sight circles and revealers on each query. No visibility grid, explored map or terrain occlusion. |
 | Resources, population, technology | `BTechTree_save` @ `0x140417190` | Implemented | `world/resources.rs`, `world/technology.rs`, `player/` |
 | Tribute | `MenuShowTribute` event | Missing | Commands are not executed. |
-| Player end states | `PlayerResignEvent` | Missing | No world code sets `PlayerState::Resigned`, `Defeated` or `Won`. |
+| Player end states | `PlayerResignEvent`, `BPlayer_setPlayerState` `0x1402F0610` | Partial | `World::set_player_state` and trigger effect 130 set the state, the end time and the unit cleanup flag, and queue a `PlayerStateChange`. Nothing consumes the queue yet: no game over, no unit cleanup (`BWorld_updatePlayerUnitCleanup` `0x1405D43C0`), no AI shutdown. |
 | Computer AI | `BAIManager` `0x1411b6068`, `BAIMission` `0x141197658`, `BAITopic` `0x1411975e0`, `BBidManager` `0x1411b6058`, `aidifficultysettings.xml` `0x141196b38` | Missing | `player/squad_ai.rs` keeps only the squad-AI roster that triggers read. |
 | Knowledge base | `BKBBase` `0x1411976c8`, `BKBSquad` `0x141197668` | Missing | |
 | Platoons, armies, dopples | `BPlatoon` `0x1411b6280`, `BArmy` `0x1411b6028`, `Dopples` `0x1411c88c8` | Missing | `entity_id.rs` reserves the entity classes. |

@@ -59,6 +59,7 @@ mod orders;
 mod ownership;
 mod parking_lots;
 mod persistent_spawns;
+mod player_states;
 mod powers;
 mod presentation;
 mod production;
@@ -126,7 +127,7 @@ pub use powers::{
 pub use presentation::{
     CameraControlPermissions, CameraDirective, CameraShake, HintCallout, HintCalloutAnchor,
     HudItem, ObjectivePointer, PlayerPresentationState, RumbleMotor, RumbleRequest,
-    ScreenFadeOverlay, ScreenFadeSequence,
+    ScreenFadeOverlay, ScreenFadeSequence, TriggerMessage,
 };
 pub use production::ProductionUpdate;
 pub use research::{ResearchError, ResearchQueueResult, technology_prototype_id};
@@ -141,8 +142,6 @@ pub(crate) use transports::{
     TransportGroupPlan, TransportGroupRequest, average_transport_position, plan_transport_groups,
     transport_carrier_spacing,
 };
-
-use team::neutral_team_relations;
 
 /// Maximum supported players.
 pub const MAX_PLAYERS: usize = 8;
@@ -224,10 +223,10 @@ pub struct World {
     bases: BTreeMap<BaseId, Base>,
     /// Next candidate base number.
     next_base_id: u16,
-    /// Authoritative scenario and gameplay trigger scripts.
-    trigger_engine: crate::trigger::TriggerEngine,
-    /// Trigger-state writes deferred while their script is being evaluated.
-    pending_building_command_events: Vec<triggers::BuildingCommandEvent>,
+    /// Authoritative trigger scripts and the world events that wait for them.
+    triggers: triggers::WorldTriggers,
+    /// Player state changes that the game did not take yet.
+    player_state_changes: Vec<crate::player::PlayerStateChange>,
 }
 
 impl Default for World {
@@ -242,7 +241,7 @@ impl World {
     pub fn new() -> Self {
         Self {
             players: Vec::new(),
-            team_relations: neutral_team_relations(),
+            team_relations: team::neutral_team_relations(),
             coop: false,
             fog_of_war_enabled: true,
             black_map_cleared: false,
@@ -277,8 +276,8 @@ impl World {
             projectiles: EntityManager::new(EntityClass::Projectile),
             bases: BTreeMap::new(),
             next_base_id: 0,
-            trigger_engine: crate::trigger::TriggerEngine::new(),
-            pending_building_command_events: Vec::new(),
+            triggers: triggers::WorldTriggers::default(),
+            player_state_changes: Vec::new(),
         }
     }
 
@@ -389,7 +388,7 @@ impl World {
     pub fn remove_squad(&mut self, id: EntityId) -> Option<Squad> {
         self.prepare_remove_squad_actions(id);
         let squad = self.squads.remove(id)?;
-        self.remove_hint_callouts_for_entity(id);
+        self.release_removed_entity(id);
         for (_, other_squad) in self.squads.iter_mut() {
             other_squad.clear_teleporter_destination(id);
             other_squad.clear_join_reference(id);
@@ -507,7 +506,7 @@ impl World {
         self.detach_unit_socket_refs(id);
         self.remove_unit_goto_base_references(id);
         let unit = self.units.remove(id)?;
-        self.remove_hint_callouts_for_entity(id);
+        self.release_removed_entity(id);
         self.refund_production_for_removed_unit(&unit);
         if let Some(player) = self.get_player_mut(unit.base.player_id) {
             player.release_population(&unit.population_costs);

@@ -67,9 +67,6 @@ pub struct Trigger {
 
     /// Max evaluations per frame (0 = unlimited).
     pub evaluate_limit: u32,
-
-    /// Whether currently active.
-    pub is_active: bool,
 }
 
 impl Default for Trigger {
@@ -90,7 +87,6 @@ impl Default for Trigger {
             evaluate_frequency: 0,
             evaluate_count: 0,
             evaluate_limit: 0,
-            is_active: false,
         }
     }
 }
@@ -157,9 +153,6 @@ impl Trigger {
     /// Check if it's time to evaluate this trigger.
     #[must_use]
     pub fn time_to_evaluate(&self, current_time: u32) -> bool {
-        if !self.is_active {
-            return false;
-        }
         current_time >= self.next_evaluate_time
     }
 
@@ -167,17 +160,6 @@ impl Trigger {
     #[must_use]
     pub fn has_evaluations_remaining(&self) -> bool {
         self.evaluate_limit == 0 || self.evaluate_count < self.evaluate_limit
-    }
-
-    /// Called when the trigger is activated.
-    pub fn on_activated(&mut self, current_time: u32) {
-        self.is_active = true;
-        self.activated_time = current_time;
-    }
-
-    /// Called when the trigger is deactivated.
-    pub fn on_deactivated(&mut self) {
-        self.is_active = false;
     }
 
     /// Reset the per-frame evaluation count.

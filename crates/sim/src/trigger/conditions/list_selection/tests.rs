@@ -215,6 +215,75 @@ fn design_line_selection_preserves_typed_identity_and_empty_output() {
     );
 }
 
+/// `BTriggerCondition_tcCanRemoveOneLocation`: `First` and `Last` keep the order of the other
+/// values, and an empty list gives false.
+#[test]
+fn can_remove_one_location_takes_first_then_last() {
+    let mut world = World::new();
+    let points = [1.0, 2.0, 3.0].map(|x| TriggerVec3::new(x, 0.0, 0.0));
+    let mut script = selection_script(
+        VarType::VectorList,
+        TriggerValue::VectorList(points.to_vec()),
+        VarType::Vector,
+        TriggerValue::Vector(TriggerVec3::default()),
+    );
+    let condition = selection_condition(ConditionType::CanRemoveOneLocation);
+
+    assert!(can_remove_one_location(&condition, &mut script, &mut world));
+    assert_eq!(
+        script.get_variable(3).unwrap().value,
+        TriggerValue::Vector(points[0])
+    );
+    script.get_variable_mut(2).unwrap().value = TriggerValue::Int(1);
+    assert!(can_remove_one_location(&condition, &mut script, &mut world));
+    assert_eq!(
+        script.get_variable(3).unwrap().value,
+        TriggerValue::Vector(points[2])
+    );
+    assert_eq!(
+        script.get_variable(1).unwrap().value,
+        TriggerValue::VectorList(vec![points[1]])
+    );
+    assert!(can_remove_one_location(&condition, &mut script, &mut world));
+    assert!(!can_remove_one_location(
+        &condition,
+        &mut script,
+        &mut world
+    ));
+}
+
+/// `BTriggerCondition_tcCanRemoveOneFloat`: `Random` takes an index from the trigger random
+/// stream and moves the last value into the free slot. An unknown position gives false.
+#[test]
+fn can_remove_one_float_random_swaps_in_the_last_value() {
+    let mut world = World::with_seed(7);
+    let mut expected_world = World::with_seed(7);
+    let index = expected_world.trigger_random_index(3) as usize;
+    let mut expected = vec![10.0, 20.0, 30.0, 40.0];
+    let removed = expected.swap_remove(index);
+
+    let mut script = selection_script(
+        VarType::FloatList,
+        TriggerValue::FloatList(vec![10.0, 20.0, 30.0, 40.0]),
+        VarType::Float,
+        TriggerValue::Float(0.0),
+    );
+    script.get_variable_mut(2).unwrap().value = TriggerValue::Int(2);
+    let condition = selection_condition(ConditionType::CanRemoveOneFloat);
+    assert!(can_remove_one_float(&condition, &mut script, &mut world));
+    assert_eq!(
+        script.get_variable(3).unwrap().value,
+        TriggerValue::Float(removed)
+    );
+    assert_eq!(
+        script.get_variable(1).unwrap().value,
+        TriggerValue::FloatList(expected)
+    );
+
+    script.get_variable_mut(2).unwrap().value = TriggerValue::Int(3);
+    assert!(!can_remove_one_float(&condition, &mut script, &mut world));
+}
+
 fn selection_script(
     list_type: VarType,
     list: TriggerValue,

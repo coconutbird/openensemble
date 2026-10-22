@@ -48,8 +48,10 @@ fn get_child_units_clears_and_unique_adds_valid_children_in_retail_order() {
     );
     assert_eq!(unit_list(&script, 3), &[first, second, third]);
 
-    script.get_variable_mut(1).unwrap().is_null = true;
-    script.get_variable_mut(2).unwrap().is_null = true;
+    let nulled = script.variables.remove(&1).unwrap();
+    script.add_variable(nulled.null());
+    let nulled = script.variables.remove(&2).unwrap();
+    script.add_variable(nulled.null());
     assert_eq!(
         get_child_units(&effect, &mut script, &world),
         EffectOutcome::Applied

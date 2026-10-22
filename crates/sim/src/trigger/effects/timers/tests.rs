@@ -101,3 +101,49 @@ fn unsupported_create_version_does_not_mutate_state_or_output() {
     assert!(world.game_timers().next().is_none());
     assert_eq!(script.get_variable(4).unwrap().value, TriggerValue::Int(-1));
 }
+
+/// `BTriggerEffect_teTimerSetPaused`: the active timer with the ID in signature 1 gets the
+/// paused bit from signature 2. A paused timer does not advance.
+#[test]
+fn set_paused_stops_and_resumes_the_timer() {
+    assert_eq!(EffectType::from_u16(781), Some(EffectType::TimerSetPaused));
+    let mut world = World::new();
+    world.init_players(2);
+    let mut script = timer_script();
+    assert_eq!(
+        create(&create_effect(5), &mut script, &mut world),
+        EffectOutcome::Applied
+    );
+    let TriggerValue::Int(timer_id) = script.get_variable(4).unwrap().value else {
+        panic!("timer ID output");
+    };
+    add(&mut script, 9, VarType::Bool, TriggerValue::Bool(true));
+    add(
+        &mut script,
+        10,
+        VarType::Integer,
+        TriggerValue::Int(timer_id),
+    );
+    let pause = Effect::new(2, EffectType::TimerSetPaused)
+        .with_input_at(1, 10)
+        .with_input_at(2, 9);
+    assert_eq!(
+        set_paused(&pause, &script, &mut world),
+        EffectOutcome::Applied
+    );
+    assert!(world.game_timer(timer_id).unwrap().is_paused());
+
+    world.game_time_ms = 1_000;
+    world.update_game_timers();
+    assert_eq!(
+        world.game_timer(timer_id).unwrap().current_time_ms(),
+        60_000
+    );
+
+    script.get_variable_mut(9).unwrap().value = TriggerValue::Bool(false);
+    assert_eq!(
+        set_paused(&pause, &script, &mut world),
+        EffectOutcome::Applied
+    );
+    assert!(!world.game_timer(timer_id).unwrap().is_paused());
+}

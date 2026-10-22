@@ -130,7 +130,7 @@ fn assert_phx04_group_transports(loaded: &LoadedGameScenario) {
     let world = &loaded.simulation.world;
     let script = world
         .trigger_engine()
-        .get_script(1)
+        .get_script(0)
         .expect("PHXscn04 scenario script");
     let created = match &script
         .get_variable(21_977)
@@ -215,7 +215,7 @@ fn assert_phx08_attack_move_spawns(loaded: &LoadedGameScenario) {
     let world = &loaded.simulation.world;
     let script = world
         .trigger_engine()
-        .get_script(1)
+        .get_script(0)
         .expect("PHXscn08 scenario trigger script");
     for output_id in [13489, 14601] {
         let squads = script
@@ -251,7 +251,7 @@ fn assert_timer_state(scenario: &str, loaded: &LoadedGameScenario) {
         .simulation
         .world
         .trigger_engine()
-        .get_script(1)
+        .get_script(0)
         .and_then(|script| script.get_variable(output_id))
         .map(|variable| &variable.value);
     assert_eq!(
@@ -400,7 +400,7 @@ fn assert_design_line_state(scenario: &str, loaded: &LoadedGameScenario) {
 
     let output = world
         .trigger_engine()
-        .get_script(1)
+        .get_script(0)
         .and_then(|script| script.get_variable(18907))
         .map(|variable| &variable.value)
         .expect("PHXscn10 AlphaToLZ trigger output");
@@ -474,7 +474,7 @@ fn assert_objective_state(scenario: &str, loaded: &LoadedGameScenario) {
     assert_eq!(objective.current_count(), current_count);
     let Some(output) = world
         .trigger_engine()
-        .get_script(1)
+        .get_script(0)
         .and_then(|script| script.get_variable(output_id))
         .map(|variable| &variable.value)
     else {
@@ -513,7 +513,7 @@ fn assert_entity_visual_state(scenario: &str, loaded: &LoadedGameScenario) {
             );
             let output = world
                 .trigger_engine()
-                .get_script(1)
+                .get_script(0)
                 .and_then(|script| script.get_variable(output_id))
                 .map(|variable| &variable.value);
             assert_eq!(output, Some(&TriggerValue::Time(2_000)));
@@ -570,7 +570,7 @@ fn assert_phx04_location_icons(loaded: &LoadedGameScenario) {
     let world = &loaded.simulation.world;
     let script = world
         .trigger_engine()
-        .get_script(1)
+        .get_script(0)
         .expect("PHXscn04 scenario trigger script");
     let mut outputs = Vec::new();
     for output_id in [19593, 19594] {
@@ -595,7 +595,7 @@ fn assert_phx14_attached_icons(loaded: &LoadedGameScenario) {
     let world = &loaded.simulation.world;
     let Some(TriggerValue::Squad(squad_id)) = world
         .trigger_engine()
-        .get_script(1)
+        .get_script(0)
         .and_then(|script| script.get_variable(2140))
         .map(|variable| &variable.value)
     else {
@@ -661,7 +661,7 @@ impl CampaignCoverage {
         for variable in engine
             .scripts()
             .flat_map(|(_, script)| script.variables.values())
-            .filter(|variable| !variable.is_null)
+            .filter(|variable| !variable.is_null())
         {
             match variable.var_type {
                 VarType::TechDataCommandType => {
