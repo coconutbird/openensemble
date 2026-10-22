@@ -247,3 +247,35 @@ fn as_float_uses_retail_versioned_priority_and_zero_default() {
         TriggerValue::Float(0.0)
     );
 }
+
+#[test]
+fn as_time_prefers_the_integer_then_truncates_the_float() {
+    let mut script = TriggerScript::new(1);
+    script.add_variable(TriggerVar::new(1, VarType::Integer).with_value(TriggerValue::Int(-2)));
+    script.add_variable(TriggerVar::new(2, VarType::Float).with_value(TriggerValue::Float(4500.9)));
+    script.add_variable(TriggerVar::new(3, VarType::Time).with_value(TriggerValue::Time(7)));
+    let effect = Effect::new(1, EffectType::AsTime)
+        .with_input_at(1, 1)
+        .with_input_at(2, 2)
+        .with_output_at(3, 3);
+    let time = |script: &TriggerScript| script.get_variable(3).unwrap().value.clone();
+
+    assert_eq!(as_time(&effect, &mut script), EffectOutcome::Applied);
+    assert_eq!(time(&script), TriggerValue::Time((-2_i32).cast_unsigned()));
+
+    let nulled = script.variables.remove(&1).unwrap();
+    script.add_variable(nulled.null());
+    assert_eq!(as_time(&effect, &mut script), EffectOutcome::Applied);
+    assert_eq!(time(&script), TriggerValue::Time(4500));
+
+    for (float, expected) in [(f32::NAN, i32::MIN), (3.0e10, i32::MIN), (-1.5, -1)] {
+        script.get_variable_mut(2).unwrap().value = TriggerValue::Float(float);
+        assert_eq!(as_time(&effect, &mut script), EffectOutcome::Applied);
+        assert_eq!(time(&script), TriggerValue::Time(expected.cast_unsigned()));
+    }
+
+    let nulled = script.variables.remove(&2).unwrap();
+    script.add_variable(nulled.null());
+    assert_eq!(as_time(&effect, &mut script), EffectOutcome::Applied);
+    assert_eq!(time(&script), TriggerValue::Time(0));
+}

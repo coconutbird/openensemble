@@ -308,6 +308,8 @@ pub enum EffectType {
     AsString = 181,
     /// Converts a value to a float.
     AsFloat = 358,
+    /// Converts an integer or a float to a time.
+    AsTime = 716,
     /// Converts a value to a count.
     AsCount = 498,
 

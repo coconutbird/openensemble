@@ -155,6 +155,28 @@ pub(super) fn as_float(effect: &Effect, script: &mut TriggerScript) -> EffectOut
     write_value(script, output_id, TriggerValue::Float(result))
 }
 
+/// Write a time from the integer input, or else from the float input (retail case `0x2CC`).
+///
+/// A used integer gives its bits. Else a used float gives `(int)float` (`cvttss2si`: a NaN or an
+/// out-of-range value gives `i32::MIN`). Else the time is 0. Every version runs this code.
+pub(super) fn as_time(effect: &Effect, script: &mut TriggerScript) -> EffectOutcome {
+    let Some(output_id) = used_variable_id(effect, script, 3) else {
+        return EffectOutcome::Skipped;
+    };
+    let result = if variable_is_used(effect, script, 1) {
+        integer_at(effect, script, 1).unwrap_or(0)
+    } else if variable_is_used(effect, script, 2) {
+        float_at(effect, script, 2).map_or(0, |value| value.to_i32().unwrap_or(i32::MIN))
+    } else {
+        0
+    };
+    write_value(
+        script,
+        output_id,
+        TriggerValue::Time(result.cast_unsigned()),
+    )
+}
+
 pub(super) fn math_time(effect: &Effect, script: &mut TriggerScript) -> EffectOutcome {
     let Some(first) = time_at(effect, script, 1) else {
         return EffectOutcome::Skipped;

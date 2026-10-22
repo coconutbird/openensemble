@@ -233,6 +233,7 @@ fn execute_collection_effect(
         EffectType::LerpTime => math::lerp_time(effect, script),
         EffectType::MathFloat => math::math_float(effect, script),
         EffectType::AsFloat => math::as_float(effect, script),
+        EffectType::AsTime => math::as_time(effect, script),
         EffectType::MathTime => math::math_time(effect, script),
         EffectType::RandomTime => math::random_time(effect, script, world),
         EffectType::BuildingCommand => commands::building_command(effect, script, world, database),

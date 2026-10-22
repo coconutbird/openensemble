@@ -143,8 +143,10 @@ fn blood_gulch_1v1_runs_minutes_without_an_early_defeat() {
     let mut built_at = [None; 2];
     let mut unsupported_effects = std::collections::BTreeMap::<u16, u32>::new();
     let mut unsupported_conditions = std::collections::BTreeMap::<u16, u32>::new();
+    let mut loop_guard_ticks = 0_u32;
     while loaded.simulation.world.game_time() < RUN_MS {
         let tick = clock.tick_with_scenario(&mut loaded.simulation, database);
+        loop_guard_ticks += u32::from(tick.triggers.infinite_loop_guard_reached);
         for raw_type in tick.triggers.unsupported_effect_types {
             *unsupported_effects.entry(raw_type).or_default() += 1;
         }
@@ -202,6 +204,12 @@ fn blood_gulch_1v1_runs_minutes_without_an_early_defeat() {
             );
         }
     }
+    // A script that loops until the guard stops it points to a missing effect or condition. The
+    // skirmish AI script looped in each update until the sim had `AsTime` (716).
+    assert_eq!(
+        loop_guard_ticks, 0,
+        "ticks whose trigger update reached the loop guard"
+    );
     for ((_, build_points), built) in hqs.iter().zip(built_at) {
         // `BUnitActionBuilding_update` @ `0x1404F4B70` advances the unbuilt HQ by the elapsed
         // seconds against its authored `BuildPoints`; no work-rate or quick-build scalar applies.
@@ -220,8 +228,13 @@ fn blood_gulch_1v1_runs_minutes_without_an_early_defeat() {
         );
     }
     assert_eq!(world.game_result(), None);
-    // `SkirmishWorld` ends once its last trigger deactivates (`BTriggerScript_update`). The
-    // player and AI scripts stay resident.
+    // `SkirmishWorld` collects the creep units at 1 s and checks them every 10 s. It defeats the
+    // creep player and ends only when none of them is left. No player attacks the creeps here,
+    // so the world script stays resident with the player and AI scripts.
+    assert!(
+        world.units.iter().any(|(_, unit)| unit.base.player_id == 3),
+        "the Creeps scripts spawn creep units"
+    );
     let launched = script_list(world)
         .into_iter()
         .filter(|(name, _)| {
@@ -233,6 +246,7 @@ fn blood_gulch_1v1_runs_minutes_without_an_early_defeat() {
     assert_eq!(
         launched,
         [
+            ("SkirmishWorld.triggerscript".to_owned(), None),
             ("SkirmishPlayer.triggerscript".to_owned(), Some(1)),
             ("SkirmishPlayer.triggerscript".to_owned(), Some(2)),
             ("SkirmishAI_raw_.triggerscript".to_owned(), Some(2)),

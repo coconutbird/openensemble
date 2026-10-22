@@ -166,7 +166,9 @@ effect of the running script removed the entity, that script removes the ID at o
 that starts later does not get the ID.
 
 `EvalLimit` limits how many times a trigger evaluates in one tick. The engine also stops the
-update after 50,000 evaluations and sets `TriggerUpdate::infinite_loop_guard_reached`.
+update after 50,000 evaluations and sets `TriggerUpdate::infinite_loop_guard_reached`. The scripts
+after the looping script then do not run in that update. Thus a script that loops in each update,
+for example because of a missing effect, also stops each script that starts after it.
 
 ## Results and reporting
 
@@ -483,7 +485,7 @@ them.
 These DBIDs occur only in `data/triggerscripts`. They become important when the sim loads those
 scripts.
 
-Effects (125 DBIDs):
+Effects (124 DBIDs):
 
 - AI: 32 DBIDs, 776 uses. `AIFactoidSubmit` (993), `AIRemoveFromMissions` (612),
   `AITopicLotto` (625), `AIAnalyzeKBSquadList` (673), `AISetPlayerAssetModifier` (1035),
@@ -500,9 +502,9 @@ Effects (125 DBIDs):
 - DLC game modes: 7 DBIDs, 74 uses. `TugOfWarMarkPlayersAsTrailing` (1071), `setCTFCount`
   (1083), `GetCTFFlag` (1074), `GetCTFFlagCarrier` (1075), `TowSetVisible` (1079), `TowSetScore`
   (1080), `ClearCTFFlagOrCarrier` (1082).
-- Other: 50 DBIDs, 751 uses. `ModifyProtoSquadData` (829), `PowerChargeUseOf` (77),
-  `AttachmentAddObject` (363), `AsTime` (716), `GetDistanceUnitLocation` (111),
-  `RefCountSquadRemove` (317), `MathLocation` (295), `TableLoad` (796), and 42 more.
+- Other: 49 DBIDs, 722 uses. `ModifyProtoSquadData` (829), `PowerChargeUseOf` (77),
+  `AttachmentAddObject` (363), `GetDistanceUnitLocation` (111), `RefCountSquadRemove` (317),
+  `MathLocation` (295), `TableLoad` (796), and 42 more.
 
 Conditions (51 DBIDs):
 
