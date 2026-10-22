@@ -1,5 +1,6 @@
 //! Retail resource and player-technology trigger effects.
 
+use super::support::used_variable_id;
 use super::{EffectOutcome, value_at, write_value};
 use crate::player::Resources;
 use crate::trigger::{Effect, TriggerScript, TriggerValue};
@@ -250,18 +251,6 @@ fn player_id_at(effect: &Effect, script: &TriggerScript, signature_id: u16) -> O
     value_at(effect, script, signature_id)
         .and_then(as_i32)
         .and_then(|value| u8::try_from(value).ok())
-}
-
-fn used_variable_id(
-    effect: &Effect,
-    script: &TriggerScript,
-    signature_id: u16,
-) -> Option<crate::trigger::VarId> {
-    let variable_id = effect.variable_id(signature_id)?;
-    script
-        .get_variable(variable_id)
-        .is_some_and(|variable| !variable.is_null)
-        .then_some(variable_id)
 }
 
 fn as_i32(value: &TriggerValue) -> Option<i32> {

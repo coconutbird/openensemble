@@ -1,6 +1,6 @@
 //! Retail entity lifecycle and idle-action conditions.
 
-use super::{entity_at, entity_inputs, write_time};
+use super::{entity_at, entity_inputs, used_variable_id, write_time};
 use crate::entities::UnitState;
 use crate::entity_id::EntityId;
 use crate::trigger::{Condition, TriggerScript};
@@ -82,18 +82,6 @@ pub(super) fn is_idle(condition: &Condition, script: &mut TriggerScript, world: 
 
 fn variable_is_used(condition: &Condition, script: &TriggerScript, signature_id: u16) -> bool {
     used_variable_id(condition, script, signature_id).is_some()
-}
-
-fn used_variable_id(
-    condition: &Condition,
-    script: &TriggerScript,
-    signature_id: u16,
-) -> Option<u32> {
-    let variable_id = condition.variable_id(signature_id)?;
-    script
-        .get_variable(variable_id)
-        .is_some_and(|variable| !variable.is_null)
-        .then_some(variable_id)
 }
 
 fn is_alive(world: &World, entity_id: EntityId) -> bool {

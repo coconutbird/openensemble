@@ -697,11 +697,15 @@ fn value_at<'a>(
     script: &'a TriggerScript,
     signature_id: u16,
 ) -> Option<&'a TriggerValue> {
-    let variable_id = condition.variable_id(signature_id)?;
-    script
-        .get_variable(variable_id)
-        .filter(|variable| !variable.is_null)
-        .map(|variable| &variable.value)
+    condition.bindings().value(script, signature_id)
+}
+
+fn used_variable_id(
+    condition: &Condition,
+    script: &TriggerScript,
+    signature_id: u16,
+) -> Option<VarId> {
+    condition.bindings().used_variable_id(script, signature_id)
 }
 
 fn operator_at(

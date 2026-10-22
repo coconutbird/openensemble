@@ -144,11 +144,7 @@ pub(super) fn value_at<'a>(
     script: &'a TriggerScript,
     signature_id: u16,
 ) -> Option<&'a TriggerValue> {
-    let variable_id = effect.variable_id(signature_id)?;
-    script
-        .get_variable(variable_id)
-        .filter(|variable| !variable.is_null)
-        .map(|variable| &variable.value)
+    effect.bindings().value(script, signature_id)
 }
 
 fn set_teleporter(effect: &Effect, script: &TriggerScript, world: &mut World) -> EffectOutcome {

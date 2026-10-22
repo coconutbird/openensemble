@@ -1,9 +1,11 @@
 //! Retail unit and squad query conditions.
 
-use super::{Condition, TriggerScript, TriggerValue, as_f32, as_i32, as_object_type, value_at};
+use super::{
+    Condition, TriggerScript, TriggerValue, as_f32, as_i32, as_object_type, used_variable_id,
+    value_at,
+};
 use crate::entities::Unit;
 use crate::entity::Entity;
-use crate::trigger::VarId;
 use crate::{EntityId, World};
 use glam::Vec3;
 
@@ -397,18 +399,6 @@ fn write_query_outputs(
     if let Some(variable_id) = used_variable_id(condition, script, list_slot) {
         super::write_trigger_value(script, variable_id, wrap_list(results.to_vec()));
     }
-}
-
-fn used_variable_id(
-    condition: &Condition,
-    script: &TriggerScript,
-    signature_id: u16,
-) -> Option<VarId> {
-    let variable_id = condition.variable_id(signature_id)?;
-    script
-        .get_variable(variable_id)
-        .is_some_and(|variable| !variable.is_null)
-        .then_some(variable_id)
 }
 
 fn as_vec3(value: &TriggerValue) -> Option<Vec3> {

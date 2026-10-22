@@ -1,6 +1,6 @@
 use super::*;
 use crate::entities::UnitState;
-use crate::trigger::{ConditionType, TriggerVar, VarType};
+use crate::trigger::{ConditionType, TriggerVar, VarId, VarType};
 
 #[test]
 fn unit_versions_preserve_empty_player_filter_and_output_semantics() {

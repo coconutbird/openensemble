@@ -1,8 +1,10 @@
 //! Retail conditions for associated construction and turret sockets.
 
-use super::{Condition, TriggerScript, TriggerValue, World, as_i32, value_at, write_trigger_value};
+use super::{
+    Condition, TriggerScript, TriggerValue, World, as_i32, used_variable_id, value_at,
+    write_trigger_value,
+};
 use crate::entity_id::EntityId;
-use crate::trigger::VarId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SocketKind {
@@ -203,18 +205,6 @@ fn write_used(
         return;
     };
     write_trigger_value(script, variable_id, value);
-}
-
-fn used_variable_id(
-    condition: &Condition,
-    script: &TriggerScript,
-    signature_id: u16,
-) -> Option<VarId> {
-    let variable_id = condition.variable_id(signature_id)?;
-    script
-        .get_variable(variable_id)
-        .is_some_and(|variable| !variable.is_null)
-        .then_some(variable_id)
 }
 
 #[cfg(test)]

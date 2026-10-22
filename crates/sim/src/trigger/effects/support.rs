@@ -66,11 +66,7 @@ pub(super) fn used_variable_id(
     script: &TriggerScript,
     signature_id: u16,
 ) -> Option<VarId> {
-    let variable_id = effect.variable_id(signature_id)?;
-    script
-        .get_variable(variable_id)
-        .is_some_and(|variable| !variable.is_null)
-        .then_some(variable_id)
+    effect.bindings().used_variable_id(script, signature_id)
 }
 
 pub(super) fn variable_is_used(effect: &Effect, script: &TriggerScript, signature_id: u16) -> bool {

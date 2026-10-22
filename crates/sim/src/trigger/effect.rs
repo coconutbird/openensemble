@@ -5,6 +5,7 @@ mod lookup;
 
 pub use ids::EffectType;
 
+use super::binding::{Bindings, push_next};
 use super::{VarBinding, VarId};
 
 /// An effect that modifies game state when executed.
@@ -46,8 +47,7 @@ impl Effect {
     /// Add an input variable reference.
     #[must_use]
     pub fn with_input(mut self, var_id: VarId) -> Self {
-        let signature_id = u16::try_from(self.inputs.len() + 1).unwrap_or(u16::MAX);
-        self.inputs.push(VarBinding::new(signature_id, var_id));
+        push_next(&mut self.inputs, var_id);
         self
     }
 
@@ -61,8 +61,7 @@ impl Effect {
     /// Add an output variable reference.
     #[must_use]
     pub fn with_output(mut self, var_id: VarId) -> Self {
-        let signature_id = u16::try_from(self.outputs.len() + 1).unwrap_or(u16::MAX);
-        self.outputs.push(VarBinding::new(signature_id, var_id));
+        push_next(&mut self.outputs, var_id);
         self
     }
 
@@ -76,10 +75,11 @@ impl Effect {
     /// Resolve a variable ID by its one-based retail signature slot.
     #[must_use]
     pub fn variable_id(&self, signature_id: u16) -> Option<VarId> {
-        self.inputs
-            .iter()
-            .chain(&self.outputs)
-            .find(|binding| binding.signature_id == signature_id)
-            .map(|binding| binding.variable_id)
+        self.bindings().variable_id(signature_id)
+    }
+
+    /// Borrow the input and output bindings.
+    pub(super) fn bindings(&self) -> Bindings<'_> {
+        Bindings::new(&self.inputs, &self.outputs)
     }
 }
