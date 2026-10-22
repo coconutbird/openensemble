@@ -158,6 +158,20 @@ impl RtsCamera {
         self.pitch_degrees = pitch_for_zoom(zoom);
     }
 
+    /// Resets the view like the `ResetCamera` path of `BUser_syncCameraState` (`0x140598D20`):
+    /// with `zoom`, the pitch and the zoom go back to the start values; with `yaw`, the yaw goes
+    /// back to `CameraYaw`. The hover point stays.
+    pub(crate) fn reset_view(&mut self, yaw: bool, zoom: bool) {
+        let start = Self::new(self.hover_point);
+        if zoom {
+            self.pitch_degrees = start.pitch_degrees;
+            self.zoom = start.zoom;
+        }
+        if yaw {
+            self.yaw_degrees = start.yaw_degrees;
+        }
+    }
+
     /// Moves the hover height to the terrain height under the hover point.
     pub(crate) fn follow_terrain(&mut self, terrain_height: Option<f32>, dt_seconds: f32) {
         let Some(height) = terrain_height.filter(|height| height.is_finite()) else {

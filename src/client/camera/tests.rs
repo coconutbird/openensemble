@@ -147,3 +147,22 @@ fn the_hover_point_stays_in_the_bounds_and_follows_the_terrain() {
     rts.snap_to_terrain(Some(12.0));
     assert_near(rts.hover_point().y, 12.0);
 }
+
+#[test]
+fn reset_view_restores_the_start_yaw_pitch_and_zoom_only_where_allowed() {
+    let mut rts = RtsCamera::new(Vec3::ZERO);
+    rts.rotate(1.0, false, 0.5);
+    rts.zoom_by(1.0, false, 0.2);
+    rts.scroll(Vec2::Y, false, 0.1);
+    let hover = rts.hover_point();
+    let turned_yaw = rts.yaw_degrees;
+
+    rts.reset_view(false, true);
+    assert_near(rts.zoom(), ZOOM_DEFAULT);
+    assert_near(rts.pitch_degrees, RtsCamera::new(Vec3::ZERO).pitch_degrees);
+    assert_near(rts.yaw_degrees, turned_yaw);
+
+    rts.reset_view(true, false);
+    assert_near(rts.yaw_degrees, YAW_DEGREES);
+    assert_vec_near(rts.hover_point(), hover);
+}

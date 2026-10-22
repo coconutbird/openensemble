@@ -75,8 +75,14 @@ The root library (`src/lib.rs`) also holds the code that the executables share:
   `cargo run --release --bin openensemble -- tundra`. Add `--seed N` to change the random seed.
 - Client controls:
   - `W`, `A`, `S`, `D`, the arrow keys or the mouse at a window edge scroll the camera.
-  - `Q` and `E` or a drag with the middle mouse button turn the camera.
-  - `Page Up` and `Page Down` zoom the camera.
+  - `Insert` and `Delete`, or `Alt` and a mouse move, turn the camera. `Home` resets the turn and
+    the zoom.
+  - `Alt` and the mouse wheel, `Page Down` and `Page Up` zoom the camera in and out.
+  - A left click selects a unit or a building (an own building opens its menu). A left drag
+    selects own army units in the box. `Shift` and a left click adds or removes a squad;
+    `Shift` and a drag adds the box. A double click or `Ctrl` and a left click selects the same
+    kind of unit on the screen. `Q` selects the army on the screen, `E` the whole army.
+  - A right click moves or attacks with the selected squads (`Shift` queues the order).
   - `Shift` makes the scroll and the zoom faster.
   - `Escape` quits.
 - The client camera uses the retail values of `startup\game.cfg` (yaw, pitch, zoom, field of

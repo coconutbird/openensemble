@@ -50,6 +50,7 @@ impl TerrainViewer {
             [ctx.size.0, ctx.size.1],
             ctx.format,
             &settings,
+            None,
         ) {
             log::error!("{error}");
             self.load_error = Some(error.to_string());

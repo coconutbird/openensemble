@@ -50,6 +50,69 @@ impl Selection {
         self.menu_building = None;
     }
 
+    /// Returns `true` if `unit` is selected.
+    pub(crate) fn contains_unit(&self, unit: EntityId) -> bool {
+        self.units.contains(&unit)
+    }
+
+    /// Returns `true` if `squad` is selected.
+    pub(crate) fn contains_squad(&self, squad: EntityId) -> bool {
+        self.squads.contains(&squad)
+    }
+
+    /// Opens the command menu of `building`. The building must be selected first.
+    pub(crate) fn open_menu(&mut self, building: EntityId) {
+        self.menu_building = Some(building);
+    }
+
+    /// Selects `unit` and every unit of its parent squad (`BSelectionManager_selectUnit`).
+    ///
+    /// A unit that is already selected or not alive is rejected. Returns `true` if `unit` was
+    /// added. Call [`Self::rebuild_squads`] after the last change.
+    pub(crate) fn select_unit(&mut self, world: &World, unit: EntityId) -> bool {
+        let Some(entity) = world.units.get(unit) else {
+            return false;
+        };
+        if !entity.base.is_alive() || self.contains_unit(unit) {
+            return false;
+        }
+        self.units.push(unit);
+        if let Some(squad) = entity.squad_id.and_then(|id| world.squads.get(id)) {
+            for &member in &squad.unit_ids {
+                let alive = world.units.get(member).is_some_and(|m| m.base.is_alive());
+                if alive && !self.contains_unit(member) {
+                    self.units.push(member);
+                }
+            }
+        }
+        true
+    }
+
+    /// Selects every unit of `squad` (`BSelectionManager_selectSquad`, `0x140389960`).
+    pub(crate) fn select_squad(&mut self, world: &World, squad: EntityId) {
+        if let Some(entity) = world.squads.get(squad) {
+            for &unit in &entity.unit_ids {
+                self.select_unit(world, unit);
+            }
+        }
+    }
+
+    /// Removes every unit of `squad` (`BSelectionManager_unselectSquad`, `0x140389A40`).
+    pub(crate) fn unselect_squad(&mut self, world: &World, squad: EntityId) {
+        self.units.retain(|&unit| {
+            world
+                .units
+                .get(unit)
+                .is_none_or(|entity| entity.squad_id != Some(squad))
+        });
+        if self
+            .menu_building
+            .is_some_and(|building| !self.units.contains(&building))
+        {
+            self.menu_building = None;
+        }
+    }
+
     /// Removes the units that are dead or gone, then derives the squad list.
     ///
     /// Like `BSelectionManager_rebuildSelectedSquads`, the squads come in the order of their

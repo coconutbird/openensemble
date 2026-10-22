@@ -6,6 +6,7 @@ use render::terrain::LodConfig;
 use render::world_view::{WorldFrame, WorldViewSettings};
 
 use super::Client;
+use super::overlays::{OverlayContext, build_overlays};
 
 /// Terrain display mode 0: the retail lit view.
 const RETAIL_DISPLAY_MODE: u32 = 0;
@@ -35,12 +36,16 @@ impl Client {
         let Some(session) = &mut self.session else {
             return;
         };
+        let hp_bar_styles = self.hp_bar_styles.take();
         if let Err(error) = session.create_world_view(
             ctx.device,
             ctx.queue,
             [ctx.size.0, ctx.size.1],
             ctx.format,
             &settings,
+            hp_bar_styles
+                .as_ref()
+                .map(|(styles, stages)| (styles.as_slice(), stages)),
         ) {
             log::error!("{error}");
             self.load_error = Some(error.to_string());
@@ -59,6 +64,25 @@ impl Client {
             return;
         };
         session.sync_world_view_units(ctx.device, ctx.queue);
+        if let (Some(simulation), Some(world_view)) = (&session.simulation, &session.world_view) {
+            let world = &simulation.world;
+            let context = OverlayContext {
+                world,
+                catalog: &self.catalog,
+                selection: &self.selection,
+                hovered: self.hover.entity,
+                team: world
+                    .get_player(self.local_player)
+                    .map_or(0, |player| player.team_id),
+                always_show_bars: false,
+            };
+            build_overlays(
+                &context,
+                |name| world_view.hp_bar_style(name),
+                &mut self.decals,
+                &mut self.hp_bars,
+            );
+        }
         let frame = WorldFrame {
             camera,
             world: session
@@ -67,8 +91,8 @@ impl Client {
                 .map(|simulation| &simulation.world),
             time_seconds: self.render_time_seconds,
             settings,
-            selection_decals: &[],
-            hp_bars: &[],
+            selection_decals: &self.decals,
+            hp_bars: &self.hp_bars,
         };
         let Some(world_view) = &mut session.world_view else {
             return;

@@ -1,9 +1,19 @@
 //! Keyboard and mouse camera controls of the client.
 //!
-//! - W, A, S, D and the arrow keys scroll. The mouse at a window edge also scrolls.
-//! - Q and E turn the view. A drag with the middle mouse button also turns the view.
-//! - Page Up and Page Down zoom.
-//! - Shift is the fast modifier.
+//! The bindings are the retail `Keyboard` config of `controllerconfigs.xml`. The values come from
+//! `BUser_handleInput` (`0x14058F250`) and `BUser_updateCameraControls` (`0x140580220`):
+//!
+//! - W, A, S, D and the arrow keys scroll (`Translation`). The mouse at a window edge also
+//!   scrolls (`MouseTranslation`).
+//! - Insert and Delete turn the view (`PanLeft`, `PanRight`): a rotate input of +0.5 or -0.5.
+//! - Alt and a mouse move turn the view (`Pan`): a rotate input of
+//!   `0.2 * (1920 / window width) * dx`.
+//! - Alt and the wheel zoom (`ZoomUp`, `ZoomDown`): a zoom input of +1 or -1 for each wheel
+//!   step. Page Down and Page Up zoom in and out (`ZoomUpAlternate`, `ZoomDownAlternate`).
+//! - Home resets the yaw, the pitch and the zoom (`ResetCamera`, `BUser_syncCameraState`).
+//! - Shift is the fast modifier (`SpeedModifier`).
+//!
+//! The camera multiplies the rotate and zoom inputs by the frame time and the retail rates.
 
 use glam::Vec2;
 use num_traits::ToPrimitive;
@@ -11,19 +21,19 @@ use render::input::{Input, KeyCode};
 use sim::PlayerPresentationState;
 
 use super::camera::RtsCamera;
+use super::mouse::cursor_position;
 
 /// `ScrollBorderWidth`: the width of the screen edge that scrolls, in pixels.
 const SCROLL_BORDER_WIDTH: f32 = 10.0;
 /// `ScrollCornerRegionPercent`: the part of an edge near a corner that also scrolls along the
 /// other axis, in percent of the window size.
 const SCROLL_CORNER_REGION_PERCENT: f32 = 20.0;
-/// The view turn for each pixel of a middle mouse button drag, in degrees.
-///
-/// This value is not a retail value.
-const DRAG_ROTATE_DEGREES_PER_PIXEL: f32 = 0.25;
-
-/// Index of the middle button in `Input::mouse_buttons`.
-const MIDDLE_MOUSE_BUTTON: usize = 1;
+/// The rotate input of `PanLeft` and `PanRight`.
+const PAN_KEY_INPUT: f32 = 0.5;
+/// The rotate input of `Pan` for each pixel of mouse move in a 1920-pixel-wide window.
+const PAN_MOUSE_INPUT_PER_PIXEL: f32 = 0.2;
+/// The window width that `PAN_MOUSE_INPUT_PER_PIXEL` refers to, in pixels.
+const PAN_MOUSE_REFERENCE_WIDTH: f32 = 1920.0;
 
 /// The mouse state that the camera controls keep between frames.
 #[derive(Debug, Default)]
@@ -33,8 +43,8 @@ pub(crate) struct CameraControls {
     first_cursor: Option<Vec2>,
     /// If true, the cursor moved in the window and edge scroll is active.
     edge_scroll_armed: bool,
-    /// The cursor position of the last frame with the middle mouse button down.
-    drag_cursor: Option<Vec2>,
+    /// The cursor position of the last frame.
+    last_cursor: Option<Vec2>,
 }
 
 impl CameraControls {
@@ -51,55 +61,72 @@ impl CameraControls {
         let cursor = cursor_position(input);
         let first_cursor = *self.first_cursor.get_or_insert(cursor);
         self.edge_scroll_armed |= cursor != first_cursor;
-        let drag_delta = if input.mouse_buttons[MIDDLE_MOUSE_BUTTON] {
-            let delta = self.drag_cursor.map_or(Vec2::ZERO, |last| cursor - last);
-            self.drag_cursor = Some(cursor);
-            delta
-        } else {
-            self.drag_cursor = None;
-            Vec2::ZERO
-        };
+        let mouse_delta = self.last_cursor.map_or(Vec2::ZERO, |last| cursor - last);
+        self.last_cursor = Some(cursor);
         if state.user_locked() {
             camera.scroll(Vec2::ZERO, false, dt_seconds);
             return;
         }
         let fast = input.is_key_held(KeyCode::LShift) || input.is_key_held(KeyCode::RShift);
+        let alt = input.is_key_held(KeyCode::LAlt) || input.is_key_held(KeyCode::RAlt);
         let controls = state.camera_controls;
+        let size = Vec2::new(
+            window_size.0.to_f32().unwrap_or(0.0),
+            window_size.1.to_f32().unwrap_or(0.0),
+        );
 
         let mut scroll = if controls.scroll {
             key_scroll(input)
         } else {
             Vec2::ZERO
         };
-        if controls.scroll && self.edge_scroll_armed && self.drag_cursor.is_none() {
-            let size = Vec2::new(
-                window_size.0.to_f32().unwrap_or(0.0),
-                window_size.1.to_f32().unwrap_or(0.0),
-            );
+        // Not decided by the engine: the client stops the edge scroll while Alt turns the view
+        // with the mouse, so that the turn does not also scroll at the window edge.
+        if controls.scroll && self.edge_scroll_armed && !alt {
             scroll += edge_scroll(cursor, size);
         }
         camera.scroll(scroll, fast, dt_seconds);
 
         if controls.yaw {
-            let keys = axis(input, KeyCode::E, KeyCode::Q);
-            camera.rotate(keys, fast, dt_seconds);
-            camera.rotate_degrees(drag_delta.x * DRAG_ROTATE_DEGREES_PER_PIXEL);
+            camera.rotate(
+                rotate_input(input, alt, mouse_delta.x, size.x),
+                fast,
+                dt_seconds,
+            );
         }
         if controls.zoom {
-            // Wave B hook: add the mouse wheel here when `render::input::Input` has a wheel
-            // value (`Input::scroll_delta`, positive = wheel up = zoom in).
-            let keys = axis(input, KeyCode::PageUp, KeyCode::PageDown);
-            camera.zoom_by(keys, fast, dt_seconds);
+            camera.zoom_by(zoom_input(input, alt), fast, dt_seconds);
+        }
+        if input.is_key_pressed(KeyCode::Home) {
+            camera.reset_view(controls.yaw, controls.zoom);
         }
     }
 }
 
-/// Returns the cursor position in window pixels.
-fn cursor_position(input: &Input) -> Vec2 {
-    Vec2::new(
-        input.mouse_position.0.to_f32().unwrap_or(0.0),
-        input.mouse_position.1.to_f32().unwrap_or(0.0),
-    )
+/// Returns the rotate input of one frame. A positive value turns the view to the right.
+///
+/// Retail adds the input to the yaw, which turns the view to the left, so the sign is the
+/// opposite of the retail input. Retail takes the `Pan` input of the last mouse event of the
+/// frame; the client uses the cursor move of the whole frame.
+fn rotate_input(input: &Input, alt: bool, mouse_dx: f32, window_width: f32) -> f32 {
+    let keys = PAN_KEY_INPUT * axis(input, KeyCode::Delete, KeyCode::Insert);
+    if keys != 0.0 {
+        return keys;
+    }
+    if alt && window_width > 0.0 {
+        -PAN_MOUSE_INPUT_PER_PIXEL * (PAN_MOUSE_REFERENCE_WIDTH / window_width) * mouse_dx
+    } else {
+        0.0
+    }
+}
+
+/// Returns the zoom input of one frame. A positive value moves the eye nearer.
+///
+/// Without Alt the wheel is `SubSelectNext` and `SubSelectPrev`, which the client does not
+/// model, so the wheel zooms only with Alt.
+fn zoom_input(input: &Input, alt: bool) -> f32 {
+    let wheel = if alt { input.scroll_delta } else { 0.0 };
+    wheel + axis(input, KeyCode::PageDown, KeyCode::PageUp)
 }
 
 /// Returns 1 if `positive` is down, -1 if `negative` is down, and 0 for both or none.
@@ -158,10 +185,45 @@ fn edge_axis(value: f32, size: f32, band: f32) -> i8 {
 
 #[cfg(test)]
 mod tests {
-    use super::edge_scroll;
+    use super::{edge_scroll, rotate_input, zoom_input};
     use glam::Vec2;
+    use render::input::{Input, KeyCode};
 
     const SIZE: Vec2 = Vec2::new(1000.0, 500.0);
+
+    fn keys(held: &[KeyCode]) -> Input {
+        Input {
+            keys_held: held.iter().copied().collect(),
+            ..Input::default()
+        }
+    }
+
+    #[test]
+    fn insert_and_delete_turn_at_half_input_and_alt_mouse_scales_with_the_width() {
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-5;
+        // PanLeft (+0.5 retail yaw input) turns to the left: -0.5 in the client sign.
+        assert!(close(
+            rotate_input(&keys(&[KeyCode::Insert]), false, 0.0, 1920.0),
+            -0.5
+        ));
+        assert!(close(
+            rotate_input(&keys(&[KeyCode::Delete]), false, 0.0, 1920.0),
+            0.5
+        ));
+        // Pan: 0.2 * (1920 / 960) * 10 pixels = 4, opposite sign.
+        assert!(close(rotate_input(&keys(&[]), true, 10.0, 960.0), -4.0));
+        assert!(close(rotate_input(&keys(&[]), false, 10.0, 960.0), 0.0));
+    }
+
+    #[test]
+    fn the_wheel_zooms_only_with_alt_and_page_down_zooms_in() {
+        let mut input = keys(&[]);
+        input.scroll_delta = 2.0;
+        assert!(zoom_input(&input, false).abs() < f32::EPSILON);
+        assert!((zoom_input(&input, true) - 2.0).abs() < f32::EPSILON);
+        assert!((zoom_input(&keys(&[KeyCode::PageDown]), false) - 1.0).abs() < f32::EPSILON);
+        assert!((zoom_input(&keys(&[KeyCode::PageUp]), false) + 1.0).abs() < f32::EPSILON);
+    }
 
     #[test]
     fn the_middle_of_the_window_does_not_scroll() {

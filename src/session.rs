@@ -11,9 +11,12 @@
 mod inputs;
 
 use num_traits::ToPrimitive;
+use pipeline::database::hw1::Database;
+use pipeline::database::hw1::hpbars::{HpBarStageList, HpBarUv};
 use pipeline::hw1;
 use pipeline::source::{AssetSource, StdFileProvider};
 use render::environment::EnvironmentMap;
+use render::hp_bars::{ColorStage, HpBarColorStages, HpBarStyle};
 use render::lighting::LocalLightView;
 use render::particle::ParticleScene;
 use render::terrain::{Camera, SimulationCameraAdapter, TerrainScene};
@@ -143,7 +146,8 @@ impl ScenarioSession {
     /// Makes the `WorldView` that draws the scenario, if it does not exist.
     ///
     /// The function moves the lightset to the `WorldView`. After the upload, it releases the
-    /// decoded XTT albedo, because the GPU has the composited atlas.
+    /// decoded XTT albedo, because the GPU has the composited atlas. `hp_bars` gives the HP bar
+    /// styles and colour stages (see [`hp_bar_styles`]); `None` draws no HP bars.
     ///
     /// # Errors
     ///
@@ -155,6 +159,7 @@ impl ScenarioSession {
         size: [u32; 2],
         output_format: wgpu::TextureFormat,
         settings: &WorldViewSettings<'_>,
+        hp_bars: Option<(&[HpBarStyle], &HpBarColorStages)>,
     ) -> Result<(), WorldViewError> {
         if self.world_view.is_some() {
             return Ok(());
@@ -173,7 +178,7 @@ impl ScenarioSession {
             sky: self.sky.as_ref(),
             units,
             asset_source: self.source.as_mut(),
-            hp_bars: None,
+            hp_bars,
             size,
             output_format,
         };
@@ -202,6 +207,45 @@ impl ScenarioSession {
             world_view.resize(device, width, height);
         }
     }
+}
+
+/// Returns the HP bar styles and the `DEFAULT` colour stages of `hpbars.xml`.
+///
+/// The style list keeps the file order, so a `WorldView` style ID is the index of the style in
+/// the file. Returns `None` if the database has no `hpbars.xml` or no `DEFAULT` stages.
+#[must_use]
+pub fn hp_bar_styles(database: &Database) -> Option<(Vec<HpBarStyle>, HpBarColorStages)> {
+    let definition = database.hp_bars.as_ref()?;
+    let styles = definition
+        .hp_bars
+        .iter()
+        .map(|bar| HpBarStyle {
+            name: bar.name.clone(),
+            texture: bar.texture.clone(),
+            mask_texture: bar.mask_texture.clone(),
+            size: [bar.size_x, bar.size_y],
+            hitpoint_uv: bar.hitpoint_uv.as_ref().and_then(HpBarUv::rect),
+            shield_uv: bar.shield_uv.as_ref().and_then(HpBarUv::rect),
+            ammo_uv: bar.ammo_uv.as_ref().and_then(HpBarUv::rect),
+        })
+        .collect();
+    let stages = definition.default_color_stages()?;
+    let convert = |list: &HpBarStageList| {
+        list.stages
+            .iter()
+            .map(|stage| ColorStage {
+                value: stage.value,
+                intensity: stage.intensity,
+                color: [stage.color.red, stage.color.green, stage.color.blue],
+            })
+            .collect()
+    };
+    let stages = HpBarColorStages {
+        hitpoint: convert(&stages.hitpoint),
+        shield: convert(&stages.shield),
+        ammo: convert(&stages.ammo),
+    };
+    Some((styles, stages))
 }
 
 /// Returns the `WorldView` camera of an interactive camera for an output of `size` pixels.

@@ -8,18 +8,29 @@
 //! - `view`: the `WorldView` creation and the frame draw.
 //! - `hud`: the egui interface (now the frame-rate line).
 //!
-//! Selection, hover, orders, overlays (selection decals and HP bars) and the full HUD go into
-//! new modules next to these. Their state goes into [`Client`].
+//! - `selection`, `select`, `mouse`: the unit selection and its retail rules and bindings.
+//! - `catalog`, `pick`, `hover`: the proto data, the screen pick and the cursor hover.
+//! - `orders`: the right-click Work command. `interaction`: the frame glue of these modules.
+//! - `overlays`, `bar_ratios`: the selection decals and the HP bars.
 
+mod bar_ratios;
 mod camera;
+mod catalog;
 mod controls;
+mod hover;
 mod hud;
+mod interaction;
+mod mouse;
+mod orders;
+mod overlays;
+mod pick;
+mod select;
 mod selection;
 mod view;
 
 use std::time::Instant;
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use openensemble::frame_stats::FrameStats;
 use openensemble::session::{ScenarioInputs, ScenarioSession};
 use render::app::{Application, Color, FrameContext, RenderContext};
@@ -30,6 +41,12 @@ use render::wgpu;
 use camera::RtsCamera;
 use controls::CameraControls;
 use selection::Selection;
+
+use catalog::ClientCatalog;
+use hover::Hover;
+use mouse::MouseSelect;
+use render::hp_bars::{HpBarColorStages, HpBarInstance, HpBarStyle};
+use render::selection_decals::SelectionDecal;
 
 /// The lobby of a client game.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,6 +86,22 @@ pub(crate) struct Client {
     render_time_seconds: f32,
     /// Frame, simulation and render timings for the frame-rate line.
     frame_stats: FrameStats,
+    /// The proto data of the selection, the hover and the overlays.
+    catalog: ClientCatalog,
+    /// The cursor hover of the frame.
+    hover: Hover,
+    /// The mouse state of the selection.
+    mouse: MouseSelect,
+    /// The cursor position of the frame, in physical pixels.
+    cursor: Vec2,
+    /// The drag box colour of the local player civilization.
+    drag_box_color: [u8; 3],
+    /// The HP bar styles for the `WorldView`, until the `WorldView` exists.
+    hp_bar_styles: Option<(Vec<HpBarStyle>, HpBarColorStages)>,
+    /// The selection decals of the frame.
+    decals: Vec<SelectionDecal>,
+    /// The HP bars of the frame.
+    hp_bars: Vec<HpBarInstance>,
 }
 
 impl Client {
@@ -89,6 +122,14 @@ impl Client {
             bump_power: 1.0,
             render_time_seconds: 0.0,
             frame_stats: FrameStats::default(),
+            catalog: ClientCatalog::default(),
+            hover: Hover::default(),
+            mouse: MouseSelect::default(),
+            cursor: Vec2::ZERO,
+            drag_box_color: interaction::drag_box_color(None),
+            hp_bar_styles: None,
+            decals: Vec::new(),
+            hp_bars: Vec::new(),
         }
     }
 
@@ -137,6 +178,17 @@ impl Client {
             self.bump_power = lightset.terrain_bump_strength;
         }
         self.local_player = local_player;
+        if let Some(content) = &session.content {
+            let database = &content.database;
+            self.catalog = ClientCatalog::new(database);
+            self.hp_bar_styles = openensemble::session::hp_bar_styles(database);
+            let civ = world
+                .get_player(local_player)
+                .and_then(|player| usize::try_from(player.civ_id).ok())
+                .and_then(|civ| database.civs.get(civ))
+                .map(|civ| civ.name.as_str());
+            self.drag_box_color = interaction::drag_box_color(civ);
+        }
         self.session = Some(session);
         Ok(())
     }
@@ -201,16 +253,16 @@ impl Application for Client {
         if let Some(session) = &mut self.session {
             session.advance(ctx.delta_time);
         }
-        if let Some(world) = self.session.as_ref().and_then(ScenarioSession::world) {
-            self.selection.rebuild_squads(world, |_| 0);
-        }
+        self.refresh_selection();
         self.frame_stats.record_simulation(started.elapsed());
         self.update_camera(input, ctx);
+        self.update_interaction(input, ctx);
         true
     }
 
     fn ui(&mut self, ctx: &egui::Context) {
         self.draw_hud(ctx);
+        self.draw_drag_box(ctx);
     }
 
     fn render(&mut self, _ctx: &FrameContext) -> Color {
