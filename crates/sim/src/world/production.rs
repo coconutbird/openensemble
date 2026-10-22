@@ -19,8 +19,11 @@ use pipeline::database::hw1::Database;
 /// Work completed by one authoritative production update.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ProductionUpdate {
+    /// The count of research tasks that completed.
     pub completed_research: usize,
+    /// The count of training tasks that completed.
     pub completed_training: usize,
+    /// The count of construction tasks that completed.
     pub completed_construction: usize,
 }
 

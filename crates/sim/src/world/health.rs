@@ -7,9 +7,13 @@ use crate::entity_id::EntityId;
 /// One unit's current and player-modified maximum health values.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct UnitHealth {
+    /// The current hitpoints.
     pub hitpoints: f32,
+    /// The maximum hitpoints after player modifiers.
     pub maximum_hitpoints: f32,
+    /// The current shield points.
     pub shieldpoints: f32,
+    /// The maximum shield points after player modifiers.
     pub maximum_shieldpoints: f32,
 }
 

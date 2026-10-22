@@ -26,7 +26,12 @@ pub enum TerrainLoadError {
     MissingChunk(u64),
     /// The XSD header was shorter than the retail version-4 layout.
     #[error("XSD header is truncated: expected at least {expected} bytes, found {actual}")]
-    TruncatedHeader { expected: usize, actual: usize },
+    TruncatedHeader {
+        /// The minimum header size, in bytes.
+        expected: usize,
+        /// The size of the header data that the file has, in bytes.
+        actual: usize,
+    },
     /// The XSD header used an unsupported version or byte order.
     #[error("unsupported XSD version bytes {0:02X?}")]
     UnsupportedVersion([u8; 4]),
@@ -35,10 +40,20 @@ pub enum TerrainLoadError {
     InvalidDimensions(&'static str),
     /// The height chunk did not contain the cache-aligned retail grid.
     #[error("XSD height grid is truncated: expected {expected} bytes, found {actual}")]
-    TruncatedHeights { expected: usize, actual: usize },
+    TruncatedHeights {
+        /// The size that the height grid needs, in bytes.
+        expected: usize,
+        /// The size of the height chunk, in bytes.
+        actual: usize,
+    },
     /// The optional tile-type chunk did not contain the row-major data grid.
     #[error("XSD tile-type grid is truncated: expected {expected} bytes, found {actual}")]
-    TruncatedTileTypes { expected: usize, actual: usize },
+    TruncatedTileTypes {
+        /// The size that the tile-type grid needs, in bytes.
+        expected: usize,
+        /// The size of the tile-type chunk, in bytes.
+        actual: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]

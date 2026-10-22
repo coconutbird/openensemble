@@ -33,12 +33,19 @@ const MAX_AUTHORED_BOMB_CLUSTERS: u32 = 10_000;
 /// Inputs accepted by retail's direct `InvokePower2` Carpet Bombing path.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CarpetBombingPowerInvocation {
+    /// The player that uses the power.
     pub player_id: PlayerId,
+    /// The runtime table index of the power prototype.
     pub proto_power_id: ProtoPowerId,
+    /// The authored power level that selects the power data.
     pub power_level: u32,
+    /// The squad that owns the power charge, or an invalid ID for a player power.
     pub squad_id: EntityId,
+    /// The world location that the power targets.
     pub target_location: Vec3,
+    /// If `true`, skip the requirement checks and the payment.
     pub ignore_requirements: bool,
+    /// The packed retail power user ID, or `PowerUserId::INVALID` if there is none.
     pub power_user_id: PowerUserId,
 }
 
@@ -62,7 +69,9 @@ pub type CarpetBombingPowerError = NativePowerError;
 /// Synchronized phase of one retail Carpet Bombing execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CarpetBombingPhase {
+    /// The power waits for the start position and the direction of the bomb run.
     WaitingForInputs,
+    /// The bomber flies the run and drops bombs.
     Active,
 }
 
@@ -75,16 +84,19 @@ pub struct CarpetBomb {
 }
 
 impl CarpetBomb {
+    /// Return the ID of the ground impact marker object.
     #[must_use]
     pub const fn impact_object_id(&self) -> EntityId {
         self.impact_object_id
     }
 
+    /// Return the world position of the impact.
     #[must_use]
     pub const fn position(&self) -> Vec3 {
         self.position
     }
 
+    /// Return the execution time at which the bomb explodes, in seconds.
     #[must_use]
     pub const fn explode_at_seconds(&self) -> f32 {
         self.explode_at_seconds
@@ -136,51 +148,61 @@ pub struct CarpetBombingPowerExecution {
 }
 
 impl CarpetBombingPowerExecution {
+    /// Return the ID of this power execution.
     #[must_use]
     pub const fn id(&self) -> PowerExecutionId {
         self.id
     }
 
+    /// Return the player that uses the power.
     #[must_use]
     pub const fn player_id(&self) -> PlayerId {
         self.player_id
     }
 
+    /// Return the runtime table index of the power prototype.
     #[must_use]
     pub const fn proto_power_id(&self) -> ProtoPowerId {
         self.proto_power_id
     }
 
+    /// Return the authored power level.
     #[must_use]
     pub const fn power_level(&self) -> u32 {
         self.power_level
     }
 
+    /// Return the packed retail power user ID.
     #[must_use]
     pub const fn power_user_id(&self) -> PowerUserId {
         self.power_user_id
     }
 
+    /// Return the world location that the invocation targets.
     #[must_use]
     pub const fn target_location(&self) -> Vec3 {
         self.target_location
     }
 
+    /// Return the current phase.
     #[must_use]
     pub const fn phase(&self) -> CarpetBombingPhase {
         self.phase
     }
 
+    /// Return the start position of the bomb run, after the player sets it.
     #[must_use]
     pub const fn start_location(&self) -> Option<Vec3> {
         self.start_location
     }
 
+    /// Return the horizontal direction of the bomb run, after the player sets it.
     #[must_use]
     pub const fn start_direction(&self) -> Option<Vec3> {
         self.start_direction
     }
 
+    /// Return the object ID of the bomber, after the run starts.
     #[must_use]
     pub const fn bomber_object_id(&self) -> Option<EntityId> {
         match &self.bomber {
@@ -189,26 +211,31 @@ impl CarpetBombingPowerExecution {
         }
     }
 
+    /// Return the prototype name of the bomber, after the run starts.
     #[must_use]
     pub fn bomber_prototype(&self) -> Option<&str> {
         self.bomber.as_ref().map(Bomber::prototype)
     }
 
+    /// Return the count of bomb clusters that the run drops.
     #[must_use]
     pub const fn maximum_bomb_clusters(&self) -> u32 {
         self.maximum_bomb_clusters
     }
 
+    /// Return the count of bomb clusters that the bomber dropped.
     #[must_use]
     pub const fn bomb_clusters_dropped(&self) -> u32 {
         self.bomb_clusters_dropped
     }
 
+    /// Return the impact markers that wait for their fuse, in explosion order.
     #[must_use]
     pub fn pending_bombs(&self) -> &[CarpetBomb] {
         &self.pending_bombs
     }
 
+    /// Return the bomb projectiles that are in flight.
     #[must_use]
     pub fn active_projectile_ids(&self) -> &[EntityId] {
         &self.active_projectile_ids

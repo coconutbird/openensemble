@@ -320,12 +320,9 @@ mod tests {
 
         let _removed = world.remove_unit(socket_id);
         assert_eq!(world.get_unit(plug_id).unwrap().build_socket_id, None);
-        assert!(
-            world
-                .get_unit(parent_id)
-                .unwrap()
-                .associated_sockets()
-                .is_empty()
+        assert_eq!(
+            world.get_unit(parent_id).unwrap().associated_sockets(),
+            [] as [EntityId; 0]
         );
     }
 

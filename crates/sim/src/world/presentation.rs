@@ -37,16 +37,27 @@ const DEFAULT_GLOBAL_TOGGLES: [bool; GLOBAL_TOGGLE_COUNT] = [true, true, false, 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum HudItem {
+    /// The minimap.
     Minimap = 0,
+    /// The resource display.
     Resources = 1,
+    /// The game time display.
     Time = 2,
+    /// The power status display.
     PowerStatus = 3,
+    /// The unit display.
     Units = 4,
+    /// The directional pad help.
     DpadHelp = 5,
+    /// The button help.
     ButtonHelp = 6,
+    /// The targeting reticle.
     Reticle = 7,
+    /// The score display.
     Score = 8,
+    /// The unit statistics display.
     UnitStats = 9,
+    /// The extra information panel of the circle menu.
     CircleMenuExtraInfo = 10,
 }
 
@@ -106,6 +117,7 @@ const DEFAULT_HUD_ITEMS: [bool; HUD_ITEM_COUNT] = [
 /// One version-4 retail camera directive waiting for a renderer/UI adapter.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CameraDirective {
+    /// The nonzero identity of this directive, which increases with each new directive.
     pub revision: u32,
     /// Terrain-planted hover point, when authored.
     pub location: Option<Vec3>,
@@ -118,8 +130,11 @@ pub struct CameraDirective {
 /// Trigger-authored permissions for renderer-owned camera input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CameraControlPermissions {
+    /// If `true`, the player can scroll the camera.
     pub scroll: bool,
+    /// If `true`, the player can turn the camera.
     pub yaw: bool,
+    /// If `true`, the player can zoom the camera.
     pub zoom: bool,
 }
 
@@ -136,10 +151,15 @@ impl Default for CameraControlPermissions {
 /// Durable presentation controls for one player/user slot.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PlayerPresentationState {
+    /// The camera input that the player can use.
     pub camera_controls: CameraControlPermissions,
+    /// The last camera directive from a trigger, if any.
     pub camera_directive: Option<CameraDirective>,
+    /// If `true`, the game ignores directional pad input from the player.
     pub ignore_dpad: bool,
+    /// If `true`, the player can open the power menu.
     pub power_menu_enabled: bool,
+    /// The ID of the trigger script that locks the user input, if any.
     pub user_lock_owner_script: Option<u32>,
 }
 

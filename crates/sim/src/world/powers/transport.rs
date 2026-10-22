@@ -30,12 +30,19 @@ const TRANSPORT_POWER_TYPE: u32 = 8;
 /// Inputs accepted by retail's direct `InvokePower2` Transport path.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TransportPowerInvocation {
+    /// The player that uses the power.
     pub player_id: PlayerId,
+    /// The runtime table index of the power prototype.
     pub proto_power_id: ProtoPowerId,
+    /// The authored power level that selects the power data.
     pub power_level: u32,
+    /// The squad that owns the power charge, or an invalid ID for a player power.
     pub squad_id: EntityId,
+    /// The world location that the power targets.
     pub target_location: Vec3,
+    /// If `true`, skip the requirement checks and the payment.
     pub ignore_requirements: bool,
+    /// The packed retail power user ID, or `PowerUserId::INVALID` if there is none.
     pub power_user_id: PowerUserId,
 }
 
@@ -89,46 +96,55 @@ pub struct TransportPowerExecution {
 }
 
 impl TransportPowerExecution {
+    /// Return the ID of this power execution.
     #[must_use]
     pub const fn id(&self) -> PowerExecutionId {
         self.id
     }
 
+    /// Return the player that uses the power.
     #[must_use]
     pub const fn player_id(&self) -> PlayerId {
         self.player_id
     }
 
+    /// Return the runtime table index of the power prototype.
     #[must_use]
     pub const fn proto_power_id(&self) -> ProtoPowerId {
         self.proto_power_id
     }
 
+    /// Return the packed retail power user ID.
     #[must_use]
     pub const fn power_user_id(&self) -> PowerUserId {
         self.power_user_id
     }
 
+    /// Return the confirmed pickup location, after a pickup selects squads.
     #[must_use]
     pub const fn pickup_location(&self) -> Option<Vec3> {
         self.pickup_location
     }
 
+    /// Return the squads that the pickup selected.
     #[must_use]
     pub fn selected_squad_ids(&self) -> &[EntityId] {
         &self.selected_squad_ids
     }
 
+    /// Return the radius of the pickup and drop-off areas (`UIRadius`), in world units.
     #[must_use]
     pub const fn ui_radius(&self) -> f32 {
         self.ui_radius
     }
 
+    /// Return the minimum pickup to drop-off distance (`MinTransportDistance`), in world units.
     #[must_use]
     pub const fn min_transport_distance(&self) -> f32 {
         self.min_transport_distance
     }
 
+    /// Return the prototype name of the carrier object.
     #[must_use]
     pub fn transport_prototype(&self) -> &str {
         &self.transport_prototype

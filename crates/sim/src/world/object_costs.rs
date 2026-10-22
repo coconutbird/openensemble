@@ -11,16 +11,32 @@ use pipeline::database::hw1::objects::ProtoObject;
 /// Rejection produced while resolving one player's current object cost.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ObjectCostError {
+    /// The world has no player with this ID.
     #[error("player {0} is not present in the world")]
     PlayerNotFound(PlayerId),
+    /// The database has no object with this runtime prototype ID.
     #[error("object runtime prototype ID {0} was not found")]
     PrototypeNotFound(i32),
+    /// The named object has costs, but the database has no resource table.
     #[error("object '{0}' has costs but the database has no resource table")]
     MissingResourceTable(String),
+    /// The object cost names a resource that the database does not define.
     #[error("object '{prototype}' references unknown resource '{resource}'")]
-    UnknownResource { prototype: String, resource: String },
+    UnknownResource {
+        /// The name of the object prototype.
+        prototype: String,
+        /// The unknown resource name.
+        resource: String,
+    },
+    /// The object has a cost value that is not usable for this resource.
     #[error("object '{prototype}' has invalid cost for resource '{resource}'")]
-    InvalidCost { prototype: String, resource: String },
+    InvalidCost {
+        /// The name of the object prototype.
+        prototype: String,
+        /// The name of the resource with the bad cost.
+        resource: String,
+    },
+    /// The named object has cost escalation data that is not usable.
     #[error("object '{0}' has invalid cost escalation")]
     InvalidEscalation(String),
 }

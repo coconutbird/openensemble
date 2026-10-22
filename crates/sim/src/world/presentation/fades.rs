@@ -8,12 +8,21 @@ use crate::world::{GeneralEvent, GeneralEventType, World};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScreenFadeSequence {
     /// A single fade from clear to the authored color, or the reverse.
-    ToColor { duration_ms: u32, fade_in: bool },
+    ToColor {
+        /// The fade duration, in milliseconds.
+        duration_ms: u32,
+        /// If `true`, fade from the color to clear, else fade from clear to the color.
+        fade_in: bool,
+    },
     /// Fade down, hold the color, then fade up. `reverse` swaps both fades.
     Transition {
+        /// The duration of the fade from clear to the color, in milliseconds.
         fade_down_ms: u32,
+        /// The time that the full color stays, in milliseconds.
         hold_ms: u32,
+        /// The duration of the fade from the color to clear, in milliseconds.
         fade_up_ms: u32,
+        /// If `true`, start at the color, fade up, hold clear, then fade down.
         reverse: bool,
     },
 }

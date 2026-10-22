@@ -31,12 +31,19 @@ pub(super) const MAX_AUTHORED_SHOTS: u32 = 10_000;
 /// Inputs accepted by retail's direct `InvokePower2` Orbital path.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OrbitalPowerInvocation {
+    /// The player that uses the power.
     pub player_id: PlayerId,
+    /// The runtime table index of the power prototype.
     pub proto_power_id: ProtoPowerId,
+    /// The authored power level that selects the power data.
     pub power_level: u32,
+    /// The squad that owns the power charge, or an invalid ID for a player power.
     pub squad_id: EntityId,
+    /// The world location that the power targets.
     pub target_location: Vec3,
+    /// If `true`, skip the requirement checks and the payment.
     pub ignore_requirements: bool,
+    /// The packed retail power user ID, or `PowerUserId::INVALID` if there is none.
     pub power_user_id: PowerUserId,
 }
 
@@ -69,26 +76,31 @@ pub struct OrbitalShot {
 }
 
 impl OrbitalShot {
+    /// Return the world position from which the projectile starts.
     #[must_use]
     pub const fn launch_position(&self) -> Vec3 {
         self.launch_position
     }
 
+    /// Return the world position that the shot hits.
     #[must_use]
     pub const fn target_position(&self) -> Vec3 {
         self.target_position
     }
 
+    /// Return the game time at which the projectile launches, in milliseconds.
     #[must_use]
     pub const fn launch_time_ms(&self) -> u32 {
         self.launch_time_ms
     }
 
+    /// Return the targeting laser object of the shot, or an invalid ID before it exists.
     #[must_use]
     pub const fn laser_object_id(&self) -> EntityId {
         self.laser_object_id
     }
 
+    /// Return `true` after the shot created its targeting laser.
     #[must_use]
     pub const fn laser_created(&self) -> bool {
         self.laser_created
@@ -140,81 +152,97 @@ pub struct OrbitalPowerExecution {
 }
 
 impl OrbitalPowerExecution {
+    /// Return the ID of this power execution.
     #[must_use]
     pub const fn id(&self) -> PowerExecutionId {
         self.id
     }
 
+    /// Return the player that uses the power.
     #[must_use]
     pub const fn player_id(&self) -> PlayerId {
         self.player_id
     }
 
+    /// Return the runtime table index of the power prototype.
     #[must_use]
     pub const fn proto_power_id(&self) -> ProtoPowerId {
         self.proto_power_id
     }
 
+    /// Return the authored power level.
     #[must_use]
     pub const fn power_level(&self) -> u32 {
         self.power_level
     }
 
+    /// Return the squad that owns the power charge, or an invalid ID for a player power.
     #[must_use]
     pub const fn owner_squad_id(&self) -> EntityId {
         self.owner_squad_id
     }
 
+    /// Return the packed retail power user ID.
     #[must_use]
     pub const fn power_user_id(&self) -> PowerUserId {
         self.power_user_id
     }
 
+    /// Return the world location that the invocation targets.
     #[must_use]
     pub const fn target_location(&self) -> Vec3 {
         self.target_location
     }
 
+    /// Return the position that the live targeting laser moves to.
     #[must_use]
     pub const fn desired_targeting_position(&self) -> Vec3 {
         self.desired_targeting_position
     }
 
+    /// Return the live targeting laser object, or an invalid ID after its removal.
     #[must_use]
     pub const fn real_targeting_laser_id(&self) -> EntityId {
         self.real_targeting_laser_id
     }
 
+    /// Return the count of shots that the execution can still queue.
     #[must_use]
     pub const fn shots_remaining(&self) -> u32 {
         self.shots_remaining
     }
 
+    /// Return the count of queued shots and projectiles that did not hit yet.
     #[must_use]
     pub const fn impacts_to_process(&self) -> u32 {
         self.impacts_to_process
     }
 
+    /// Return `true` after the player confirmed the first shot.
     #[must_use]
     pub const fn fired_initial_shot(&self) -> bool {
         self.fired_initial_shot
     }
 
+    /// Return `true` if a shot target must be in line of sight.
     #[must_use]
     pub const fn requires_los(&self) -> bool {
         self.requires_los
     }
 
+    /// Return the time since the invocation, in seconds.
     #[must_use]
     pub const fn elapsed_seconds(&self) -> f32 {
         self.elapsed_seconds
     }
 
+    /// Return the shots that wait for their launch time.
     #[must_use]
     pub fn pending_shots(&self) -> &[OrbitalShot] {
         &self.shots
     }
 
+    /// Return the shot projectiles that are in flight.
     #[must_use]
     pub fn active_projectile_ids(&self) -> &[EntityId] {
         &self.active_projectile_ids

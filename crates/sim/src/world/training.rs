@@ -17,54 +17,92 @@ pub const MAX_TRAIN_BATCH: u32 = 256;
 /// Number of requested training items accepted by authoritative validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrainingQueueResult {
+    /// The count of items that the building added to its queue.
     pub accepted: u32,
+    /// The count of items that the command asked for.
     pub requested: u32,
 }
 
 /// Rejection produced while validating authoritative building training.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TrainingError {
+    /// The world has no player with this ID.
     #[error("player {0} is not present in the world")]
     PlayerNotFound(PlayerId),
+    /// The world has no building with this ID.
     #[error("building {0:?} is not present in the world")]
     BuildingNotFound(EntityId),
+    /// The building belongs to a different player.
     #[error("building {building_id:?} is not owned by player {player_id}")]
     BuildingNotOwned {
+        /// The building that the command names.
         building_id: EntityId,
+        /// The player that issued the command.
         player_id: PlayerId,
     },
+    /// The database has no prototype of this kind with this runtime ID.
     #[error("{kind:?} runtime prototype ID {prototype_id} was not found")]
     PrototypeNotFound {
+        /// The training kind that selects the prototype table.
         kind: TrainingKind,
+        /// The runtime prototype ID that the command names.
         prototype_id: i32,
     },
+    /// The named object prototype is not a standalone unit or building.
     #[error("object training prototype '{0}' is not a standalone unit or building")]
     PrototypeNotSpawnable(String),
+    /// The building has no training command of this kind for the prototype.
     #[error("building {building_id:?} does not offer {kind:?} '{prototype}'")]
     CommandUnavailable {
+        /// The building that the command names.
         building_id: EntityId,
+        /// The requested training kind.
         kind: TrainingKind,
+        /// The name of the requested prototype.
         prototype: String,
     },
+    /// The named prototype has costs, but the database has no resource table.
     #[error("training '{0}' has costs but the database has no resource table")]
     MissingResourceTable(String),
+    /// The prototype cost names a resource that the database does not define.
     #[error("training '{prototype}' references unknown resource '{resource}'")]
-    UnknownResource { prototype: String, resource: String },
+    UnknownResource {
+        /// The name of the prototype.
+        prototype: String,
+        /// The unknown resource name.
+        resource: String,
+    },
+    /// The prototype has a cost value that is not usable for this resource.
     #[error("training '{prototype}' has invalid cost for resource '{resource}'")]
-    InvalidCost { prototype: String, resource: String },
+    InvalidCost {
+        /// The name of the prototype.
+        prototype: String,
+        /// The name of the resource with the bad cost.
+        resource: String,
+    },
+    /// The named prototype has build points that are not usable.
     #[error("training '{0}' has invalid build points")]
     InvalidBuildPoints(String),
+    /// The named prototype uses population, but the database has no population table.
     #[error("training '{0}' has population but the database has no population table")]
     MissingPopulationTable(String),
+    /// The prototype names a population type that the database does not define.
     #[error("'{prototype}' references unknown population type '{population}'")]
     UnknownPopulation {
+        /// The name of the prototype.
         prototype: String,
+        /// The unknown population type name.
         population: String,
     },
+    /// The object cost lookup failed.
     #[error(transparent)]
     ObjectCost(#[from] ObjectCostError),
+    /// The command asks for more than `MAX_TRAIN_BATCH` items.
     #[error("training count {count} exceeds the per-command limit of {MAX_TRAIN_BATCH}")]
-    BatchTooLarge { count: u32 },
+    BatchTooLarge {
+        /// The count of items that the command asks for.
+        count: u32,
+    },
 }
 
 #[derive(Debug, Clone)]

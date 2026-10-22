@@ -69,14 +69,9 @@ fn removing_a_squad_revokes_its_owner_power_source() {
 
     world.remove_squad(squad_id).unwrap();
 
-    assert!(
-        world
-            .get_player(1)
-            .unwrap()
-            .power_entry(0)
-            .unwrap()
-            .items()
-            .is_empty()
+    assert_eq!(
+        world.get_player(1).unwrap().power_entry(0).unwrap().items(),
+        [] as [crate::PowerEntryItem; 0]
     );
 }
 

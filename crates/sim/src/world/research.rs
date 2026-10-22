@@ -12,57 +12,85 @@ use pipeline::database::hw1::{Database, Tech};
 /// Result of accepting a positive retail research command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResearchQueueResult {
+    /// The building added the technology to its research queue.
     Queued,
+    /// The technology activated at once, because it has the `Instant` flag or the request is free.
     CompletedInstantly,
 }
 
 /// Rejection produced while validating authoritative research work.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ResearchError {
+    /// The world has no player with this ID.
     #[error("player {0} is not present in the world")]
     PlayerNotFound(PlayerId),
+    /// The world has no building with this ID.
     #[error("building {0:?} is not present in the world")]
     BuildingNotFound(EntityId),
+    /// The building belongs to a different player.
     #[error("building {building_id:?} is not owned by player {player_id}")]
     BuildingNotOwned {
+        /// The building that the command names.
         building_id: EntityId,
+        /// The player that issued the command.
         player_id: PlayerId,
     },
+    /// The database has no technology with this runtime ID.
     #[error("technology runtime ID {0} was not found")]
     TechnologyNotFound(i32),
+    /// The building has no research command for the technology.
     #[error("building {building_id:?} does not offer technology '{technology}'")]
     CommandUnavailable {
+        /// The building that the command names.
         building_id: EntityId,
+        /// The name of the requested technology.
         technology: String,
     },
+    /// The technology status is not `Available`.
     #[error("technology '{technology}' has retail status {status:?}, not Available")]
     TechnologyUnavailable {
+        /// The name of the requested technology.
         technology: String,
+        /// The current retail status of the technology.
         status: TechStatus,
     },
+    /// The shared worker of the building already researches a unique technology.
     #[error("building {0:?} already has a unique technology in its shared worker")]
     UniqueResearchInProgress(EntityId),
+    /// The named technology is a shadow technology that only the tech tree activates.
     #[error("shadow technology '{0}' must be activated by the tech tree, not researched manually")]
     ShadowTechnologyUnsupported(String),
+    /// The technology cost names a resource that the database does not define.
     #[error("technology '{technology}' references unknown resource '{resource}'")]
     UnknownResource {
+        /// The name of the technology.
         technology: String,
+        /// The unknown resource name.
         resource: String,
     },
+    /// The technology has a cost value that is not usable for this resource.
     #[error("technology '{technology}' has invalid cost for resource '{resource}'")]
     InvalidCost {
+        /// The name of the technology.
         technology: String,
+        /// The name of the resource with the bad cost.
         resource: String,
     },
+    /// The named technology has costs, but the database has no resource table.
     #[error("technology '{0}' has costs but the database has no resource table")]
     MissingResourceTable(String),
+    /// The named technology has research points that are not usable.
     #[error("technology '{0}' has invalid research points")]
     InvalidResearchPoints(String),
+    /// The player does not have the resources to pay for the technology.
     #[error("player {player_id} cannot afford technology '{technology}'")]
     InsufficientResources {
+        /// The player that must pay.
         player_id: PlayerId,
+        /// The name of the requested technology.
         technology: String,
     },
+    /// The technology activation failed.
     #[error(transparent)]
     Activation(#[from] TechnologyError),
 }

@@ -149,7 +149,7 @@ fn shutdown_rolls_back_pickup_before_destroying_the_targeting_session() {
     ));
     let execution = &world.active_transport_powers()[0];
     assert_eq!(execution.pickup_location(), None);
-    assert!(execution.selected_squad_ids().is_empty());
+    assert_eq!(execution.selected_squad_ids(), [] as [EntityId; 0]);
 
     assert!(world.submit_transport_power_input(
         &database,
@@ -192,14 +192,14 @@ fn commanding_a_reserved_squad_cancels_its_incoming_pickup() {
     );
 
     assert!(world.issue_squad_move_order_to_position(1, passenger, Vec3::Z * 10.0, false, false,));
-    assert!(
+    assert_eq!(
         world
             .get_squad(carrier_id)
             .unwrap()
             .power_transport()
             .unwrap()
-            .passenger_squad_ids()
-            .is_empty()
+            .passenger_squad_ids(),
+        [] as [EntityId; 0]
     );
     advance_until(&mut world, &database, 360, |world| {
         world.get_squad(carrier_id).is_none()

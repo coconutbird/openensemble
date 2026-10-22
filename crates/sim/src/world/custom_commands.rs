@@ -18,71 +18,87 @@ impl CustomCommandFlags {
     const UNAVAILABLE: u8 = 1 << 5;
     const ALLOW_CANCEL: u8 = 1 << 6;
 
+    /// Return a copy with the `queue` flag set to `enabled`.
     #[must_use]
     pub const fn with_queue(self, enabled: bool) -> Self {
         self.with(Self::QUEUE, enabled)
     }
 
+    /// Return a copy with the `allow_multiple` flag set to `enabled`.
     #[must_use]
     pub const fn with_allow_multiple(self, enabled: bool) -> Self {
         self.with(Self::ALLOW_MULTIPLE, enabled)
     }
 
+    /// Return a copy with the `show_limit` flag set to `enabled`.
     #[must_use]
     pub const fn with_show_limit(self, enabled: bool) -> Self {
         self.with(Self::SHOW_LIMIT, enabled)
     }
 
+    /// Return a copy with the `close_menu` flag set to `enabled`.
     #[must_use]
     pub const fn with_close_menu(self, enabled: bool) -> Self {
         self.with(Self::CLOSE_MENU, enabled)
     }
 
+    /// Return a copy with the `persistent` flag set to `enabled`.
     #[must_use]
     pub const fn with_persistent(self, enabled: bool) -> Self {
         self.with(Self::PERSISTENT, enabled)
     }
 
+    /// Return a copy with the `unavailable` flag set to `enabled`.
     #[must_use]
     pub const fn with_unavailable(self, enabled: bool) -> Self {
         self.with(Self::UNAVAILABLE, enabled)
     }
 
+    /// Return a copy with the `allow_cancel` flag set to `enabled`.
     #[must_use]
     pub const fn with_allow_cancel(self, enabled: bool) -> Self {
         self.with(Self::ALLOW_CANCEL, enabled)
     }
 
+    /// Return `true` if the command waits in the unit queue.
+    ///
+    /// If this flag is clear, a new command cancels and refunds the queue of the unit.
     #[must_use]
     pub const fn queue(self) -> bool {
         self.contains(Self::QUEUE)
     }
 
+    /// Return `true` if a persistent command can have more than one queued execution.
     #[must_use]
     pub const fn allow_multiple(self) -> bool {
         self.contains(Self::ALLOW_MULTIPLE)
     }
 
+    /// Return `true` if the UI shows the command limit.
     #[must_use]
     pub const fn show_limit(self) -> bool {
         self.contains(Self::SHOW_LIMIT)
     }
 
+    /// Return `true` if the UI closes the command menu after use.
     #[must_use]
     pub const fn close_menu(self) -> bool {
         self.contains(Self::CLOSE_MENU)
     }
 
+    /// Return `true` if the command stays in the registry after it completes.
     #[must_use]
     pub const fn persistent(self) -> bool {
         self.contains(Self::PERSISTENT)
     }
 
+    /// Return `true` if a player cannot queue the command.
     #[must_use]
     pub const fn unavailable(self) -> bool {
         self.contains(Self::UNAVAILABLE)
     }
 
+    /// Return `true` if a player can cancel a queued execution for a refund.
     #[must_use]
     pub const fn allow_cancel(self) -> bool {
         self.contains(Self::ALLOW_CANCEL)
@@ -105,18 +121,31 @@ impl CustomCommandFlags {
 /// One retail `BCustomCommand` exposed to renderer/UI consumers.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CustomCommand {
+    /// The retail ID that `World::add_custom_command` assigns.
     pub id: i32,
+    /// The unit that offers the command.
     pub unit_id: EntityId,
+    /// The slot of the command icon in the unit command menu.
     pub icon_position: i32,
+    /// The name of the command icon, if the trigger sets one.
     pub icon_name: Option<String>,
+    /// The resources that the player pays to queue the command.
     pub cost: Resources,
+    /// The time from the start of an execution to its completion, in seconds.
     pub timer_seconds: f32,
+    /// The maximum count of queued and finished executions, or `0` for no limit.
     pub limit: i32,
+    /// The string table ID of the command name, or `-1`.
     pub name_string_id: i32,
+    /// The string table ID of the command information text, or `-1`.
     pub info_string_id: i32,
+    /// The string table ID of the command help text, or `-1`.
     pub help_string_id: i32,
+    /// The count of executions in the queue.
     pub queued_count: i32,
+    /// The count of executions that completed.
     pub finished_count: i32,
+    /// The authored behavior flags.
     pub flags: CustomCommandFlags,
 }
 
@@ -171,15 +200,18 @@ impl World {
         Some(removed)
     }
 
+    /// Return the registered command with this ID.
     #[must_use]
     pub fn custom_command(&self, command_id: i32) -> Option<&CustomCommand> {
         self.custom_commands.get(&command_id)
     }
 
+    /// Iterate over all registered commands in ID order.
     pub fn custom_commands(&self) -> impl Iterator<Item = &CustomCommand> {
         self.custom_commands.values()
     }
 
+    /// Return the ID that the next added command receives.
     #[must_use]
     pub fn next_custom_command_id(&self) -> i32 {
         self.next_custom_command_id

@@ -361,12 +361,9 @@ mod tests {
 
         assert_eq!(world.remove_unit_attachments_by_prototype(unit_id, 27), 1);
         assert!(world.get_object(attachment_id).is_none());
-        assert!(
-            world
-                .entity_object_state(unit_id)
-                .unwrap()
-                .attachments()
-                .is_empty()
+        assert_eq!(
+            world.entity_object_state(unit_id).unwrap().attachments(),
+            [] as [EntityId; 0]
         );
     }
 }

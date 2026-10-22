@@ -29,12 +29,19 @@ const DROP_POD_OFFSET: Vec3 = Vec3::new(10.0, 80.0, 10.0);
 /// Inputs accepted by retail's direct `InvokePower2` ODST path.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OdstPowerInvocation {
+    /// The player that uses the power.
     pub player_id: PlayerId,
+    /// The runtime table index of the power prototype.
     pub proto_power_id: ProtoPowerId,
+    /// The authored power level that selects the power data.
     pub power_level: u32,
+    /// The squad that owns the power charge, or an invalid ID for a player power.
     pub squad_id: EntityId,
+    /// The world location that the power targets.
     pub target_location: Vec3,
+    /// If `true`, skip the requirement checks and the payment.
     pub ignore_requirements: bool,
+    /// The packed retail power user ID, or `PowerUserId::INVALID` if there is none.
     pub power_user_id: PowerUserId,
 }
 
@@ -66,21 +73,25 @@ pub struct OdstDrop {
 }
 
 impl OdstDrop {
+    /// Return the hidden ODST squad that the drop pod carries.
     #[must_use]
     pub const fn squad_id(&self) -> EntityId {
         self.squad_id
     }
 
+    /// Return the drop pod projectile, or an invalid ID before the launch.
     #[must_use]
     pub const fn projectile_id(&self) -> EntityId {
         self.projectile_id
     }
 
+    /// Return the validated world location of the drop.
     #[must_use]
     pub const fn target_location(&self) -> Vec3 {
         self.target_location
     }
 
+    /// Return the execution time at which the squad appears, in seconds.
     #[must_use]
     pub const fn reveal_at_seconds(&self) -> f32 {
         self.reveal_at_seconds
@@ -120,66 +131,81 @@ pub struct OdstPowerExecution {
 }
 
 impl OdstPowerExecution {
+    /// Return the ID of this power execution.
     #[must_use]
     pub const fn id(&self) -> PowerExecutionId {
         self.id
     }
 
+    /// Return the player that uses the power.
     #[must_use]
     pub const fn player_id(&self) -> PlayerId {
         self.player_id
     }
 
+    /// Return the runtime table index of the power prototype.
     #[must_use]
     pub const fn proto_power_id(&self) -> ProtoPowerId {
         self.proto_power_id
     }
 
+    /// Return the authored power level.
     #[must_use]
     pub const fn power_level(&self) -> u32 {
         self.power_level
     }
 
+    /// Return the squad that owns the power charge, or an invalid ID for a player power.
     #[must_use]
     pub const fn owner_squad_id(&self) -> EntityId {
         self.owner_squad_id
     }
 
+    /// Return the packed retail power user ID.
     #[must_use]
     pub const fn power_user_id(&self) -> PowerUserId {
         self.power_user_id
     }
 
+    /// Return the location of the last confirmed drop, or the invocation target.
     #[must_use]
     pub const fn target_location(&self) -> Vec3 {
         self.target_location
     }
 
+    /// Return the time from a confirmed drop to the squad reveal, in seconds.
     #[must_use]
     pub const fn squad_spawn_delay(&self) -> f32 {
         self.squad_spawn_delay
     }
 
+    /// Return the prototype name of the drop pod projectile.
     #[must_use]
     pub fn projectile_prototype(&self) -> &str {
         &self.projectile_prototype
     }
 
+    /// Return the prototype name of the ODST squad.
     #[must_use]
     pub fn odst_squad_prototype(&self) -> &str {
         &self.odst_squad_prototype
     }
 
+    /// Return the time since the invocation, in seconds.
     #[must_use]
     pub const fn elapsed_seconds(&self) -> f32 {
         self.elapsed_seconds
     }
 
+    /// Return `true` after a shutdown input.
+    ///
+    /// After a shutdown input, the execution accepts no new drops.
     #[must_use]
     pub const fn ready_for_shutdown(&self) -> bool {
         self.ready_for_shutdown
     }
 
+    /// Return the drops that are not complete.
     #[must_use]
     pub fn active_drops(&self) -> &[OdstDrop] {
         &self.active_drops

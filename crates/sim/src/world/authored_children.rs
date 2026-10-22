@@ -150,12 +150,9 @@ mod tests {
                 .is_some_and(|child| !child.is_alive())
         );
         assert_eq!(world.get_unit(child_id).unwrap().built_by, None);
-        assert!(
-            world
-                .get_unit(parent_id)
-                .unwrap()
-                .associated_foundations()
-                .is_empty()
+        assert_eq!(
+            world.get_unit(parent_id).unwrap().associated_foundations(),
+            [] as [EntityId; 0]
         );
     }
 
@@ -181,12 +178,9 @@ mod tests {
 
         let _removed = world.remove_unit(child_id);
 
-        assert!(
-            world
-                .get_unit(parent_id)
-                .unwrap()
-                .associated_child_units()
-                .is_empty()
+        assert_eq!(
+            world.get_unit(parent_id).unwrap().associated_child_units(),
+            [] as [EntityId; 0]
         );
     }
 }

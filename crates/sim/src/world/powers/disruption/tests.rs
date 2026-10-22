@@ -123,7 +123,7 @@ fn assert_shutdown_death_lifetime(
     world.game_time_ms = 5_500;
     world.update_entities(0.05);
     assert!(world.get_object(field_id).is_none());
-    assert!(pulse_ids(world).is_empty());
+    assert_eq!(pulse_ids(world), Vec::<EntityId>::new());
 }
 
 #[test]

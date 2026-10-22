@@ -70,111 +70,133 @@ pub struct RepairPowerExecution {
 }
 
 impl RepairPowerExecution {
+    /// Return the ID of this power execution.
     #[must_use]
     pub const fn id(&self) -> PowerExecutionId {
         self.id
     }
 
+    /// Return the player that uses the power.
     #[must_use]
     pub const fn player_id(&self) -> u8 {
         self.player_id
     }
 
+    /// Return the runtime table index of the power prototype.
     #[must_use]
     pub const fn proto_power_id(&self) -> i32 {
         self.proto_power_id
     }
 
+    /// Return the authored power level.
     #[must_use]
     pub const fn power_level(&self) -> u32 {
         self.power_level
     }
 
+    /// Return the squad that owns the power charge, or an invalid ID for a player power.
     #[must_use]
     pub const fn owner_squad_id(&self) -> EntityId {
         self.owner_squad_id
     }
 
+    /// Return the repair area object, or an invalid ID after shutdown.
     #[must_use]
     pub const fn repair_object_id(&self) -> EntityId {
         self.repair_object_id
     }
 
+    /// Return the world location of the repair area center.
     #[must_use]
     pub const fn target_location(&self) -> Vec3 {
         self.target_location
     }
 
+    /// Return the prototype name of the repair area object (`RepairObject`).
     #[must_use]
     pub fn repair_object_prototype(&self) -> &str {
         &self.repair_object_prototype
     }
 
+    /// Return the prototype name that attaches to repaired squads (`RepairAttachment`), if any.
     #[must_use]
     pub fn repair_attachment_prototype(&self) -> Option<&str> {
         self.repair_attachment_prototype.as_deref()
     }
 
+    /// Return the object type that a squad leader must have (`FilterType`).
     #[must_use]
     pub fn filter_type(&self) -> &str {
         &self.filter_type
     }
 
+    /// Return the radius of the repair area (`RepairRadius`), in world units.
     #[must_use]
     pub const fn radius(&self) -> f32 {
         self.radius
     }
 
+    /// Return the time between repair ticks (`TickDuration`), in milliseconds.
     #[must_use]
     pub const fn tick_duration_ms(&self) -> u32 {
         self.tick_duration_ms
     }
 
+    /// Return the game time of the next repair tick, in milliseconds.
     #[must_use]
     pub const fn next_tick_time_ms(&self) -> u32 {
         self.next_tick_time_ms
     }
 
+    /// Return the combat value that each tick repairs (`RepairCombatValuePerTick`).
     #[must_use]
     pub const fn repair_combat_value_per_tick(&self) -> f32 {
         self.repair_combat_value_per_tick
     }
 
+    /// Return the repair pause after damage (`CooldownTimeIfDamaged`), in milliseconds.
     #[must_use]
     pub const fn cooldown_time_if_damaged_ms(&self) -> u32 {
         self.cooldown_time_if_damaged_ms
     }
 
+    /// Return the count of repair ticks that remain (`NumTicks` at the start).
     #[must_use]
     pub const fn ticks_remaining(&self) -> u32 {
         self.ticks_remaining
     }
 
+    /// Return `true` if each tick divides its combat value among the squads (`SpreadAmongSquads`).
     #[must_use]
     pub const fn spreads_among_squads(&self) -> bool {
         self.flags.contains(RepairFlags::SPREAD_AMONG_SQUADS)
     }
 
+    /// Return `true` if the repair can reinforce squads (`AllowReinforce`).
     #[must_use]
     pub const fn allows_reinforcement(&self) -> bool {
         self.flags.contains(RepairFlags::ALLOW_REINFORCE)
     }
 
+    /// Return `true` if the target can be outside the playable bounds (`IgnorePlacement`).
     #[must_use]
     pub const fn ignores_placement(&self) -> bool {
         self.flags.contains(RepairFlags::IGNORE_PLACEMENT)
     }
 
+    /// Return `true` if the power repairs squads of all players, not only allies (`HealAny`).
     #[must_use]
     pub const fn heals_any_relation(&self) -> bool {
         self.flags.contains(RepairFlags::HEAL_ANY)
     }
 
+    /// Return `true` if the power has no tick limit (`NeverStops`).
     #[must_use]
     pub const fn never_stops(&self) -> bool {
         self.flags.contains(RepairFlags::NEVER_STOPS)
     }
 
+    /// Return the squads that the last tick repaired.
     #[must_use]
     pub fn repairing_squads(&self) -> &[EntityId] {
         &self.repairing_squads

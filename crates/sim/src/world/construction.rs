@@ -1,9 +1,10 @@
 //! Retail-style building construction, placement, payment, and cancellation.
 
+mod error;
 mod on_built;
 mod placement;
 
-use super::{ObjectCostError, World};
+use super::World;
 use crate::entities::units::{ProductionTask, TriggerCommandStateRef};
 use crate::entities::{ConstructionKind, ConstructionProgress, ConstructionTask};
 use crate::entity_id::EntityId;
@@ -15,6 +16,8 @@ use pipeline::database::hw1::Database;
 use pipeline::database::hw1::objects::{ProtoObject, TrainLimitType};
 
 use placement::{direct_build_transform, find_build_other_socket};
+
+pub use error::ConstructionError;
 
 impl World {
     pub(crate) fn set_construction_damage_multiplier(&mut self, multiplier: Option<f32>) {
@@ -29,69 +32,6 @@ impl World {
 pub struct ConstructionQueueResult {
     /// `BuildOther` creates its target only after reaching the shared worker.
     pub target_building_id: Option<EntityId>,
-}
-
-/// Rejection produced while validating authoritative construction.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConstructionError {
-    #[error("player {0} is not present in the world")]
-    PlayerNotFound(PlayerId),
-    #[error("builder {0:?} is not present in the world")]
-    BuilderNotFound(EntityId),
-    #[error("builder {builder_id:?} is not owned by player {player_id}")]
-    BuilderNotOwned {
-        builder_id: EntityId,
-        player_id: PlayerId,
-    },
-    #[error("builder {0:?} has not completed construction")]
-    BuilderUnbuilt(EntityId),
-    #[error("runtime building prototype ID {0} was not found")]
-    PrototypeNotFound(i32),
-    #[error("construction target '{0}' is not a building")]
-    PrototypeNotBuilding(String),
-    #[error("builder {builder_id:?} does not offer {kind:?} '{prototype}'")]
-    CommandUnavailable {
-        builder_id: EntityId,
-        kind: ConstructionKind,
-        prototype: String,
-    },
-    #[error(transparent)]
-    ObjectCost(#[from] ObjectCostError),
-    #[error("construction '{0}' has invalid build points")]
-    InvalidBuildPoints(String),
-    #[error("construction '{0}' has population but the database has no population table")]
-    MissingPopulationTable(String),
-    #[error("'{prototype}' references unknown population type '{population}'")]
-    UnknownPopulation {
-        prototype: String,
-        population: String,
-    },
-    #[error("player {player_id} cannot afford '{prototype}'")]
-    InsufficientResources {
-        player_id: PlayerId,
-        prototype: String,
-    },
-    #[error("player {player_id} has no population room for '{prototype}'")]
-    PopulationFull {
-        player_id: PlayerId,
-        prototype: String,
-    },
-    #[error("the train limit for '{prototype}' on builder {builder_id:?} is reached")]
-    TrainLimitReached {
-        builder_id: EntityId,
-        prototype: String,
-    },
-    #[error("builder {0:?} already has queued or active BuildOther work")]
-    BuildOtherAlreadyQueued(EntityId),
-    #[error("builder {builder_id:?} has no available socket for '{prototype}'")]
-    SocketUnavailable {
-        builder_id: EntityId,
-        prototype: String,
-    },
-    #[error("construction position and facing must be finite")]
-    InvalidTransform,
-    #[error("new building {0:?} could not start its construction worker")]
-    WorkerUnavailable(EntityId),
 }
 
 #[derive(Debug, Clone)]

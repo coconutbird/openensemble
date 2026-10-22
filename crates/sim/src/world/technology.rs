@@ -26,7 +26,9 @@ pub enum TechnologyError {
     /// The selected live unit does not belong to the researching player.
     #[error("unit {unit_id:?} is not owned by player {player_id}")]
     UnitNotOwned {
+        /// The unit that the technology targets.
         unit_id: EntityId,
+        /// The player that researches the technology.
         player_id: PlayerId,
     },
 }

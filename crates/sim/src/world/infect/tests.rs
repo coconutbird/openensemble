@@ -154,12 +154,9 @@ fn invalid_target_types_prevent_initial_squad_exposure() {
 
     update(&mut world, &database, &gameplay, 0.05);
 
-    assert!(
-        world
-            .get_unit(source_id)
-            .unwrap()
-            .infection_exposures()
-            .is_empty()
+    assert_eq!(
+        world.get_unit(source_id).unwrap().infection_exposures(),
+        [] as [InfectionExposure; 0]
     );
     assert!(world.objects.is_empty());
 }

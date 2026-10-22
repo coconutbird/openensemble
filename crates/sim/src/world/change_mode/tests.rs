@@ -287,7 +287,10 @@ fn lockdown_menu_vehicle_installs_and_removes_default_rally() {
 
     execute_work_change_mode(&mut world, &database, &gameplay, squad_id);
     world.update_entities_with_gameplay(0.56, &gameplay);
-    assert!(world.get_player(1).unwrap().goto_base_units().is_empty());
+    assert_eq!(
+        world.get_player(1).unwrap().goto_base_units(),
+        [] as [EntityId; 0]
+    );
     assert!(world.unit_rally_point(unit_id, 1).is_none());
 }
 
@@ -302,7 +305,10 @@ fn lockdown_menu_membership_follows_squad_ownership() {
     assert_eq!(world.get_player(1).unwrap().goto_base_units(), &[unit_id]);
 
     assert!(world.change_squad_owner(squad_id, 2));
-    assert!(world.get_player(1).unwrap().goto_base_units().is_empty());
+    assert_eq!(
+        world.get_player(1).unwrap().goto_base_units(),
+        [] as [EntityId; 0]
+    );
     assert_eq!(world.get_player(2).unwrap().goto_base_units(), &[unit_id]);
     assert!(world.unit_rally_point(unit_id, 2).is_some());
 }
@@ -317,7 +323,10 @@ fn killing_lockdown_menu_leader_removes_goto_and_rally_state_immediately() {
     assert_eq!(world.get_player(1).unwrap().goto_base_units(), &[unit_id]);
 
     assert!(world.kill_unit(unit_id, false));
-    assert!(world.get_player(1).unwrap().goto_base_units().is_empty());
+    assert_eq!(
+        world.get_player(1).unwrap().goto_base_units(),
+        [] as [EntityId; 0]
+    );
     assert!(world.unit_rally_point(unit_id, 1).is_none());
     assert!(world.get_unit(unit_id).is_some());
 }

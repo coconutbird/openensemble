@@ -114,10 +114,9 @@ fn recent_damage_refreshes_cooldown_until_a_scheduled_tick_reaches_expiration() 
         world.get_unit(unit_id).unwrap().hitpoints.to_bits(),
         50.0_f32.to_bits()
     );
-    assert!(
-        world.active_repair_powers()[0]
-            .repairing_squads()
-            .is_empty()
+    assert_eq!(
+        world.active_repair_powers()[0].repairing_squads(),
+        [] as [EntityId; 0]
     );
     advance(&mut world, &database, 599, 0.05);
     assert_eq!(

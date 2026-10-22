@@ -168,12 +168,12 @@ fn aura_buffs_allied_members_chooses_size_fx_and_reverses_on_leave() {
     assert!(world.teleport_squad(medium_id, Vec3::X * 100.0));
     advance(&mut world, &database, 20, 0.01);
     assert_close(unit_scalar(&world, medium_id, UnitDataScalar::Damage), 1.0);
-    assert!(attached_names(&world, medium_id).is_empty());
+    assert_eq!(attached_names(&world, medium_id), Vec::<&str>::new());
 
     assert!(world.submit_rage_power_input(&database, execution_id, NativePowerInput::Shutdown,));
     for id in [small_id, large_id] {
         assert_close(unit_scalar(&world, id, UnitDataScalar::Damage), 1.0);
-        assert!(attached_names(&world, id).is_empty());
+        assert_eq!(attached_names(&world, id), Vec::<&str>::new());
     }
 }
 
