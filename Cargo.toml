@@ -126,3 +126,15 @@ mod_module_files = "deny"
 
 [workspace.lints.rustdoc]
 all = { level = "warn", priority = -1 }
+
+# Optimize all dependencies in debug and test builds. This includes the path dependencies from
+# `ensemble-formats` and `ensemble-assets`. Without optimization, the DDX, ERA and XMB decoders
+# make a debug scenario load take minutes.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev.package.render]
+opt-level = 1
+
+[profile.dev.package.motion]
+opt-level = 1
