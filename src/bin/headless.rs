@@ -11,7 +11,7 @@ use num_traits::ToPrimitive;
 use pipeline::database::hw1::Database;
 use pipeline::hw1::loader;
 use pipeline::hw1::scenario::ScenarioData;
-use sim::{Session, SessionState, Simulation, World, load_scenario_into_world};
+use sim::{GameSettings, Session, SessionState, Simulation, World, load_scenario_into_world};
 use std::time::{Duration, Instant};
 
 /// Headless server configuration.
@@ -114,7 +114,7 @@ impl HeadlessServer {
     pub fn load_scenario_data(&mut self, scenario: &ScenarioData) -> Result<()> {
         let empty_db = Database::new();
         let db = self.database.as_ref().unwrap_or(&empty_db);
-        let loaded = load_scenario_into_world(scenario, db);
+        let loaded = load_scenario_into_world(scenario, db, &GameSettings::skirmish_1v1(0))?;
         self.world = loaded.world;
 
         let player_count = scenario.players.as_ref().map_or(0, |p| p.entries.len());

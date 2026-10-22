@@ -2,9 +2,8 @@
 
 use super::prototypes::prototype_has_flag;
 use super::{
-    PlacedUnitKind, ScenarioObject, classify_proto_object, configure_unit_from_proto,
-    create_scenario_squad, is_class_zero_object, refresh_squad_member_settings, scenario_forward,
-    scenario_position, valid_nonnegative,
+    PlacedUnitKind, classify_proto_object, configure_unit_from_proto, create_squad_from_prototype,
+    is_class_zero_object, refresh_squad_member_settings, valid_nonnegative,
 };
 use crate::entities::objects::is_icon_prototype;
 use crate::entities::squads::marine::is_marine_squad;
@@ -13,10 +12,20 @@ use crate::entities::{IconObject, Object, SquadArchetype, SquadFormation};
 use crate::player::GAIA_PLAYER;
 use crate::prototypes::{
     ProtoSquadEntry, ScenarioProto, object_by_id, object_squad_id, proto_id, representing_squad,
-    scenario_proto,
 };
 use crate::{EntityId, World};
 use pipeline::database::hw1::{Database, ProtoObject};
+
+/// Owner and transform of a new entity.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Placement {
+    /// Requested owner. A `ForceToGaiaPlayer` proto object belongs to Gaia instead.
+    pub(super) player_id: u8,
+    /// World position.
+    pub(super) position: glam::Vec3,
+    /// World forward direction.
+    pub(super) forward: glam::Vec3,
+}
 
 #[derive(Debug, Clone, Copy)]
 struct ProtoObjectSquadPlacement {
@@ -26,35 +35,61 @@ struct ProtoObjectSquadPlacement {
     start_built: bool,
 }
 
-/// Create the entities of one placed `.scn` object.
+/// Create the entities of one resolved scenario proto and return the created entity.
 ///
 /// The proto reference resolves as in `BScenario_loadObject`; see
-/// [`scenario_proto`]. An implicit proto squad places its object. The sim does
-/// not place merged squads.
+/// [`crate::prototypes::scenario_proto`]. An implicit proto squad places its object. The
+/// sim does not place merged squads.
 pub(super) fn create_scenario_object(
     world: &mut World,
-    object: &ScenarioObject,
     database: &Database,
+    proto: ScenarioProto<'_>,
+    proto_name: &str,
+    placement: Placement,
 ) -> Option<EntityId> {
-    let (prototype_index, prototype) =
-        match scenario_proto(database, &object.proto_name, object.is_squad)? {
-            ScenarioProto::Squad(ProtoSquadEntry::Squad(_)) => {
-                return Some(create_scenario_squad(world, object, database));
-            }
-            ScenarioProto::Squad(ProtoSquadEntry::Merged { .. }) => return None,
-            ScenarioProto::Squad(ProtoSquadEntry::Implicit {
-                object_index,
-                object: proto,
-            }) => (object_index, proto),
-            ScenarioProto::Object(index, proto) => (index, proto),
-        };
+    let (prototype_index, prototype) = match proto {
+        ScenarioProto::Squad(ProtoSquadEntry::Squad(_)) => {
+            return Some(create_squad_from_prototype(
+                world,
+                placement.player_id,
+                placement.position,
+                placement.forward,
+                proto_name.trim(),
+                database,
+            ));
+        }
+        ScenarioProto::Squad(ProtoSquadEntry::Merged { .. }) => return None,
+        ScenarioProto::Squad(ProtoSquadEntry::Implicit {
+            object_index,
+            object: proto,
+        }) => (object_index, proto),
+        ScenarioProto::Object(index, proto) => (index, proto),
+    };
+    create_object_entity(world, database, prototype_index, prototype, placement)
+        .map(|(entity_id, _)| entity_id)
+}
+
+/// Create one proto object like `BWorld_createEntity` with the object flag.
+///
+/// A class-zero object becomes a world object. A unit or building becomes a one-unit squad
+/// with a completed unit. Returns the created entity (the object or the squad) and the unit.
+pub(super) fn create_object_entity(
+    world: &mut World,
+    database: &Database,
+    prototype_index: usize,
+    prototype: &ProtoObject,
+    placement: Placement,
+) -> Option<(EntityId, Option<EntityId>)> {
     if is_class_zero_object(prototype) {
-        return Some(create_class_zero_object(
+        let object_id = create_class_zero_object_at(
             world,
-            object,
-            prototype_index,
+            placement.player_id,
+            placement.position,
+            placement.forward,
+            proto_id(prototype_index),
             prototype,
-        ));
+        );
+        return Some((object_id, None));
     }
     classify_proto_object(prototype)?;
     create_proto_object_squad(
@@ -63,26 +98,23 @@ pub(super) fn create_scenario_object(
         prototype_index,
         prototype,
         ProtoObjectSquadPlacement {
-            player_id: u8::try_from(object.player).unwrap_or_default(),
-            position: scenario_position(object),
-            forward: scenario_forward(object),
+            player_id: placement.player_id,
+            position: placement.position,
+            forward: placement.forward,
             start_built: true,
         },
     )
-    .map(|(squad_id, _)| squad_id)
+    .map(|(squad_id, unit_id)| (squad_id, Some(unit_id)))
 }
 
-fn create_class_zero_object(
-    world: &mut World,
-    placement: &ScenarioObject,
-    prototype_index: usize,
-    prototype: &ProtoObject,
-) -> EntityId {
-    let owner = u8::try_from(placement.player).unwrap_or_default();
-    let position = scenario_position(placement);
-    let forward = scenario_forward(placement);
-    let prototype_id = proto_id(prototype_index);
-    create_class_zero_object_at(world, owner, position, forward, prototype_id, prototype)
+/// Owner of a new object: `BObject` initialization (`sub_14029C300`) gives a proto object
+/// with the `ForceToGaiaPlayer` flag (`BProtoObject` `+0xB5` bit 4) to Gaia.
+fn object_owner(requested_owner: u8, prototype: &ProtoObject) -> u8 {
+    if prototype_has_flag(prototype, "ForceToGaiaPlayer") {
+        GAIA_PLAYER
+    } else {
+        requested_owner
+    }
 }
 
 pub(crate) fn create_class_zero_object_at(
@@ -93,11 +125,7 @@ pub(crate) fn create_class_zero_object_at(
     prototype_id: i32,
     prototype: &ProtoObject,
 ) -> EntityId {
-    let owner = if prototype_has_flag(prototype, "ForceToGaiaPlayer") {
-        GAIA_PLAYER
-    } else {
-        requested_owner
-    };
+    let owner = object_owner(requested_owner, prototype);
     let id = world.objects.allocate_id();
     let object = if is_icon_prototype(prototype) {
         Object::new_icon(
@@ -156,7 +184,8 @@ fn create_proto_object_squad(
     placement: ProtoObjectSquadPlacement,
 ) -> Option<(EntityId, EntityId)> {
     let kind = classify_proto_object(prototype)?;
-    let squad_id = world.create_squad_at(placement.player_id, placement.position);
+    let owner = object_owner(placement.player_id, prototype);
+    let squad_id = world.create_squad_at(owner, placement.position);
     configure_synthetic_squad(
         world,
         squad_id,
@@ -167,10 +196,8 @@ fn create_proto_object_squad(
     );
 
     let unit_id = match kind {
-        PlacedUnitKind::Mobile => world.create_unit_at(placement.player_id, placement.position),
-        PlacedUnitKind::Building => {
-            world.create_building_at(placement.player_id, placement.position)
-        }
+        PlacedUnitKind::Mobile => world.create_unit_at(owner, placement.position),
+        PlacedUnitKind::Building => world.create_building_at(owner, placement.position),
     };
     configure_unit_from_proto(
         world,

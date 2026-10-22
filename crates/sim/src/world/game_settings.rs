@@ -83,6 +83,21 @@ impl World {
     }
 }
 
+impl World {
+    /// Seed the synchronized random stream from game setting 8 (`RandomSeed`).
+    ///
+    /// `BScenario_load` @ `0x140377BE0` writes the seed to every stream of the random
+    /// manager (`qword_141625AC0`) before it reads the scenario.
+    pub(crate) fn seed_sim_random(&mut self, seed: u32) {
+        self.sim_rng.set_seed(seed);
+    }
+
+    /// Mutably access the synchronized random stream (`qword_141625AC0 + 0x18`).
+    pub(crate) fn sim_random_mut(&mut self) -> &mut crate::random::SimRandom {
+        &mut self.sim_rng
+    }
+}
+
 pub(super) fn default_config_symbols() -> BTreeSet<String> {
     BTreeSet::from([VETERANCY_CONFIG.to_owned()])
 }

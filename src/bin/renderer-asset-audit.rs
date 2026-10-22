@@ -314,11 +314,9 @@ fn print_scenario_placements(world: &hw1::World) {
         .scenario
         .as_ref()
         .map(|descriptor| descriptor.max_players);
-    let position_axes = render::ugx::ScenarioPositionAxes::infer(scenario, max_players);
     println!("scenario max players: {max_players:?}");
     println!("scenario sim bounds: {:?}", scenario.sim_bounds());
-    println!("scenario object axes: Transposed");
-    println!("scenario player-start axes: {position_axes:?}");
+    println!("scenario object and player-start axes: Transposed");
     if let Some(raw) = world
         .terrain_data
         .as_ref()
@@ -343,8 +341,8 @@ fn print_scenario_placements(world: &hw1::World) {
             position.player,
             position.number,
             position.default_camera,
-            position_axes.position_to_world(authored_position),
-            position_axes.direction_to_world(authored_forward),
+            render::ugx::scenario_object_position_to_world(authored_position),
+            render::ugx::scenario_object_direction_to_world(authored_forward),
         );
     }
     println!("scenario objects:");

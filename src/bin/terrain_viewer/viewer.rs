@@ -202,11 +202,14 @@ fn load_scenario_inputs(scenario_name: &str) -> Result<TerrainLoadInputs, String
     log::info!("Loading scenario database and game state via sim: {scenario_name}");
     let dir = openensemble::game_dir();
     let dir_str = dir.to_string_lossy();
+    // Default lobby: a human UNSC Cutter (team 1) against a computer AI Covenant Arbiter
+    // (team 2).
+    let settings = sim::GameSettings::skirmish_1v1(0);
     let sim::LoadedGameScenario {
         simulation,
         mut content,
         mut source,
-    } = sim::load_scenario_from_game_dir(&dir_str, scenario_name)
+    } = sim::load_scenario_from_game_dir(&dir_str, scenario_name, &settings)
         .map_err(|error| format!("Failed to load simulation scenario: {error}"))?;
     log::info!(
         "Entered sim scenario with {} players, {} initial bases, {} squads, {} units/buildings, and {} projectiles",
@@ -216,6 +219,18 @@ fn load_scenario_inputs(scenario_name: &str) -> Result<TerrainLoadInputs, String
         simulation.world.units.len(),
         simulation.world.projectiles.len(),
     );
+    for player in simulation.world.players() {
+        log::info!(
+            "Player {} '{}': {:?} civ {} leader {} team {} state {:?}",
+            player.id,
+            player.name,
+            player.player_type,
+            player.civ_id,
+            player.leader_id,
+            player.team_id,
+            player.state,
+        );
+    }
 
     let sky = content
         .manifest

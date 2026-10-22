@@ -5,8 +5,8 @@
 use render::ugx::UnitScene;
 use sim::entities::squads::marine::MARINE_SQUAD_NAME;
 use sim::{
-    BuildingCommand, LoadedGameScenario, MS_PER_TICK, Simulation, configure_player_leader,
-    object_prototype_id, spawn_object_at, spawn_squad_at, squad_prototype_id,
+    BuildingCommand, LoadedGameScenario, MS_PER_TICK, Simulation, object_prototype_id,
+    spawn_object_at, spawn_squad_at, squad_prototype_id,
 };
 
 /// Run with:
@@ -76,22 +76,11 @@ fn train_real_marine_squad(
     simulation: &mut sim::LoadedScenario,
     database: &pipeline::database::hw1::Database,
 ) -> sim::EntityId {
+    // The default 1v1 game settings give player 1 the Cutter leader.
     let (&player_id, &base_id) = simulation
         .initial_base_ids
         .first_key_value()
         .expect("skirmish scenario should assign a player base");
-    let cutter_id = database
-        .leaders
-        .iter()
-        .position(|leader| leader.name.eq_ignore_ascii_case("Cutter"))
-        .and_then(|index| i32::try_from(index).ok())
-        .expect("real database should contain Cutter for the lobby fixture");
-    assert!(configure_player_leader(
-        &mut simulation.world,
-        database,
-        player_id,
-        cutter_id,
-    ));
     simulation
         .world
         .get_player_mut(player_id)

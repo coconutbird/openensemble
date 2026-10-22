@@ -6,8 +6,9 @@ use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad};
 use sim::entities::squads::warthog::{WARTHOG_SQUAD_NAME, WarthogSquadSpec};
 use sim::entities::units::warthog::{WARTHOG_HITPOINTS, WARTHOG_UNIT_NAME, WarthogUnitSpec};
 use sim::{
-    Command, CommandEntry, CommandExecutor, CommandPayload, MotionType, OrderType, ScenarioData,
-    SquadArchetype, SquadState, UnitArchetype, WorkCommand, World, load_scenario_into_world,
+    Command, CommandEntry, CommandExecutor, CommandPayload, GameSettings, LoadedScenario,
+    MotionType, OrderType, PlayerSettings, ScenarioData, SquadArchetype, SquadState, UnitArchetype,
+    WorkCommand, World,
 };
 
 /// Proto IDs are load-order indices; the Warthog is first in each table.
@@ -32,6 +33,12 @@ const COLLISION_SCENARIO: &str = r#"<Scenario>
         <Object Player="0" ID="20" Position="0,0,0">test_blocker</Object>
     </Objects>
 </Scenario>"#;
+
+/// Load the scenario with one lobby slot for its controllable player.
+fn load_scenario_into_world(scenario: &ScenarioData, database: &Database) -> LoadedScenario {
+    let settings = GameSettings::skirmish(vec![PlayerSettings::default()], 0);
+    sim::load_scenario_into_world(scenario, database, &settings).expect("players set up")
+}
 
 fn assert_close(actual: f32, expected: f32) {
     assert!((actual - expected).abs() < f32::EPSILON);

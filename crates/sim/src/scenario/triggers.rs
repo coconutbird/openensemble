@@ -9,7 +9,7 @@ use crate::trigger::{
 };
 use pipeline::database::hw1::Database;
 use pipeline::source::{AssetSource, StdFileProvider};
-use pipeline::xmb::Document;
+use pipeline::xmb::Node;
 
 /// Directory of the retail trigger script files.
 const TRIGGER_SCRIPT_DIRECTORY: &str = "data\\triggerscripts\\";
@@ -169,35 +169,26 @@ fn load_script_file(
     }
 }
 
-pub(super) fn load_trigger_systems(
+/// Create and activate one `.scn` `TriggerSystem` when the load reaches its element.
+///
+/// This follows `BTriggerManager_createScriptFromNode` @ `0x140487700` and
+/// `BTriggerManager_activateScript` @ `0x140487800` (step `W` of `BScenario_load`).
+pub(super) fn create_trigger_system(
     scenario: &mut LoadedScenario,
     database: &Database,
-    document: &Document,
-) -> LoadResult<()> {
-    let root = document
-        .root()
-        .ok_or_else(|| crate::trigger::LoadError::MissingElement("Scenario root".into()))?;
+    node: &Node,
+) -> LoadResult<TriggerScriptId> {
     let context = TriggerLoadContext {
         scenario_entities: Some(&scenario.scenario_id_to_entity_id),
         scenario_units: Some(&scenario.scenario_id_to_unit_id),
         database: Some(database),
     };
-    let scripts = root
-        .children
-        .iter()
-        .filter(|node| node.name == "TriggerSystem")
-        .map(|node| VanillaLoader::from_node_with_context(node, context))
-        .collect::<LoadResult<Vec<_>>>()?;
-
+    let script = VanillaLoader::from_node_with_context(node, context)?;
     let current_time = scenario.world.game_time_ms;
-    for script in scripts {
-        let script_id = scenario.world.trigger_engine_mut().add_script(script);
-        scenario
-            .world
-            .trigger_engine_mut()
-            .activate_script(script_id, current_time);
-    }
-    Ok(())
+    let engine = scenario.world.trigger_engine_mut();
+    let script_id = engine.add_script(script);
+    engine.activate_script(script_id, current_time);
+    Ok(script_id)
 }
 
 pub(super) fn scripted_animation_requests(scenario: &LoadedScenario) -> Vec<(String, String)> {

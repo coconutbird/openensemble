@@ -760,7 +760,7 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scenario::{ScenarioData, load_scenario_into_world};
+    use crate::scenario::{ScenarioData, load_test_scenario as load_scenario_into_world};
     use crate::simulation::Simulation;
     use pipeline::database::hw1::Database;
 

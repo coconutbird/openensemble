@@ -87,10 +87,10 @@ pub use player::{
 };
 pub use random::Random;
 pub use scenario::{
-    LoadedGameScenario, LoadedScenario, ScenarioAssetLoadError, ScenarioData, ScenarioObject,
-    ScenarioPlayer, ScenarioPosition, ScenarioPositionAxes, configure_player_leader,
-    load_scenario_from_game_dir, load_scenario_into_world, scenario_object_direction_to_world,
-    scenario_object_position_to_world,
+    GameSettings, LoadedGameScenario, LoadedScenario, PlayerSettings, SKIRMISH_GAME_MODE,
+    ScenarioAssetLoadError, ScenarioData, ScenarioObject, ScenarioPlayer, ScenarioPosition,
+    ScenarioSetupError, SlotType, load_scenario_from_game_dir, load_scenario_into_world,
+    scenario_object_direction_to_world, scenario_object_position_to_world,
 };
 pub use serialize::{SerializeError, deserialize_command, serialize_command};
 pub use session::{ClientState, PlayerInfo, Session, SessionState};

@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::env;
 use std::process::ExitCode;
 
-use sim::load_scenario_from_game_dir;
+use sim::{GameSettings, load_scenario_from_game_dir};
 
 fn main() -> ExitCode {
     let mut arguments = env::args().skip(1);
@@ -21,7 +21,7 @@ fn main() -> ExitCode {
 
     let mut failed = false;
     for scenario in scenarios {
-        match load_scenario_from_game_dir(&game_dir, &scenario) {
+        match load_scenario_from_game_dir(&game_dir, &scenario, &GameSettings::skirmish_1v1(0)) {
             Ok(mut loaded) => {
                 if env::var_os("OPENENSEMBLE_AUDIT_OBJECTIVES").is_some() {
                     print_scenario_objectives(&scenario, &mut loaded);

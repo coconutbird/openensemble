@@ -35,9 +35,7 @@ pub use renderer::{
     AnimationCameraShake, AnimationTerrainAlpha, AnimationTerrainAlphaShape, UnitSceneRenderer,
     simulation_entity_secondary_transform,
 };
-pub use sim::{
-    ScenarioPositionAxes, scenario_object_direction_to_world, scenario_object_position_to_world,
-};
+pub use sim::{scenario_object_direction_to_world, scenario_object_position_to_world};
 
 /// One decoded visual bound to an entity in the simulation world.
 #[derive(Clone, Debug)]

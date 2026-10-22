@@ -4,7 +4,7 @@ use glam::Vec3;
 use pipeline::database::hw1::Database;
 use sim::{
     EntityId, NativePowerInput, PowerTransportPhase, PowerUserId, TransportPowerInvocation,
-    configure_player_leader, power_prototype_id, spawn_squad_at, squad_prototype_id,
+    power_prototype_id, spawn_squad_at, squad_prototype_id,
 };
 
 const TRANSPORT_POWER: &str = "UnscCivTransport";
@@ -18,7 +18,7 @@ const PELICAN: &str = "unsc_air_pelican_01";
 fn shipped_transport_profile_carries_a_layered_marine_squad_to_dropoff() {
     let mut loaded = test_support::installed_scenario("blood_gulch");
     remove_scenario_squads(&mut loaded.simulation.world);
-    configure_cutter(&mut loaded);
+    assert_player_one_is_cutter(&loaded);
     let database = &loaded.content.database;
     assert_shipped_transport_data(database);
     let marine_id = spawn_named_squad(
@@ -150,7 +150,8 @@ fn assert_shipped_transport_data(database: &Database) {
     assert_eq!(game_data.transport_dropoff_height, Some(15.0));
 }
 
-fn configure_cutter(loaded: &mut sim::LoadedGameScenario) {
+/// The default 1v1 game settings give player 1 the Cutter leader.
+fn assert_player_one_is_cutter(loaded: &sim::LoadedGameScenario) {
     let leader_id = loaded
         .content
         .database
@@ -159,12 +160,8 @@ fn configure_cutter(loaded: &mut sim::LoadedGameScenario) {
         .position(|leader| leader.name.eq_ignore_ascii_case("Cutter"))
         .and_then(|index| i32::try_from(index).ok())
         .expect("shipped Cutter leader");
-    assert!(configure_player_leader(
-        &mut loaded.simulation.world,
-        &loaded.content.database,
-        1,
-        leader_id,
-    ));
+    let player = loaded.simulation.world.get_player(1).expect("player 1");
+    assert_eq!(player.leader_id, leader_id);
 }
 
 fn spawn_named_squad(

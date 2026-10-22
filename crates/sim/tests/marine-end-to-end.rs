@@ -8,9 +8,9 @@ use sim::entities::units::marine::{
     MARINE_HITPOINTS, MARINE_PHYSICS_REPLACEMENT_INFO, MARINE_UNIT_NAME, MarineUnitSpec,
 };
 use sim::{
-    Command, CommandEntry, CommandExecutor, CommandPayload, GroundMovePhase, OrderType,
-    ScenarioData, SquadArchetype, SquadFormation, SquadState, UnitArchetype, WorkCommand, World,
-    load_scenario_into_world,
+    Command, CommandEntry, CommandExecutor, CommandPayload, GameSettings, GroundMovePhase,
+    LoadedScenario, OrderType, PlayerSettings, ScenarioData, SquadArchetype, SquadFormation,
+    SquadState, UnitArchetype, WorkCommand, World,
 };
 
 /// Proto IDs are load-order indices; the Marine is first in each table.
@@ -25,6 +25,12 @@ const MARINE_SCENARIO: &str = r#"<Scenario>
         </Object>
     </Objects>
 </Scenario>"#;
+
+/// Load the scenario with one lobby slot for its controllable player.
+fn load_scenario_into_world(scenario: &ScenarioData, database: &Database) -> LoadedScenario {
+    let settings = GameSettings::skirmish(vec![PlayerSettings::default()], 0);
+    sim::load_scenario_into_world(scenario, database, &settings).expect("players set up")
+}
 
 fn assert_close(actual: f32, expected: f32) {
     assert!((actual - expected).abs() < f32::EPSILON);

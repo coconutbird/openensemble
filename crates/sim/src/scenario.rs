@@ -1,20 +1,25 @@
 //! Scenario world loading for Halo Wars maps.
 //!
-//! This module provides functionality to load scenario data into the simulation world.
-//! The scenario data itself is parsed by the `pipeline` crate; this module handles
-//! the simulation-specific logic of creating players and entities.
+//! This module loads scenario data into the simulation world like `BScenario_load` @
+//! `0x140377BE0`. The `pipeline` crate parses the scenario data. This module creates the
+//! players, entities and trigger scripts in the engine order:
+//!
+//! 1. The `.scn` root elements in document order: `Players` (player setup), `Objects`,
+//!    each `TriggerSystem` and each `ExternalTriggerScript`.
+//! 2. The `.sc2` objects, then the `.sc3` objects.
+//! 3. The starting units of the players.
+//! 4. The simulation bounds.
 //!
 //! # Example
 //!
 //! ```ignore
 //! use pipeline::hw1::scenario::ScenarioData;
 //! use pipeline::database::hw1::Database;
-//! use sim::load_scenario_into_world;
+//! use sim::{GameSettings, load_scenario_into_world};
 //!
-//! // Load scenario data from parsed SCN file
 //! let scenario = ScenarioData::default();
 //! let db = Database::new();
-//! let loaded = load_scenario_into_world(&scenario, &db);
+//! let loaded = load_scenario_into_world(&scenario, &db, &GameSettings::skirmish_1v1(0))?;
 //! println!("Created {} players", loaded.world.player_count());
 //! ```
 
@@ -23,30 +28,34 @@ use crate::entities::squads::warthog::{WarthogSquadSpec, is_warthog_squad};
 use crate::entities::{BaseId, SquadArchetype, SquadFormation};
 use crate::entity_id::EntityId;
 use crate::gameplay::GameplayCatalog;
-use crate::player::{DEFAULT_PLAYER_DIFFICULTY, PlayerId, PlayerType};
+use crate::player::PlayerId;
 use crate::world::World;
 use glam::Vec3;
 #[cfg(test)]
 use pipeline::database::hw1::ProtoObject;
 use pipeline::database::hw1::{Database, Squad as ProtoSquad};
+use pipeline::hw1::scenario::{ScenarioLoadStep, scenario_load_steps};
 use pipeline::source::{AssetSource, StdFileProvider};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 mod garrison;
 
 mod animation_requests;
 pub(crate) mod child_objects;
-mod coordinates;
 mod design_objects;
 mod forbids;
+mod game_settings;
 mod objectives;
+mod objects;
 pub(crate) mod parking_lots;
 pub(crate) mod placed;
+mod placement;
+mod player_setup;
 pub(crate) mod population;
 mod prototypes;
 mod resources;
 mod settings;
-mod starts;
+mod starting_units;
 mod technology;
 mod triggers;
 mod units;
@@ -57,11 +66,14 @@ pub(crate) use units::{
     create_unit_squad_from_prototype,
 };
 
-// Re-export scenario types from pipeline for convenience
-pub use coordinates::ScenarioPositionAxes;
+pub use game_settings::{GameSettings, PlayerSettings, SKIRMISH_GAME_MODE, SlotType};
 pub use pipeline::hw1::scenario::{ScenarioData, ScenarioObject, ScenarioPlayer, ScenarioPosition};
+pub use player_setup::ScenarioSetupError;
 pub(crate) use prototypes::{PlacedUnitKind, classify_proto_object};
 use prototypes::{creates_base, find_proto_object, find_proto_squad, is_class_zero_object};
+
+use objects::{StartMarkers, VisualVariations};
+use player_setup::PlayerSetup;
 
 /// Result of loading a scenario into a world.
 ///
@@ -75,7 +87,7 @@ pub struct LoadedScenario {
     pub scenario_id_to_entity_id: HashMap<i32, EntityId>,
     /// Mapping from scenario object IDs to their representative simulation unit.
     pub scenario_id_to_unit_id: HashMap<i32, EntityId>,
-    /// Initial base assigned to each active player with a scenario start.
+    /// Base that the starting units of each player created (the base of its starting HQ).
     pub initial_base_ids: BTreeMap<PlayerId, BaseId>,
 }
 
@@ -119,6 +131,9 @@ pub enum ScenarioAssetLoadError {
         /// Canonical SCN path selected by the scenario descriptor.
         path: String,
     },
+    /// The scenario players could not be set up.
+    #[error("failed to set up the scenario players: {0}")]
+    Setup(#[from] ScenarioSetupError),
     /// A scenario trigger system was malformed.
     #[error("failed to load a scenario trigger system: {0}")]
     Trigger(#[from] crate::trigger::LoadError),
@@ -146,7 +161,7 @@ impl LoadedScenario {
         self.scenario_id_to_unit_id.get(&scenario_id).copied()
     }
 
-    /// Get the initial base assigned to an active player.
+    /// Get the base that the starting units of a player created.
     #[must_use]
     pub fn get_initial_base_id(&self, player_id: PlayerId) -> Option<BaseId> {
         self.initial_base_ids.get(&player_id).copied()
@@ -159,15 +174,18 @@ impl LoadedScenario {
 /// pipeline database is parsed. Consequently, database files supplied by the
 /// scenario participate in normal last-loaded-wins asset resolution. The same
 /// parsed database then creates the simulation entities, while the returned
-/// pipeline content remains available to presentation systems.
+/// pipeline content remains available to presentation systems. `settings` is the lobby
+/// input of the game.
 ///
 /// # Errors
 ///
 /// Returns an error when the scenario archive cannot be found, required
-/// database files cannot be parsed, or the archive contains no resolvable SCN.
+/// database files cannot be parsed, the archive contains no resolvable SCN, or the
+/// scenario players cannot be set up.
 pub fn load_scenario_from_game_dir(
     game_dir: &str,
     scenario: &str,
+    settings: &GameSettings,
 ) -> Result<LoadedGameScenario, ScenarioAssetLoadError> {
     let mut source = pipeline::hw1::loader::load_game_dir(game_dir);
     let config_symbols = pipeline::hw1::startup::load_startup_config(&mut source);
@@ -189,12 +207,7 @@ pub fn load_scenario_from_game_dir(
             scenario: scenario.to_owned(),
         }
     })?;
-    let max_players = content
-        .scenario
-        .as_ref()
-        .map(|descriptor| descriptor.max_players)
-        .filter(|maximum| *maximum > 0);
-    let gameplay = GameplayCatalog::load_from_source(&content.database, &mut source);
+    let database = &content.database;
     let scenario_path = content
         .scenario
         .as_ref()
@@ -202,56 +215,78 @@ pub fn load_scenario_from_game_dir(
         .ok_or_else(|| ScenarioAssetLoadError::ScenarioDataNotFound {
             scenario: scenario.to_owned(),
         })?;
-    let trigger_document = source.read_xmb(&scenario_path).ok_or_else(|| {
+    let scenario_document = source.read_xmb(&scenario_path).ok_or_else(|| {
         ScenarioAssetLoadError::ScenarioDefinitionNotFound {
             path: scenario_path.clone(),
         }
     })?;
     let visual_variation_indices = settings::visual_variation_indices(scenario_data.objects());
-    let mut simulation = load_scenario_into_world_with_max_players(
+    let mut builder = ScenarioBuilder::new(
         scenario_data,
-        &content.database,
-        max_players,
-        gameplay,
-        scenario_data.allow_veterancy,
-        Some(&visual_variation_indices),
-        Some(&config_symbols),
+        database,
+        settings,
+        WorldSetup {
+            gameplay: GameplayCatalog::load_from_source(database, &mut source),
+            allows_veterancy: scenario_data.allow_veterancy,
+            config_symbols: Some(&config_symbols),
+        },
     );
+    let world = &mut builder.loaded.world;
     if let Some(terrain) = &content.terrain_data {
         let minimum = Vec3::from_array(terrain.header.world_min);
         let maximum = Vec3::from_array(terrain.header.world_max);
-        let _configured = simulation.world.configure_terrain_bounds(minimum, maximum);
+        let _configured = world.configure_terrain_bounds(minimum, maximum);
     }
     if let Some(descriptor) = &content.scenario
         && let Some(terrain) = descriptor.read_simulation_terrain(&mut source)?
     {
-        simulation.world.configure_terrain_simulation(terrain);
+        world.configure_terrain_simulation(terrain);
     }
-    let objectives = pipeline::hw1::scenario::parse_objectives(&trigger_document)?;
+    let root = scenario_document
+        .root()
+        .ok_or_else(|| crate::trigger::LoadError::MissingElement("Scenario root".into()))?;
+    for step in scenario_load_steps(root) {
+        match step {
+            ScenarioLoadStep::Players => builder.players()?,
+            ScenarioLoadStep::Objects => builder.objects(
+                scenario_data.objects(),
+                VisualVariations::ById(&visual_variation_indices),
+            ),
+            ScenarioLoadStep::TriggerSystem(node) => {
+                triggers::create_trigger_system(&mut builder.loaded, database, node)?;
+            }
+            ScenarioLoadStep::ExternalTriggerScript(file_name) => {
+                let _script = builder.loaded.launch_trigger_script(
+                    &mut source,
+                    database,
+                    &file_name,
+                    crate::trigger::TriggerExternals::default(),
+                )?;
+            }
+        }
+    }
+    for file in [&content.scenario_sc2, &content.scenario_sc3]
+        .into_iter()
+        .flatten()
+    {
+        builder.objects(file.objects(), VisualVariations::Authored);
+    }
+    let mut simulation = builder.finish();
+    let objectives = pipeline::hw1::scenario::parse_objectives(&scenario_document)?;
     objectives::load_objectives(&mut simulation.world, &objectives);
-    let design_objects = pipeline::hw1::scenario::parse_design_objects(&trigger_document)?;
+    let design_objects = pipeline::hw1::scenario::parse_design_objects(&scenario_document)?;
     design_objects::load_design_objects(&mut simulation.world, &design_objects);
-    forbids::apply_scenario_forbids(
-        &mut simulation.world,
-        &content.database,
-        scenario_data.players(),
-    );
-    triggers::load_trigger_systems(&mut simulation, &content.database, &trigger_document)?;
-    triggers::preload_trigger_scripts(&mut simulation, &mut source, &content.database);
+    triggers::preload_trigger_scripts(&mut simulation, &mut source, database);
     let animation_requests = triggers::scripted_animation_requests(&simulation)
         .into_iter()
         .chain(animation_requests::trained_birth_animation_requests(
-            &content.database,
+            database,
         ))
-        .chain(animation_requests::squad_mode_animation_requests(
-            &content.database,
-        ))
+        .chain(animation_requests::squad_mode_animation_requests(database))
         .chain(simulation.gameplay.energy_shield_animation_requests());
-    simulation.gameplay.load_scripted_animation_requests(
-        &content.database,
-        &mut source,
-        animation_requests,
-    );
+    simulation
+        .gameplay
+        .load_scripted_animation_requests(database, &mut source, animation_requests);
 
     Ok(LoadedGameScenario {
         simulation,
@@ -262,98 +297,144 @@ pub fn load_scenario_from_game_dir(
 
 /// Load a scenario into a new [`World`], creating players and entities.
 ///
-/// Returns a [`LoadedScenario`] containing the populated world and
-/// a mapping from scenario object IDs to entity IDs.
+/// The load runs the `Players` and `Objects` steps of [`load_scenario_from_game_dir`] and
+/// the starting units, without trigger scripts, terrain or `.sc2` and `.sc3` objects.
 ///
-/// # Example
+/// # Errors
 ///
-/// ```ignore
-/// use pipeline::hw1::scenario::ScenarioData;
-/// use pipeline::database::hw1::Database;
-/// use sim::load_scenario_into_world;
-///
-/// let scenario = ScenarioData::default();
-/// let db = Database::new();
-/// let loaded = load_scenario_into_world(&scenario, &db);
-/// println!("Created {} players", loaded.world.player_count());
-/// ```
-#[must_use]
-pub fn load_scenario_into_world(scenario: &ScenarioData, db: &Database) -> LoadedScenario {
-    load_scenario_into_world_with_max_players(
-        scenario,
-        db,
-        None,
-        GameplayCatalog::default(),
-        true,
-        None,
-        None,
-    )
-}
-
-fn load_scenario_into_world_with_max_players(
+/// Returns an error if the scenario players cannot be set up.
+pub fn load_scenario_into_world(
     scenario: &ScenarioData,
     db: &Database,
-    max_players: Option<u32>,
-    gameplay: GameplayCatalog,
-    scenario_allows_veterancy: bool,
-    visual_variation_indices: Option<&BTreeMap<i32, i32>>,
-    config_symbols: Option<&std::collections::BTreeSet<String>>,
-) -> LoadedScenario {
-    let mut world = World::new();
-    if let Some(config_symbols) = config_symbols {
-        world.configure_startup_configs(config_symbols.iter().map(String::as_str));
-    }
-    world.set_scenario_allows_veterancy(scenario_allows_veterancy);
-    world.configure_prototype_catalogs(db);
-    world.configure_prototype_damage_profiles(&gameplay);
-    world.configure_prototype_vehicle_physics(&gameplay);
-    world.set_construction_damage_multiplier(
-        db.game_data
-            .as_ref()
-            .and_then(|game_data| game_data.construction_damage_multiplier),
+    settings: &GameSettings,
+) -> Result<LoadedScenario, ScenarioSetupError> {
+    let mut builder = ScenarioBuilder::new(
+        scenario,
+        db,
+        settings,
+        WorldSetup {
+            gameplay: GameplayCatalog::default(),
+            allows_veterancy: true,
+            config_symbols: None,
+        },
     );
-    world.set_game_over_delay(
-        db.game_data
-            .as_ref()
-            .and_then(|game_data| game_data.game_over_delay),
-    );
-    let mut scenario_id_to_entity_id = HashMap::new();
-    let mut scenario_id_to_unit_id = HashMap::new();
-    let players = scenario.players.as_ref().map_or(&[][..], |w| &w.entries);
-    let objects = scenario.objects.as_ref().map_or(&[][..], |w| &w.entries);
-    let player_count =
-        u8::try_from(players.len().min(crate::world::MAX_PLAYERS)).unwrap_or(u8::MAX);
-    world.init_players(player_count);
-    objectives::configure_objective_references(&mut world, scenario.objectives());
-    configure_players(&mut world, players, db);
+    builder.players()?;
+    builder.objects(scenario.objects(), VisualVariations::Authored);
+    Ok(builder.finish())
+}
 
-    for obj in objects {
-        let Some(entity_id) = create_scenario_object(&mut world, obj, db) else {
-            continue;
-        };
-        let visual_variation_index = visual_variation_indices
-            .map_or(obj.visual_variation_index.unwrap_or(0), |indices| {
-                indices.get(&obj.id).copied().unwrap_or(-1)
-            });
-        apply_scenario_visual_variation(&mut world, entity_id, visual_variation_index);
-        if obj.id >= 0 {
-            if let Some(unit_id) = representative_unit_id(&world, entity_id) {
-                scenario_id_to_unit_id.insert(obj.id, unit_id);
-            }
-            scenario_id_to_entity_id.insert(obj.id, entity_id);
+/// World options that the scenario load applies before it creates entities.
+struct WorldSetup<'a> {
+    gameplay: GameplayCatalog,
+    allows_veterancy: bool,
+    config_symbols: Option<&'a BTreeSet<String>>,
+}
+
+/// State of one scenario load between its steps.
+struct ScenarioBuilder<'a> {
+    loaded: LoadedScenario,
+    scenario: &'a ScenarioData,
+    database: &'a Database,
+    settings: &'a GameSettings,
+    setup: PlayerSetup,
+    markers: StartMarkers,
+}
+
+impl<'a> ScenarioBuilder<'a> {
+    fn new(
+        scenario: &'a ScenarioData,
+        database: &'a Database,
+        settings: &'a GameSettings,
+        options: WorldSetup<'_>,
+    ) -> Self {
+        let mut world = World::new();
+        if let Some(config_symbols) = options.config_symbols {
+            world.configure_startup_configs(config_symbols.iter().map(String::as_str));
+        }
+        world.seed_sim_random(settings.random_seed);
+        world.set_game_type(settings.game_type);
+        world.set_scenario_allows_veterancy(options.allows_veterancy);
+        world.configure_prototype_catalogs(database);
+        world.configure_prototype_damage_profiles(&options.gameplay);
+        world.configure_prototype_vehicle_physics(&options.gameplay);
+        world.set_construction_damage_multiplier(
+            database
+                .game_data
+                .as_ref()
+                .and_then(|game_data| game_data.construction_damage_multiplier),
+        );
+        world.set_game_over_delay(
+            database
+                .game_data
+                .as_ref()
+                .and_then(|game_data| game_data.game_over_delay),
+        );
+        world.init_players(0);
+        objectives::configure_objective_references(&mut world, scenario.objectives());
+        Self {
+            loaded: LoadedScenario {
+                world,
+                gameplay: options.gameplay,
+                scenario_id_to_entity_id: HashMap::new(),
+                scenario_id_to_unit_id: HashMap::new(),
+                initial_base_ids: BTreeMap::new(),
+            },
+            scenario,
+            database,
+            settings,
+            setup: PlayerSetup::default(),
+            markers: StartMarkers::default(),
         }
     }
-    let initial_base_ids =
-        starts::create_initial_bases(&mut world, scenario, db, player_count, max_players);
-    world.configure_unit_revivals(&gameplay);
 
-    LoadedScenario {
-        world,
-        gameplay,
-        scenario_id_to_entity_id,
-        scenario_id_to_unit_id,
-        initial_base_ids,
+    /// The `Players` step: `BScenario_setupPlayers` and the player forbids.
+    fn players(&mut self) -> Result<(), ScenarioSetupError> {
+        let world = &mut self.loaded.world;
+        self.setup =
+            player_setup::setup_players(world, self.scenario, self.database, self.settings)?;
+        forbids::apply_scenario_forbids(world, self.database, self.scenario.players(), &self.setup);
+        Ok(())
     }
+
+    /// An object list: `.scn` `Objects`, `.sc2` or `.sc3`.
+    fn objects(&mut self, objects: &[ScenarioObject], visual_variations: VisualVariations<'_>) {
+        objects::load_objects(
+            &mut self.loaded,
+            objects,
+            self.database,
+            &self.setup,
+            &mut self.markers,
+            visual_variations,
+        );
+    }
+
+    /// The starting units (step `CC`) and the simulation bounds (step `DD`).
+    fn finish(mut self) -> LoadedScenario {
+        let world = &mut self.loaded.world;
+        self.loaded.initial_base_ids = starting_units::create_starting_units(
+            world,
+            self.database,
+            self.scenario,
+            &self.setup,
+            &self.markers,
+        );
+        set_sim_bounds(world, self.scenario);
+        world.configure_unit_revivals(&self.loaded.gameplay);
+        self.loaded
+    }
+}
+
+/// Apply the top-level `SimBounds*` elements like `BWorld_setSimBounds` @ `0x1405D2210`.
+///
+/// The engine clamps the bounds to the terrain. A world without terrain keeps no bounds.
+fn set_sim_bounds(world: &mut World, scenario: &ScenarioData) {
+    if world.terrain_bounds().is_none() {
+        return;
+    }
+    let [min_x, min_z, max_x, max_z] = scenario.sim_bounds();
+    let first = Vec3::from_array(scenario_object_position_to_world([min_x, 0.0, min_z]));
+    let second = Vec3::from_array(scenario_object_position_to_world([max_x, 0.0, max_z]));
+    let _set = world.set_playable_bounds(first, second);
 }
 
 fn apply_scenario_visual_variation(world: &mut World, entity_id: EntityId, index: i32) {
@@ -385,111 +466,11 @@ fn representative_unit_id(world: &World, entity_id: EntityId) -> Option<EntityId
         .and_then(|squad| squad.unit_ids.first().copied())
 }
 
-fn configure_players(world: &mut World, players: &[ScenarioPlayer], db: &Database) {
-    let default_difficulty = db
-        .game_data
-        .as_ref()
-        .map_or(DEFAULT_PLAYER_DIFFICULTY, |data| {
-            data.difficulty_default.unwrap_or(DEFAULT_PLAYER_DIFFICULTY)
-        });
-    let population_names = db
-        .game_data
-        .as_ref()
-        .and_then(|game_data| game_data.pops.as_ref())
-        .map_or(&[][..], |pops| pops.entries.as_slice());
-    let rate_count = db
-        .game_data
-        .as_ref()
-        .and_then(|game_data| game_data.rates.as_ref())
-        .map_or(0, |rates| rates.entries.len());
-    for player in world.players_mut() {
-        player.difficulty = default_difficulty;
-        player.configure_population_slots(population_names.len());
-        player.configure_rate_slots(rate_count);
-    }
-    for (index, scenario_player) in players.iter().take(crate::world::MAX_PLAYERS).enumerate() {
-        let player_id = u8::try_from(index + 1).unwrap_or(u8::MAX);
-        let Some(player) = world.get_player_mut(player_id) else {
-            continue;
-        };
-        player.name.clone_from(&scenario_player.name);
-        player.civ_id = find_name_index(&db.civs, &scenario_player.civ, |civ| &civ.name);
-        let leader_id =
-            find_name_index(&db.leaders, &scenario_player.leader, |leader| &leader.name);
-        player.leader_id = leader_id;
-        apply_leader_population(player, db, leader_id, population_names);
-        resources::apply_leader_starting_resources(player, db, leader_id);
-        player.team_id = u8::try_from(scenario_player.team).unwrap_or_default();
-        player.player_type = if scenario_player.controllable {
-            PlayerType::Human
-        } else {
-            PlayerType::ComputerAi
-        };
-        let supplies = scenario_player.resource("Supplies");
-        let power = scenario_player.resource("Power");
-        if supplies != 0.0 || power != 0.0 {
-            player.resources.set(0, supplies);
-            player.resources.set(1, power);
-        }
-        player.initialize_resource_totals();
-    }
-    technology::activate_all_starting_technologies(world, db);
-    world.configure_standard_team_relations();
-}
-
-/// Apply a lobby-selected runtime leader and its authored population limits.
-///
-/// Skirmish SCN files contain player slots but generally leave civilization and
-/// leader selection to the pregame lobby. Call this before placing lobby-owned
-/// starting forces when `ScenarioPlayer/Leader1` did not provide the choice.
-#[must_use]
-pub fn configure_player_leader(
-    world: &mut World,
-    database: &Database,
-    player_id: PlayerId,
-    leader_id: i32,
-) -> bool {
-    let Some(leader) = usize::try_from(leader_id)
-        .ok()
-        .and_then(|index| database.leaders.get(index))
-    else {
-        return false;
-    };
-    let population_names = database
-        .game_data
-        .as_ref()
-        .and_then(|game_data| game_data.pops.as_ref())
-        .map_or(&[][..], |pops| pops.entries.as_slice());
-    let civilization_id = leader.civ.as_deref().map_or(-1, |civilization| {
-        find_name_index(&database.civs, civilization, |entry| &entry.name)
-    });
-    let live_cap_additions = world
-        .units
-        .iter()
-        .filter(|(_, unit)| unit.base.player_id == player_id && unit.built)
-        .flat_map(|(_, unit)| unit.population_cap_additions.iter().copied())
-        .collect::<Vec<_>>();
-    let Some(player) = world.get_player_mut(player_id) else {
-        return false;
-    };
-    player.configure_population_slots(population_names.len());
-    for population_id in 0..player.population.len() {
-        let _configured = player.set_population_limits(population_id, 0.0, 0.0);
-    }
-    player.leader_id = leader_id;
-    player.civ_id = civilization_id;
-    apply_leader_population(player, database, leader_id, population_names);
-    resources::apply_leader_starting_resources(player, database, leader_id);
-    player.adjust_population_cap(&live_cap_additions, true);
-    technology::activate_player_starting_technologies(world, database, player_id);
-    true
-}
-
+/// Copy the population counts and limits of a leader to a player (`BPlayer_setup`).
 fn apply_leader_population(
     player: &mut crate::player::Player,
     database: &Database,
     leader_id: i32,
-    population_names: &[String],
 ) {
     let Some(leader) = usize::try_from(leader_id)
         .ok()
@@ -497,6 +478,11 @@ fn apply_leader_population(
     else {
         return;
     };
+    let population_names = database
+        .game_data
+        .as_ref()
+        .and_then(|game_data| game_data.pops.as_ref())
+        .map_or(&[][..], |pops| pops.entries.as_slice());
     for population in &leader.pops {
         let Some(population_id) = population_names
             .iter()
@@ -515,27 +501,6 @@ fn find_name_index<T>(values: &[T], name: &str, key: impl Fn(&T) -> &str) -> i32
         .position(|value| key(value).eq_ignore_ascii_case(name))
         .and_then(|index| i32::try_from(index).ok())
         .unwrap_or(-1)
-}
-
-fn create_scenario_object(
-    world: &mut World,
-    object: &ScenarioObject,
-    db: &Database,
-) -> Option<EntityId> {
-    placed::create_scenario_object(world, object, db)
-}
-
-fn create_scenario_squad(world: &mut World, object: &ScenarioObject, db: &Database) -> EntityId {
-    let player_id = u8::try_from(object.player).unwrap_or_default();
-    let position = scenario_position(object);
-    create_squad_from_prototype(
-        world,
-        player_id,
-        position,
-        scenario_forward(object),
-        object.proto_name.trim(),
-        db,
-    )
 }
 
 pub(crate) fn create_squad_from_prototype(
@@ -726,26 +691,28 @@ fn valid_nonnegative(value: Option<f32>) -> Option<f32> {
     value.filter(|value| value.is_finite() && *value >= 0.0)
 }
 
-/// Convert an authored SCN object position into canonical terrain-world axes.
+/// Convert an authored scenario position into canonical terrain-world axes.
+///
+/// `BScenario_loadPosition` @ `0x14037F430` and `BScenario_loadObject` @ `0x14037D6A0` read
+/// start positions and objects in one frame (`sub_1406217A0`). The simulation swaps the X
+/// and Z axes of that frame for both.
 #[must_use]
 pub const fn scenario_object_position_to_world(position: [f32; 3]) -> [f32; 3] {
     [position[2], position[1], position[0]]
 }
 
-/// Convert an authored SCN object direction into canonical terrain-world axes.
+/// Convert an authored scenario direction into canonical terrain-world axes.
 #[must_use]
 pub const fn scenario_object_direction_to_world(direction: [f32; 3]) -> [f32; 3] {
     scenario_object_position_to_world(direction)
 }
 
-fn scenario_position(object: &ScenarioObject) -> Vec3 {
-    Vec3::from_array(scenario_object_position_to_world(
-        object.position_vec3().unwrap_or_default(),
-    ))
-}
-
-fn scenario_forward(object: &ScenarioObject) -> Vec3 {
-    Vec3::from_array(scenario_object_direction_to_world(object.forward_vec3()))
+/// Load a test scenario with eight default lobby slots, so that each controllable player
+/// is active and keeps its `.scn` civ, leader and team.
+#[cfg(test)]
+pub(crate) fn load_test_scenario(scenario: &ScenarioData, database: &Database) -> LoadedScenario {
+    let settings = GameSettings::skirmish(vec![PlayerSettings::default(); 8], 0);
+    load_scenario_into_world(scenario, database, &settings).expect("test players set up")
 }
 
 #[cfg(test)]

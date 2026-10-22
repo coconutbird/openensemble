@@ -38,9 +38,17 @@ impl SimRandom {
         self.current
     }
 
-    fn next_15(&mut self) -> u32 {
+    /// Advance the stream and return the full new state.
+    ///
+    /// Some retail code reads the state directly, for example
+    /// `BScenario_setupPlayers` @ `0x140381CF0` takes bit 30 for a team choice.
+    pub(crate) fn next_state(&mut self) -> u32 {
         self.current = self.current.wrapping_mul(214_013).wrapping_add(2_531_011);
-        (self.current >> 16) & 0x7fff
+        self.current
+    }
+
+    fn next_15(&mut self) -> u32 {
+        (self.next_state() >> 16) & 0x7fff
     }
 
     /// Return a value in the inclusive range `0..=maximum`.
@@ -49,6 +57,22 @@ impl SimRandom {
             return 0;
         }
         self.next_15() / (32_767 / (maximum + 1) + 1)
+    }
+
+    /// Return a value in the inclusive range `minimum..=maximum`.
+    ///
+    /// This follows `BRandomManager_getRandomRange`: if `maximum <= minimum`, the stream does
+    /// not advance and the result is `minimum`.
+    pub(crate) fn range(&mut self, minimum: i32, maximum: i32) -> i32 {
+        let Some(span) = maximum
+            .checked_sub(minimum)
+            .and_then(|span| u32::try_from(span).ok())
+            .filter(|span| *span > 0)
+        else {
+            return minimum;
+        };
+        let offset = i32::try_from(self.index(span)).unwrap_or(i32::MAX);
+        minimum.saturating_add(offset)
     }
 
     /// Return retail's inclusive floating distribution in `0.0..=1.0`.

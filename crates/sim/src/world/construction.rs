@@ -307,6 +307,82 @@ impl World {
         })
     }
 
+    /// Start a `BuildOther` at once and without cost, and return the unbuilt target.
+    ///
+    /// This follows `BUnit_doBuildOther` @ `0x1404D2070` with `noCost` set, the call that
+    /// `BScenario_createStartingUnits` makes for a leader starting unit:
+    /// `BUnitActionBuilding_doBuildOther` @ `0x1404F8420` then calls
+    /// `BUnitActionBuilding_startBuildOther` immediately instead of queueing the work. The
+    /// engine does not check the owner of the builder (the starting socket belongs to Gaia),
+    /// its command list or the train limits on this path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid player, builder or prototype, a builder with other
+    /// work, a full population or a builder without a free compatible socket.
+    pub(crate) fn start_build_other_without_cost(
+        &mut self,
+        player_id: PlayerId,
+        builder_id: EntityId,
+        database: &Database,
+        prototype_id: i32,
+    ) -> Result<EntityId, ConstructionError> {
+        let definition = construction_definition(
+            database,
+            prototype_id,
+            self.get_player(player_id)
+                .map(|player| &player.technologies),
+        )?;
+        find_build_other_socket(
+            self,
+            builder_id,
+            database,
+            definition.prototype_id,
+            &definition.prototype_name,
+        )?;
+        self.pay_construction(player_id, &definition, true, true)?;
+        let task = ConstructionTask {
+            player_id,
+            purchasing_player_id: player_id,
+            kind: ConstructionKind::BuildOther,
+            prototype_id,
+            prototype_name: definition.prototype_name.clone(),
+            current_points: 0.0,
+            total_points: definition.total_points,
+            cost: Resources::new(),
+            population_costs: definition.population_costs.clone(),
+            target_building_id: None,
+            manual: definition.manual,
+            train_limit_bucket: None,
+            trigger_state: None,
+        };
+        let started = self
+            .get_building_mut(builder_id)
+            .is_some_and(|builder| builder.production.start_construction(task.clone()));
+        if !started {
+            self.refund_construction_task(&task);
+            return Err(ConstructionError::WorkerUnavailable(builder_id));
+        }
+        let target_id = self
+            .start_promoted_build_other(builder_id, database)
+            .then(|| {
+                self.get_building(builder_id)
+                    .and_then(|builder| builder.production.current_construction())
+                    .and_then(|task| task.target_building_id)
+            })
+            .flatten();
+        target_id.ok_or_else(|| {
+            if let Some(builder) = self.get_building_mut(builder_id) {
+                builder.production.current_item = None;
+            }
+            self.refund_construction_task(&task);
+            ConstructionError::SocketUnavailable {
+                builder_id,
+                prototype: definition.prototype_name,
+            }
+        })
+    }
+
     /// Cancel the newest queued matching `BuildOther`, then the current item.
     ///
     /// # Errors

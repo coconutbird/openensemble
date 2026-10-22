@@ -20,8 +20,8 @@ use sim::{
     AttackQuery, BuildingCommand, CommandEntry, CommandExecutor, CommandPayload,
     LoadedGameScenario, MS_PER_TICK, PlayerId, RecoveryType, ScenarioAssetLoadError,
     ShieldCoverage, Simulation, SquadMode, TechStatus, TrainingKind, WorkCommand,
-    configure_player_leader, load_scenario_from_game_dir, object_prototype_id, spawn_object_at,
-    spawn_squad_at, spawn_squad_from_base_by_name, squad_prototype_id, technology_prototype_id,
+    load_scenario_from_game_dir, object_prototype_id, spawn_object_at, spawn_squad_at,
+    spawn_squad_from_base_by_name, squad_prototype_id, technology_prototype_id,
 };
 
 const DATABASE_PATHS: [&str; 10] = [
@@ -50,6 +50,7 @@ fn missing_scenario_archive_is_reported_before_database_loading() {
     let result = load_scenario_from_game_dir(
         &missing_dir.to_string_lossy(),
         "definitely_not_a_real_scenario",
+        &sim::GameSettings::skirmish_1v1(0),
     );
 
     assert!(matches!(
@@ -175,30 +176,6 @@ fn ensure_unit_population_room(
     player_id: PlayerId,
     unit_population_id: usize,
 ) {
-    let database = &loaded.content.database;
-    let has_room = loaded
-        .simulation
-        .world
-        .get_player(player_id)
-        .and_then(|player| player.get_population(unit_population_id))
-        .is_some_and(|population| {
-            population.count + population.future + 1.0 <= population.cap
-                && population.count + population.future + 1.0 <= population.max
-        });
-    if !has_room {
-        let cutter_id = database
-            .leaders
-            .iter()
-            .position(|leader| leader.name.eq_ignore_ascii_case("Cutter"))
-            .and_then(|index| i32::try_from(index).ok())
-            .expect("real database should contain Cutter for the lobby fixture");
-        assert!(configure_player_leader(
-            &mut loaded.simulation.world,
-            database,
-            player_id,
-            cutter_id,
-        ));
-    }
     assert!(
         loaded
             .simulation

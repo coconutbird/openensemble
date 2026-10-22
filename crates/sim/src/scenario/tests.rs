@@ -1,3 +1,4 @@
+use super::load_test_scenario as load_scenario_into_world;
 use super::*;
 
 const SAMPLE_SCENARIO: &str = r#"<?xml version="1.0" encoding="utf-8"?>
@@ -42,12 +43,14 @@ fn test_load_into_world() {
     let loaded = load_scenario_into_world(&scenario, &db);
 
     assert_eq!(loaded.world.player_count(), 3);
+    // A controllable player takes the lobby name, "Player N" without a slot name.
     let p1 = loaded.world.get_player(1).unwrap();
-    assert_eq!(p1.name, "Player1");
+    assert_eq!(p1.name, "Player 1");
     assert_eq!(p1.team_id, 1);
-    assert_eq!(p1.civ_id, -1);
+    // `BScenario_loadPlayer` keeps civ 1 for an unknown civ name.
+    assert_eq!(p1.civ_id, 1);
     let p2 = loaded.world.get_player(2).unwrap();
-    assert_eq!(p2.name, "Player2");
+    assert_eq!(p2.name, "Player 2");
     assert_eq!(p2.team_id, 2);
 
     let squad_count = scenario.objects.as_ref().map_or(0, |objects| {
@@ -99,7 +102,7 @@ fn loads_squad_members_buildings_and_base_anchors() {
         r#"<Scenario>
             <Players><Player Name="P1" Team="1" /></Players>
             <Objects>
-                <Object IsSquad="true" Player="1" ID="10">marine_squad</Object>
+                <Object IsSquad="true" Player="1" ID="10" Position="0,0,0">marine_squad</Object>
                 <Object Player="1" ID="20" Position="5,0,7">unsc_base</Object>
                 <Object IsSquad="true" Player="1" ID="30" Position="9,0,7">unsc_base</Object>
             </Objects>
@@ -197,8 +200,8 @@ fn scenario_visual_variation_reaches_every_squad_member_and_checksum() {
     };
     let load = |variation| {
         let scenario = ScenarioData::from_xml_str(&format!(
-            r#"<Scenario><Players><Player Name="P1" /></Players><Objects>
-                <Object IsSquad="true" Player="1" ID="10" VisualVariationIndex="{variation}">
+            r#"<Scenario><Players><Player Name="P1" Team="1" /></Players><Objects>
+                <Object IsSquad="true" Player="1" ID="10" Position="0,0,0" VisualVariationIndex="{variation}">
                     marine_squad
                 </Object>
             </Objects></Scenario>"#
@@ -269,17 +272,25 @@ fn loads_implicit_class_zero_visual_objects_and_preserves_scenario_mapping() {
 }
 
 #[test]
-fn lobby_leader_selection_configures_database_population_slots() {
+fn lobby_slot_settings_give_civ_leader_team_and_leader_population() {
+    // `BScenario_setupPlayers` copies the slot civ, leader and team for a
+    // `UsePlayerSettings` player and makes slot type 1 a computer AI.
     use pipeline::database::hw1::gamedata::PopsWrapper;
     use pipeline::database::hw1::leaders::PopEntry;
     use pipeline::database::hw1::{Civ, GameData, Leader, Tech};
 
     let database = Database {
-        civs: vec![Civ {
-            name: "UNSC".to_owned(),
-            civ_tech: Some("UnscBootstrap".to_owned()),
-            ..Civ::default()
-        }],
+        civs: vec![
+            Civ {
+                name: "None".to_owned(),
+                ..Civ::default()
+            },
+            Civ {
+                name: "UNSC".to_owned(),
+                civ_tech: Some("UnscBootstrap".to_owned()),
+                ..Civ::default()
+            },
+        ],
         leaders: vec![Leader {
             name: "Cutter".to_owned(),
             civ: Some("UNSC".to_owned()),
@@ -309,19 +320,30 @@ fn lobby_leader_selection_configures_database_population_slots() {
         ],
         ..Database::default()
     };
-    let mut world = World::new();
-    world.init_players(1);
-    let base_id = world.create_building(1);
-    world
-        .get_building_mut(base_id)
-        .unwrap()
-        .population_cap_additions
-        .push(crate::player::PopulationCost::new(0, 5.0));
+    let scenario = ScenarioData::from_xml_str(
+        r#"<Scenario><Players>
+            <Player Name="Player1" UsePlayerSettings="true" Team="3" />
+            <Player Name="Creeps" Controllable="false" Civ="UNSC" Team="3" />
+        </Players></Scenario>"#,
+    )
+    .unwrap();
+    let settings = GameSettings::skirmish(
+        vec![PlayerSettings::new(
+            SlotType::ComputerAi,
+            "UNSC",
+            "Cutter",
+            1,
+        )],
+        0,
+    );
 
-    assert!(configure_player_leader(&mut world, &database, 1, 0));
-    let player = world.get_player(1).unwrap();
+    let loaded = super::load_scenario_into_world(&scenario, &database, &settings).unwrap();
+    let player = loaded.world.get_player(1).unwrap();
+    assert_eq!(player.name, "Player 1");
+    assert_eq!(player.player_type, crate::player::PlayerType::ComputerAi);
+    assert_eq!(player.team_id, 1);
     assert_eq!(player.leader_id, 0);
-    assert_eq!(player.civ_id, 0);
+    assert_eq!(player.civ_id, 1);
     assert_eq!(
         player
             .technologies
@@ -330,9 +352,13 @@ fn lobby_leader_selection_configures_database_population_slots() {
         ["UnscBootstrap", "CutterBootstrap"]
     );
     assert_eq!(player.population.len(), 2);
-    assert!((player.population[0].cap - 35.0).abs() <= f32::EPSILON);
     assert!((player.population[0].max - 99.0).abs() <= f32::EPSILON);
-    assert!((player.population[1].cap - 0.0).abs() <= f32::EPSILON);
+    let creeps = loaded.world.get_player(2).unwrap();
+    assert_eq!(creeps.name, "Creeps");
+    assert_eq!(creeps.player_type, crate::player::PlayerType::Npc);
+    // The NPC gets a random leader of its civ: Cutter is the only candidate.
+    assert_eq!(creeps.leader_id, 0);
+    assert_eq!(creeps.team_id, 3);
 }
 
 #[test]

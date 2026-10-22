@@ -8,7 +8,7 @@ use render::ugx::{UnitScene, simulation_entity_transform};
 use render_test_support::{assert_visual_loaded, load_active_visuals, placement};
 use sim::{
     EntityId, NativePowerInput, PowerTransportPhase, PowerUserId, TransportPowerInvocation,
-    configure_player_leader, power_prototype_id, spawn_squad_at, squad_prototype_id,
+    power_prototype_id, spawn_squad_at, squad_prototype_id,
 };
 
 const TRANSPORT_POWER: &str = "UnscCivTransport";
@@ -26,7 +26,7 @@ fn renderer_projects_transport_visibility_and_motion_from_live_sim_state() {
         mut source,
     } = test_support::installed_scenario("blood_gulch");
     remove_scenario_squads(&mut simulation.world);
-    configure_cutter(&mut simulation.world, &content.database);
+    assert_player_one_is_cutter(&simulation.world, &content.database);
     let marine_id = spawn_named_squad(
         &mut simulation.world,
         &content.database,
@@ -153,14 +153,15 @@ fn assert_members_rendered(world: &sim::World, members: &[EntityId], expected: b
     );
 }
 
-fn configure_cutter(world: &mut sim::World, database: &Database) {
+/// The default 1v1 game settings give player 1 the Cutter leader.
+fn assert_player_one_is_cutter(world: &sim::World, database: &Database) {
     let leader_id = database
         .leaders
         .iter()
         .position(|leader| leader.name.eq_ignore_ascii_case("Cutter"))
         .and_then(|index| i32::try_from(index).ok())
         .expect("shipped Cutter leader");
-    assert!(configure_player_leader(world, database, 1, leader_id));
+    assert_eq!(world.get_player(1).expect("player 1").leader_id, leader_id);
 }
 
 fn spawn_named_squad(

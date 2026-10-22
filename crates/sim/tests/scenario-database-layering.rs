@@ -164,7 +164,10 @@ const SCENARIO_ABILITIES: &str = r#"<Abilities>
     </Ability>
 </Abilities>"#;
 
+// Civ 0 is the engine "no civ": `BScenario_setupPlayers` replaces a civ below 1 with a
+// random civ.
 const SCENARIO_CIVS: &str = r"<Civs>
+    <Civ><Name>None</Name></Civ>
     <Civ><Name>ScenarioCiv</Name><CivTech>ScenarioCivBootstrap</CivTech></Civ>
 </Civs>";
 
@@ -220,9 +223,9 @@ const SCENARIO: &str = r#"<Scenario>
             Team="1" Controllable="true" />
     </Players>
     <Objects>
-        <Object Player="1" ID="99" VisualVariationIndex="1">variation_crate</Object>
-        <Object Player="1" ID="100">variation_crate</Object>
-        <Object Player="1" ID="101">scenario_generator</Object>
+        <Object Player="1" ID="99" Position="0,0,0" VisualVariationIndex="1">variation_crate</Object>
+        <Object Player="1" ID="100" Position="0,0,0">variation_crate</Object>
+        <Object Player="1" ID="101" Position="0,0,0">scenario_generator</Object>
     </Objects>
 </Scenario>"#;
 
@@ -230,6 +233,15 @@ const VETERANCY_SCENARIO: &str = r#"<Scenario>
     <AllowVeterancy>true</AllowVeterancy>
     <Players><Player Name="Scenario Player" Team="1" /></Players>
 </Scenario>"#;
+
+/// One lobby slot with the scenario player name.
+fn settings() -> sim::GameSettings {
+    let slot = sim::PlayerSettings {
+        name: Some("Scenario Player".to_owned()),
+        ..sim::PlayerSettings::default()
+    };
+    sim::GameSettings::skirmish(vec![slot], 0)
+}
 
 #[test]
 fn scenario_database_tables_win_before_authoritative_simulation_is_built() {
@@ -302,7 +314,7 @@ fn scenario_database_tables_win_before_authoritative_simulation_is_built() {
     );
 
     let game_dir_text = game_dir.path().to_string_lossy();
-    let mut loaded = sim::load_scenario_from_game_dir(&game_dir_text, "layered_test")
+    let mut loaded = sim::load_scenario_from_game_dir(&game_dir_text, "layered_test", &settings())
         .expect("synthetic scenario and database should load together");
 
     assert_layered_database_and_scenario_state(&loaded);
@@ -345,7 +357,7 @@ fn assert_layered_database_and_scenario_state(loaded: &sim::LoadedGameScenario) 
         .expect("scenario player");
     assert_eq!(scenario_player.name, "Scenario Player");
     assert!((scenario_player.difficulty - 0.82).abs() < f32::EPSILON);
-    assert_eq!(scenario_player.civ_id, 0);
+    assert_eq!(scenario_player.civ_id, 1);
     assert_eq!(scenario_player.leader_id, 0);
     assert_close(scenario_player.get_resource(0), 25.0);
     assert_close(scenario_player.get_rate(0), 7.0);
@@ -902,9 +914,9 @@ fn scenario_archive_cannot_retroactively_define_startup_veterancy_config() {
         ],
     );
 
-    let loaded =
-        sim::load_scenario_from_game_dir(&game_dir.path().to_string_lossy(), "layered_test")
-            .expect("synthetic scenario should load");
+    let game_dir_text = game_dir.path().to_string_lossy();
+    let loaded = sim::load_scenario_from_game_dir(&game_dir_text, "layered_test", &settings())
+        .expect("synthetic scenario should load");
 
     assert!(!loaded.simulation.world.is_config_defined("Veterancy"));
     assert!(!loaded.simulation.world.veterancy_enabled());

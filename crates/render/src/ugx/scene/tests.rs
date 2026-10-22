@@ -205,7 +205,7 @@ fn visual_cache_distinguishes_random_explicit_and_animated_variants() {
 fn scenario_visual_variation_is_projected_only_from_sim_state() {
     let scenario = sim::ScenarioData::from_xml_str(
         r#"<Scenario><Objects>
-                <Object ID="7" VisualVariationIndex="2">variation_crate</Object>
+                <Object ID="7" Position="0,0,0" VisualVariationIndex="2">variation_crate</Object>
             </Objects></Scenario>"#,
     )
     .expect("valid scenario");
@@ -217,7 +217,9 @@ fn scenario_visual_variation_is_projected_only_from_sim_state() {
         }],
         ..Database::default()
     };
-    let loaded = sim::load_scenario_into_world(&scenario, &database);
+    let settings = sim::GameSettings::skirmish(Vec::new(), 0);
+    let loaded = sim::load_scenario_into_world(&scenario, &database, &settings)
+        .expect("a scenario without players sets up");
     let entity_id = loaded.get_entity_id(7).unwrap();
     let projected = super::simulation_visuals(&loaded.world)
         .find(|visual| visual.id == entity_id)

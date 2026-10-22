@@ -2,6 +2,30 @@
 
 use crate::player::{Player, Resources};
 use pipeline::database::hw1::Database;
+use pipeline::hw1::scenario::ScenarioPlayer;
+
+/// Set each database resource to the `.scn` value of the player.
+///
+/// `BScenario_setupPlayers` @ `0x140381CF0` does this for a player with
+/// `DefaultResources="false"` (loop at `0x140382DA1`, `sub_1402F10D0`). A resource without a
+/// `.scn` attribute becomes `0`.
+pub(super) fn apply_scenario_resources(
+    player: &mut Player,
+    database: &Database,
+    scenario_player: &ScenarioPlayer,
+) {
+    let resource_names = database
+        .game_data
+        .as_ref()
+        .and_then(|game_data| game_data.resources.as_ref())
+        .map_or(&[][..], |resources| resources.entries.as_slice());
+    for (resource_id, resource) in resource_names.iter().enumerate() {
+        player
+            .resources
+            .set(resource_id, scenario_player.resource(resource.name.trim()));
+    }
+    player.initialize_resource_totals();
+}
 
 pub(super) fn apply_leader_starting_resources(
     player: &mut Player,
