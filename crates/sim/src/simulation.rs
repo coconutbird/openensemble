@@ -21,6 +21,13 @@ pub const MS_PER_TICK: u32 = 1_000 / TICK_RATE;
 const MS_PER_TICK_F32: f32 = 50.0;
 const SECONDS_PER_TICK: f32 = 0.05;
 
+/// Most game time, in milliseconds at speed 1, that one update call can catch up.
+///
+/// An update that falls further behind drops the rest of the time. A slow frame or a slow tick
+/// then makes the game run slower for a moment, instead of making each later update longer.
+/// This changes only the pacing: the ticks themselves stay the same.
+pub const MAX_CATCH_UP_MS: f32 = 250.0;
+
 /// Simulation state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SimState {
@@ -125,6 +132,7 @@ impl Simulation {
 
     /// Adds `dt_seconds` to the accumulator and runs `tick` once for each full fixed tick.
     ///
+    /// The accumulator holds at most [`MAX_CATCH_UP_MS`] times the speed (at least speed 1).
     /// Returns the commands of all ticks in tick order. Returns no commands if the simulation
     /// does not run.
     fn advance_fixed_ticks(
@@ -136,7 +144,9 @@ impl Simulation {
             return Vec::new();
         }
 
-        self.accumulated_ms += dt_seconds * 1_000.0 * self.speed;
+        let limit_ms = MAX_CATCH_UP_MS * self.speed.max(1.0);
+        self.accumulated_ms =
+            (self.accumulated_ms + dt_seconds * 1_000.0 * self.speed).min(limit_ms);
         let mut all_commands = Vec::new();
         while self.accumulated_ms >= MS_PER_TICK_F32 {
             self.accumulated_ms -= MS_PER_TICK_F32;
@@ -326,5 +336,19 @@ mod tests {
         sim.update(0.0375);
         assert_eq!(sim.tick, 5);
         assert_eq!(sim.game_time_ms, 250);
+    }
+
+    #[test]
+    fn a_long_frame_catches_up_at_most_the_limit_and_drops_the_rest() {
+        let mut sim = Simulation::new();
+        sim.start();
+        sim.update(10.0);
+        assert_eq!(sim.tick, 5);
+        sim.update(0.0);
+        assert_eq!(sim.tick, 5);
+
+        sim.speed = 4.0;
+        sim.update(10.0);
+        assert_eq!(sim.tick, 25);
     }
 }
