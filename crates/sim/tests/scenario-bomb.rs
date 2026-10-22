@@ -1,6 +1,7 @@
 //! Checks that the shipped Flood bomb loads scenario physics and runs its persistent actions.
 
 use glam::Vec3;
+use num_traits::ToPrimitive;
 use sim::{
     BombPhase, GameplayCatalog, MotionType, UnitDetonatePhase, World, object_prototype_id,
     spawn_object_at,
@@ -8,6 +9,7 @@ use sim::{
 
 const FLOOD_BOMB: &str = "fx_proj_fldbomb_01";
 const FLOOD_SPAWN: &str = "fld_inf_InfectionForm_03";
+const TICK_SECONDS: f32 = 0.05;
 
 /// Run with:
 /// `OPENENSEMBLE_GAME_DIR=<HaloWarsDE> cargo test -p sim --test scenario-bomb -- --ignored`
@@ -44,15 +46,36 @@ fn shipped_flood_bomb_loads_scenario_physics_and_executes_persistent_actions() {
         MotionType::Dynamic
     );
     assert!(bomb.base.position.y < position.y);
+    // Retail's `BUnitActionBomb::connect` draws `mRoll` from the synchronized
+    // sim random stream, which skirmish setup and the skirmish scripts also
+    // consume, so either branch is valid here; each must finish its own way.
+    let rolls = bomb.bomb_rolls();
+    let countdown = gameplay
+        .first_detonate_action(FLOOD_BOMB)
+        .and_then(|action| action.duration())
+        .expect("shipped Flood bomb Detonate countdown");
+    // The longest sampled countdown, plus one second for the action start and
+    // the detonation's death cleanup.
+    let max_updates = ((countdown.seconds() + countdown.spread() + 1.0) / TICK_SECONDS)
+        .ceil()
+        .to_usize()
+        .expect("finite Detonate countdown");
 
-    for _ in 0..80 {
-        if world.get_unit(source).is_none() {
+    let mut completed = false;
+    for _ in 0..max_updates {
+        let Some(bomb) = world.get_unit(source) else {
             break;
-        }
+        };
+        completed |= bomb.bomb_phase() == BombPhase::Complete;
         tick(world, database, gameplay);
     }
 
     assert!(world.get_unit(source).is_none());
+    assert_eq!(
+        completed, rolls,
+        "a rolling Bomb completes on contact and waits for the countdown; \
+         a non-rolling Bomb detonates on impact"
+    );
     assert_eq!(
         matching_squad_count(world, FLOOD_SPAWN),
         existing_spawns + 1
@@ -90,7 +113,7 @@ fn tick(
     database: &pipeline::database::hw1::Database,
     gameplay: &GameplayCatalog,
 ) {
-    world.update_entities_with_database_and_gameplay(0.05, database, gameplay);
+    world.update_entities_with_database_and_gameplay(TICK_SECONDS, database, gameplay);
 }
 
 fn scenario_center(world: &World) -> Vec3 {
