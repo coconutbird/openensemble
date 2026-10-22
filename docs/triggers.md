@@ -7,9 +7,9 @@ triggers. It reads only the results that the sim puts into `World`.
 The sim loads the `TriggerSystem` nodes that a scenario SCN file embeds and the
 `ExternalTriggerScript` files that it names. It also parses the `.triggerscript` files that
 scripts can launch into a script library before the first tick. A skirmish also starts the
-game-mode world and player scripts. The sim does not yet start the scripts of powers, abilities,
-weapons or the skirmish AI. See [Script files and launch](#script-files-and-launch) and
-[Gaps](#gaps).
+game-mode world and player scripts and the skirmish AI script. The sim does not yet start the
+scripts of powers, abilities or weapons, and most skirmish AI effects are unsupported. See
+[Script files and launch](#script-files-and-launch) and [Gaps](#gaps).
 
 ## Code layout
 
@@ -116,9 +116,17 @@ launch request to the engine. Script IDs start at 0 and follow creation order, l
    defined, it then launches the `PlayerScript` for each human and computer AI player in player
    ID order, with the Player external (`BTriggerManager_setScriptPlayer`, `0x140489390`). A
    scenario game with the `SkirmishAIOnScenario` config instead makes player 2 a computer AI.
+3. The skirmish AI (step `HH`, `scenario/player_ais.rs`). `BWorld_initPlayerAIs`
+   (`0x1405D1A30`) creates a `BAI` for each player that is not human, in player ID order, and
+   `BAI_startSkirmishAIScript` (`0x14014E4D0`) launches `SkirmishAI_raw_.triggerscript` for each
+   computer AI player. It needs a skirmish, or a scenario game with `SkirmishAIOnScenario`, and
+   no `AIDisable` config. The script gets the Player external and the Cost external: zero, or 1
+   for each gamedata resource with the `AINoAttack` config. The retail gate on the
+   `TutorialMap` config value is not modelled, because the sim reads config names only.
 
-For a 1v1 Blood Gulch skirmish the scripts are `Audio`, `Blood_Gulch`, `SkirmishWorld`, and
-`SkirmishPlayer` for players 1 and 2. The `Creeps` NPC gets no player script.
+For a 1v1 Blood Gulch skirmish the scripts are `Audio`, `Blood_Gulch`, `SkirmishWorld`,
+`SkirmishPlayer` for players 1 and 2, and `SkirmishAI_raw_` for player 2. The `Creeps` NPC gets
+no player or AI script.
 
 ## Scheduling
 
@@ -520,9 +528,8 @@ In order of shipped use:
    them. `SetPlayerState` (130) ends a skirmish (`World::game_result`), but the AI manager does
    not learn that a player left (`BAIManager_onPlayerLeft`).
 3. External trigger script starts. `TriggerEngine::launch_script` exists, but nothing calls it
-   for the skirmish AI script (`BAI_startSkirmishAIScript` `0x14014E4D0`), the power scripts of
-   `BProtoPower_load` (`0x14034EB96`) and the weapon scripts of `BWeapon_loadWeapon`
-   (`0x1403FFE52`).
+   for the power scripts of `BProtoPower_load` (`0x14034EB96`) and the weapon scripts of
+   `BWeapon_loadWeapon` (`0x1403FFE52`).
 4. Hints and UI: `HintMessageShow` (805), `HintMessageDestroy` (815), `FlareMinimapNormal`
    (135), `FlashUIElement` (923), `ConceptPermission` (924) and the UI input effects and
    conditions.

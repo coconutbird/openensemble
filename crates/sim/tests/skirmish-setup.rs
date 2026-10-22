@@ -71,7 +71,8 @@ fn blood_gulch_1v1_matches_the_retail_tick_zero_setup() {
     assert_eq!(objects("snd_play"), 18);
 
     // `BScenario_load`: the `.scn` trigger systems, then the game mode (`GG`): `SkirmishWorld`
-    // once and `SkirmishPlayer` for the human and computer AI players only.
+    // once and `SkirmishPlayer` for the human and computer AI players only, then (`HH`)
+    // `SkirmishAI_raw_` for the computer AI player.
     assert_eq!(
         script_list(world),
         [
@@ -80,8 +81,15 @@ fn blood_gulch_1v1_matches_the_retail_tick_zero_setup() {
             ("SkirmishWorld.triggerscript".to_owned(), None),
             ("SkirmishPlayer.triggerscript".to_owned(), Some(1)),
             ("SkirmishPlayer.triggerscript".to_owned(), Some(2)),
+            ("SkirmishAI_raw_.triggerscript".to_owned(), Some(2)),
         ]
     );
+    let ai_cost = world
+        .trigger_engine()
+        .scripts()
+        .find_map(|(_, script)| script.name.starts_with("SkirmishAI").then_some(script))
+        .and_then(|script| script.externals.cost);
+    assert_eq!(ai_cost, Some(sim::trigger::TriggerCost::default()));
 }
 
 /// The name and Player external of each trigger script, in script ID order.

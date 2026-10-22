@@ -11,6 +11,7 @@
 //! 4. The simulation bounds.
 //! 5. The game mode of a skirmish: its NPC player and tech, the world script and one player
 //!    script for each human and computer AI player (`game_mode`).
+//! 6. The skirmish AI script of each computer AI player (`player_ais`).
 //!
 //! # Example
 //!
@@ -53,6 +54,7 @@ mod objects;
 pub(crate) mod parking_lots;
 pub(crate) mod placed;
 mod placement;
+mod player_ais;
 mod player_setup;
 pub(crate) mod population;
 mod prototypes;
@@ -288,6 +290,7 @@ pub fn load_scenario_from_game_dir(
         &settings.game_mode,
         &mut load_script,
     )?;
+    player_ais::start_skirmish_ai_scripts(&mut simulation, database, &mut load_script)?;
     triggers::preload_trigger_scripts(&mut simulation, &mut source, database);
     let animation_requests = triggers::scripted_animation_requests(&simulation)
         .into_iter()
