@@ -284,6 +284,41 @@ fn can_remove_one_float_random_swaps_in_the_last_value() {
     assert!(!can_remove_one_float(&condition, &mut script, &mut world));
 }
 
+/// `BTriggerCondition_tcCanRemoveOneInteger`: `First` and `Last` keep the order, `Random`
+/// swaps in the last value, and an empty list gives false.
+#[test]
+fn can_remove_one_integer_follows_the_list_position() {
+    let mut world = World::with_seed(3);
+    let mut expected_world = World::with_seed(3);
+    let mut script = selection_script(
+        VarType::IntegerList,
+        TriggerValue::IntegerList(vec![1, 2, 3, 4, 5]),
+        VarType::Integer,
+        TriggerValue::Int(0),
+    );
+    let condition = selection_condition(ConditionType::CanRemoveOneInteger);
+    let output = |script: &TriggerScript| script.get_variable(3).unwrap().value.clone();
+    let list = |script: &TriggerScript| script.get_variable(1).unwrap().value.clone();
+
+    assert!(can_remove_one_integer(&condition, &mut script, &mut world));
+    assert_eq!(output(&script), TriggerValue::Int(1));
+    script.get_variable_mut(2).unwrap().value = TriggerValue::Int(1);
+    assert!(can_remove_one_integer(&condition, &mut script, &mut world));
+    assert_eq!(output(&script), TriggerValue::Int(5));
+    assert_eq!(list(&script), TriggerValue::IntegerList(vec![2, 3, 4]));
+
+    let index = expected_world.trigger_random_index(2) as usize;
+    let mut expected = vec![2, 3, 4];
+    let removed = expected.swap_remove(index);
+    script.get_variable_mut(2).unwrap().value = TriggerValue::Int(2);
+    assert!(can_remove_one_integer(&condition, &mut script, &mut world));
+    assert_eq!(output(&script), TriggerValue::Int(removed));
+    assert_eq!(list(&script), TriggerValue::IntegerList(expected));
+
+    script.get_variable_mut(1).unwrap().value = TriggerValue::IntegerList(Vec::new());
+    assert!(!can_remove_one_integer(&condition, &mut script, &mut world));
+}
+
 fn selection_script(
     list_type: VarType,
     list: TriggerValue,

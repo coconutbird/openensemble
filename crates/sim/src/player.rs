@@ -280,6 +280,8 @@ pub struct Player {
     pub player_type: PlayerType,
     /// Continuous retail difficulty scalar selected for this player.
     pub difficulty: f32,
+    /// Retail `mLookAtPos` (`BPlayer + 0`). The AI focus effect (`AISetFocus`) sets it.
+    pub look_at_position: glam::Vec3,
     /// Current resources.
     pub resources: Resources,
     /// Lifetime resources gained, unaffected by spending and refunds.
@@ -325,6 +327,7 @@ impl Player {
             state: PlayerState::Playing,
             player_type: PlayerType::Human,
             difficulty: DEFAULT_PLAYER_DIFFICULTY,
+            look_at_position: glam::Vec3::ZERO,
             resources: Resources::new(),
             total_resources: Resources::new(),
             resource_trickle_rate: Resources::new(),

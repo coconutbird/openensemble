@@ -127,6 +127,9 @@ fn evaluate_query_condition(
         ConditionType::CheckDifficulty => {
             game_settings::check_difficulty(condition, script, world, database)
         }
+        ConditionType::AICanGetDifficultySetting => {
+            game_settings::ai_can_get_difficulty_setting(condition, script, world, database)
+        }
         ConditionType::CanGetUnits => queries::can_get_units(condition, script, world),
         ConditionType::CanGetSquads => queries::can_get_squads(condition, script, world),
         ConditionType::CanGetOneUnit => list_selection::can_get_one_unit(condition, script, world),
@@ -162,6 +165,9 @@ fn evaluate_query_condition(
         ConditionType::CanRemoveOneFloat => {
             list_selection::can_remove_one_float(condition, script, world)
         }
+        ConditionType::CanRemoveOneInteger => {
+            list_selection::can_remove_one_integer(condition, script, world)
+        }
         ConditionType::CanRetrieveExternals => externals::can_retrieve_externals(condition, script),
         ConditionType::CanRetrieveExternalLocation => {
             externals::can_retrieve_external_location(condition, script)
@@ -171,6 +177,9 @@ fn evaluate_query_condition(
         }
         ConditionType::SquadLocationDistance => {
             spatial::squad_location_distance(condition, script, world)
+        }
+        ConditionType::MarkerSquadsInArea => {
+            spatial::marker_squads_in_area(condition, script, world)
         }
         ConditionType::CanGetDesignSpheres => {
             spatial::can_get_design_spheres(condition, script, world)

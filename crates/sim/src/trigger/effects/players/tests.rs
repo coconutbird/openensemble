@@ -182,3 +182,130 @@ fn get_npc_players_by_name_matches_npc_type_and_name() {
         TriggerValue::PlayerList(Vec::new())
     );
 }
+
+/// Inline cases `0xEF`, `0x189` and `0x1DB`: signature 2 gets the civ, team or leader of the
+/// player in signature 1. An unknown player changes nothing.
+#[test]
+fn get_player_civ_team_and_leader_write_signature_two() {
+    let mut world = World::new();
+    world.init_players(2);
+    let player = world.get_player_mut(2).unwrap();
+    player.civ_id = 2;
+    player.team_id = 3;
+    player.leader_id = 7;
+    let mut script = TriggerScript::new(0);
+    add(&mut script, 1, VarType::Player, TriggerValue::Player(2));
+    add(&mut script, 2, VarType::Civ, TriggerValue::Int(-1));
+    let effect = |effect_type| {
+        Effect::new(0, effect_type)
+            .with_input_at(1, 1)
+            .with_output_at(2, 2)
+    };
+
+    for (effect_type, expected) in [
+        (EffectType::GetPlayerCiv, TriggerValue::Int(2)),
+        (EffectType::GetPlayerTeam, TriggerValue::Team(3)),
+        (EffectType::GetPlayerLeader, TriggerValue::Int(7)),
+    ] {
+        assert_eq!(
+            execute(&effect(effect_type), &mut script, &mut world),
+            Some(EffectOutcome::Applied)
+        );
+        assert_eq!(players_value(&script, 2), expected);
+    }
+    script.get_variable_mut(1).unwrap().value = TriggerValue::Player(9);
+    assert_eq!(
+        execute(&effect(EffectType::GetPlayerCiv), &mut script, &mut world),
+        Some(EffectOutcome::Skipped)
+    );
+}
+
+/// Inline case `0x20D`: version 2 writes the player difficulty to a non-null signature 3.
+#[test]
+fn get_difficulty_v2_writes_the_player_scalar() {
+    let mut world = World::new();
+    world.init_players(2);
+    world.get_player_mut(2).unwrap().difficulty = 0.67;
+    let mut script = TriggerScript::new(0);
+    add(&mut script, 1, VarType::Player, TriggerValue::Player(2));
+    add(&mut script, 3, VarType::Float, TriggerValue::Float(0.0));
+    let effect = versioned(
+        Effect::new(0, EffectType::GetDifficulty)
+            .with_input_at(1, 1)
+            .with_output_at(3, 3),
+        2,
+    );
+    assert_eq!(
+        execute(&effect, &mut script, &mut world),
+        Some(EffectOutcome::Applied)
+    );
+    assert_eq!(players_value(&script, 3), TriggerValue::Float(0.67));
+    assert_eq!(
+        execute(&versioned(effect, 1), &mut script, &mut world),
+        Some(EffectOutcome::Unsupported(525))
+    );
+}
+
+/// `BTriggerEffect_teTeamsToPlayers` replaces signature 2 with the players of each listed team,
+/// once each, and skips a team outside the team table.
+#[test]
+fn teams_to_players_lists_each_player_once() {
+    let mut world = World::new();
+    world.init_players(3);
+    world.get_player_mut(1).unwrap().team_id = 1;
+    world.get_player_mut(2).unwrap().team_id = 2;
+    world.get_player_mut(3).unwrap().team_id = 1;
+    let mut script = TriggerScript::new(0);
+    add(
+        &mut script,
+        1,
+        VarType::TeamList,
+        TriggerValue::TeamList(vec![2, 9, 1, 2]),
+    );
+    add(
+        &mut script,
+        2,
+        VarType::PlayerList,
+        TriggerValue::PlayerList(vec![0]),
+    );
+    let effect = Effect::new(0, EffectType::TeamsToPlayers)
+        .with_input_at(1, 1)
+        .with_output_at(2, 2);
+    assert_eq!(
+        execute(&effect, &mut script, &mut world),
+        Some(EffectOutcome::Applied)
+    );
+    assert_eq!(
+        players_value(&script, 2),
+        TriggerValue::PlayerList(vec![2, 1, 3])
+    );
+}
+
+/// `BTriggerEffect_teGetGameMode` compares the game mode name without case. A null output gets
+/// no value.
+#[test]
+fn get_game_mode_tests_skirmish_and_deathmatch() {
+    let mut world = World::new();
+    world.set_game_mode(Some("skirmish".to_owned()));
+    let mut script = TriggerScript::new(0);
+    add(&mut script, 1, VarType::Bool, TriggerValue::Bool(false));
+    add(&mut script, 2, VarType::Bool, TriggerValue::Bool(true));
+    let effect = Effect::new(0, EffectType::GetGameMode)
+        .with_output_at(1, 1)
+        .with_output_at(2, 2);
+    assert_eq!(
+        execute(&effect, &mut script, &mut world),
+        Some(EffectOutcome::Applied)
+    );
+    assert_eq!(players_value(&script, 1), TriggerValue::Bool(true));
+    assert_eq!(players_value(&script, 2), TriggerValue::Bool(false));
+
+    world.set_game_mode(Some("Deathmatch".to_owned()));
+    script.add_variable(TriggerVar::new(1, VarType::Bool).null());
+    assert_eq!(
+        execute(&effect, &mut script, &mut world),
+        Some(EffectOutcome::Applied)
+    );
+    assert_eq!(players_value(&script, 1), TriggerValue::Bool(false));
+    assert_eq!(players_value(&script, 2), TriggerValue::Bool(true));
+}

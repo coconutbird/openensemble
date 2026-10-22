@@ -724,7 +724,7 @@ impl World {
         surface_distance <= range.max(0.0)
     }
 
-    pub(super) fn squad_obstruction_radius(&self, squad_id: EntityId) -> f32 {
+    pub(crate) fn squad_obstruction_radius(&self, squad_id: EntityId) -> f32 {
         self.squads.get(squad_id).map_or(0.0, |squad| {
             squad
                 .unit_ids

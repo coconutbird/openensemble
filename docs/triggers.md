@@ -297,9 +297,20 @@ logic.
   (`BDesignObjectManager_load` `0x140200530`, kept in `World::design_spheres`). It matches the
   type without case, or every sphere if the type is null, and always overwrites the center and
   radius lists. The `Creeps` and `CrateMaker` scripts that `SkirmishWorld` launches still need
-  `CheckPlacement` (82), `CanGetRandomLocation` (956), `MarkerSquadsInArea` (980),
-  `RandomLocation` (55) v4 with obstruction tests, `GetDistanceLocationLocation` (512) and
-  `SetLevel` (820) (issue #24).
+  `CheckPlacement` (82), `CanGetRandomLocation` (956), `RandomLocation` (55) v4 with obstruction
+  tests (`BTriggerEffect_teRandomLocationV4` calls `BWorld_checkPlacement`),
+  `GetDistanceLocationLocation` (512) and `SetLevel` (820) (issue #24).
+- Skirmish AI player state: `GetPlayerCiv` (239), `GetPlayerTeam` (393), `GetPlayerLeader`
+  (475), `GetDifficulty` (525) v2, `TeamsToPlayers` (433), `GetGameMode` (1065, game setting 7
+  name in `World::game_mode`) and `AISetFocus` (711) v2 (sets `Player::look_at_position`,
+  retail `mLookAtPos`). `AIBindLog` (720) only binds the debug AI log. DBIDs 208, 212, 855
+  and 957 jump to the default case of `BTriggerEffect_fire` and do nothing.
+- Location math: `LerpLocation` (294), `MathLocation` (295, operators 0 and 1) and
+  `LocationAdjustDir` (554, pulls the result 0.01 inside the simulation bounds).
+- `AICanGetDifficultySetting` (920) reads `aidifficultysettings.xml`: a null default name gives
+  the `PiecewiseFunc` value at the player difficulty, else the named `DefaultValue`.
+  `CanRemoveOneInteger` (563) follows the other `CanRemoveOne*` conditions.
+  `MarkerSquadsInArea` (980) tests the XZ distance from each live squad to the location.
 
 ## Coverage
 
@@ -392,7 +403,6 @@ code in `BTriggerEffect_fire` without a separate function.
 | 159 | `PlayAnimationUnit` | 10 (2) | 5 | inline case @ `0x14044AA3F` |
 | 910 | `SquadFlagSet` | 10 (3) | 4 | `BTriggerEffect_teSquadFlagSet` @ `0x14047ABA0` |
 | 1032 | `ResetAbilityTimer` | 10 (3) | 0 | `BTriggerEffect_teResetAbilityTimer` @ `0x140480010` |
-| 554 | `LocationAdjustDir` | 9 (2) | 23 | `BTriggerEffect_teLocationAdjustDir` @ `0x14046A9E0` |
 | 934 | `ConceptSetParameters` | 9 (2) | 8 | `BTriggerEffect_teConceptSetParameters` @ `0x14047B8E0` |
 | 498 | `AsInt` | 8 (2) | 43 | inline case @ `0x14044C09B` |
 | 767 | `GetGarrisonedSquads` | 8 (1) | 14 | `BTriggerEffect_teGetGarrisonedSquads` @ `0x140470990` |
@@ -428,7 +438,6 @@ code in `BTriggerEffect_fire` without a separate function.
 | 981 | `LocationListGetClosest` | 4 (1) | 0 | `BTriggerEffect_teLocationListGetClosest` @ `0x14047C820` |
 | 1049 | `ChatForceSubtitles` | 4 (2) | 0 | `BTriggerEffect_teChatForceSubtitles` @ `0x1404803F0` |
 | 57 | `LaunchProjectile` | 2 (2) | 38 | inline case @ `0x14044A3AC` |
-| 393 | `GetPlayerTeam` | 2 (1) | 14 | inline case @ `0x14044BB2F` |
 | 359 | `Settle` | 2 (1) | 6 | `BTriggerEffect_teSettle` @ `0x1404627D0` |
 | 775 | `SetOverrideTint` | 2 (1) | 6 | `BTriggerEffect_teSetOverrideTint` @ `0x140471E00` |
 | 891 | `RepairByCombatValue` | 2 (2) | 5 | `BTriggerEffect_teRepairByCombatValue` @ `0x140478710` |
@@ -436,7 +445,6 @@ code in `BTriggerEffect_fire` without a separate function.
 | 941 | `TeamSetDiplomacy` | 2 (1) | 0 | `BTriggerEffect_teTeamSetDiplomacy` @ `0x14047B060` |
 | 1022 | `PowerUserShutdown` | 2 (1) | 0 | `BTriggerEffect_tePowerUserShutdown` @ `0x14047E090` |
 | 1027 | `ChangeControlledPlayer` | 2 (1) | 0 | `BTriggerEffect_teChangeControlledPlayer` @ `0x14047FDC0` |
-| 294 | `LerpLocation` | 1 (1) | 44 | inline case @ `0x14044B1F8` |
 | 186 | `CalculatePercentTime` | 1 (1) | 2 | `BTriggerEffect_teCalculatePercentTime` @ `0x14045CA80` |
 | 521 | `SetFollowCam` | 1 (1) | 0 | `BTriggerEffect_teSetFollowCam` @ `0x14046A060` |
 

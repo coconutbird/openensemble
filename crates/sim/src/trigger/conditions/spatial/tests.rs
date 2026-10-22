@@ -134,3 +134,52 @@ fn can_get_design_spheres_filters_by_type_and_overwrites_outputs() {
         TriggerValue::FloatList(Vec::new())
     );
 }
+
+/// `BTriggerCondition_tcMarkerSquadsInArea`: a non-null signature 4 gets the live squads in
+/// range in list order; a null signature 4 only gives the result. No squad in range writes an
+/// empty list and gives false.
+#[test]
+fn marker_squads_in_area_lists_live_squads_in_range() {
+    let mut world = World::new();
+    world.init_players(1);
+    let near = world.create_squad_at(1, Vec3::new(3.0, 50.0, 4.0));
+    let far = world.create_squad_at(1, Vec3::new(30.0, 0.0, 0.0));
+    let edge = world.create_squad_at(1, Vec3::new(0.0, 0.0, 6.0));
+    let dead = world.create_squad_at(1, Vec3::ZERO);
+    assert!(world.remove_squad(dead).is_some());
+    let mut script = TriggerScript::new(1);
+    script.add_variable(
+        TriggerVar::new(1, VarType::SquadList)
+            .with_value(TriggerValue::SquadList(vec![dead, far, edge, near])),
+    );
+    script.add_variable(
+        TriggerVar::new(2, VarType::Vector)
+            .with_value(TriggerValue::Vector(TriggerVec3::new(0.0, 0.0, 0.0))),
+    );
+    script.add_variable(TriggerVar::new(3, VarType::Float).with_value(TriggerValue::Float(6.0)));
+    script.add_variable(
+        TriggerVar::new(4, VarType::SquadList).with_value(TriggerValue::SquadList(vec![far])),
+    );
+    script.add_variable(TriggerVar::new(5, VarType::SquadList).null());
+    let condition = |output_id| {
+        Condition::new(1, ConditionType::MarkerSquadsInArea)
+            .with_input_at(1, 1)
+            .with_input_at(2, 2)
+            .with_input_at(3, 3)
+            .with_output_at(4, output_id)
+    };
+
+    assert!(marker_squads_in_area(&condition(4), &mut script, &world));
+    assert_eq!(
+        script.get_variable(4).unwrap().value,
+        TriggerValue::SquadList(vec![edge, near])
+    );
+    assert!(marker_squads_in_area(&condition(5), &mut script, &world));
+
+    script.get_variable_mut(3).unwrap().value = TriggerValue::Float(1.0);
+    assert!(!marker_squads_in_area(&condition(4), &mut script, &world));
+    assert_eq!(
+        script.get_variable(4).unwrap().value,
+        TriggerValue::SquadList(Vec::new())
+    );
+}

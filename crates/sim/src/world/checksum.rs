@@ -131,6 +131,8 @@ fn hash_players(checksum: &mut SyncChecksum, players: &[Player]) {
         checksum.hash_u32(player.state as u32);
         checksum.hash_u32(player.player_type as u32);
         checksum.hash_f32(player.difficulty);
+        let look_at = player.look_at_position;
+        checksum.hash_vec3(look_at.x, look_at.y, look_at.z);
         for &amount in &player.resources.amounts {
             checksum.hash_f32(amount);
         }

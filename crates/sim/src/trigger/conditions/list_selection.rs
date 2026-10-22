@@ -165,9 +165,22 @@ pub(super) fn can_remove_one_float(
     })
 }
 
+/// `CanRemoveOneInteger` (563, `BTriggerCondition_tcCanRemoveOneInteger`).
+pub(super) fn can_remove_one_integer(
+    condition: &Condition,
+    script: &mut TriggerScript,
+    world: &mut World,
+) -> bool {
+    remove_one(condition, script, world, |value| match value {
+        TriggerValue::IntegerList(values) => Some(RemovableList::Integers(values)),
+        _ => None,
+    })
+}
+
 enum RemovableList<'a> {
     Vectors(&'a mut Vec<TriggerVec3>),
     Floats(&'a mut Vec<f32>),
+    Integers(&'a mut Vec<i32>),
 }
 
 impl RemovableList<'_> {
@@ -175,6 +188,7 @@ impl RemovableList<'_> {
         match self {
             Self::Vectors(values) => values.len(),
             Self::Floats(values) => values.len(),
+            Self::Integers(values) => values.len(),
         }
     }
 
@@ -182,6 +196,7 @@ impl RemovableList<'_> {
         match self {
             Self::Vectors(values) => TriggerValue::Vector(take_at(values, index, ordered)),
             Self::Floats(values) => TriggerValue::Float(take_at(values, index, ordered)),
+            Self::Integers(values) => TriggerValue::Int(take_at(values, index, ordered)),
         }
     }
 }

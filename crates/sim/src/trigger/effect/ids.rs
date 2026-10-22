@@ -795,6 +795,18 @@ pub enum EffectType {
     /// Copies an AI squad analysis value.
     CopyAISquadAnalysis = 921,
 
+    // Skirmish AI player state
+    /// Gets the difficulty scalar of a player.
+    GetDifficulty = 525,
+    /// Sets the AI focus (look-at) position of a player.
+    AISetFocus = 711,
+    /// Binds the AI debug log of a trigger.
+    AIBindLog = 720,
+    /// Tells if the game mode is skirmish or deathmatch.
+    GetGameMode = 1065,
+    /// Moves a location along a direction and keeps it in the playable bounds.
+    LocationAdjustDir = 554,
+
     // Scenario transport setup
     /// Sets the destination squad of a teleporter squad.
     SetTeleporterDestination = 967,

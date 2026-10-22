@@ -331,12 +331,18 @@ fn unit_intersects_sphere(unit: &Unit, center: Vec3, radius: f32) -> bool {
     if !center.is_finite() || !radius.is_finite() || radius < 0.0 {
         return false;
     }
+    unit_xz_surface_distance(unit, center) <= radius
+}
+
+/// The XZ distance from the obstruction of `unit` to `point`, or 0 inside it
+/// (`BEntity_calculateXZDistanceToPoint` @ `0x1402049A0`).
+pub(super) fn unit_xz_surface_distance(unit: &Unit, point: Vec3) -> f32 {
     let delta = Vec3::new(
-        (unit.base.position.x - center.x).abs(),
+        (unit.base.position.x - point.x).abs(),
         0.0,
-        (unit.base.position.z - center.z).abs(),
+        (unit.base.position.z - point.z).abs(),
     );
-    let distance = if unit.is_building() {
+    if unit.is_building() {
         let outside = (delta - unit.obstruction_half_extents.abs()).max(Vec3::ZERO);
         outside.x.hypot(outside.z)
     } else {
@@ -346,8 +352,7 @@ fn unit_intersects_sphere(unit: &Unit, center: Vec3, radius: f32) -> bool {
             .abs()
             .max(unit.obstruction_half_extents.z.abs());
         (delta.x.hypot(delta.z) - obstruction_radius).max(0.0)
-    };
-    distance <= radius
+    }
 }
 
 fn unit_intersects_box(

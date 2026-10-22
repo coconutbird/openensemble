@@ -43,6 +43,9 @@ pub struct GameResult {
 pub(super) struct GameEndState {
     /// Game setting 5 (`GameType`).
     game_type: GameType,
+    /// The `gamemodes.xml` name of game setting 7 (`GameMode`), or `None` if the setting names
+    /// no game mode.
+    game_mode: Option<String>,
     /// Gamedata `GameOverDelay` in seconds. Retail uses 0 if gamedata does not set it.
     game_over_delay: f32,
     /// Player state changes that the game layer did not take yet.
@@ -56,6 +59,12 @@ pub(super) struct GameEndState {
 impl GameEndState {
     pub(super) fn hash_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_u32(u32::from(self.game_type as u8));
+        if let Some(game_mode) = &self.game_mode {
+            checksum.hash_u32(1);
+            checksum.hash_string(game_mode);
+        } else {
+            checksum.hash_u32(0);
+        }
         checksum.hash_f32(self.game_over_delay);
         if let Some(result) = self.result {
             checksum.hash_u32(1);
@@ -79,6 +88,18 @@ impl World {
     /// players.
     pub const fn set_game_type(&mut self, game_type: GameType) {
         self.game_end.game_type = game_type;
+    }
+
+    /// Return the `gamemodes.xml` name of game setting 7 (`GameMode`).
+    #[must_use]
+    pub fn game_mode(&self) -> Option<&str> {
+        self.game_end.game_mode.as_deref()
+    }
+
+    /// Set the game mode. Scenario loaders set the `gamemodes.xml` name that game setting 7
+    /// selects, or `None` if no game mode has the setting name.
+    pub fn set_game_mode(&mut self, game_mode: Option<String>) {
+        self.game_end.game_mode = game_mode;
     }
 
     /// Set the gamedata `GameOverDelay` in seconds. A missing or invalid value is 0.

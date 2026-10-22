@@ -368,6 +368,13 @@ impl<'a> ScenarioBuilder<'a> {
         }
         world.seed_sim_random(settings.random_seed);
         world.set_game_type(settings.game_type);
+        world.set_game_mode(
+            database
+                .game_modes
+                .iter()
+                .find(|mode| mode.name.eq_ignore_ascii_case(&settings.game_mode))
+                .map(|mode| mode.name.clone()),
+        );
         world.set_scenario_allows_veterancy(options.allows_veterancy);
         world.configure_prototype_catalogs(database);
         world.configure_prototype_damage_profiles(&options.gameplay);
