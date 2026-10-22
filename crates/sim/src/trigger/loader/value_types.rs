@@ -12,6 +12,22 @@ pub(super) fn parse_unit_reference(text: &str, context: TriggerLoadContext<'_>) 
     parse_entity_reference_with_map(text, context.scenario_units.or(context.scenario_entities))
 }
 
+/// Map an authored scenario player number to its world player.
+///
+/// Cases 12 (`Player`) and 23 (`PlayerList`) of `BTriggerVar_loadValueFromText` @
+/// `0x14048B280` read a number in `0..=8` through the scenario player map
+/// (`gScenarioPlayerToWorldPlayer`) and store `-1` for any other number or an unmapped
+/// player.
+pub(super) fn scenario_player(player: i32, context: TriggerLoadContext<'_>) -> i32 {
+    let Some(map) = context.scenario_players else {
+        return player;
+    };
+    usize::try_from(player)
+        .ok()
+        .and_then(|index| map.get(index).copied().flatten())
+        .map_or(-1, i32::from)
+}
+
 fn parse_entity_reference_with_map(
     text: &str,
     scenario_entities: Option<&HashMap<i32, EntityId>>,

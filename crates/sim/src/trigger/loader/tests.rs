@@ -13,6 +13,7 @@ fn scenario_unit_references_resolve_to_spawned_members() {
         scenario_entities: Some(&scenario_entities),
         scenario_units: Some(&scenario_units),
         database: None,
+        scenario_players: None,
     };
 
     assert_eq!(
@@ -26,6 +27,32 @@ fn scenario_unit_references_resolve_to_spawned_members() {
     assert_eq!(
         parse_var_value("42", VarType::UnitList, context),
         TriggerValue::UnitList(vec![unit_id])
+    );
+}
+
+#[test]
+fn player_values_map_scenario_players_to_world_players() {
+    // Scenario player 2 (a co-op slot) has no world player, so player 3 is world player 2.
+    let map = [Some(0), Some(1), None, Some(2)];
+    let context = TriggerLoadContext {
+        scenario_players: Some(&map),
+        ..TriggerLoadContext::default()
+    };
+    assert_eq!(
+        parse_var_value("3", VarType::Player, context),
+        TriggerValue::Player(2)
+    );
+    assert_eq!(
+        parse_var_value("2", VarType::Player, context),
+        TriggerValue::Player(-1)
+    );
+    assert_eq!(
+        parse_var_value("0,3,9,-1", VarType::PlayerList, context),
+        TriggerValue::PlayerList(vec![0, 2, -1, -1])
+    );
+    assert_eq!(
+        parse_var_value("7", VarType::Player, TriggerLoadContext::default()),
+        TriggerValue::Player(7)
     );
 }
 

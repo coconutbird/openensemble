@@ -59,6 +59,11 @@ gives it the scenario ID maps and the scenario-layered `Database`.
   to runtime IDs.
 - Scenario Unit, Squad, Object and Entity references change to the generational `EntityId` of
   the placed entity. Unknown references become `EntityId::INVALID`.
+- `Player` and `PlayerList` values are `.scn` player numbers. Like
+  `BTriggerVar_loadValueFromText` (`0x14048B280`), the loader maps a number in `0..=8`
+  through the scenario player map (`gScenarioPlayerToWorldPlayer`) and stores `-1` for any
+  other number or a player without a world player, such as the co-op slot of a
+  single-player campaign. Without a scenario load the numbers stay as authored.
 - Prototype object, prototype squad, technology, civilization, leader, player state and
   population bucket names resolve through the layered database to retail numeric IDs.
   Relation type, tech status, squad mode, difficulty, operator, general event and command

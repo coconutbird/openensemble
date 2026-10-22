@@ -113,7 +113,8 @@ fn controllable_players_fill_the_lobby_slots_and_the_others_become_npcs() {
             ("Player 2", PlayerType::ComputerAi, 2),
         ]
     );
-    // The scenario-player to world-player map of `BScenario_loadObject` (`dword_14161BA48`).
+    // The scenario-player to world-player map of `BScenario_loadObject`
+    // (`gScenarioPlayerToWorldPlayer`).
     let owners = (-1..=9)
         .map(|player| setup.object_owner(player))
         .collect::<Vec<_>>();

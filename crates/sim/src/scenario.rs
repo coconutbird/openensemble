@@ -94,6 +94,8 @@ pub struct LoadedScenario {
     pub scenario_id_to_unit_id: HashMap<i32, EntityId>,
     /// Base that the starting units of each player created (the base of its starting HQ).
     pub initial_base_ids: BTreeMap<PlayerId, BaseId>,
+    /// World player of each scenario player number, which trigger `Player` values read.
+    scenario_players: [Option<PlayerId>; player_setup::OWNER_SLOTS],
 }
 
 /// A scenario's authoritative simulation state and the assets used to build it.
@@ -170,6 +172,15 @@ impl LoadedScenario {
     #[must_use]
     pub fn get_initial_base_id(&self, player_id: PlayerId) -> Option<BaseId> {
         self.initial_base_ids.get(&player_id).copied()
+    }
+
+    /// Get the world player of a `.scn` player number, or `None` for a number that names no
+    /// world player (for example the co-op slot of a single-player campaign).
+    #[must_use]
+    pub fn world_player(&self, scenario_player: i32) -> Option<PlayerId> {
+        usize::try_from(scenario_player)
+            .ok()
+            .and_then(|index| self.scenario_players.get(index).copied().flatten())
     }
 }
 
@@ -400,6 +411,7 @@ impl<'a> ScenarioBuilder<'a> {
                 scenario_id_to_entity_id: HashMap::new(),
                 scenario_id_to_unit_id: HashMap::new(),
                 initial_base_ids: BTreeMap::new(),
+                scenario_players: PlayerSetup::default().owners(),
             },
             scenario,
             database,
@@ -415,6 +427,7 @@ impl<'a> ScenarioBuilder<'a> {
         self.setup =
             player_setup::setup_players(world, self.scenario, self.database, self.settings)?;
         forbids::apply_scenario_forbids(world, self.database, self.scenario.players(), &self.setup);
+        self.loaded.scenario_players = self.setup.owners();
         Ok(())
     }
 

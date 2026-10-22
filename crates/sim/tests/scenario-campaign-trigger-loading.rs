@@ -112,8 +112,11 @@ fn assert_update_frontier(scenario: &str, update: &TriggerUpdate) {
     }
     if scenario == "PHXscn04" {
         assert!(!update.unsupported_effect_types.contains(&875));
-        assert_eq!(update.effects_skipped, 0);
-        assert_eq!(update.skipped_effect_types, Vec::<u16>::new());
+        // Single-player campaign settings leave the co-op `Player 2` without a world
+        // player, so its `Player` values load as -1 (`BTriggerVar_loadValueFromText`)
+        // and only its `TechActivate` effects find no player.
+        assert_eq!(update.effects_skipped, 2);
+        assert_eq!(update.skipped_effect_types, vec![60]);
     }
 }
 
@@ -271,7 +274,16 @@ fn assert_forbid_state(scenario: &str, loaded: &LoadedGameScenario) {
     // indices, so look up the IDs by name. The `dbid` values are not proto IDs.
     let object = |name| sim::object_prototype_id(database, name).expect("PHXscn13 object");
     let squad = |name| sim::squad_prototype_id(database, name).expect("PHXscn13 squad");
-    let player_three = world.get_player(3).expect("PHXscn13 player 3");
+    // The trigger players are `.scn` player numbers; single-player settings leave the
+    // co-op slot without a world player, so map them.
+    let player = |number| {
+        loaded
+            .simulation
+            .world_player(number)
+            .and_then(|player_id| world.get_player(player_id))
+            .unwrap_or_else(|| panic!("PHXscn13 scenario player {number}"))
+    };
+    let player_three = player(3);
     assert!(player_three.is_object_forbidden(database, object("cov_bldg_turret_01")));
     for name in [
         "cov_inf_arbiter_01",
@@ -281,11 +293,11 @@ fn assert_forbid_state(scenario: &str, loaded: &LoadedGameScenario) {
     ] {
         assert!(player_three.is_squad_forbidden(database, squad(name)));
     }
-    let player_four = world.get_player(4).expect("PHXscn13 player 4");
+    let player_four = player(4);
     for name in ["cov_inf_arbiter_01", "cov_inf_prophet_01"] {
         assert!(player_four.is_squad_forbidden(database, squad(name)));
     }
-    let player_five = world.get_player(5).expect("PHXscn13 player 5");
+    let player_five = player(5);
     for name in ["fld_inf_infectedCarrier_01", "fld_inf_rhinodillo_01"] {
         assert!(player_five.is_squad_forbidden(database, squad(name)));
     }

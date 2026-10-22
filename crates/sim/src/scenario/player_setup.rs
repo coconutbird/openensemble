@@ -16,7 +16,7 @@ use crate::random::SimRandom;
 use crate::world::World;
 
 /// Number of scenario player numbers that an object can name (`0` Gaia and `1..=8`).
-const OWNER_SLOTS: usize = 9;
+pub(super) const OWNER_SLOTS: usize = 9;
 
 /// Config that makes the random leader choice return the first `Test` leader of the civ.
 const USE_TEST_LEADERS_CONFIG: &str = "UseTestLeaders";
@@ -48,7 +48,8 @@ pub(super) struct ActivePlayer {
 /// Result of the player setup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PlayerSetup {
-    /// World player of each scenario player number (`dword_14161BA48`).
+    /// World player of each scenario player number (`gScenarioPlayerToWorldPlayer` @
+    /// `0x14161BA48`).
     owners: [Option<PlayerId>; OWNER_SLOTS],
     /// Active scenario players in document order.
     pub(super) players: Vec<ActivePlayer>,
@@ -76,6 +77,11 @@ impl PlayerSetup {
         usize::try_from(scenario_player)
             .ok()
             .and_then(|index| self.owners.get(index).copied().flatten())
+    }
+
+    /// World player of each scenario player number, for the trigger `Player` values.
+    pub(super) const fn owners(&self) -> [Option<PlayerId>; OWNER_SLOTS] {
+        self.owners
     }
 }
 

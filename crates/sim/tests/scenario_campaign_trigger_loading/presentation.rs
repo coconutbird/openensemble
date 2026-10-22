@@ -63,26 +63,27 @@ fn assert_phx06_presentation(loaded: &LoadedGameScenario) {
         world.minimap_rotation_degrees().to_bits(),
         (-85.0_f32).to_bits()
     );
-    for player_id in [1, 4] {
-        let state = world.player_presentation_state(player_id);
-        assert!(state.camera_controls.scroll);
-        assert!(state.camera_controls.yaw);
-        assert!(state.camera_controls.zoom);
-        let directive = state
-            .camera_directive
-            .unwrap_or_else(|| panic!("PHXscn06 player {player_id} camera directive"));
-        super::assertions::assert_vec3_close(
-            directive.location.expect("PHXscn06 camera location"),
-            glam::Vec3::new(266.0444, 69.3125, 235.5218),
-            0.001,
-        );
-        super::assertions::assert_vec3_close(
-            directive.direction.expect("PHXscn06 camera direction"),
-            glam::Vec3::new(0.6442, 0.0, 0.7648),
-            0.0001,
-        );
-        assert!(directive.hover_height_offset.is_none());
-    }
+    // Single-player campaign settings give the co-op scenario player `Player4` no world
+    // player, so its camera effects load with player -1 and only player 1 gets them.
+    assert!(loaded.simulation.world_player(4).is_none());
+    let state = world.player_presentation_state(1);
+    assert!(state.camera_controls.scroll);
+    assert!(state.camera_controls.yaw);
+    assert!(state.camera_controls.zoom);
+    let directive = state
+        .camera_directive
+        .expect("PHXscn06 player 1 camera directive");
+    super::assertions::assert_vec3_close(
+        directive.location.expect("PHXscn06 camera location"),
+        glam::Vec3::new(266.0444, 69.3125, 235.5218),
+        0.001,
+    );
+    super::assertions::assert_vec3_close(
+        directive.direction.expect("PHXscn06 camera direction"),
+        glam::Vec3::new(0.6442, 0.0, 0.7648),
+        0.0001,
+    );
+    assert!(directive.hover_height_offset.is_none());
 }
 
 pub(super) fn assert_hint_callout_state(scenario: &str, loaded: &LoadedGameScenario) {

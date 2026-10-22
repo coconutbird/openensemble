@@ -13,7 +13,7 @@ use super::{
     Condition, ConditionMode, ConditionType, Effect, EffectType, Trigger, TriggerScript,
     TriggerValue, TriggerVar, VarBinding, VarId, VarType,
 };
-use crate::EntityId;
+use crate::{EntityId, PlayerId};
 
 mod value_types;
 
@@ -70,6 +70,9 @@ pub struct TriggerLoadContext<'a> {
     pub scenario_units: Option<&'a HashMap<i32, EntityId>>,
     /// Active scenario-layered database used to resolve prototype names.
     pub database: Option<&'a Database>,
+    /// World player of each scenario player number (`gScenarioPlayerToWorldPlayer`), when a
+    /// scenario load set the players up. Without it, `Player` values keep their numbers.
+    pub scenario_players: Option<&'a [Option<PlayerId>]>,
 }
 
 /// Loads vanilla .triggerscript XMB files into `TriggerScript` instances.
@@ -622,8 +625,16 @@ fn parse_var_value(text: &str, var_type: VarType, context: TriggerLoadContext<'_
             true,
         )),
         // Player/team references
-        VarType::Player => TriggerValue::Player(text.parse().unwrap_or(0)),
-        VarType::PlayerList => TriggerValue::PlayerList(parse_i32_list(text)),
+        VarType::Player => TriggerValue::Player(value_types::scenario_player(
+            text.parse().unwrap_or(0),
+            context,
+        )),
+        VarType::PlayerList => TriggerValue::PlayerList(
+            parse_i32_list(text)
+                .into_iter()
+                .map(|player| value_types::scenario_player(player, context))
+                .collect(),
+        ),
         VarType::Team => TriggerValue::Team(text.parse().unwrap_or(0)),
         VarType::TeamList => TriggerValue::TeamList(parse_i32_list(text)),
         VarType::PlayerState => TriggerValue::Int(parse_player_state(text, context)),

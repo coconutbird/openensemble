@@ -154,6 +154,7 @@ fn load_script_file(
         scenario_entities: Some(&scenario.scenario_id_to_entity_id),
         scenario_units: Some(&scenario.scenario_id_to_unit_id),
         database: Some(database),
+        scenario_players: Some(&scenario.scenario_players),
     };
     let parsed = VanillaLoader::from_node_with_context(root, context);
     let library = scenario.world.trigger_engine_mut().script_library_mut();
@@ -182,6 +183,7 @@ pub(super) fn create_trigger_system(
         scenario_entities: Some(&scenario.scenario_id_to_entity_id),
         scenario_units: Some(&scenario.scenario_id_to_unit_id),
         database: Some(database),
+        scenario_players: Some(&scenario.scenario_players),
     };
     let script = VanillaLoader::from_node_with_context(node, context)?;
     let current_time = scenario.world.game_time_ms;
