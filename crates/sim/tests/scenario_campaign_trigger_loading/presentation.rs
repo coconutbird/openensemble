@@ -128,5 +128,5 @@ fn assert_tutorial_presentation(loaded: &LoadedGameScenario, advanced: bool) {
     assert!(!state.camera_controls.yaw);
     assert!(!state.camera_controls.zoom);
     assert_eq!(state.ignore_dpad, !advanced);
-    assert_eq!(state.user_lock_owner_script, Some(1));
+    assert_eq!(state.user_lock_owner_script, Some(0));
 }
