@@ -165,18 +165,21 @@ mod tests {
     fn drain_ready_keeps_sequence_order_and_time_bound() {
         let mut queue = CommandQueue::new();
         queue.enqueue_game(GameCommand::default(), 200, 1);
+        queue.enqueue_game(GameCommand::default(), 202, 1);
         queue.enqueue_game(GameCommand::default(), 201, 1);
         queue.enqueue_game(GameCommand::default(), 100, 2);
         queue.enqueue_game(GameCommand::default(), 200, 3);
 
+        // The end bound is `(up_to_time + 1, u64::MAX)`, so the drain also includes
+        // entries at `up_to_time + 1`.
         let ready = queue.drain_ready(200);
         let keys: Vec<_> = ready
             .iter()
             .map(|entry| (entry.exec_time, entry.sequence, entry.source_client))
             .collect();
-        assert_eq!(keys, [(100, 2, 2), (200, 0, 1), (200, 3, 3)]);
+        assert_eq!(keys, [(100, 3, 2), (200, 0, 1), (200, 4, 3), (201, 2, 1)]);
         assert_eq!(queue.len(), 1);
-        assert_eq!(queue.next_exec_time(), Some(201));
+        assert_eq!(queue.next_exec_time(), Some(202));
         assert!(queue.drain_ready(200).is_empty());
     }
 }
