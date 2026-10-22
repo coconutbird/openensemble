@@ -1,4 +1,4 @@
-//! Foliage rendering module for terrain viewer.
+//! Foliage rendering of the world view.
 //!
 //! This module handles rendering of foliage (grass, bushes) on the terrain.
 //! Based on the original Halo Wars terrainFoliage.fx shader.
@@ -23,7 +23,6 @@
 mod rendering;
 mod resources;
 
-pub(crate) use resources::parse_foliage_index_buffer;
 pub use resources::{FoliageResources, FoliageWorldBindings};
 
 /// Configuration for foliage rendering.

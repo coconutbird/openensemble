@@ -1,9 +1,9 @@
 //! GPU upload wrapper for animation-driven terrain visibility.
 
+use crate::terrain::DynamicTerrainAlphaMask;
+use crate::ugx::{AnimationTerrainAlpha, AnimationTerrainAlphaShape};
+use crate::wgpu;
 use glam::Vec2;
-use render::terrain::DynamicTerrainAlphaMask;
-use render::ugx::{AnimationTerrainAlpha, AnimationTerrainAlphaShape};
-use render::wgpu;
 use zerocopy::IntoBytes;
 
 pub(crate) struct DynamicTerrainAlphaTexture {

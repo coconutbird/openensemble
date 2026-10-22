@@ -1,12 +1,12 @@
 //! Oracle-aligned terrain road rendering.
 
+use crate::terrain::{LightingParams, ROADS_SHADER, RawXtdData};
+use crate::wgpu::util::DeviceExt;
+use crate::{RenderPhase, WorldRenderer, wgpu};
 use num_traits::ToPrimitive;
-use render::terrain::{LightingParams, ROADS_SHADER, RawXtdData};
-use render::wgpu::util::DeviceExt;
-use render::{RenderPhase, WorldRenderer, wgpu};
 use zerocopy::IntoBytes;
 
-use crate::gpu::xtd_packed_to_world;
+use crate::world_view::packed::xtd_packed_to_world;
 
 /// Per-material road geometry and textures.
 pub struct RoadBatch {
@@ -270,7 +270,7 @@ fn texture_layout_entry(
     visibility: wgpu::ShaderStages,
     dimension: wgpu::TextureViewDimension,
 ) -> wgpu::BindGroupLayoutEntry {
-    render::gpu::texture_layout_entry(
+    crate::gpu::texture_layout_entry(
         binding,
         visibility,
         wgpu::TextureSampleType::Float { filterable: true },

@@ -1,7 +1,7 @@
 //! Foliage rendering logic.
 
 use super::FoliageResources;
-use render::{RenderPhase, WorldRenderer, wgpu};
+use crate::{RenderPhase, WorldRenderer, wgpu};
 
 fn draw_foliage<'a>(
     render_pass: &mut wgpu::RenderPass<'a>,

@@ -1,9 +1,9 @@
 //! Cascaded directional shadow-map generation.
 
+use crate::local_shadow::{LOCAL_SHADOW_DEPTH_BIAS, LOCAL_SHADOW_FORMAT, LocalShadowMap};
+use crate::terrain::NORMALIZED_TERRAIN_Y_OFFSET;
+use crate::{RenderPhase, WorldRenderer, wgpu};
 use glam::{Mat4, Vec3};
-use render::local_shadow::{LOCAL_SHADOW_DEPTH_BIAS, LOCAL_SHADOW_FORMAT, LocalShadowMap};
-use render::terrain::NORMALIZED_TERRAIN_Y_OFFSET;
-use render::{RenderPhase, WorldRenderer, wgpu};
 use zerocopy::IntoBytes;
 
 const SHADOW_MAP_SIZE: u32 = 2048;
@@ -226,7 +226,7 @@ fn create_shadow_pipeline(
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Shadow Depth Shader"),
-        source: wgpu::ShaderSource::Wgsl(render::terrain::SHADOW_DEPTH_SHADER.into()),
+        source: wgpu::ShaderSource::Wgsl(crate::terrain::SHADOW_DEPTH_SHADER.into()),
     });
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Shadow Pipeline Layout"),

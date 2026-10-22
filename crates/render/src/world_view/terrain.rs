@@ -1,13 +1,42 @@
-//! Data types for the terrain viewer.
+//! GPU resources of the tessellated terrain heightfield.
 //!
-//! This module contains GPU-specific types that remain in the viewer,
-//! and re-exports terrain types from the `render` crate.
+//! The submodules make the textures, buffers and pipelines of the terrain. `TerrainBuild`
+//! collects them, together with the resources that share the terrain textures: the compositor,
+//! the shadows, the foliage and the roads.
+
+mod buffers;
+mod pipelines;
+mod textures;
 
 use num_traits::ToPrimitive;
-use render::{RenderPhase, WorldRenderer, wgpu};
+use pipeline::source::{AssetSource, StdFileProvider};
 
-// Re-export terrain types from render crate
-pub use render::terrain::{AlbedoData, FoliageQNChunk, FoliageSet, RawXtdData};
+use super::foliage::FoliageResources;
+use super::roads::RoadResources;
+use super::shadow::ShadowResources;
+use crate::terrain::{CompositorResources, TerrainScene};
+use crate::{RenderPhase, WorldRenderer, wgpu};
+
+/// The inputs and the results of one terrain GPU resource build.
+pub(super) struct TerrainBuild<'a> {
+    /// Decoded terrain data.
+    pub(super) scene: &'a TerrainScene,
+    /// Linear color format of the scene pipelines.
+    pub(super) scene_format: wgpu::TextureFormat,
+    /// Initial terrain debug mode.
+    pub(super) debug_mode: u32,
+    /// Initial normal map strength.
+    pub(super) bump_power: f32,
+    /// Asset source for the road textures.
+    pub(super) asset_source: Option<&'a mut AssetSource<StdFileProvider>>,
+    pub(super) compositor: Option<CompositorResources>,
+    pub(super) compositor_bind_group: Option<wgpu::BindGroup>,
+    pub(super) chunk_centers: Vec<[f32; 3]>,
+    pub(super) gpu: Option<TerrainResources>,
+    pub(super) shadow_resources: Option<ShadowResources>,
+    pub(super) foliage_resources: Option<FoliageResources>,
+    pub(super) road_resources: Option<RoadResources>,
+}
 
 const TERRAIN_CELLS_PER_CHUNK: u32 = 64;
 
@@ -78,7 +107,7 @@ impl TerrainChunkGrid {
 }
 
 /// GPU resources for terrain rendering.
-pub struct GpuResources {
+pub(super) struct TerrainResources {
     pub pipeline: wgpu::RenderPipeline,
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
@@ -92,7 +121,7 @@ pub struct GpuResources {
     /// Dynamic packed terrain visibility mask shared with conforming visuals.
     pub terrain_alpha_view: wgpu::TextureView,
     /// CPU-backed GPU mask updated by crossed `TerrainAlpha` animation tags.
-    pub(crate) dynamic_terrain_alpha: crate::dynamic_alpha::DynamicTerrainAlphaTexture,
+    pub(crate) dynamic_terrain_alpha: super::dynamic_alpha::DynamicTerrainAlphaTexture,
     /// Fog-of-war visibility texture shared with lit decals.
     pub blackmap_view: wgpu::TextureView,
     /// Unexplored-color texture shared with lit decals.
@@ -102,11 +131,11 @@ pub struct GpuResources {
     pub params_buffer: wgpu::Buffer,
     pub lighting_buffer: Option<wgpu::Buffer>,
     /// Shared oracle-packed local-light storage used by every world renderer.
-    pub local_lights: render::lighting::LocalLightBuffer,
+    pub local_lights: crate::lighting::LocalLightBuffer,
     /// Renderer-owned local spot/omni shadow atlas.
-    pub local_shadows: render::local_shadow::LocalShadowMap,
+    pub local_shadows: crate::local_shadow::LocalShadowMap,
     /// Shared retail-style 3D field for non-shadowed buffered local lights.
-    pub light_volume: render::light_volume::LocalLightVolume,
+    pub light_volume: crate::light_volume::LocalLightVolume,
     pub terrain_size: [f32; 2],
     pub(crate) chunk_grid: TerrainChunkGrid,
     pub tile_scale: f32,
@@ -114,7 +143,7 @@ pub struct GpuResources {
     pub num_patch_instances: u32,
 }
 
-impl WorldRenderer for GpuResources {
+impl WorldRenderer for TerrainResources {
     fn render_phase<'pass>(&'pass self, phase: RenderPhase, pass: &mut wgpu::RenderPass<'pass>) {
         if phase != RenderPhase::World {
             return;

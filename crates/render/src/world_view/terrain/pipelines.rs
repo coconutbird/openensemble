@@ -4,17 +4,18 @@
 //! render pipelines, bind group layouts, and wire everything together.
 
 use num_traits::ToPrimitive;
-use render::gpu::{
-    buffer_entry, buffer_layout_entry, filtering_sampler_layout_entry as sampler_layout_entry,
-    sampler_entry, texture_entry, texture_layout_entry,
-};
-use render::terrain::{CompositeBindings, CompositingConfig, CompositorResources};
-use render::wgpu;
 use wgpu::util::DeviceExt;
 use zerocopy::{Immutable, IntoBytes};
 
-use crate::types::TerrainChunkGrid;
-use crate::viewer::TerrainViewer;
+use super::{TerrainBuild, TerrainChunkGrid};
+use crate::gpu::{
+    buffer_entry, buffer_layout_entry, filtering_sampler_layout_entry as sampler_layout_entry,
+    sampler_entry, texture_entry, texture_layout_entry,
+};
+use crate::terrain::{CompositeBindings, CompositingConfig, CompositorResources};
+use crate::wgpu;
+use crate::world_view::foliage::{FoliageResources, FoliageWorldBindings};
+use crate::world_view::roads::{RoadBatchInput, RoadResourceInput, create_road_resources};
 
 mod tessellation;
 
@@ -132,7 +133,7 @@ fn create_terrain_samplers(device: &wgpu::Device) -> TerrainSamplers {
     }
 }
 
-impl TerrainViewer {
+impl TerrainBuild<'_> {
     fn init_compositor(
         &mut self,
         device: &wgpu::Device,
@@ -191,10 +192,7 @@ impl TerrainViewer {
 
     /// Calculates map-sized chunk center positions from the terrain bounds.
     pub(crate) fn calculate_chunk_centers(&mut self, chunk_grid: TerrainChunkGrid) {
-        let Some(scene) = &self.scene else {
-            return;
-        };
-        let terrain = &scene.mesh;
+        let terrain = &self.scene.mesh;
 
         let world_min = terrain.world_min;
         let world_max = terrain.world_max;
@@ -231,9 +229,9 @@ impl TerrainViewer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        world: Option<&crate::foliage::FoliageWorldBindings<'_>>,
+        world: Option<&FoliageWorldBindings<'_>>,
     ) {
-        let Some(scene) = &self.scene else { return };
+        let scene = self.scene;
 
         if scene.foliage_sets.is_empty() {
             log::info!("No foliage sets to render");
@@ -261,7 +259,7 @@ impl TerrainViewer {
             })
             .unwrap_or_default();
 
-        let mut foliage_resources = crate::foliage::FoliageResources::new(
+        let mut foliage_resources = FoliageResources::new(
             device,
             self.scene_format,
             &gpu.camera_bind_group_layout,
@@ -301,7 +299,7 @@ impl TerrainViewer {
 
     /// Initialize road GPU resources for rendering roads on terrain.
     pub(crate) fn init_road_resources(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        let Some(scene) = &self.scene else { return };
+        let scene = self.scene;
         if scene.road_chunks.is_empty() {
             log::info!("No road data to render");
             return;
@@ -311,19 +309,19 @@ impl TerrainViewer {
             return;
         };
         let camera_layout = gpu.camera_bind_group_layout.clone();
-        let road_chunks = scene.road_chunks.clone();
-        let Some(mut source) = self.asset_source.take() else {
+        let Some(source) = self.asset_source.take() else {
             log::warn!("Cannot load road textures: no asset source");
             return;
         };
-        let loaded: Vec<_> = road_chunks
-            .into_iter()
+        let loaded: Vec<_> = scene
+            .road_chunks
+            .iter()
             .filter_map(|road| {
                 if road.positions.is_empty() {
                     log::warn!("Road '{}' has no vertices", road.texture_name);
                     return None;
                 }
-                render::terrain::load_road_textures(&mut source, &road.texture_name)
+                crate::terrain::load_road_textures(source, &road.texture_name)
                     .map(|textures| (road, textures))
             })
             .collect();
@@ -334,7 +332,7 @@ impl TerrainViewer {
         }
         let batch_inputs: Vec<_> = loaded
             .iter()
-            .map(|(road, textures)| crate::roads::RoadBatchInput {
+            .map(|(road, textures)| RoadBatchInput {
                 positions: &road.positions,
                 uvs: &road.uvs,
                 albedo_pixels: &textures.albedo_pixels,
@@ -343,11 +341,7 @@ impl TerrainViewer {
                 texture_size: [textures.width, textures.height],
             })
             .collect();
-        let Some(raw_terrain) = self
-            .scene
-            .as_ref()
-            .and_then(|loaded_scene| loaded_scene.raw_xtd_data.as_ref())
-        else {
+        let Some(raw_terrain) = scene.raw_xtd_data.as_ref() else {
             log::warn!("Cannot conform roads without raw terrain position data");
             return;
         };
@@ -355,10 +349,10 @@ impl TerrainViewer {
             .shadow_resources
             .as_ref()
             .map(|shadow| shadow.shadow_view.clone());
-        self.road_resources = Some(crate::roads::create_road_resources(
+        self.road_resources = Some(create_road_resources(
             device,
             queue,
-            &crate::roads::RoadResourceInput {
+            &RoadResourceInput {
                 camera_bind_group_layout: &camera_layout,
                 camera_bind_group: &gpu.camera_bind_group,
                 surface_format: self.scene_format,

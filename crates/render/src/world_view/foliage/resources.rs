@@ -1,16 +1,13 @@
 //! GPU resources for foliage rendering.
 
-use std::collections::BTreeSet;
-
 use num_traits::ToPrimitive;
-use render::terrain::LightingParams;
-use render::wgpu;
-use render::wgpu::util::DeviceExt;
 use zerocopy::IntoBytes;
 
 use super::FoliageConfig;
-use crate::gpu::xtd_packed_to_world;
-use crate::types::FoliageSet;
+use crate::terrain::{FoliageSet, LightingParams, parse_foliage_index_buffer};
+use crate::wgpu;
+use crate::wgpu::util::DeviceExt;
+use crate::world_view::packed::xtd_packed_to_world;
 
 mod gpu;
 mod types;
@@ -26,42 +23,6 @@ pub use types::{
     FoliageWorldBindings,
 };
 use types::{FallbackFoliageWorldResources, FoliageDrawInfo};
-
-/// Extracts one (`local_grid_index`, `blade_type`) entry per foliage blade.
-///
-/// The fresh PC shader consumes a 32-bit index whose upper 16 bits select the
-/// blade geometry and whose lower 16 bits are
-/// `local_grid_index * 10 + vertex_in_blade`. The local XTT decoder has already
-/// converted the file's big-endian bytes into those words. The shader's decimal
-/// decomposition is hard-coded to ten vertices, so sets with any other geometry
-/// stride cannot use this path.
-pub(crate) fn parse_foliage_index_buffer(
-    indices: &[u32],
-    num_verts_per_blade: u32,
-) -> Vec<[u32; 2]> {
-    const INDEX_VERTICES_PER_BLADE: u32 = 10;
-    let mut blade_entries = Vec::new();
-    if indices.is_empty() || num_verts_per_blade != INDEX_VERTICES_PER_BLADE {
-        return blade_entries;
-    }
-
-    let mut seen = BTreeSet::new();
-    for &packed in indices {
-        let index_part = packed & 0xFFFF;
-        if index_part == 0xFFFF {
-            continue;
-        }
-
-        let vertex_in_blade = index_part % INDEX_VERTICES_PER_BLADE;
-        if vertex_in_blade == 0 {
-            let entry = [index_part / INDEX_VERTICES_PER_BLADE, packed >> 16];
-            if seen.insert(entry) {
-                blade_entries.push(entry);
-            }
-        }
-    }
-    blade_entries
-}
 
 impl FoliageResources {
     /// Create foliage rendering resources.
@@ -430,7 +391,7 @@ impl FoliageResources {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        terrain_data: &crate::types::RawXtdData,
+        terrain_data: &crate::terrain::RawXtdData,
         world: Option<&FoliageWorldBindings<'_>>,
     ) {
         let Some(first_set) = self.set_resources.first() else {
@@ -594,7 +555,7 @@ impl FoliageResources {
     /// Creates a blade map texture for the shader to look up blade placement.
     fn collect_draw_infos(
         &self,
-        qn_chunks: &[crate::types::FoliageQNChunk],
+        qn_chunks: &[crate::terrain::FoliageQNChunk],
         chunks_per_axis: u32,
     ) -> Vec<FoliageDrawInfo> {
         let mut draw_infos = Vec::new();
@@ -800,7 +761,7 @@ impl FoliageResources {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        qn_chunks: &[crate::types::FoliageQNChunk],
+        qn_chunks: &[crate::terrain::FoliageQNChunk],
         num_verts_per_axis: u32,
     ) {
         self.draw_calls.clear();
@@ -889,7 +850,7 @@ impl FoliageResources {
     fn create_heightmap_texture(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        terrain_data: &crate::types::RawXtdData,
+        terrain_data: &crate::terrain::RawXtdData,
         num_verts: u32,
     ) -> wgpu::Texture {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -931,30 +892,5 @@ impl FoliageResources {
         log::info!("Foliage position texture: {num_verts}x{num_verts} R10G10B10A2_UNORM");
 
         texture
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::parse_foliage_index_buffer;
-
-    #[test]
-    fn foliage_index_buffer_extracts_one_entry_per_blade() {
-        let indices = [
-            0x0002_0014_u32,
-            0x0002_0015,
-            0x0002_0014,
-            0x0000_FFFF,
-            0x0001_0028,
-        ];
-        assert_eq!(parse_foliage_index_buffer(&indices, 10), [[2, 2], [4, 1]]);
-    }
-
-    #[test]
-    fn foliage_index_buffer_rejects_geometry_that_cannot_match_the_oracle() {
-        assert_eq!(
-            parse_foliage_index_buffer(&[0x0002_0014], 8),
-            [] as [[u32; 2]; 0]
-        );
     }
 }

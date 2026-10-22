@@ -3,12 +3,11 @@
 //! Creates GPU texture arrays and atlases from loaded terrain data.
 
 use pipeline::hw1::terrain::TerrainImage;
-use render::gpu::{create_rgba_texture, upload_rgba_mip_chain, write_rgba_level};
-use render::terrain::{DecalTexture, mip_level_count};
-use render::wgpu;
 
-use crate::types::{AlbedoData, TerrainChunkGrid};
-use crate::viewer::TerrainViewer;
+use super::{TerrainBuild, TerrainChunkGrid};
+use crate::gpu::{create_rgba_texture, upload_rgba_mip_chain, write_rgba_level};
+use crate::terrain::{AlbedoData, DecalTexture, mip_level_count};
+use crate::wgpu;
 
 const ALPHA_CHUNK_SIZE: u32 = 64;
 const ALPHA_CHUNK_SIZE_USIZE: usize = 64;
@@ -289,7 +288,7 @@ fn create_alpha_texture(
     (texture, view)
 }
 
-impl TerrainViewer {
+impl TerrainBuild<'_> {
     /// Creates a 2D texture array from loaded terrain textures.
     pub(crate) fn create_terrain_texture_array(
         &self,
@@ -297,7 +296,7 @@ impl TerrainViewer {
         queue: &wgpu::Queue,
         albedo: Option<&AlbedoData>,
     ) -> (wgpu::Texture, wgpu::TextureView) {
-        let scene = self.scene.as_ref().expect("scene must be loaded");
+        let scene = self.scene;
         let diffuse = &scene.terrain_textures.diffuse;
         if diffuse.is_empty() {
             create_single_terrain_array(device, queue, albedo)
@@ -318,7 +317,7 @@ impl TerrainViewer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> (wgpu::Texture, wgpu::TextureView) {
-        let scene = self.scene.as_ref().expect("scene must be loaded");
+        let scene = self.scene;
         let normal = &scene.terrain_textures.normal;
         if normal.is_empty() {
             create_flat_normal_array(device, queue)
@@ -339,7 +338,7 @@ impl TerrainViewer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> (wgpu::Texture, wgpu::TextureView) {
-        let scene = self.scene.as_ref().expect("scene must be loaded");
+        let scene = self.scene;
         let specular = &scene.terrain_textures.specular;
         if specular.is_empty() {
             create_black_specular_array(device, queue)
@@ -361,11 +360,7 @@ impl TerrainViewer {
         queue: &wgpu::Queue,
         chunk_grid: TerrainChunkGrid,
     ) -> (wgpu::Texture, wgpu::TextureView) {
-        let chunks = &self
-            .scene
-            .as_ref()
-            .expect("scene must be loaded")
-            .chunk_splat_data;
+        let chunks = &self.scene.chunk_splat_data;
         if chunks.is_empty() {
             log::info!("No splat data, using empty alpha texture atlas");
         } else {
@@ -406,11 +401,7 @@ impl TerrainViewer {
         queue: &wgpu::Queue,
         chunk_grid: TerrainChunkGrid,
     ) -> (wgpu::Texture, wgpu::TextureView) {
-        let chunks = &self
-            .scene
-            .as_ref()
-            .expect("scene must be loaded")
-            .chunk_splat_data;
+        let chunks = &self.scene.chunk_splat_data;
         let mut data = empty_alpha_atlas(chunk_grid);
         populate_alpha_data(
             &mut data,
@@ -431,11 +422,7 @@ impl TerrainViewer {
         queue: &wgpu::Queue,
         chunk_grid: TerrainChunkGrid,
     ) -> (wgpu::Texture, wgpu::TextureView) {
-        let chunks = &self
-            .scene
-            .as_ref()
-            .expect("scene must be loaded")
-            .chunk_decal_data;
+        let chunks = &self.scene.chunk_decal_data;
         if chunks.is_empty() {
             log::info!("No decal data, using empty decal alpha atlas");
         } else {
@@ -465,11 +452,7 @@ impl TerrainViewer {
         queue: &wgpu::Queue,
         chunk_grid: TerrainChunkGrid,
     ) -> (wgpu::Texture, wgpu::TextureView) {
-        let chunks = &self
-            .scene
-            .as_ref()
-            .expect("scene must be loaded")
-            .chunk_decal_data;
+        let chunks = &self.scene.chunk_decal_data;
         let mut data = empty_alpha_atlas(chunk_grid);
         populate_alpha_data(
             &mut data,
@@ -489,11 +472,7 @@ impl TerrainViewer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> (wgpu::TextureView, wgpu::TextureView) {
-        let decals = &self
-            .scene
-            .as_ref()
-            .expect("scene must be loaded")
-            .decal_textures;
+        let decals = &self.scene.decal_textures;
         let (_, diffuse) = create_decal_array(device, queue, decals, false);
         let (_, opacity) = create_decal_array(device, queue, decals, true);
         (diffuse, opacity)

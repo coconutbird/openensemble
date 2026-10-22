@@ -1,10 +1,10 @@
-use num_traits::ToPrimitive;
-use render::gpu::{
+use crate::gpu::{
     buffer_layout_entry, buffer_layout_entry_with_options, create_mipped_rgba_texture,
     sampler_layout_entry, texture_layout_entry,
 };
-use render::terrain::FOLIAGE_SHADER;
-use render::wgpu;
+use crate::terrain::FOLIAGE_SHADER;
+use crate::wgpu;
+use num_traits::ToPrimitive;
 
 use super::{
     ChunkInfoUniform, FoliageConfig, FoliageParamsUniform, FoliageSet, FoliageSetResources,
@@ -355,7 +355,7 @@ pub(super) fn create_foliage_material_bind_group(
 }
 
 pub(super) fn initial_foliage_params(
-    terrain_data: &crate::types::RawXtdData,
+    terrain_data: &crate::terrain::RawXtdData,
     first_set: &FoliageSetResources,
     config: &FoliageConfig,
 ) -> FoliageParamsUniform {

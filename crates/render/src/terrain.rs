@@ -14,6 +14,7 @@ mod callouts;
 mod camera;
 mod compositing;
 mod dynamic_alpha;
+mod foliage_index;
 mod icons;
 pub mod loading;
 mod mesh;
@@ -32,6 +33,7 @@ pub use compositing::{
     CompositeBindings, CompositeParams, CompositingConfig, CompositorResources, LodConfig,
 };
 pub use dynamic_alpha::DynamicTerrainAlphaMask;
+pub use foliage_index::parse_foliage_index_buffer;
 pub use icons::{ProjectedIconObject, project_icon_objects};
 pub use loading::{
     RoadTextures, extract_chunk_splat_data, extract_decal_data, extract_foliage_chunks,

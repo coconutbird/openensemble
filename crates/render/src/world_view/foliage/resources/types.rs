@@ -1,6 +1,6 @@
-use render::wgpu;
+use crate::wgpu;
 
-use crate::foliage::FoliageConfig;
+use crate::world_view::foliage::FoliageConfig;
 
 /// A single foliage draw call (one per QN chunk × set pair).
 pub struct FoliageDrawCall {

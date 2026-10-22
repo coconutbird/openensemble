@@ -1,21 +1,24 @@
 use glam::Vec3;
 use num_traits::ToPrimitive;
-use render::light_volume::LocalLightVolume;
-use render::lighting::LocalLightBuffer;
-use render::local_shadow::LocalShadowMap;
-use render::terrain::{GpuTessParams, LightingParams, NORMALIZED_TERRAIN_Y_OFFSET, TerrainParams};
-use render::wgpu;
 use wgpu::util::DeviceExt;
 use zerocopy::IntoBytes;
 
+use super::super::{TerrainBuild, TerrainChunkGrid, TerrainResources};
 use super::{
     CameraResources, CompositorInputs, TerrainSamplers, create_camera_resources,
     create_terrain_samplers, create_uniform_buffer,
 };
-use crate::dynamic_alpha::DynamicTerrainAlphaTexture;
-use crate::gpu::{create_depth_texture, xtd_packed_to_world};
-use crate::types::{AlbedoData, GpuResources, RawXtdData, TerrainChunkGrid};
-use crate::viewer::TerrainViewer;
+use crate::light_volume::LocalLightVolume;
+use crate::lighting::LocalLightBuffer;
+use crate::local_shadow::LocalShadowMap;
+use crate::terrain::{
+    AlbedoData, GpuTessParams, LightingParams, NORMALIZED_TERRAIN_Y_OFFSET, RawXtdData,
+    TerrainParams,
+};
+use crate::wgpu;
+use crate::world_view::create_depth_texture;
+use crate::world_view::dynamic_alpha::DynamicTerrainAlphaTexture;
+use crate::world_view::packed::xtd_packed_to_world;
 
 mod gpu;
 
@@ -30,8 +33,8 @@ use gpu::{
 mod tests {
     use super::gpu::downsample_rgb10a2;
     use super::{create_patch_instances, tessellation_factor, world_patch_level};
-    use crate::types::RawXtdData;
-    use render::terrain::TerrainTessellationData;
+    use crate::terrain::RawXtdData;
+    use crate::terrain::TerrainTessellationData;
 
     fn raw_with_tessellation(levels: Vec<u8>, patches_x: u32, patches_z: u32) -> RawXtdData {
         RawXtdData {
@@ -145,7 +148,7 @@ struct TessellationStageTwo {
 }
 
 struct TessellationAuxiliary {
-    shadow: crate::shadow::ShadowResources,
+    shadow: crate::world_view::shadow::ShadowResources,
     blackmap: wgpu::TextureView,
     unexplored: wgpu::TextureView,
     light: wgpu::TextureView,
@@ -209,7 +212,7 @@ fn patch_level(levels: &[u8], patches_x: u32, x: u32, z: u32) -> u8 {
 }
 
 fn world_patch_level(levels: &[u8], patches_x: u32, world_x: u32, world_z: u32) -> u8 {
-    // Match the position/basis resource conversion: viewer (x, z) addresses
+    // Match the position/basis resource conversion: terrain-world (x, z) addresses
     // XTD source (z, x).
     patch_level(levels, patches_x, world_z, world_x)
 }
@@ -293,7 +296,7 @@ fn create_instance_buffer(
     })
 }
 
-impl TerrainViewer {
+impl TerrainBuild<'_> {
     fn create_tessellation_textures(
         &self,
         device: &wgpu::Device,
@@ -398,12 +401,10 @@ impl TerrainViewer {
             .expect("tessellation patch count must fit u32");
         let chunk_grid = TerrainChunkGrid::from_terrain_dimension(raw_data.num_verts_per_axis)
             .expect("terrain dimension must be a non-zero multiple of 64 cells");
-        if let Some(scene) = &self.scene
-            && scene.chunk_splat_data.len() != chunk_grid.total_chunks()
-        {
+        if self.scene.chunk_splat_data.len() != chunk_grid.total_chunks() {
             log::warn!(
                 "Decoded {} XTT chunks for a {}×{} XTD terrain grid ({} expected)",
-                scene.chunk_splat_data.len(),
+                self.scene.chunk_splat_data.len(),
                 chunk_grid.width(),
                 chunk_grid.height(),
                 chunk_grid.total_chunks(),
@@ -472,10 +473,7 @@ impl TerrainViewer {
             ],
         };
         let tess_params_buffer = create_uniform_buffer(device, "Tess Params Buffer", &tess_params);
-        let terrain_size = self
-            .scene
-            .as_ref()
-            .map_or(Vec3::new(1024.0, 100.0, 1024.0), |scene| scene.mesh.size());
+        let terrain_size = self.scene.mesh.size();
         let params = TerrainParams {
             terrain_size: [terrain_size.x, terrain_size.z],
             chunk_count: config.chunk_grid.dimensions_f32(),
@@ -540,8 +538,8 @@ impl TerrainViewer {
             create_placeholder_view(device, queue, "Placeholder Unexplored", [0, 0, 0, 0]);
         let lighting_source = self
             .scene
+            .lighting_data
             .as_ref()
-            .and_then(|scene| scene.lighting_data.as_ref())
             .map(|data| (data.pixels.as_slice(), data.width, data.height));
         TessellationAuxiliary {
             shadow,
@@ -603,7 +601,7 @@ impl TerrainViewer {
         let shadow = &mut auxiliary.shadow;
         shadow.set_terrain_geometry((sv, si, vertex_count, config.total_patches));
         self.shadow_resources = Some(auxiliary.shadow);
-        self.gpu = Some(GpuResources {
+        self.gpu = Some(TerrainResources {
             pipeline,
             vertex_buffer: expanded_vertex_buffer,
             index_buffer: instance_buffer,
@@ -697,7 +695,7 @@ impl TerrainViewer {
             .expect("shadow resources were stored above")
             .shadow_view
             .clone();
-        let foliage_world = crate::foliage::FoliageWorldBindings {
+        let foliage_world = crate::world_view::foliage::FoliageWorldBindings {
             shadow: &foliage_shadow,
             blackmap,
             unexplored,

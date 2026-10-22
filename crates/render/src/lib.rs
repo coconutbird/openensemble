@@ -2,7 +2,7 @@
 //!
 //! Rendering subsystem using wgpu (pure Rust).
 //! [`app`] provides the window loop with egui integration. [`input`] provides the
-//! platform-neutral input of the application.
+//! platform-neutral input of the application. [`world_view`] draws a loaded scenario.
 
 pub mod app;
 pub mod environment;
@@ -19,6 +19,7 @@ pub mod terrain_effect;
 pub mod ugx;
 pub mod ui;
 mod world;
+pub mod world_view;
 
 pub use world::{RenderPhase, WorldRenderer};
 

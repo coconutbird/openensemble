@@ -3,20 +3,19 @@
 //! Creates GPU storage and uniform buffers for chunk layer data and texture scales.
 
 use num_traits::ToPrimitive;
-use render::wgpu;
 use zerocopy::IntoBytes;
 
-use crate::types::TerrainChunkGrid;
-use crate::viewer::TerrainViewer;
+use super::{TerrainBuild, TerrainChunkGrid};
+use crate::wgpu;
 
-impl TerrainViewer {
+impl TerrainBuild<'_> {
     pub(crate) fn create_chunk_layers_buffer(
         &self,
         device: &wgpu::Device,
         chunk_grid: TerrainChunkGrid,
     ) -> wgpu::Buffer {
         use wgpu::util::DeviceExt;
-        let scene = self.scene.as_ref().expect("scene must be loaded");
+        let scene = self.scene;
         let chunk_splat_data = &scene.chunk_splat_data;
 
         let layer_slots = chunk_grid
@@ -73,7 +72,7 @@ impl TerrainViewer {
         // Must cover ALL active textures since splat_layer_ids can reference any index.
         // The original game stores these in g_LayerData[i].yz per-layer, but we store
         // them per-texture and look up by texture index in the shader.
-        let scene = self.scene.as_ref().expect("scene must be loaded");
+        let scene = self.scene;
         let terrain_textures = &scene.terrain_textures.diffuse;
         let num_textures = terrain_textures.len().max(1);
         let mut scale_data = vec![1.0f32; num_textures * 2]; // Default scale of 1.0
@@ -108,7 +107,7 @@ impl TerrainViewer {
         chunk_grid: TerrainChunkGrid,
     ) -> wgpu::Buffer {
         use wgpu::util::DeviceExt;
-        let scene = self.scene.as_ref().expect("scene must be loaded");
+        let scene = self.scene;
 
         let layer_slots = chunk_grid
             .total_chunks()
@@ -142,7 +141,7 @@ impl TerrainViewer {
     /// Each instance is a `vec4<f32>`: rotation, center U/V, and bitcast decal index.
     pub(crate) fn create_decal_instances_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
         use wgpu::util::DeviceExt;
-        let scene = self.scene.as_ref().expect("scene must be loaded");
+        let scene = self.scene;
 
         // At least 1 entry to avoid zero-sized buffer
         let num = scene.decal_instances.len().max(1);
@@ -173,7 +172,7 @@ impl TerrainViewer {
     /// Each entry is a `vec2<f32>`: (`u_scale`, `v_scale`) per decal instance.
     pub(crate) fn create_decal_uv_scales_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
         use wgpu::util::DeviceExt;
-        let scene = self.scene.as_ref().expect("scene must be loaded");
+        let scene = self.scene;
 
         let num = scene.decal_instances.len().max(1);
         let mut data = vec![[1.0f32; 2]; num];

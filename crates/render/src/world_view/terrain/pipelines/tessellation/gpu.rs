@@ -1,13 +1,13 @@
+use crate::terrain::GPU_TESS_SHADER;
+use crate::wgpu;
 use glam::Vec2;
 use num_traits::ToPrimitive;
-use render::terrain::GPU_TESS_SHADER;
-use render::wgpu;
 use wgpu::util::DeviceExt;
 use zerocopy::IntoBytes;
 
 use super::{PatchMesh, TessellationBuildConfig};
-use crate::dynamic_alpha::DynamicTerrainAlphaTexture;
-use crate::types::RawXtdData;
+use crate::terrain::RawXtdData;
+use crate::world_view::dynamic_alpha::DynamicTerrainAlphaTexture;
 
 use super::super::{
     buffer_entry, buffer_layout_entry, sampler_entry, sampler_layout_entry, texture_entry,
@@ -424,7 +424,7 @@ pub(super) fn create_shadow_resources(
     raw_data: &RawXtdData,
     bindings: &ShadowResourceBindings<'_>,
     local_shadow_layout: &wgpu::BindGroupLayout,
-) -> crate::shadow::ShadowResources {
+) -> crate::world_view::shadow::ShadowResources {
     let vertex_layouts = [
         wgpu::VertexBufferLayout {
             array_stride: 8,
@@ -457,7 +457,7 @@ pub(super) fn create_shadow_resources(
             ],
         },
     ];
-    let mut shadow = crate::shadow::ShadowResources::new(
+    let mut shadow = crate::world_view::shadow::ShadowResources::new(
         device,
         bindings.camera_layout,
         local_shadow_layout,
@@ -470,7 +470,7 @@ pub(super) fn create_shadow_resources(
     shadow.setup_params(
         device,
         queue,
-        &crate::shadow::ShadowSetup {
+        &crate::world_view::shadow::ShadowSetup {
             position_texture_view: bindings.position,
             position_sampler: bindings.position_sampler,
             alpha_texture_view: bindings.alpha,
