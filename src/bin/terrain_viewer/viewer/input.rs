@@ -119,7 +119,8 @@ impl TerrainViewer {
             return;
         };
         let target = glam::Vec3::new(self.camera.position.x, y, self.camera.position.z);
-        let command = sim::WorkCommand::move_squads(i32::from(player_id), recipients, target);
+        let command =
+            sim::WorkCommand::user_work(i32::from(player_id), recipients, target, None, false);
         let exec_time = self
             .simulation_clock
             .game_time_ms
