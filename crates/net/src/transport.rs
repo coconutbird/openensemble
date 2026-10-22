@@ -9,12 +9,21 @@ use tokio::net::UdpSocket;
 /// Maximum packet size.
 pub const MAX_PACKET_SIZE: usize = 1400;
 
+/// Error from a `Transport` operation.
 #[derive(Error, Debug)]
 pub enum TransportError {
+    /// A socket I/O operation failed.
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
+    /// The packet is larger than `MAX_PACKET_SIZE`.
     #[error("Packet too large: {size} > {max}")]
-    PacketTooLarge { size: usize, max: usize },
+    PacketTooLarge {
+        /// Packet size in bytes.
+        size: usize,
+        /// Maximum permitted size in bytes.
+        max: usize,
+    },
+    /// The transport has no bound socket.
     #[error("Socket not bound")]
     NotBound,
 }

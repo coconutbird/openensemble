@@ -32,6 +32,7 @@ pub enum PacketType {
 }
 
 impl PacketType {
+    /// Converts a wire byte to a packet type; returns `None` for unknown values.
     #[must_use]
     pub fn from_u8(value: u8) -> Option<Self> {
         match value {

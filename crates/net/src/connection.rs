@@ -6,10 +6,14 @@ use std::time::{Duration, Instant};
 /// Connection state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ConnectionState {
+    /// No connection exists.
     #[default]
     Disconnected,
+    /// The connection handshake is in progress.
     Connecting,
+    /// The connection is active.
     Connected,
+    /// The connection is closing.
     Disconnecting,
 }
 

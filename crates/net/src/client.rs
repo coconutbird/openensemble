@@ -6,14 +6,19 @@ use crate::transport::{Transport, TransportError};
 use std::net::SocketAddr;
 use thiserror::Error;
 
+/// Error from a `NetClient` operation.
 #[derive(Error, Debug)]
 pub enum ClientError {
+    /// The transport failed.
     #[error("Transport error: {0}")]
     Transport(#[from] TransportError),
+    /// The client has no connection to a host.
     #[error("Not connected")]
     NotConnected,
+    /// The host did not accept the connection.
     #[error("Connection failed")]
     ConnectionFailed,
+    /// The connection did not complete in time.
     #[error("Connection timed out")]
     Timeout,
 }

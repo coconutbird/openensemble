@@ -114,79 +114,143 @@ pub enum GamepadButton {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum KeyCode {
-    // Letters
+    /// Letter key `A`.
     A,
+    /// Letter key `B`.
     B,
+    /// Letter key `C`.
     C,
+    /// Letter key `D`.
     D,
+    /// Letter key `E`.
     E,
+    /// Letter key `F`.
     F,
+    /// Letter key `G`.
     G,
+    /// Letter key `H`.
     H,
+    /// Letter key `I`.
     I,
+    /// Letter key `J`.
     J,
+    /// Letter key `K`.
     K,
+    /// Letter key `L`.
     L,
+    /// Letter key `M`.
     M,
+    /// Letter key `N`.
     N,
+    /// Letter key `O`.
     O,
+    /// Letter key `P`.
     P,
+    /// Letter key `Q`.
     Q,
+    /// Letter key `R`.
     R,
+    /// Letter key `S`.
     S,
+    /// Letter key `T`.
     T,
+    /// Letter key `U`.
     U,
+    /// Letter key `V`.
     V,
+    /// Letter key `W`.
     W,
+    /// Letter key `X`.
     X,
+    /// Letter key `Y`.
     Y,
+    /// Letter key `Z`.
     Z,
-    // Numbers
+    /// Number row key `0`.
     Key0,
+    /// Number row key `1`.
     Key1,
+    /// Number row key `2`.
     Key2,
+    /// Number row key `3`.
     Key3,
+    /// Number row key `4`.
     Key4,
+    /// Number row key `5`.
     Key5,
+    /// Number row key `6`.
     Key6,
+    /// Number row key `7`.
     Key7,
+    /// Number row key `8`.
     Key8,
+    /// Number row key `9`.
     Key9,
-    // Function keys
+    /// Function key `F1`.
     F1,
+    /// Function key `F2`.
     F2,
+    /// Function key `F3`.
     F3,
+    /// Function key `F4`.
     F4,
+    /// Function key `F5`.
     F5,
+    /// Function key `F6`.
     F6,
+    /// Function key `F7`.
     F7,
+    /// Function key `F8`.
     F8,
+    /// Function key `F9`.
     F9,
+    /// Function key `F10`.
     F10,
+    /// Function key `F11`.
     F11,
+    /// Function key `F12`.
     F12,
-    // Special keys
+    /// `Escape` key.
     Escape,
+    /// Space bar.
     Space,
+    /// `Enter` key.
     Enter,
+    /// `Tab` key.
     Tab,
+    /// `Backspace` key.
     Backspace,
+    /// `Delete` key.
     Delete,
+    /// `Insert` key.
     Insert,
+    /// `Home` key.
     Home,
+    /// `End` key.
     End,
+    /// `Page Up` key.
     PageUp,
+    /// `Page Down` key.
     PageDown,
+    /// Left arrow key.
     Left,
+    /// Right arrow key.
     Right,
+    /// Up arrow key.
     Up,
+    /// Down arrow key.
     Down,
-    // Modifiers
+    /// Left `Shift` key.
     LShift,
+    /// Right `Shift` key.
     RShift,
+    /// Left `Ctrl` key.
     LCtrl,
+    /// Right `Ctrl` key.
     RCtrl,
+    /// Left `Alt` key.
     LAlt,
+    /// Right `Alt` key.
     RAlt,
 }
 
@@ -229,10 +293,15 @@ pub trait Application {
 /// Configuration for creating a window
 #[derive(Debug, Clone)]
 pub struct WindowConfig {
+    /// Window title text.
     pub title: String,
+    /// Initial window width in pixels.
     pub width: u32,
+    /// Initial window height in pixels.
     pub height: u32,
+    /// If `true`, the user can resize the window.
     pub resizable: bool,
+    /// If `true`, presentation waits for vertical sync.
     pub vsync: bool,
 }
 
@@ -249,6 +318,7 @@ impl Default for WindowConfig {
 }
 
 impl WindowConfig {
+    /// Creates a configuration with the given title and size in pixels; other fields use defaults.
     pub fn new(title: impl Into<String>, width: u32, height: u32) -> Self {
         Self {
             title: title.into(),

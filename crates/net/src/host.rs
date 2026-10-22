@@ -7,12 +7,16 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use thiserror::Error;
 
+/// Error from a `NetHost` operation.
 #[derive(Error, Debug)]
 pub enum HostError {
+    /// The transport failed.
     #[error("Transport error: {0}")]
     Transport(#[from] TransportError),
+    /// The host has the maximum number of clients.
     #[error("Max clients reached")]
     MaxClients,
+    /// No client has the given client ID.
     #[error("Client not found: {0}")]
     ClientNotFound(u64),
 }

@@ -5,17 +5,22 @@ use pipeline::uax::types::{Animation, TransformTrack};
 
 use self::curve::{AnimationSample, sample_curve};
 
+/// Local bone transforms sampled from one animation at one time.
 #[derive(Clone, Debug, Default)]
 pub struct AnimationPose {
     tracks: Vec<(String, Mat4)>,
 }
 
 impl AnimationPose {
+    /// Samples the pose at the start of `animation`.
     #[must_use]
     pub fn at_start(animation: &Animation) -> Self {
         Self::at_position(animation, 0.0)
     }
 
+    /// Samples the pose at `normalized_position` (0.0 is the start, 1.0 is the end).
+    ///
+    /// Tracks with no name, duplicate names, or unsupported curves are skipped.
     #[must_use]
     pub fn at_position(animation: &Animation, normalized_position: f32) -> Self {
         let sample = AnimationSample::from_normalized(animation, normalized_position);
@@ -44,6 +49,7 @@ impl AnimationPose {
         Self { tracks }
     }
 
+    /// Returns the local transform for `bone_name`; the match ignores ASCII case.
     #[must_use]
     pub fn local_transform(&self, bone_name: &str) -> Option<Mat4> {
         self.tracks
@@ -52,6 +58,9 @@ impl AnimationPose {
             .map(|(_, matrix)| *matrix)
     }
 
+    /// Blends from `previous` to `current` by `weight` (0.0 - 1.0).
+    ///
+    /// When one pose has no track for a bone, `bind_local` gives the bind pose.
     #[must_use]
     pub fn blended(
         previous: &Self,
@@ -89,6 +98,7 @@ impl AnimationPose {
     }
 }
 
+/// Blends two local transforms by `weight` (0.0 gives `movement`, 1.0 gives `action`).
 #[must_use]
 pub fn blended_local_transform(action: Mat4, movement: Mat4, weight: f32) -> Mat4 {
     if weight <= 0.0 {
