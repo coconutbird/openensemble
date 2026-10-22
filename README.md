@@ -75,9 +75,9 @@ Otherwise, it uses the current directory.
 - To run the tests that do not need the game, run `cargo test --workspace`.
 - To run the tests that load the installed game, set `OPENENSEMBLE_GAME_DIR`, then run
   `cargo test --workspace -- --ignored`. The run takes about 3 minutes.
-- The dev and test profiles build all dependencies at `opt-level = 3` and the `render` and
-  `motion` crates at `opt-level = 1` (`Cargo.toml`). Thus a debug build loads a scenario in
-  seconds. The first build of the dependencies takes longer.
+- The dev and test profiles build all dependencies at `opt-level = 3` without debug information,
+  and the `render` and `motion` crates at `opt-level = 1` (`Cargo.toml`). Thus a debug build
+  loads a scenario in seconds. The first build of the dependencies takes longer.
 - Before a commit, make sure that `cargo clippy --workspace --all-targets -- -D warnings`
   completes without warnings.
 
