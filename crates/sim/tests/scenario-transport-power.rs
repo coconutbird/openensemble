@@ -4,8 +4,7 @@ use glam::Vec3;
 use pipeline::database::hw1::Database;
 use sim::{
     EntityId, NativePowerInput, PowerTransportPhase, PowerUserId, TransportPowerInvocation,
-    configure_player_leader, load_scenario_from_game_dir, power_prototype_id, spawn_squad_at,
-    squad_prototype_id,
+    configure_player_leader, power_prototype_id, spawn_squad_at, squad_prototype_id,
 };
 
 const TRANSPORT_POWER: &str = "UnscCivTransport";
@@ -17,7 +16,7 @@ const PELICAN: &str = "unsc_air_pelican_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_transport_profile_carries_a_layered_marine_squad_to_dropoff() {
-    let mut loaded = load_installed_scenario();
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     remove_scenario_squads(&mut loaded.simulation.world);
     configure_cutter(&mut loaded);
     let database = &loaded.content.database;
@@ -207,11 +206,4 @@ fn assert_close(actual: f32, expected: f32) {
         (actual - expected).abs() < 0.000_1,
         "expected {expected}, got {actual}"
     );
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }

@@ -1,18 +1,15 @@
 //! Checks that Blood Gulch triggers load, remap, and run from the simulation tick.
 
-use sim::{EffectType, Simulation, TriggerValue, load_scenario_from_game_dir};
+use sim::{EffectType, Simulation, TriggerValue};
 
 /// Run with:
 /// `OPENENSEMBLE_GAME_DIR=<HaloWarsDE> cargo test -p sim --test scenario-trigger-loading -- --ignored`
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn blood_gulch_triggers_load_remap_and_execute_from_the_authoritative_tick() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
     let scenario =
         std::env::var("OPENENSEMBLE_TEST_SCENARIO").unwrap_or_else(|_| "blood_gulch".to_owned());
-    let mut loaded = load_scenario_from_game_dir(&game_dir, &scenario)
-        .expect("scenario, layered database, simulation, and triggers should load");
+    let mut loaded = test_support::installed_scenario(&scenario);
 
     let engine = loaded.simulation.world.trigger_engine();
     assert_eq!(engine.script_count(), 2);

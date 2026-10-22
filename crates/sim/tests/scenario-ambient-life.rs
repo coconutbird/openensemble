@@ -1,10 +1,7 @@
 //! Checks that the shipped bird uses layered ambient-life data.
 
 use glam::Vec3;
-use sim::{
-    AmbientLifeBehavior, GAIA_PLAYER, load_scenario_from_game_dir, spawn_squad_at,
-    squad_prototype_id,
-};
+use sim::{AmbientLifeBehavior, GAIA_PLAYER, spawn_squad_at, squad_prototype_id};
 
 const BIRD: &str = "env_creatures_bird_01";
 
@@ -13,10 +10,7 @@ const BIRD: &str = "env_creatures_bird_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_bird_uses_layered_ambient_life_data() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let profile = loaded
         .simulation
         .gameplay

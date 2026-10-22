@@ -1,10 +1,7 @@
 //! Checks that the shipped cryo power runs against the scenario-layered database.
 
 use glam::Vec3;
-use sim::{
-    CryoPowerInvocation, EntityId, load_scenario_from_game_dir, power_prototype_id, spawn_squad_at,
-    squad_prototype_id,
-};
+use sim::{CryoPowerInvocation, EntityId, power_prototype_id, spawn_squad_at, squad_prototype_id};
 
 const CRYO_POWER: &str = "UnscLeaderCryo";
 const FROZEN_KILL_TARGET: &str = "unsc_air_hornet_01";
@@ -14,7 +11,7 @@ const FROZEN_KILL_TARGET: &str = "unsc_air_hornet_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_cryo_profile_executes_against_the_scenario_layered_database() {
-    let mut loaded = load_installed_scenario();
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let database = &loaded.content.database;
     let power_id = power_prototype_id(database, CRYO_POWER).expect("shipped Cryo power");
     let target_prototype =
@@ -111,11 +108,4 @@ fn shipped_cryo_profile_executes_against_the_scenario_layered_database() {
             .proto_object_name,
         execution.cryo_object_prototype()
     );
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }

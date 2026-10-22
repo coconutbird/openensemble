@@ -3,8 +3,8 @@
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use sim::{
-    EntityId, NativePowerInput, OrbitalPowerInvocation, PowerUserId, load_scenario_from_game_dir,
-    power_prototype_id, spawn_squad_at, squad_prototype_id,
+    EntityId, NativePowerInput, OrbitalPowerInvocation, PowerUserId, power_prototype_id,
+    spawn_squad_at, squad_prototype_id,
 };
 
 const ORBITAL_POWER: &str = "UnscLeaderOrbitalBombard";
@@ -23,7 +23,7 @@ const ROCKS: [&str; 3] = [
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_orbital_profile_uses_layered_tactics_and_throws_synchronized_debris() {
-    let mut loaded = load_installed_scenario();
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     remove_scenario_squads(&mut loaded.simulation.world);
     configure_enemies(&mut loaded.simulation.world);
     assert_shipped_profile(&loaded);
@@ -262,11 +262,4 @@ fn remove_scenario_squads(world: &mut sim::World) {
     for id in ids {
         world.remove_squad(id).unwrap();
     }
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }

@@ -3,9 +3,7 @@
 use std::collections::BTreeSet;
 
 use glam::Vec3;
-use sim::{
-    EntityId, NativePowerError, NativePowerInvocation, PowerUserId, load_scenario_from_game_dir,
-};
+use sim::{EntityId, NativePowerError, NativePowerInvocation, PowerUserId};
 
 const SHIPPED_POWER_TYPES: [&str; 10] = [
     "CarpetBombing",
@@ -25,7 +23,7 @@ const SHIPPED_POWER_TYPES: [&str; 10] = [
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn every_scenario_layered_shipped_native_power_type_reaches_a_sim_implementation() {
-    let mut loaded = load_installed_scenario();
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let routed_powers = loaded
         .content
         .database
@@ -68,11 +66,4 @@ fn every_scenario_layered_shipped_native_power_type_reaches_a_sim_implementation
             "shipped power {power_name} uses unrouted type {power_type}"
         );
     }
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }

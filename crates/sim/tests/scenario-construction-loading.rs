@@ -4,8 +4,8 @@ use glam::Vec3;
 use pipeline::database::hw1::Database;
 use pipeline::database::hw1::objects::ChildObjectType;
 use sim::{
-    ConstructionKind, EntityId, PlayerId, World, load_scenario_from_game_dir, object_prototype_id,
-    object_runtime_id, spawn_object_at,
+    ConstructionKind, EntityId, PlayerId, World, object_prototype_id, object_runtime_id,
+    spawn_object_at,
 };
 
 const COMMAND_CENTER: &str = "unsc_bldg_command_01";
@@ -24,10 +24,7 @@ const ARBITER_LEADER_TECH: &str = "covenant_LeaderArbiter";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn builds_real_command_center_through_blood_gulch_power_socket() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("scenario archive and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     assert_command_center_child_definitions(&loaded.content.database);
     let (&player_id, &base_id) = loaded
         .simulation
@@ -273,10 +270,7 @@ fn assert_completed_command_center_children(
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn real_rebel_base_materializes_and_kills_its_authored_units() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("scenario archive and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let player_id = *loaded
         .simulation
         .initial_base_ids
@@ -347,10 +341,7 @@ fn real_rebel_base_materializes_and_kills_its_authored_units() {
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn real_covenant_base_materializes_its_default_building_child() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("scenario archive and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let player_id = *loaded
         .simulation
         .initial_base_ids
@@ -401,10 +392,7 @@ fn real_covenant_base_materializes_its_default_building_child() {
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn real_reactor_quote_uses_the_scenario_layered_object_database() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("scenario archive and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let player_id = *loaded
         .simulation
         .initial_base_ids
@@ -498,10 +486,7 @@ fn real_reactor_quote_uses_the_scenario_layered_object_database() {
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn real_supply_pad_built_state_activates_and_removes_its_rate() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("scenario archive and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let player_id = *loaded
         .simulation
         .initial_base_ids
@@ -568,10 +553,7 @@ fn real_supply_pad_built_state_activates_and_removes_its_rate() {
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn real_temple_one_time_child_trains_only_one_enabled_leader() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("scenario archive and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let player_id = *loaded
         .simulation
         .initial_base_ids

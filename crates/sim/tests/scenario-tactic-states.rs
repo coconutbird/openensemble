@@ -5,8 +5,7 @@ use std::collections::BTreeSet;
 use glam::Vec3;
 use sim::{
     CommandEntry, CommandExecutor, CommandPayload, LoadedGameScenario, SquadMode, WorkCommand,
-    load_scenario_from_game_dir, object_prototype_id, spawn_object_at, spawn_squad_at,
-    squad_prototype_id,
+    object_prototype_id, spawn_object_at, spawn_squad_at, squad_prototype_id,
 };
 
 const GHOST: &str = "cov_veh_ghost_01";
@@ -37,14 +36,11 @@ const SCENARIOS: [&str; 16] = [
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn layered_scenarios_preserve_shipped_tactic_state_contracts() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
     let mut state_definitions = BTreeSet::new();
     let mut transitions = BTreeSet::new();
 
     for scenario in SCENARIOS {
-        let loaded = load_scenario_from_game_dir(&game_dir, scenario)
-            .unwrap_or_else(|error| panic!("installed scenario {scenario} should load: {error}"));
+        let loaded = test_support::installed_scenario(scenario);
         collect_tactic_state_contracts(&loaded, &mut state_definitions, &mut transitions);
     }
 
@@ -58,32 +54,23 @@ fn layered_scenarios_preserve_shipped_tactic_state_contracts() {
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_ghost_ram_drives_authoritative_tactic_state() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario should load");
+    let loaded = test_support::installed_scenario("blood_gulch");
     assert_ghost_ram_state_transition(loaded);
 }
 
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_suicide_grunt_detonates_through_authoritative_state() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     assert_suicide_grunt_detonation(&mut loaded);
 }
 
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_methane_tank_exposes_physics_death_detonation() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
     let mut diagnostics = Vec::new();
     for scenario in SCENARIOS {
-        let mut loaded = load_scenario_from_game_dir(&game_dir, scenario)
-            .unwrap_or_else(|error| panic!("installed scenario {scenario} should load: {error}"));
+        let mut loaded = test_support::installed_scenario(scenario);
         let gameplay = &loaded.simulation.gameplay;
         let Some(replacement) = gameplay.physics_replacement(METHANE_TANK) else {
             diagnostics.extend(

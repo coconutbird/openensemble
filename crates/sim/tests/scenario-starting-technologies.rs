@@ -1,14 +1,9 @@
 //! Checks that campaign players activate layered civilization and leader technologies.
 
-use std::env;
-
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn campaign_players_activate_layered_civilization_then_leader_technologies() {
-    let game_dir = env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let loaded = sim::load_scenario_from_game_dir(&game_dir, "PHXscn01")
-        .expect("installed campaign scenario should load");
+    let loaded = test_support::installed_scenario("PHXscn01");
     let database = &loaded.content.database;
     let mut players_with_starting_technology = 0;
     let mut active_shadow_technologies = 0;

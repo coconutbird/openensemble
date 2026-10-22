@@ -1,20 +1,15 @@
 //! Checks that shipped scenarios do not author the latent mines action.
 
-use sim::load_scenario_from_game_dir;
-
 /// Run with:
 /// `OPENENSEMBLE_GAME_DIR=<HaloWarsDE> cargo test -p sim --test scenario-mines -- --ignored --nocapture`
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_scenarios_do_not_author_the_latent_mines_action() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
     let scenarios = std::env::var("OPENENSEMBLE_TEST_SCENARIO")
         .ok()
         .map_or_else(shipped_scenarios, |scenario| vec![scenario]);
     for scenario in scenarios {
-        let loaded =
-            load_scenario_from_game_dir(&game_dir, &scenario).expect("real scenario should load");
+        let loaded = test_support::installed_scenario(&scenario);
         let candidates = loaded
             .content
             .database

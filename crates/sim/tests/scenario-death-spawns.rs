@@ -1,7 +1,7 @@
 //! Checks that shipped death spawns create their database squads and technology-assigned spawns.
 
 use glam::Vec3;
-use sim::{load_scenario_from_game_dir, object_prototype_id, spawn_object_at};
+use sim::{object_prototype_id, spawn_object_at};
 
 const FLOOD_BOMB: &str = "fx_proj_fldbomb_01";
 const FLOOD_SPAWN: &str = "fld_inf_InfectionForm_03";
@@ -14,7 +14,7 @@ const GRUNT_CONFETTI: &str = "fx_obj_gruntconfetti";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_flood_bomb_death_spawns_its_database_squad() {
-    let mut loaded = load_installed_scenario();
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let source_position = Vec3::new(128.0, 0.0, 128.0);
     let existing = matching_squad_count(&loaded.simulation.world, FLOOD_SPAWN);
     let source_id = spawn_installed_object(&mut loaded, FLOOD_BOMB, source_position);
@@ -52,7 +52,7 @@ fn shipped_flood_bomb_death_spawns_its_database_squad() {
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_grunt_birthday_party_technology_assigns_confetti_death_spawn() {
-    let mut loaded = load_installed_scenario();
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     assert!(
         loaded
             .simulation
@@ -71,13 +71,6 @@ fn shipped_grunt_birthday_party_technology_assigns_confetti_death_spawn() {
         matching_squad_count(&loaded.simulation.world, GRUNT_CONFETTI),
         existing + 1
     );
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }
 
 fn spawn_installed_object(

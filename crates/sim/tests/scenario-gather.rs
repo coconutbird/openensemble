@@ -1,10 +1,7 @@
 //! Checks that the shipped scenario catalog and resource nodes drive Marine gathering.
 
 use glam::Vec3;
-use sim::{
-    GAIA_PLAYER, load_scenario_from_game_dir, object_prototype_id, spawn_object_at, spawn_squad_at,
-    squad_prototype_id,
-};
+use sim::{GAIA_PLAYER, object_prototype_id, spawn_object_at, spawn_squad_at, squad_prototype_id};
 
 const MARINES: &str = "unsc_inf_marine_01";
 const SUPPLY_CRATE: &str = "rsrc_supplies_crate_01";
@@ -14,10 +11,7 @@ const SUPPLY_CRATE: &str = "rsrc_supplies_crate_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_scenario_catalog_and_resource_node_drive_marine_gathering() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let supplies = loaded
         .simulation
         .gameplay

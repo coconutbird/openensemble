@@ -64,13 +64,10 @@ fn missing_scenario_archive_is_reported_before_database_loading() {
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn loads_real_scenario_database_and_simulation_together() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
     let scenario =
         std::env::var("OPENENSEMBLE_TEST_SCENARIO").unwrap_or_else(|_| "blood_gulch".to_owned());
 
-    let mut loaded = load_scenario_from_game_dir(&game_dir, &scenario)
-        .expect("scenario, layered database, and simulation should load");
+    let mut loaded = test_support::installed_scenario(&scenario);
 
     assert_database_and_archive_layers(&mut loaded);
     assert_initial_base_state(&loaded);

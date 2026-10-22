@@ -3,8 +3,8 @@
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use sim::{
-    GameplayCatalog, World, load_scenario_from_game_dir, object_prototype_id, spawn_object_at,
-    spawn_squad_at, squad_prototype_id,
+    GameplayCatalog, World, object_prototype_id, spawn_object_at, spawn_squad_at,
+    squad_prototype_id,
 };
 
 const AIR_PAD: &str = "unsc_bldg_airPad_01";
@@ -16,10 +16,7 @@ const FLOOD_SWARM: &str = "fld_air_swarm_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_scenario_air_bases_initialize_source_exact_landing_spots() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     assert_shipped_profiles(&loaded.simulation.gameplay);
 
     let database = &loaded.content.database;

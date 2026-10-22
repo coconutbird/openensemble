@@ -3,8 +3,7 @@
 use glam::Vec3;
 use sim::{
     EnergyShieldPhase, EnergyShieldPresentationKind, EnergyShieldVisualProfile, GameplayCatalog,
-    World, load_scenario_from_game_dir, object_prototype_id, spawn_object_at, spawn_squad_at,
-    squad_prototype_id,
+    World, object_prototype_id, spawn_object_at, spawn_squad_at, squad_prototype_id,
 };
 
 const PROPHET: &str = "cov_inf_prophet_02";
@@ -16,10 +15,7 @@ const ELITE_COMMANDO: &str = "cov_inf_elitecommando_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_scenario_shield_actions_drive_authoritative_visual_state() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     assert_shipped_profiles(&loaded.simulation.gameplay, &loaded.content.database);
 
     let database = &loaded.content.database;

@@ -92,6 +92,12 @@ The crates of this repository are in four layers:
 3. `net` and `render`.
 4. The root package `openensemble`.
 
+Two crates contain shared test code. Use them only as dev-dependencies:
+
+- `test-support` depends on `sim`. It loads the installed game and has shared assertions.
+- `render-test-support` depends on `render`. It has shared scene helpers for the renderer
+  tests.
+
 - Make a crate depend only on crates in lower layers.
 - Do not make `sim` depend on `render`, `net`, `xcore` or a graphics, window or audio crate.
 - Put a new format parser or writer in `ensemble-formats`. Put new game data loading in
@@ -119,7 +125,7 @@ code.
 - Make tests deterministic. Compare floating-point values with a tolerance.
 - If a test needs the installed game, mark it with
   `#[ignore = "requires a local Halo Wars DE installation"]`. Read the game directory from
-  `OPENENSEMBLE_GAME_DIR`.
+  `OPENENSEMBLE_GAME_DIR` with `test_support::game_dir` or `test_support::installed_scenario`.
 - Run the ignored tests with `cargo test --workspace -- --ignored`.
 
 ## Working copies

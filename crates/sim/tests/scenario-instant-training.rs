@@ -1,10 +1,7 @@
 //! Checks that the shipped Sentinel store trains at once and then recharges.
 
 use glam::Vec3;
-use sim::{
-    TrainingKind, load_scenario_from_game_dir, object_prototype_id, spawn_object_at,
-    squad_runtime_id,
-};
+use sim::{TrainingKind, object_prototype_id, spawn_object_at, squad_runtime_id};
 
 const SENTINEL_STORE: &str = "hook_store_sentinel_01";
 const SENTINEL_SQUAD: &str = "for_air_sentinel_01";
@@ -14,10 +11,7 @@ const SENTINEL_SQUAD: &str = "for_air_sentinel_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_sentinel_store_trains_immediately_then_recharges_in_sim_state() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("scenario archive and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let player_id = *loaded
         .simulation
         .initial_base_ids

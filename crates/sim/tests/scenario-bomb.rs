@@ -2,8 +2,8 @@
 
 use glam::Vec3;
 use sim::{
-    BombPhase, GameplayCatalog, MotionType, UnitDetonatePhase, World, load_scenario_from_game_dir,
-    object_prototype_id, spawn_object_at,
+    BombPhase, GameplayCatalog, MotionType, UnitDetonatePhase, World, object_prototype_id,
+    spawn_object_at,
 };
 
 const FLOOD_BOMB: &str = "fx_proj_fldbomb_01";
@@ -14,10 +14,7 @@ const FLOOD_SPAWN: &str = "fld_inf_InfectionForm_03";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_flood_bomb_loads_scenario_physics_and_executes_persistent_actions() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     assert_shipped_profile(&loaded.simulation.gameplay);
 
     let database = &loaded.content.database;

@@ -2,10 +2,7 @@
 
 use glam::Vec3;
 use pipeline::database::hw1::Database;
-use sim::{
-    GameplayCatalog, HealPhase, World, load_scenario_from_game_dir, spawn_squad_at,
-    squad_prototype_id,
-};
+use sim::{GameplayCatalog, HealPhase, World, spawn_squad_at, squad_prototype_id};
 
 const MEDIC: &str = "unsc_inf_medic_01";
 const MEDIC_SQUAD: &str = "unsc_inf_marine_03";
@@ -16,10 +13,7 @@ const MONITOR: &str = "for_air_monitor_02";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_scenario_database_and_tactics_drive_medic_healing() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     assert_shipped_profiles(&loaded.simulation.gameplay);
 
     let database = &loaded.content.database;

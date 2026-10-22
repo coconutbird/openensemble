@@ -30,10 +30,7 @@ impl log::Log for AnchorLogger {
 fn shipped_attack_and_physics_events_resolve_headless_pose_anchors() {
     let _logger = log::set_logger(&LOGGER);
     log::set_max_level(log::LevelFilter::Debug);
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point at Halo Wars DE");
-    let loaded = sim::load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("scenario and layered gameplay catalog");
+    let loaded = test_support::installed_scenario("blood_gulch");
     let (attack_count, fallback_attacks, impulse_count, single_bone_count) =
         anchor_counts(&loaded.simulation.gameplay);
 

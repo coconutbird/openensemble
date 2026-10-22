@@ -1,7 +1,7 @@
 //! Checks that the shipped scenario database and tactics drive Engineer repair of other units.
 
 use glam::Vec3;
-use sim::{RepairOtherPhase, load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id};
+use sim::{RepairOtherPhase, spawn_squad_at, squad_prototype_id};
 
 const ENGINEER: &str = "cov_inf_engineer_01";
 const ANDERS: &str = "cpgn_npc_anders_01";
@@ -13,10 +13,7 @@ const WRAITH: &str = "cov_veh_wraith_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_scenario_database_and_tactics_drive_engineer_repair_other() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let engineer = loaded
         .simulation
         .gameplay

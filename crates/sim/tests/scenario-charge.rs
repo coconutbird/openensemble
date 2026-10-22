@@ -1,10 +1,7 @@
 //! Checks that the shipped Brute Chief charge compiles and pulls a Marine squad.
 
 use glam::Vec3;
-use sim::{
-    GameplayCatalog, SquadPullPhase, World, load_scenario_from_game_dir, spawn_squad_at,
-    squad_prototype_id,
-};
+use sim::{GameplayCatalog, SquadPullPhase, World, spawn_squad_at, squad_prototype_id};
 
 const BRUTE_CHIEF_01: &str = "cov_inf_bruteChief_01";
 const BRUTE_CHIEF_02: &str = "cov_inf_bruteChief_02";
@@ -18,10 +15,7 @@ const UPGRADE_2: &str = "cov_bruteChief_upgrade2";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_brute_chief_charge_compiles_and_pulls_a_marine_squad() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     assert_shipped_profiles(&loaded.simulation.gameplay);
 
     let database = &loaded.content.database;

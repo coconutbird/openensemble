@@ -1,10 +1,7 @@
 //! Checks the shipped ODST drop: layered profiles, transformed members, and delayed reveal.
 
 use glam::Vec3;
-use sim::{
-    EntityId, NativePowerInput, OdstPowerInvocation, PowerUserId, load_scenario_from_game_dir,
-    power_prototype_id,
-};
+use sim::{EntityId, NativePowerInput, OdstPowerInvocation, PowerUserId, power_prototype_id};
 
 const ODST_POWER: &str = "UnscOdstDrop";
 const ODST_TECH: &str = "unsc_odst_upgrade1";
@@ -16,7 +13,7 @@ const ODST_POD: &str = "unsc_air_odstPod_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_odst_drop_uses_layered_profiles_transformed_members_and_delayed_reveal() {
-    let loaded = load_installed_scenario();
+    let loaded = test_support::installed_scenario("blood_gulch");
     let sim::LoadedGameScenario {
         mut simulation,
         content,
@@ -130,11 +127,4 @@ fn remove_scenario_squads(world: &mut sim::World) {
     for id in ids {
         world.remove_squad(id).unwrap();
     }
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }

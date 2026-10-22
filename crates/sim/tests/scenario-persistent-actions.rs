@@ -1,14 +1,11 @@
 //! Checks that shipped persistent actions survive scenario database layering.
 
-use sim::{GameplayCatalog, load_scenario_from_game_dir};
+use sim::GameplayCatalog;
 
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_persistent_actions_survive_scenario_layering() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("scenario archive and layered gameplay should load");
+    let loaded = test_support::installed_scenario("blood_gulch");
     let gameplay = &loaded.simulation.gameplay;
 
     assert_unit_persistent(gameplay, "cov_inf_hunter_01", "Dodge", "Dodge");

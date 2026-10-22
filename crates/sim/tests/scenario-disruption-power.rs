@@ -3,7 +3,7 @@
 use glam::{Vec3, Vec4};
 use sim::{
     Command, CommandEntry, CommandExecutor, CommandPayload, EntityId, PowerCommand,
-    PowerCommandType, load_scenario_from_game_dir, power_prototype_id,
+    PowerCommandType, power_prototype_id,
 };
 
 const DISRUPTION_POWER: &str = "UnscLeaderDisruption";
@@ -14,7 +14,7 @@ const CRYO_POWER: &str = "UnscLeaderCryo";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_disruption_blocks_cryo_through_the_native_power_command_path() {
-    let mut loaded = load_installed_scenario();
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let disruption_id = power_prototype_id(&loaded.content.database, DISRUPTION_POWER)
         .expect("shipped Disruption power");
     let cryo_id =
@@ -137,11 +137,4 @@ fn advance_until_active(loaded: &mut sim::LoadedGameScenario) {
         }
     }
     panic!("shipped Disruption never became active");
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }

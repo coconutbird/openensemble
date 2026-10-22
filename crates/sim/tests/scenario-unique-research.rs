@@ -4,8 +4,8 @@ use glam::Vec3;
 use pipeline::database::hw1::Database;
 use pipeline::database::hw1::objects::ChildObjectType;
 use sim::{
-    EntityId, ResearchQueueResult, TechStatus, World, load_scenario_from_game_dir,
-    object_prototype_id, spawn_object_at, technology_prototype_id,
+    EntityId, ResearchQueueResult, TechStatus, World, object_prototype_id, spawn_object_at,
+    technology_prototype_id,
 };
 
 const COMMAND_CENTER_ONE: &str = "unsc_bldg_command_01";
@@ -19,10 +19,7 @@ const BASE_UPGRADE_ONE: &str = "unsc_base_upgrade1";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_base_upgrade_transforms_only_its_blood_gulch_building_instance() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("scenario archive and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let player_id = *loaded
         .simulation
         .initial_base_ids

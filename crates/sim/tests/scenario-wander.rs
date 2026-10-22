@@ -1,7 +1,7 @@
 //! Checks that the shipped spore cloud wanders with scenario-layered tactics.
 
 use glam::Vec3;
-use sim::{load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id};
+use sim::{spawn_squad_at, squad_prototype_id};
 
 const SPORE_CLOUD: &str = "fld_air_sporecloud_01";
 
@@ -10,10 +10,7 @@ const SPORE_CLOUD: &str = "fld_air_sporecloud_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_spore_cloud_wanders_from_scenario_layered_tactics() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let profile = loaded
         .simulation
         .gameplay

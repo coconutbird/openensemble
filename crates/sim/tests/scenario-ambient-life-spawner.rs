@@ -2,8 +2,7 @@
 
 use glam::Vec3;
 use sim::{
-    EntityId, GAIA_PLAYER, load_scenario_from_game_dir, object_prototype_id, spawn_object_at,
-    spawn_squad_at, squad_prototype_id,
+    EntityId, GAIA_PLAYER, object_prototype_id, spawn_object_at, spawn_squad_at, squad_prototype_id,
 };
 use std::collections::BTreeSet;
 
@@ -16,10 +15,7 @@ const MARINES: &str = "unsc_inf_marine_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_layered_spawner_creates_one_fleeing_bird_squad() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let profile = loaded
         .simulation
         .gameplay

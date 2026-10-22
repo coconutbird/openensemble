@@ -1,7 +1,7 @@
 //! Checks that the Arbiter reflects a real hand attack with scenario-layered data.
 
 use glam::Vec3;
-use sim::{load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id};
+use sim::{spawn_squad_at, squad_prototype_id};
 
 const ARBITER: &str = "cov_inf_arbiter_01";
 const BRUTE_CHIEF: &str = "cov_inf_bruteChief_01";
@@ -13,7 +13,7 @@ const FIENDISH_RETURN_TECH: &str = "cov_arbiter_upgrade1";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn arbiter_reflects_real_hand_attack_from_scenario_layered_data() {
-    let mut loaded = load_installed_scenario();
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let profile = loaded
         .simulation
         .gameplay
@@ -102,13 +102,6 @@ fn squad_hitpoints(world: &sim::World, squad_id: sim::EntityId) -> f32 {
             .map(|unit| unit.hitpoints)
             .sum()
     })
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }
 
 fn assert_close(actual: f32, expected: f32) {

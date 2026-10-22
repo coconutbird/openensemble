@@ -2,8 +2,8 @@
 
 use glam::Vec3;
 use sim::{
-    AircraftCrashPhase, FlightControllerKind, GameplayCatalog, TeamRelation, World,
-    load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id,
+    AircraftCrashPhase, FlightControllerKind, GameplayCatalog, TeamRelation, World, spawn_squad_at,
+    squad_prototype_id,
 };
 
 const BANSHEE: &str = "cov_air_banshee_01";
@@ -20,10 +20,7 @@ const BANSHEE_UPGRADES: [&str; 3] = [
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_banshee_uses_layered_air_avoidance_and_kamikaze_data() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     assert_shipped_profiles(&loaded.simulation.gameplay);
 
     let database = &loaded.content.database;

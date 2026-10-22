@@ -1,14 +1,9 @@
 //! Installed-data audit for retail's independent turret attack executors.
 
-use sim::load_scenario_from_game_dir;
-
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_secondary_and_slave_turret_actions_remain_discoverable() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("scenario archive and layered gameplay should load");
+    let loaded = test_support::installed_scenario("blood_gulch");
     let mut secondary_count = 0;
     let mut slave_count = 0;
     let mut master_count = 0;

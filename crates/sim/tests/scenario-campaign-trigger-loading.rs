@@ -1,9 +1,6 @@
 //! Checks that every campaign trigger catalog loads and runs with retail variable aliases.
 
-use sim::{
-    LoadedGameScenario, TriggerEngine, TriggerUpdate, TriggerValue, VarType,
-    load_scenario_from_game_dir,
-};
+use sim::{LoadedGameScenario, TriggerEngine, TriggerUpdate, TriggerValue, VarType};
 
 #[path = "scenario_campaign_trigger_loading/assertions.rs"]
 mod assertions;
@@ -34,13 +31,10 @@ const CAMPAIGN_SCENARIOS: [&str; 17] = [
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn every_campaign_trigger_catalog_loads_with_retail_variable_aliases() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
     let mut coverage = CampaignCoverage::default();
 
     for scenario in CAMPAIGN_SCENARIOS {
-        let mut loaded = load_scenario_from_game_dir(&game_dir, scenario)
-            .unwrap_or_else(|error| panic!("{scenario} should load: {error}"));
+        let mut loaded = test_support::installed_scenario(scenario);
         let engine = loaded.simulation.world.trigger_engine();
         assert_catalog(scenario, engine);
         coverage.include_variables(engine);

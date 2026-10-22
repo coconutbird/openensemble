@@ -1,20 +1,14 @@
 //! Checks that a Blood Gulch Marine squad moves through the authored teleporter link.
 
 use glam::Vec3;
-use sim::{
-    Simulation, SquadContainmentState, WorkCommand, load_scenario_from_game_dir, spawn_squad_at,
-    squad_prototype_id,
-};
+use sim::{Simulation, SquadContainmentState, WorkCommand, spawn_squad_at, squad_prototype_id};
 
 /// Run with:
 /// `OPENENSEMBLE_GAME_DIR=<HaloWarsDE> cargo test -p sim --test scenario-teleporter-traversal -- --ignored`
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn blood_gulch_marine_squad_traverses_the_authored_teleporter_link() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("Blood Gulch and its layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let mut simulation = Simulation::with_seed(0xB100_D6A1);
     simulation.start();
     let endpoints = prepare_endpoints(&mut loaded, &mut simulation);

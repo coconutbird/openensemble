@@ -1,16 +1,13 @@
 //! Checks that Blood Gulch players seed lifetime totals from layered starting resources.
 
-use sim::{configure_player_leader, load_scenario_from_game_dir};
+use sim::configure_player_leader;
 
 /// Run with:
 /// `OPENENSEMBLE_GAME_DIR=<HaloWarsDE> cargo test -p sim --test scenario-resource-loading -- --ignored`
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn blood_gulch_players_seed_lifetime_totals_from_layered_starting_resources() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("scenario and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let leader_id = loaded
         .content
         .database

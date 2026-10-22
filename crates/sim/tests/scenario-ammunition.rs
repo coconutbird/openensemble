@@ -1,10 +1,7 @@
 //! Checks that the shipped scenario database drives ammunition and its technologies.
 
 use glam::Vec3;
-use sim::{
-    load_scenario_from_game_dir, object_prototype_id, spawn_object_at, spawn_squad_at,
-    squad_prototype_id,
-};
+use sim::{object_prototype_id, spawn_object_at, spawn_squad_at, squad_prototype_id};
 
 const MARINE: &str = "unsc_inf_marine_01";
 const WARTHOG: &str = "unsc_veh_warthog_01";
@@ -14,12 +11,9 @@ const WARTHOG: &str = "unsc_veh_warthog_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_scenario_database_drives_authoritative_ammunition_and_technology() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
     let scenario =
         std::env::var("OPENENSEMBLE_TEST_SCENARIO").unwrap_or_else(|_| "blood_gulch".to_owned());
-    let mut loaded =
-        load_scenario_from_game_dir(&game_dir, &scenario).expect("real scenario should load");
+    let mut loaded = test_support::installed_scenario(&scenario);
     let database = &loaded.content.database;
 
     let marine_proto = find_object(database, MARINE);

@@ -4,7 +4,7 @@ use glam::Vec3;
 use pipeline::database::hw1::Database;
 use sim::{
     DisruptionPowerInvocation, EntityId, MS_PER_TICK, NativePowerError, RepairPowerInvocation,
-    load_scenario_from_game_dir, power_prototype_id, spawn_squad_at, squad_prototype_id,
+    power_prototype_id, spawn_squad_at, squad_prototype_id,
 };
 
 const REPAIR_POWER: &str = "UnscLeaderRepair";
@@ -16,7 +16,7 @@ const MARINES: &str = "unsc_inf_marine_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_repair_reinforces_from_the_layered_database_and_obeys_disruption() {
-    let loaded = load_installed_scenario();
+    let loaded = test_support::installed_scenario("blood_gulch");
     let sim::LoadedGameScenario {
         mut simulation,
         content,
@@ -209,11 +209,4 @@ fn advance_one_tick(simulation: &mut sim::LoadedScenario, database: &Database) {
         database,
         &simulation.gameplay,
     );
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }

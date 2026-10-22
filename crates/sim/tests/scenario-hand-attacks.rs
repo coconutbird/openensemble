@@ -3,7 +3,7 @@
 use glam::Vec3;
 use sim::{
     AttackQuery, AttackQueryFlags, CommandEntry, CommandExecutor, CommandPayload, SquadMode,
-    WorkCommand, load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id,
+    WorkCommand, spawn_squad_at, squad_prototype_id,
 };
 
 const BRUTE_CHIEF: &str = "cov_inf_bruteChief_01";
@@ -14,10 +14,7 @@ const HAMMER_ATTACK: &str = "HammerAttackAction";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_brute_chief_hand_attack_executes_without_a_projectile() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed scenario should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     assert_shipped_hand_attack_profile(&loaded);
 
     let database = &loaded.content.database;

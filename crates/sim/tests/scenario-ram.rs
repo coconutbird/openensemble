@@ -3,7 +3,7 @@
 use glam::Vec3;
 use sim::{
     CommandEntry, CommandExecutor, CommandPayload, RecoveryType, SquadMode, WorkCommand,
-    load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id,
+    spawn_squad_at, squad_prototype_id,
 };
 
 const WARTHOG: &str = "unsc_veh_warthog_01";
@@ -13,12 +13,9 @@ const WARTHOG: &str = "unsc_veh_warthog_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_scenario_database_drives_authoritative_warthog_ram() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
     let scenario =
         std::env::var("OPENENSEMBLE_TEST_SCENARIO").unwrap_or_else(|_| "blood_gulch".to_owned());
-    let mut loaded =
-        load_scenario_from_game_dir(&game_dir, &scenario).expect("real scenario should load");
+    let mut loaded = test_support::installed_scenario(&scenario);
     let database = &loaded.content.database;
     let gameplay = &loaded.simulation.gameplay;
 

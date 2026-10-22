@@ -1,7 +1,7 @@
 //! Checks that the shipped Marine squad uses ground move actions for each member.
 
 use glam::Vec3;
-use sim::{GroundMovePhase, load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id};
+use sim::{GroundMovePhase, spawn_squad_at, squad_prototype_id};
 
 const MARINES: &str = "unsc_inf_marine_01";
 
@@ -10,10 +10,7 @@ const MARINES: &str = "unsc_inf_marine_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_marine_squad_uses_per_member_ground_move_actions() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let database = &loaded.content.database;
     let world = &mut loaded.simulation.world;
     let bounds = world

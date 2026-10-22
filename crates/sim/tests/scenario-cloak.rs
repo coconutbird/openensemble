@@ -1,9 +1,7 @@
 //! Checks that shipped cloak profiles drive visibility and the cloak lifecycle.
 
 use glam::Vec3;
-use sim::{
-    RecoveryType, UnitDataScalar, load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id,
-};
+use sim::{RecoveryType, UnitDataScalar, spawn_squad_at, squad_prototype_id};
 
 const ARBITER: &str = "cov_inf_arbiter_01";
 const ARBITER_CLOAK_TECH: &str = "cov_arbiter_upgrade3";
@@ -15,7 +13,7 @@ const ELITE_COMMANDO: &str = "cov_inf_elitecommando_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_cloak_profiles_drive_authoritative_visibility_and_lifecycle() {
-    let mut loaded = load_installed_scenario();
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     assert_shipped_profiles(&loaded.simulation.gameplay);
 
     let database = &loaded.content.database;
@@ -130,13 +128,6 @@ fn advance(
     seconds: f32,
 ) {
     world.update_entities_with_database_and_gameplay(seconds, database, gameplay);
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }
 
 fn assert_close(actual: f32, expected: f32) {

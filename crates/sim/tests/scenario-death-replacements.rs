@@ -1,10 +1,7 @@
 //! Checks that shipped death replacements select the correct database replacement object.
 
 use glam::Vec3;
-use sim::{
-    load_scenario_from_game_dir, object_prototype_id, spawn_object_at, spawn_squad_at,
-    squad_prototype_id,
-};
+use sim::{object_prototype_id, spawn_object_at, spawn_squad_at, squad_prototype_id};
 
 const DETONATOR: &str = "cpgn_scn02_detonator_01";
 const DESTROYED_DETONATOR: &str = "cpgn_scn02_detonatord_01";
@@ -16,7 +13,7 @@ const SHATTER_TARGET: &str = "fld_inf_tentacle_shatterdeath_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_campaign_detonator_retains_its_id_as_the_database_replacement() {
-    let mut loaded = load_installed_scenario();
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let position = Vec3::new(128.0, 0.0, 128.0);
     let source_id = spawn_installed_object(&mut loaded, DETONATOR, position);
 
@@ -47,7 +44,7 @@ fn shipped_campaign_detonator_retains_its_id_as_the_database_replacement() {
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_frozen_tentacle_selects_its_transient_shatter_replacement() {
-    let mut loaded = load_installed_scenario();
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     assert!(object_prototype_id(&loaded.content.database, SHATTER_TARGET).is_some());
     let (squad_id, source_id) = spawn_installed_squad(&mut loaded, SHATTER_SOURCE, Vec3::ZERO);
 
@@ -98,13 +95,6 @@ fn spawn_installed_squad(
         .and_then(|squad| squad.unit_ids.first())
         .expect("shipped squad has its authored member");
     (squad_id, unit_id)
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }
 
 fn spawn_installed_object(

@@ -3,8 +3,8 @@
 use glam::Vec3;
 use sim::{
     CommandEntry, CommandExecutor, CommandPayload, EntityId, GameplayCatalog, SquadChangeModePhase,
-    SquadMode, WorkCommand, World, load_scenario_from_game_dir, object_prototype_id,
-    spawn_object_at, spawn_squad_at, squad_prototype_id,
+    SquadMode, WorkCommand, World, object_prototype_id, spawn_object_at, spawn_squad_at,
+    squad_prototype_id,
 };
 
 const COBRA: &str = "unsc_veh_cobra_01";
@@ -16,10 +16,7 @@ const MARINE: &str = "unsc_inf_marine_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_cobra_uses_scenario_layered_mode_database_and_animations() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let database = &loaded.content.database;
     let gameplay = &loaded.simulation.gameplay;
     assert_shipped_database(database, gameplay);

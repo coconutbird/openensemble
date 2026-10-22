@@ -3,8 +3,8 @@
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use sim::{
-    CleansingPowerInvocation, EntityId, NativePowerInput, PowerUserId, load_scenario_from_game_dir,
-    power_prototype_id, spawn_squad_at, squad_prototype_id,
+    CleansingPowerInvocation, EntityId, NativePowerInput, PowerUserId, power_prototype_id,
+    spawn_squad_at, squad_prototype_id,
 };
 
 const CLEANSING_POWER: &str = "CovLeaderGlassing";
@@ -19,7 +19,7 @@ const AIR_IMPACT: &str = "fx_cleansing_air_impact_small_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_cleansing_profile_uses_scenario_layered_database_and_tactics() {
-    let mut loaded = load_installed_scenario();
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     remove_scenario_squads(&mut loaded.simulation.world);
     configure_enemies(&mut loaded.simulation.world);
     let owner_id = spawn_named_squad(
@@ -219,13 +219,6 @@ fn remove_scenario_squads(world: &mut sim::World) {
     for id in ids {
         world.remove_squad(id).unwrap();
     }
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }
 
 fn assert_close(actual: f32, expected: f32) {

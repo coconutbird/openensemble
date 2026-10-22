@@ -4,7 +4,7 @@ use glam::Vec3;
 use pipeline::database::hw1::Database;
 use sim::{
     CarpetBombingPhase, CarpetBombingPowerInvocation, EntityId, NativePowerInput, PowerUserId,
-    load_scenario_from_game_dir, power_prototype_id, spawn_squad_at, squad_prototype_id,
+    power_prototype_id, spawn_squad_at, squad_prototype_id,
 };
 
 const CARPET_BOMBING_POWER: &str = "UnscLeaderCarpetBombing";
@@ -17,7 +17,7 @@ const IMPACT: &str = "pow_gp_carpetbomb_impact";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_carpet_bombing_profile_drops_eight_fused_bombs_and_applies_tactic_damage() {
-    let mut loaded = load_installed_scenario();
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     remove_scenario_squads(&mut loaded.simulation.world);
     configure_enemies(&mut loaded.simulation.world);
     let database = &loaded.content.database;
@@ -178,11 +178,4 @@ fn remove_scenario_squads(world: &mut sim::World) {
     for id in ids {
         world.remove_squad(id).unwrap();
     }
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }

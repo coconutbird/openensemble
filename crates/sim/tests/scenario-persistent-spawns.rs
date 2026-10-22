@@ -1,7 +1,7 @@
 //! Checks that shipped spawn actions survive layering and keep their live spawned squads.
 
 use glam::Vec3;
-use sim::{Entity, JoinKind, load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id};
+use sim::{Entity, JoinKind, spawn_squad_at, squad_prototype_id};
 
 const PROPHET: &str = "cov_inf_prophet_01";
 const MONITOR: &str = "cov_air_monitor_01";
@@ -10,7 +10,7 @@ const FLOOD_BOMBER: &str = "fld_air_bomber_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_spawn_actions_survive_scenario_database_layering() {
-    let loaded = load_installed_scenario();
+    let loaded = test_support::installed_scenario("blood_gulch");
     let gameplay = &loaded.simulation.gameplay;
 
     let prophet = &gameplay.persistent_squad_spawns(PROPHET)[0];
@@ -38,7 +38,7 @@ fn shipped_spawn_actions_survive_scenario_database_layering() {
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn prophet_spawn_action_maintains_two_live_auto_joined_monitors() {
-    let mut loaded = load_installed_scenario();
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let database = &loaded.content.database;
     let prototype = squad_prototype_id(database, PROPHET).expect("Prophet squad prototype");
     let owner_squad = spawn_squad_at(
@@ -128,11 +128,4 @@ fn spawned_followers(loaded: &sim::LoadedGameScenario, owner: sim::EntityId) -> 
             (squad.is_alive() && squad.trained_by == Some(owner)).then_some(id)
         })
         .collect()
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }

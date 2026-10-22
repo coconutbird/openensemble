@@ -7,6 +7,8 @@ members = [
     "crates/sim",
     "crates/net",
     "crates/data",
+    "crates/test-support",
+    "crates/render-test-support",
 ]
 
 [workspace.package]
@@ -22,6 +24,8 @@ motion = { path = "crates/motion" }
 render = { path = "crates/render" }
 sim = { path = "crates/sim" }
 data = { path = "crates/data" }
+test-support = { path = "crates/test-support" }
+render-test-support = { path = "crates/render-test-support" }
 
 # ensemble-assets (sibling repo) — single dependency for all game data
 pipeline = { path = "../ensemble-assets/crates/pipeline" }

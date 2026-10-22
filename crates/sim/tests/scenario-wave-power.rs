@@ -4,7 +4,7 @@ use glam::Vec3;
 use pipeline::database::hw1::Database;
 use sim::{
     EntityId, NativePowerInput, PowerUserId, WaveGravityBallState, WavePowerInvocation,
-    load_scenario_from_game_dir, power_prototype_id, spawn_squad_at, squad_prototype_id,
+    power_prototype_id, spawn_squad_at, squad_prototype_id,
 };
 
 const WAVE_POWER: &str = "CovLeaderWave";
@@ -22,7 +22,7 @@ const EXPLOSION: &str = "pow_proj_wave_explode_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_damage_part_catalog_uses_layered_visual_damage_and_model_assets() {
-    let loaded = load_installed_scenario();
+    let loaded = test_support::installed_scenario("blood_gulch");
     let marine = loaded
         .simulation
         .gameplay
@@ -51,7 +51,7 @@ fn shipped_damage_part_catalog_uses_layered_visual_damage_and_model_assets() {
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_wave_profile_uses_scenario_layered_database_and_tactics() {
-    let mut loaded = load_installed_scenario();
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     remove_scenario_squads(&mut loaded.simulation.world);
     configure_enemies(&mut loaded.simulation.world);
     let center = playable_center(&loaded.simulation.world);
@@ -151,7 +151,7 @@ fn shipped_wave_profile_uses_scenario_layered_database_and_tactics() {
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_wave_captures_a_marine_physics_replacement_as_owned_debris() {
-    let mut loaded = load_installed_scenario();
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let setup = begin_marine_wave_capture(&mut loaded);
     let captured = capture_marine_replacement(&mut loaded, setup.target_unit_id);
 
@@ -173,7 +173,7 @@ fn shipped_wave_captures_a_marine_physics_replacement_as_owned_debris() {
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_wave_throws_live_marines_with_layered_action_and_clamshell_data() {
-    let mut loaded = load_installed_scenario();
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let setup = begin_shipped_marine_throw(&mut loaded);
     advance(&mut loaded, 70);
     let execution = &loaded.simulation.world.active_wave_powers()[0];
@@ -731,13 +731,6 @@ fn remove_scenario_squads(world: &mut sim::World) {
     for id in ids {
         world.remove_squad(id).unwrap();
     }
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }
 
 fn assert_close(actual: f32, expected: f32) {
