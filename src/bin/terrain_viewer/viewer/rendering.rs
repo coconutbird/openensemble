@@ -31,6 +31,7 @@ impl TerrainViewer {
         if let Some(raw_data) = &session.scene.raw_xtd_data {
             self.write_decoded_capture_references(raw_data);
         }
+
         let settings = WorldViewSettings {
             debug_mode: self.debug_mode,
             compositor_debug_mode: self.compositor_debug_mode,
@@ -145,6 +146,8 @@ impl TerrainViewer {
                 details: include_details,
                 scenario_tone_map: debug_mode == 0 || debug_mode == 12,
             },
+            selection_decals: &[],
+            hp_bars: &[],
         };
         let mut encoder = ctx
             .device
@@ -299,6 +302,8 @@ impl TerrainViewer {
                 details: true,
                 scenario_tone_map: true,
             },
+            selection_decals: &[],
+            hp_bars: &[],
         };
         let Some(world_view) = &mut session.world_view else {
             return;

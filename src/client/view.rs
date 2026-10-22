@@ -67,6 +67,8 @@ impl Client {
                 .map(|simulation| &simulation.world),
             time_seconds: self.render_time_seconds,
             settings,
+            selection_decals: &[],
+            hp_bars: &[],
         };
         let Some(world_view) = &mut session.world_view else {
             return;

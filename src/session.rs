@@ -173,6 +173,7 @@ impl ScenarioSession {
             sky: self.sky.as_ref(),
             units,
             asset_source: self.source.as_mut(),
+            hp_bars: None,
             size,
             output_format,
         };

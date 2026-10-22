@@ -1,6 +1,6 @@
 //! Stateless viewport projection for simulation-owned icon objects.
 
-use super::projection::{inputs_are_valid, project_world_target};
+use crate::picking::{inputs_are_valid, project_world_target};
 use glam::Mat4;
 use sim::{EntityId, PlayerId, World};
 

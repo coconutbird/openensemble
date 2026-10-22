@@ -17,6 +17,7 @@ impl WorldView {
         self.render_particle_pass(encoder, depth_view);
         self.render_distortion_pass(encoder, depth_view);
         self.tone_map.encode(encoder, output);
+        self.render_hp_bar_pass(encoder, output);
     }
 
     fn render_units<'pass>(&'pass self, phase: RenderPhase, pass: &mut wgpu::RenderPass<'pass>) {
@@ -113,7 +114,7 @@ impl WorldView {
         }
     }
 
-    /// Draws the sky, the terrain, the units, the foliage and the roads.
+    /// Draws the sky, the terrain, the units, the foliage, the roads and the selection decals.
     fn render_terrain_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -157,6 +158,30 @@ impl WorldView {
                 roads.render_phase(RenderPhase::World, &mut render_pass);
             }
         }
+        // The selection decals are client UI, so they draw without the scene details too.
+        self.selection_decals.render(&mut render_pass);
+    }
+
+    /// Draws the hit-point bars over the tone-mapped output, without a depth test.
+    fn render_hp_bar_pass(&self, encoder: &mut wgpu::CommandEncoder, output: &wgpu::TextureView) {
+        let Some(hp_bars) = self.hp_bars.as_ref().filter(|hp_bars| hp_bars.has_bars()) else {
+            return;
+        };
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("HP Bar Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: output,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        hp_bars.render(&mut render_pass);
     }
 
     /// Draws the particles over the lit world. The depth is read-only, so the particles can

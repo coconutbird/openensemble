@@ -20,7 +20,6 @@ pub mod loading;
 mod mesh;
 mod objective_pointers;
 mod patch;
-mod projection;
 mod scene;
 mod shaders;
 mod texture;
@@ -41,12 +40,12 @@ pub use loading::{
 };
 pub use mesh::TerrainMesh;
 pub use objective_pointers::{ProjectedObjectivePointer, project_objective_pointers};
-pub(crate) use patch::canonical_patch_path;
 pub use patch::{
     TerrainPatchError, TerrainPatchImage, TerrainPatchInstance, TerrainPatchMaterial,
     TerrainPatchRenderer, TerrainPatchRendererDescriptor, TerrainPatchShading,
     TerrainPatchWorldBindings,
 };
+pub(crate) use patch::{canonical_patch_path, load_ddx_image};
 pub use scene::TerrainScene;
 pub use shaders::{
     COMPOSITE_SHADER, FOLIAGE_SHADER, GPU_TESS_SHADER, HEIGHTFIELD_SHADER, ROADS_SHADER,

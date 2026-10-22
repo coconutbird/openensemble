@@ -43,6 +43,18 @@ impl WorldView {
         )
         .with_light_volume(light_volume_rows, particle_light_scale);
         self.update_ugx(device, queue, frame, &lighting, &particle_scene);
+        if let Err(error) = self.selection_decals.update(
+            device,
+            queue,
+            camera.view_projection,
+            &lighting,
+            frame.selection_decals,
+        ) {
+            log::warn!("could not upload selection decals: {error}");
+        }
+        if let Some(hp_bars) = &mut self.hp_bars {
+            hp_bars.update(device, queue, camera, frame.hp_bars);
+        }
         if let (Some([start, end]), Some(foliage)) = (settings.foliage_fade, &mut self.foliage) {
             foliage.set_fade_distances(queue, start, end);
         }

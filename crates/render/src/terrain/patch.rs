@@ -507,18 +507,27 @@ fn load_map(
     base: &str,
     suffix: &str,
 ) -> Result<Option<TerrainPatchImage>, TerrainPatchError> {
-    let path = format!("{base}{suffix}");
-    let Some(bytes) = source.resolve_with_fallback(&path, &[".ddx"]) else {
+    load_ddx_image(source, &format!("{base}{suffix}"))
+}
+
+/// Decodes the DDX texture at `path` (with or without the `.ddx` extension).
+///
+/// Returns `Ok(None)` if the asset source has no file at the path.
+pub(crate) fn load_ddx_image(
+    source: &mut AssetSource<StdFileProvider>,
+    path: &str,
+) -> Result<Option<TerrainPatchImage>, TerrainPatchError> {
+    let Some(bytes) = source.resolve_with_fallback(path, &[".ddx"]) else {
         return Ok(None);
     };
     let texture = DdxTexture::from_bytes(&bytes).map_err(|error| TerrainPatchError::MapDecode {
-        path: path.clone(),
+        path: path.to_owned(),
         reason: error.to_string(),
     })?;
     let decoded = texture
         .decode_to_rgba()
         .map_err(|error| TerrainPatchError::MapDecode {
-            path,
+            path: path.to_owned(),
             reason: error.to_string(),
         })?;
     TerrainPatchImage::from_rgba(decoded.width, decoded.height, decoded.pixels).map(Some)

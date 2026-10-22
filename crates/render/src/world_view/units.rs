@@ -43,6 +43,26 @@ fn terrain_heightfield<'a>(
     }
 }
 
+/// Returns the scenario resources that terrain patches bind: the heightfield for the terrain
+/// conformance, the terrain alpha, the shadows, the fog of war and the local lights.
+pub(super) fn patch_world_bindings<'a>(
+    terrain: &'a TerrainResources,
+    shadow: &'a ShadowResources,
+    raw_data: &RawXtdData,
+) -> TerrainPatchWorldBindings<'a> {
+    TerrainPatchWorldBindings {
+        heightfield: Some(terrain_heightfield(terrain, raw_data)),
+        terrain_alpha: Some(&terrain.terrain_alpha_view),
+        directional_shadow: Some(&shadow.shadow_view),
+        blackmap: Some(&terrain.blackmap_view),
+        unexplored: Some(&terrain.unexplored_view),
+        local_lights: Some(&terrain.local_lights),
+        local_shadow: Some(terrain.local_shadows.view()),
+        light_volume_color: Some(terrain.light_volume.color_view()),
+        light_volume_vector: Some(terrain.light_volume.vector_view()),
+    }
+}
+
 /// Creates the shared UGX resources, then the sky renderer and the unit scene renderer.
 pub(super) fn create_unit_renderers(
     device: &wgpu::Device,
@@ -96,17 +116,7 @@ fn create_unit_scene_renderer(
         queue,
         inputs.scene_format,
         Some(wgpu::TextureFormat::Depth32Float),
-        TerrainPatchWorldBindings {
-            heightfield: Some(terrain_heightfield(terrain, inputs.raw_data)),
-            terrain_alpha: Some(&terrain.terrain_alpha_view),
-            directional_shadow: Some(&inputs.shadow.shadow_view),
-            blackmap: Some(&terrain.blackmap_view),
-            unexplored: Some(&terrain.unexplored_view),
-            local_lights: Some(&terrain.local_lights),
-            local_shadow: Some(terrain.local_shadows.view()),
-            light_volume_color: Some(terrain.light_volume.color_view()),
-            light_volume_vector: Some(terrain.light_volume.vector_view()),
-        },
+        patch_world_bindings(terrain, inputs.shadow, inputs.raw_data),
         units.scene,
     );
     log::info!(

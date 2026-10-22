@@ -1,6 +1,6 @@
 //! Stateless screen projection for simulation-owned objective pointers.
 
-use super::projection::{inputs_are_valid, project_world_target};
+use crate::picking::{inputs_are_valid, project_world_target};
 use glam::Mat4;
 use sim::{PlayerId, World};
 

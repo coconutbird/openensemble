@@ -1,6 +1,6 @@
 //! Renderer projection for authoritative simulation hint callouts.
 
-use super::projection::{inputs_are_valid, project_visible_world_point};
+use crate::picking::{inputs_are_valid, project_visible_world_point};
 use glam::Mat4;
 use sim::{HintCalloutAnchor, World};
 

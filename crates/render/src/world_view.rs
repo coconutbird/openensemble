@@ -29,9 +29,11 @@ use pipeline::hw1::LightSetData;
 use pipeline::source::{AssetSource, StdFileProvider};
 
 use crate::environment::EnvironmentMap;
+use crate::hp_bars::{HpBarColorStages, HpBarInstance, HpBarRenderer, HpBarStyle, HpBarStyleId};
 use crate::lighting::{LocalLightSet, LocalLightView};
 use crate::particle::ParticleSceneTextures;
 use crate::postprocess::{HDR_COLOR_FORMAT, ToneMapResources};
+use crate::selection_decals::{SelectionDecal, SelectionDecalRenderer};
 use crate::terrain::{CompositorResources, LodConfig, TerrainScene};
 use crate::ugx::{Unit, UnitRenderer, UnitScene, UnitSceneRenderer};
 use crate::wgpu;
@@ -69,8 +71,11 @@ pub struct WorldViewInputs<'a> {
     pub sky: Option<&'a Unit>,
     /// Unit visuals and the simulation world.
     pub units: Option<WorldViewUnits<'a>>,
-    /// Asset source for the road textures.
+    /// Asset source for the road and HP bar textures.
     pub asset_source: Option<&'a mut AssetSource<StdFileProvider>>,
+    /// HP bar styles and fill colors. `WorldView::new` loads the textures of the styles from
+    /// `asset_source`. `None` disables the HP bars.
+    pub hp_bars: Option<(&'a [HpBarStyle], &'a HpBarColorStages)>,
     /// Width and height of the output in pixels.
     pub size: [u32; 2],
     /// Texture format of the output view.
@@ -135,6 +140,10 @@ pub struct WorldFrame<'a> {
     pub time_seconds: f32,
     /// Display settings of the frame.
     pub settings: WorldViewSettings<'a>,
+    /// Selection decals on the terrain. They draw in the lit world pass.
+    pub selection_decals: &'a [SelectionDecal],
+    /// Hit-point bars. They draw over the tone-mapped output.
+    pub hp_bars: &'a [HpBarInstance],
 }
 
 /// GPU resources and frame orchestration that draw one loaded scenario.
@@ -151,6 +160,8 @@ pub struct WorldView {
     roads: Option<RoadResources>,
     sky: Option<UnitRenderer>,
     units: Option<UnitSceneRenderer>,
+    selection_decals: SelectionDecalRenderer,
+    hp_bars: Option<HpBarRenderer>,
     tone_map: ToneMapResources,
     local_lights: LocalLightSet,
     lightset: Option<LightSetData>,
@@ -175,7 +186,7 @@ impl WorldView {
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        inputs: WorldViewInputs<'_>,
+        mut inputs: WorldViewInputs<'_>,
         settings: &WorldViewSettings<'_>,
     ) -> Result<Self, WorldViewError> {
         let tone_map = ToneMapResources::new(device, inputs.output_format, inputs.size);
@@ -184,6 +195,21 @@ impl WorldView {
             .raw_xtd_data
             .as_ref()
             .ok_or(WorldViewError::MissingPackedTerrain)?;
+        let hp_bars = match (inputs.hp_bars, inputs.asset_source.as_deref_mut()) {
+            (Some((styles, color_stages)), Some(source)) => Some(HpBarRenderer::load(
+                device,
+                queue,
+                inputs.output_format,
+                source,
+                styles,
+                color_stages,
+            )),
+            (Some(_), None) => {
+                log::warn!("HP bars need an asset source for their textures");
+                None
+            }
+            (None, _) => None,
+        };
         let mut build = TerrainBuild {
             scene: inputs.terrain,
             scene_format: HDR_COLOR_FORMAT,
@@ -235,6 +261,13 @@ impl WorldView {
                 scene_format: HDR_COLOR_FORMAT,
             },
         );
+        let selection_decals = SelectionDecalRenderer::new(
+            device,
+            queue,
+            HDR_COLOR_FORMAT,
+            Some(wgpu::TextureFormat::Depth32Float),
+            units::patch_world_bindings(&terrain, &shadow, raw_data),
+        );
         Ok(Self {
             terrain,
             shadow,
@@ -248,6 +281,8 @@ impl WorldView {
             roads: road_resources,
             sky: renderers.sky,
             units: renderers.units,
+            selection_decals,
+            hp_bars,
             tone_map,
             local_lights: LocalLightSet::default(),
             lightset: inputs.lightset,
@@ -286,6 +321,13 @@ impl WorldView {
                 renderer.placement_count()
             );
         }
+    }
+
+    /// Returns the HP bar style with `name` (the match ignores the case). Returns `None` if
+    /// the view has no HP bars, the name is unknown, or the textures of the style did not load.
+    #[must_use]
+    pub fn hp_bar_style(&self, name: &str) -> Option<HpBarStyleId> {
+        self.hp_bars.as_ref()?.style(name)
     }
 
     /// Returns the number of terrain chunks that the compositor must still composite.

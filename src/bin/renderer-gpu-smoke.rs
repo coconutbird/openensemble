@@ -1,9 +1,12 @@
 //! Headless validation for renderer pipelines that are not always instantiated
 //! by the terrain-viewer scenario under test.
 
+use std::collections::HashMap;
+
 use glam::{Mat4, Vec3};
 use pipeline::database::hw1::pfx;
 use pipeline::xmb::Document;
+use render::hp_bars::{ColorStage, HpBarColorStages, HpBarInstance, HpBarRenderer, HpBarStyle};
 use render::lighting::{LocalLight, LocalLightBuffer, LocalLightSet};
 use render::local_shadow::{
     LOCAL_SHADOW_DEPTH_BIAS, LOCAL_SHADOW_FORMAT, LocalShadowMap, LocalShadowRequest,
@@ -13,11 +16,13 @@ use render::particle::{
     ParticleRenderContext, ParticleRenderer, ParticleScene, ParticleSceneTextures,
 };
 use render::postprocess::{DISTORTION_FORMAT, HDR_COLOR_FORMAT};
+use render::selection_decals::{SelectionDecal, SelectionDecalRenderer};
 use render::terrain::{
     LightingParams, TerrainPatchImage, TerrainPatchInstance, TerrainPatchMaterial,
     TerrainPatchRenderer, TerrainPatchRendererDescriptor, TerrainPatchWorldBindings,
 };
 use render::wgpu;
+use render::world_view::WorldCamera;
 
 fn main() -> anyhow::Result<()> {
     pollster::block_on(run())
@@ -120,6 +125,7 @@ async fn run() -> anyhow::Result<()> {
     );
     queue.submit(Some(command_buffer));
     let _poll_result = device.poll(wgpu::Maintain::Wait);
+    run_overlay_smoke(&device, &queue)?;
     if let Some(error) = device.pop_error_scope().await {
         anyhow::bail!("renderer GPU validation failed: {error}");
     }
@@ -440,6 +446,212 @@ fn encode_local_shadow_smoke(
     }
 }
 
+/// Draws a selection decal into an HDR target and a hit-point bar into an sRGB target, then
+/// reads the bar pixels back.
+fn run_overlay_smoke(device: &wgpu::Device, queue: &wgpu::Queue) -> anyhow::Result<()> {
+    let [scene, depth, output] = [
+        create_target(device, "Overlay Smoke HDR", HDR_COLOR_FORMAT),
+        create_target(
+            device,
+            "Overlay Smoke Depth",
+            wgpu::TextureFormat::Depth32Float,
+        ),
+        create_target(
+            device,
+            "Overlay Smoke Output",
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+        ),
+    ];
+    let scene_view = scene.create_view(&wgpu::TextureViewDescriptor::default());
+    let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
+    let output_view = output.create_view(&wgpu::TextureViewDescriptor::default());
+    let world_to_view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+    let camera = WorldCamera {
+        view_projection: Mat4::orthographic_rh(-2.0, 2.0, -2.0, 2.0, 0.1, 10.0) * world_to_view,
+        world_to_view,
+        position: Vec3::new(0.0, 0.0, 5.0),
+        depth_unproject: [0.0, 1.0],
+        viewport: [8, 8],
+    };
+
+    let mut decals = SelectionDecalRenderer::new(
+        device,
+        queue,
+        HDR_COLOR_FORMAT,
+        Some(wgpu::TextureFormat::Depth32Float),
+        TerrainPatchWorldBindings::default(),
+    );
+    let top_down = Mat4::orthographic_rh(-2.0, 2.0, -2.0, 2.0, 0.1, 10.0)
+        * Mat4::look_at_rh(Vec3::new(0.0, 3.0, 0.0), Vec3::ZERO, Vec3::Z);
+    decals.update(
+        device,
+        queue,
+        top_down,
+        &LightingParams::default(),
+        &[SelectionDecal {
+            center: Vec3::ZERO,
+            forward: Vec3::Z,
+            radius_x: 1.5,
+            radius_z: 1.0,
+            color: [0.27, 0.43, 0.09, 1.0],
+            intensity: 6.0,
+        }],
+    )?;
+
+    let style = HpBarStyle {
+        name: "Smoke_Health".to_owned(),
+        texture: r"ui\smoke\frame".to_owned(),
+        mask_texture: r"ui\smoke\frame_mask".to_owned(),
+        size: [4.0, 4.0],
+        hitpoint_uv: Some([0.0, 0.25, 1.0, 0.75]),
+        shield_uv: None,
+        ammo_uv: None,
+    };
+    let stages = HpBarColorStages {
+        hitpoint: vec![ColorStage {
+            value: 1.0,
+            intensity: 1.0,
+            color: [0, 255, 0],
+        }],
+        ..HpBarColorStages::default()
+    };
+    let images = HashMap::from([
+        (style.texture.clone(), TerrainPatchImage::solid([255; 4])),
+        (
+            style.mask_texture.clone(),
+            TerrainPatchImage::solid([255; 4]),
+        ),
+    ]);
+    let mut bars = HpBarRenderer::new(
+        device,
+        queue,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        std::slice::from_ref(&style),
+        &stages,
+        &images,
+    );
+    let style_id = bars
+        .style("smoke_health")
+        .ok_or_else(|| anyhow::anyhow!("the smoke HP bar style did not load"))?;
+    bars.update(
+        device,
+        queue,
+        &camera,
+        &[HpBarInstance {
+            position: Vec3::ZERO,
+            size: style.size,
+            style: style_id,
+            hitpoints: 0.5,
+            shield: None,
+            ammo: None,
+            player_color: [255, 0, 0],
+        }],
+    );
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("Overlay Smoke Encoder"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Selection Decal Smoke Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &scene_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        decals.render(&mut pass);
+    }
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("HP Bar Smoke Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &output_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        bars.render(&mut pass);
+    }
+    let pixels = read_target(device, queue, encoder, &output)?;
+    let pixel = |x: usize, y: usize| &pixels[y * READBACK_ROW_BYTES + x * 4..][..4];
+    // Filled half of the hit-point rectangle, empty half, and the frame above the rectangle.
+    let filled = pixel(2, 4);
+    let empty = pixel(6, 4);
+    let frame = pixel(4, 1);
+    let checks = filled[1] > 200
+        && filled[0] < 30
+        && empty[1] < 60
+        && empty[0] < 60
+        && frame[0] > 200
+        && frame[1] < 30;
+    anyhow::ensure!(
+        checks,
+        "HP bar pixels are wrong: filled {filled:?}, empty {empty:?}, frame {frame:?}"
+    );
+    Ok(())
+}
+
+/// Bytes in one row of a readback buffer: the copy alignment of wgpu.
+const READBACK_ROW_BYTES: usize = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
+
+/// Copies an 8x8 RGBA8 target into a buffer, submits `encoder` and returns the padded rows.
+fn read_target(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    mut encoder: wgpu::CommandEncoder,
+    target: &wgpu::Texture,
+) -> anyhow::Result<Vec<u8>> {
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Overlay Smoke Readback"),
+        size: u64::from(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * 8,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    encoder.copy_texture_to_buffer(
+        target.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT),
+                rows_per_image: Some(8),
+            },
+        },
+        target.size(),
+    );
+    queue.submit(Some(encoder.finish()));
+    let slice = buffer.slice(..);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |result| {
+        let _send_result = sender.send(result);
+    });
+    let _poll_result = device.poll(wgpu::Maintain::Wait);
+    receiver.recv()??;
+    let pixels = slice.get_mapped_range().to_vec();
+    buffer.unmap();
+    Ok(pixels)
+}
+
 fn create_target(device: &wgpu::Device, label: &str, format: wgpu::TextureFormat) -> wgpu::Texture {
     let is_depth = format == wgpu::TextureFormat::Depth32Float;
     device.create_texture(&wgpu::TextureDescriptor {
@@ -457,7 +669,7 @@ fn create_target(device: &wgpu::Device, label: &str, format: wgpu::TextureFormat
             | if is_depth {
                 wgpu::TextureUsages::TEXTURE_BINDING
             } else {
-                wgpu::TextureUsages::empty()
+                wgpu::TextureUsages::COPY_SRC
             },
         view_formats: &[],
     })
