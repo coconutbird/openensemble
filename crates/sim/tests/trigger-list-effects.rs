@@ -1,3 +1,5 @@
+//! Checks trigger list effects: queries, add, remove, size, partitions, and differences.
+
 use sim::trigger::{
     Condition, ConditionType, Effect, EffectType, Trigger, TriggerScript, TriggerValue, TriggerVar,
     VarType,
@@ -244,7 +246,7 @@ fn partitions_preserve_retail_rounding_and_the_unit_source_clear_quirk() {
     let update = world.update_triggers();
 
     assert_eq!(update.effects_applied, 2);
-    assert!(script_entities(&world, script_id, 0).is_empty());
+    assert_eq!(script_entities(&world, script_id, 0), Vec::<EntityId>::new());
     assert_eq!(script_entities(&world, script_id, 3), units[..2]);
     assert_eq!(script_entities(&world, script_id, 4), units[2..]);
     assert_eq!(script_entities(&world, script_id, 5), squads);

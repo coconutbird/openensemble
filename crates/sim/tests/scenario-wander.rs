@@ -1,3 +1,5 @@
+//! Checks that the shipped spore cloud wanders with scenario-layered tactics.
+
 use glam::Vec3;
 use sim::{load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id};
 

@@ -1,3 +1,5 @@
+//! Checks that the shipped cleansing power uses the scenario-layered database and tactics.
+
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use sim::{

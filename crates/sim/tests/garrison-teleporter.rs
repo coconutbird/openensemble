@@ -1,3 +1,6 @@
+//! Checks garrison and teleporter containers: lifecycle, emergency unload, capacity, and
+//! determinism.
+
 use glam::Vec3;
 use sim::{
     CommandEntry, CommandExecutor, GarrisonError, PopulationCost, QueuedCommand,
@@ -64,13 +67,13 @@ fn work_command_drives_authoritative_teleporter_lifecycle() {
     assert_eq!(passenger.move_target, Some(rally_position));
     assert!(!world.get_unit(passenger_unit).unwrap().is_garrisoned());
     assert!(world.get_unit(passenger_unit).unwrap().is_operational());
-    assert!(
+    assert_eq!(
         world
             .get_unit(source_unit)
             .unwrap()
             .garrison
-            .contained_unit_ids()
-            .is_empty()
+            .contained_unit_ids(),
+        [] as [sim::EntityId; 0]
     );
 }
 

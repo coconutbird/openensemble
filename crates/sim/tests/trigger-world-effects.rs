@@ -1,3 +1,5 @@
+//! Checks trigger world effects: spatial queries, ownership, teleport, health, and damage.
+
 use sim::trigger::{
     Condition, ConditionType, Effect, EffectType, Trigger, TriggerScript, TriggerValue, TriggerVar,
     VarType,

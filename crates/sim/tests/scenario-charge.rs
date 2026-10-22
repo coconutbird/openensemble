@@ -1,3 +1,5 @@
+//! Checks that the shipped Brute Chief charge compiles and pulls a Marine squad.
+
 use glam::Vec3;
 use sim::{
     GameplayCatalog, SquadPullPhase, World, load_scenario_from_game_dir, spawn_squad_at,

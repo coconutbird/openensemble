@@ -1,3 +1,5 @@
+//! Checks that the shipped scenario database drives the Warthog ram.
+
 use glam::Vec3;
 use sim::{
     CommandEntry, CommandExecutor, QueuedCommand, RecoveryType, SquadMode, WorkCommand,

@@ -1,3 +1,5 @@
+//! Checks that the Hunter spirit bond uses scenario-layered data and runtime state.
+
 use glam::Vec3;
 use sim::{EntityId, load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id};
 

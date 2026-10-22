@@ -136,7 +136,8 @@ fn empty_resolved_player_list_is_an_applied_noop_and_unknown_version_is_visible(
         grant(&effect, &script, &mut world, Some(&database)),
         EffectOutcome::Applied
     );
-    assert!(world.get_player(1).unwrap().power_entries().is_empty());
+    let entries = world.get_player(1).unwrap().power_entries();
+    assert_eq!(entries.len(), 0, "{entries:?}");
 
     effect.version = 1;
     assert_eq!(

@@ -1,3 +1,6 @@
+//! Checks squad attack orders: target resolution, rejection of invalid orders, and cancellation
+//! when the target dies.
+
 use glam::Vec3;
 use pipeline::database::hw1::tactics::{Action, TacticData, Weapon};
 use pipeline::database::hw1::{Database, ProtoObject};

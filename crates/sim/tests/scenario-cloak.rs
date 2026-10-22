@@ -1,3 +1,5 @@
+//! Checks that shipped cloak profiles drive visibility and the cloak lifecycle.
+
 use glam::Vec3;
 use sim::{
     RecoveryType, UnitDataScalar, load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id,

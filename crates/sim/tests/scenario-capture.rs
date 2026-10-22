@@ -1,3 +1,5 @@
+//! Checks that the shipped scenario database and tactics drive Marine capture.
+
 use glam::Vec3;
 use sim::{
     CapturePhase, GAIA_PLAYER, load_scenario_from_game_dir, object_prototype_id, spawn_object_at,

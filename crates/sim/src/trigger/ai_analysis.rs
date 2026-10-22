@@ -37,60 +37,114 @@ impl AIDamageClass {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum AISquadAnalysisComponent {
+    /// No component. This is the default.
     #[default]
     Invalid = 0,
+    /// Combat value of squads in the `Light` armor class.
     CVLight = 1,
+    /// Combat value of squads in the `LightArmored` armor class.
     CVLightArmored = 2,
+    /// Combat value of squads in the `Medium` armor class.
     CVMedium = 3,
+    /// Combat value of squads in the `MediumAir` armor class.
     CVMediumAir = 4,
+    /// Combat value of squads in the `Heavy` armor class.
     CVHeavy = 5,
+    /// Combat value of squads in the `Building` armor class.
     CVBuilding = 6,
+    /// Total combat value of all armor classes.
     CVTotal = 7,
+    /// Hitpoints of squads in the `Light` armor class.
     HPLight = 8,
+    /// Hitpoints of squads in the `LightArmored` armor class.
     HPLightArmored = 9,
+    /// Hitpoints of squads in the `Medium` armor class.
     HPMedium = 10,
+    /// Hitpoints of squads in the `MediumAir` armor class.
     HPMediumAir = 11,
+    /// Hitpoints of squads in the `Heavy` armor class.
     HPHeavy = 12,
+    /// Hitpoints of squads in the `Building` armor class.
     HPBuilding = 13,
+    /// Total hitpoints of all armor classes.
     HPTotal = 14,
+    /// Shieldpoints of squads in the `Light` armor class.
     SPLight = 15,
+    /// Shieldpoints of squads in the `LightArmored` armor class.
     SPLightArmored = 16,
+    /// Shieldpoints of squads in the `Medium` armor class.
     SPMedium = 17,
+    /// Shieldpoints of squads in the `MediumAir` armor class.
     SPMediumAir = 18,
+    /// Shieldpoints of squads in the `Heavy` armor class.
     SPHeavy = 19,
+    /// Shieldpoints of squads in the `Building` armor class.
     SPBuilding = 20,
+    /// Total shieldpoints of all armor classes.
     SPTotal = 21,
+    /// Damage per second against the `Light` armor class.
     DPSLight = 22,
+    /// Damage per second against the `LightArmored` armor class.
     DPSLightArmored = 23,
+    /// Damage per second against the `Medium` armor class.
     DPSMedium = 24,
+    /// Damage per second against the `MediumAir` armor class.
     DPSMediumAir = 25,
+    /// Damage per second against the `Heavy` armor class.
     DPSHeavy = 26,
+    /// Damage per second against the `Building` armor class.
     DPSBuilding = 27,
+    /// Total damage per second against all armor classes.
     DPSTotal = 28,
+    /// Share of combat value in the `Light` armor class, from 0 to 1.
     CVPercentLight = 29,
+    /// Share of combat value in the `LightArmored` armor class, from 0 to 1.
     CVPercentLightArmored = 30,
+    /// Share of combat value in the `Medium` armor class, from 0 to 1.
     CVPercentMedium = 31,
+    /// Share of combat value in the `MediumAir` armor class, from 0 to 1.
     CVPercentMediumAir = 32,
+    /// Share of combat value in the `Heavy` armor class, from 0 to 1.
     CVPercentHeavy = 33,
+    /// Share of combat value in the `Building` armor class, from 0 to 1.
     CVPercentBuilding = 34,
+    /// Share of hitpoints in the `Light` armor class, from 0 to 1.
     HPPercentLight = 35,
+    /// Share of hitpoints in the `LightArmored` armor class, from 0 to 1.
     HPPercentLightArmored = 36,
+    /// Share of hitpoints in the `Medium` armor class, from 0 to 1.
     HPPercentMedium = 37,
+    /// Share of hitpoints in the `MediumAir` armor class, from 0 to 1.
     HPPercentMediumAir = 38,
+    /// Share of hitpoints in the `Heavy` armor class, from 0 to 1.
     HPPercentHeavy = 39,
+    /// Share of hitpoints in the `Building` armor class, from 0 to 1.
     HPPercentBuilding = 40,
+    /// Combat value times attack stars against the `Light` armor class.
     CVStarsLight = 41,
+    /// Combat value times attack stars against the `LightArmored` armor class.
     CVStarsLightArmored = 42,
+    /// Combat value times attack stars against the `Medium` armor class.
     CVStarsMedium = 43,
+    /// Combat value times attack stars against the `MediumAir` armor class.
     CVStarsMediumAir = 44,
+    /// Combat value times attack stars against the `Heavy` armor class.
     CVStarsHeavy = 45,
+    /// Combat value times attack stars against the `Building` armor class.
     CVStarsBuilding = 46,
+    /// Total combat-value stars of all armor classes.
     CVStarsTotal = 47,
+    /// Combat-value stars for the `Light` armor class, scaled so the largest class is 1.
     NormalizedStarsLight = 48,
+    /// Combat-value stars for the `LightArmored` armor class, scaled so the largest class is 1.
     NormalizedStarsLightArmored = 49,
+    /// Combat-value stars for the `Medium` armor class, scaled so the largest class is 1.
     NormalizedStarsMedium = 50,
+    /// Combat-value stars for the `MediumAir` armor class, scaled so the largest class is 1.
     NormalizedStarsMediumAir = 51,
+    /// Combat-value stars for the `Heavy` armor class, scaled so the largest class is 1.
     NormalizedStarsHeavy = 52,
+    /// Combat-value stars for the `Building` armor class, scaled so the largest class is 1.
     NormalizedStarsBuilding = 53,
 }
 

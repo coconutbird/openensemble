@@ -1,3 +1,6 @@
+//! Checks building research commands: payment, progress, prerequisites, refunds, and unique
+//! research.
+
 use glam::Vec3;
 use pipeline::database::hw1::gamedata::{ResourceDef, ResourcesWrapper};
 use pipeline::database::hw1::objects::ObjectCommand;

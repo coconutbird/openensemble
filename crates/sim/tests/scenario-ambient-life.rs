@@ -1,3 +1,5 @@
+//! Checks that the shipped bird uses layered ambient-life data.
+
 use glam::Vec3;
 use sim::{
     AmbientLifeBehavior, GAIA_PLAYER, load_scenario_from_game_dir, spawn_squad_at,

@@ -1,3 +1,5 @@
+//! Checks that the shipped repair power reinforces squads and obeys disruption.
+
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use sim::{

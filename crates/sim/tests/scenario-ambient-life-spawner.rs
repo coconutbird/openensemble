@@ -1,3 +1,5 @@
+//! Checks that the shipped layered ambient-life spawner creates one fleeing bird squad.
+
 use glam::Vec3;
 use sim::{
     EntityId, GAIA_PLAYER, load_scenario_from_game_dir, object_prototype_id, spawn_object_at,

@@ -1,3 +1,5 @@
+//! Checks that the shipped orbital power uses layered tactics and throws synchronized debris.
+
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use sim::{

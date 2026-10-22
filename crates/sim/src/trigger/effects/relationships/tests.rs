@@ -54,7 +54,7 @@ fn get_child_units_clears_and_unique_adds_valid_children_in_retail_order() {
         get_child_units(&effect, &mut script, &world),
         EffectOutcome::Applied
     );
-    assert!(unit_list(&script, 3).is_empty());
+    assert_eq!(unit_list(&script, 3), [] as [crate::EntityId; 0]);
 }
 
 #[test]

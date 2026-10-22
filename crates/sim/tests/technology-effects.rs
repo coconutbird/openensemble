@@ -1,3 +1,5 @@
+//! Checks that technology effects update live and future units, squads, and players.
+
 use glam::Vec3;
 use pipeline::database::hw1::squads::{UnitEntry, UnitsWrapper};
 use pipeline::database::hw1::tactics::TacticData;

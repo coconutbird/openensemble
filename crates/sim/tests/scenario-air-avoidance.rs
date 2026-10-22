@@ -1,3 +1,5 @@
+//! Checks that the shipped Banshee uses scenario-layered air avoidance and kamikaze data.
+
 use glam::Vec3;
 use sim::{
     AircraftCrashPhase, FlightControllerKind, GameplayCatalog, TeamRelation, World,

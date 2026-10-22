@@ -1,3 +1,5 @@
+//! Checks that shipped scenarios do not author the latent mines action.
+
 use sim::load_scenario_from_game_dir;
 
 /// Run with:

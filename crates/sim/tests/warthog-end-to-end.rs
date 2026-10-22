@@ -1,3 +1,5 @@
+//! Checks the stock Warthog from database profiles to movement and building collisions.
+
 use glam::Vec3;
 use pipeline::database::hw1::squads::{TurnRadius, UnitEntry, UnitsWrapper};
 use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad};

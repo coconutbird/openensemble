@@ -114,7 +114,7 @@ fn list_effects_preserve_duplicates_and_retail_removal_modes() {
         execute(&remove, &mut script, &World::new()),
         Some(EffectOutcome::Applied)
     );
-    assert!(lines(&script, 4).is_empty());
+    assert_eq!(lines(&script, 4), [] as [i32; 0]);
 
     let size = Effect::new(3, EffectType::DesignLineListGetSize)
         .with_input_at(1, 2)

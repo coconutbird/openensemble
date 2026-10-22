@@ -1,3 +1,5 @@
+//! Checks trigger loading and execution order, activation, and unsupported conditions.
+
 use pipeline::database::hw1::{Database, Tech};
 use pipeline::xmb::Document;
 use sim::trigger::{

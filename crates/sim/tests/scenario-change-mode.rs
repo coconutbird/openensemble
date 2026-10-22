@@ -1,3 +1,5 @@
+//! Checks that the shipped Cobra uses the scenario-layered mode database and animations.
+
 use glam::Vec3;
 use sim::{
     CommandEntry, CommandExecutor, EntityId, GameplayCatalog, QueuedCommand, SquadChangeModePhase,

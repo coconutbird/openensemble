@@ -1,3 +1,5 @@
+//! Checks that the shipped Flood bomb loads scenario physics and runs its persistent actions.
+
 use glam::Vec3;
 use sim::{
     BombPhase, GameplayCatalog, MotionType, UnitDetonatePhase, World, load_scenario_from_game_dir,

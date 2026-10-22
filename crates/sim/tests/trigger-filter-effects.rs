@@ -1,3 +1,5 @@
+//! Checks trigger entity-filter effects and their retail order and invalid-input handling.
+
 use sim::trigger::{
     Condition, ConditionType, Effect, EffectType, EntityFilterSet, Trigger, TriggerScript,
     TriggerValue, TriggerVar, VarType,
@@ -227,7 +229,7 @@ fn in_list_copies_payload_clear_empties_set_and_failed_alias_write_wins() {
     let update = world.update_triggers();
 
     assert_eq!(update.effects_applied, 5);
-    assert!(script_entities(&world, script_id, 1).is_empty());
+    assert_eq!(script_entities(&world, script_id, 1), Vec::<EntityId>::new());
     assert_eq!(script_entities(&world, script_id, 5), vec![second]);
     assert_eq!(script_entities(&world, script_id, 6), vec![first, second]);
     assert_eq!(script_filter_set(&world, script_id, 0).filter_count(), 0);

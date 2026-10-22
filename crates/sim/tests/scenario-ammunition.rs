@@ -1,3 +1,5 @@
+//! Checks that the shipped scenario database drives ammunition and its technologies.
+
 use glam::Vec3;
 use sim::{
     load_scenario_from_game_dir, object_prototype_id, spawn_object_at, spawn_squad_at,

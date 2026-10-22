@@ -396,6 +396,7 @@ pub struct TriggerIterator {
 }
 
 impl TriggerIterator {
+    /// Return the ID of the list variable that this iterator walks, if any.
     #[must_use]
     pub fn source_list_id(&self) -> Option<VarId> {
         self.source_list_id
@@ -415,6 +416,7 @@ impl TriggerIterator {
         self.visited_players.contains(&player_id)
     }
 
+    /// Return the number of players that the iterator visited.
     #[must_use]
     pub fn visited_player_count(&self) -> usize {
         self.visited_players.len()
@@ -430,6 +432,7 @@ impl TriggerIterator {
         self.visited_teams.contains(&team_id)
     }
 
+    /// Return the number of teams that the iterator visited.
     #[must_use]
     pub fn visited_team_count(&self) -> usize {
         self.visited_teams.len()
@@ -445,6 +448,7 @@ impl TriggerIterator {
         self.visited_units.contains(&unit_id)
     }
 
+    /// Return the number of units that the iterator visited.
     #[must_use]
     pub fn visited_unit_count(&self) -> usize {
         self.visited_units.len()
@@ -460,6 +464,7 @@ impl TriggerIterator {
         self.visited_squads.contains(&squad_id)
     }
 
+    /// Return the number of squads that the iterator visited.
     #[must_use]
     pub fn visited_squad_count(&self) -> usize {
         self.visited_squads.len()
@@ -483,6 +488,7 @@ impl TriggerIterator {
         self.visited_objects.contains(&object_id)
     }
 
+    /// Return the number of objects that the iterator visited.
     #[must_use]
     pub fn visited_object_count(&self) -> usize {
         self.visited_objects.len()
@@ -498,6 +504,7 @@ impl TriggerIterator {
         self.visited_vectors.contains(&vector)
     }
 
+    /// Return the number of vectors that the iterator visited.
     #[must_use]
     pub fn visited_vector_count(&self) -> usize {
         self.visited_vectors.len()
@@ -529,17 +536,22 @@ impl TriggerIterator {
 /// A 3D vector for locations and directions.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Vec3 {
+    /// X component.
     pub x: f32,
+    /// Y component.
     pub y: f32,
+    /// Z component.
     pub z: f32,
 }
 
 impl Vec3 {
+    /// Make a vector from its three components.
     #[must_use]
     pub fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
     }
 
+    /// Return the zero vector.
     #[must_use]
     pub fn zero() -> Self {
         Self::default()
@@ -549,13 +561,18 @@ impl Vec3 {
 /// RGBA color value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Color {
+    /// Red channel, 0 to 255.
     pub r: u8,
+    /// Green channel, 0 to 255.
     pub g: u8,
+    /// Blue channel, 0 to 255.
     pub b: u8,
+    /// Alpha channel, 0 to 255.
     pub a: u8,
 }
 
 impl Color {
+    /// Make a color from its four channels.
     #[must_use]
     pub fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
         Self { r, g, b, a }
@@ -572,9 +589,13 @@ pub const COST_RESOURCE_SLOTS: usize = 4;
 /// population-cap accounting is stored separately on [`crate::player::Player`].
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Cost {
+    /// Amount of resource slot 0 (supplies).
     pub supplies: f32,
+    /// Amount of resource slot 1 (power).
     pub power: f32,
+    /// Amount of resource slot 2. The name `population` is a legacy name.
     pub population: f32,
+    /// Amount of resource slot 3.
     pub resource_3: f32,
 }
 
@@ -682,45 +703,73 @@ impl BuildingCommandState {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TriggerValue {
     // Primitives
+    /// Boolean value.
     Bool(bool),
+    /// Integer value.
     Int(i32),
+    /// List of integers.
     IntegerList(Vec<i32>),
+    /// Floating-point value.
     Float(f32),
+    /// Text value.
     String(String),
 
     // Game entities
+    /// Any entity.
     Entity(EntityId),
+    /// List of entities.
     EntityList(Vec<EntityId>),
+    /// Unit entity.
     Unit(EntityId),
+    /// List of unit entities.
     UnitList(Vec<EntityId>),
+    /// Squad entity.
     Squad(EntityId),
+    /// List of squad entities.
     SquadList(Vec<EntityId>),
+    /// Object entity.
     Object(EntityId),
+    /// List of object entities.
     ObjectList(Vec<EntityId>),
 
     // Spatial
+    /// World location.
     Location(Vec3),
+    /// List of world locations.
     LocationList(Vec<Vec3>),
+    /// Direction or offset vector.
     Vector(Vec3),
+    /// List of vectors.
     VectorList(Vec<Vec3>),
 
     // Players/Teams
+    /// Player ID.
     Player(PlayerId),
+    /// List of player IDs.
     PlayerList(Vec<PlayerId>),
+    /// Team ID.
     Team(TeamId),
+    /// List of team IDs.
     TeamList(Vec<TeamId>),
 
     // Game data references
+    /// Proto object ID from game data.
     ProtoObject(ProtoObjectId),
+    /// List of proto object IDs.
     ProtoObjectList(Vec<ProtoObjectId>),
+    /// Proto squad ID from game data.
     ProtoSquad(ProtoSquadId),
+    /// List of proto squad IDs.
     ProtoSquadList(Vec<ProtoSquadId>),
+    /// Technology ID.
     Tech(TechId),
+    /// List of technology IDs.
     TechList(Vec<TechId>),
     /// Authored object-type name. Retail resolves this name to a runtime ID
     /// while loading a script; retaining the name keeps the same identity
     /// stable across scenario-layered databases.
     ObjectType(String),
+    /// List of authored object-type names.
     ObjectTypeList(Vec<String>),
     /// Scenario design-object line identity.
     DesignLine(i32),
@@ -728,23 +777,36 @@ pub enum TriggerValue {
     DesignLineList(Vec<i32>),
 
     // Resources
+    /// Resource cost.
     Cost(Cost),
+    /// Time in milliseconds.
     Time(u32), // milliseconds
 
     // Miscellaneous
+    /// RGBA color.
     Color(Color),
+    /// Objective ID.
     Objective(ObjectiveId),
+    /// Trigger ID in the same script.
     Trigger(super::TriggerId),
+    /// Iterator state over a list variable.
     Iterator(TriggerIterator),
+    /// Set of entity filters.
     EntityFilterSet(EntityFilterSet),
+    /// Result state of a building command.
     BuildingCommandState(BuildingCommandState),
+    /// AI squad-analysis values.
     AISquadAnalysis(super::AISquadAnalysis),
+    /// Selector for one AI squad-analysis value.
     AISquadAnalysisComponent(super::AISquadAnalysisComponent),
 
     // Placeholder for complex/uncommon types
     // These can be expanded as needed
+    /// Raw data for a variable type that has no typed form.
     Other {
+        /// Variable type of the data.
         var_type: super::VarType,
+        /// Raw bytes of the value.
         data: Vec<u8>,
     },
 }

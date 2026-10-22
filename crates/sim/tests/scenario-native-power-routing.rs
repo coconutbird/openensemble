@@ -1,3 +1,5 @@
+//! Checks that every shipped native power type reaches a simulation implementation.
+
 use std::collections::BTreeSet;
 
 use glam::Vec3;

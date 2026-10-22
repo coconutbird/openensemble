@@ -1,3 +1,5 @@
+//! Checks the shipped ODST drop: layered profiles, transformed members, and delayed reveal.
+
 use glam::Vec3;
 use sim::{
     EntityId, NativePowerInput, OdstPowerInvocation, PowerUserId, load_scenario_from_game_dir,

@@ -60,7 +60,7 @@ pub(super) fn assert_loaded_gameplay_catalog(loaded: &LoadedGameScenario) {
     );
     assert!(rifle.damage_per_attack > 0.0);
     assert_real_rifle_accuracy(marine, rifle);
-    assert!(!rifle.animations.is_empty());
+    assert_ne!(rifle.animations.len(), 0);
     assert!(
         rifle
             .animations

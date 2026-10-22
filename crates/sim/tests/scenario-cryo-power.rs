@@ -1,3 +1,5 @@
+//! Checks that the shipped cryo power runs against the scenario-layered database.
+
 use glam::Vec3;
 use sim::{
     CryoPowerInvocation, EntityId, load_scenario_from_game_dir, power_prototype_id, spawn_squad_at,

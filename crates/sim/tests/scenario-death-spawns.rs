@@ -1,3 +1,5 @@
+//! Checks that shipped death spawns create their database squads and technology-assigned spawns.
+
 use glam::Vec3;
 use sim::{load_scenario_from_game_dir, object_prototype_id, spawn_object_at};
 

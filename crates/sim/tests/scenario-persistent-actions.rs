@@ -1,3 +1,5 @@
+//! Checks that shipped persistent actions survive scenario database layering.
+
 use sim::{GameplayCatalog, load_scenario_from_game_dir};
 
 #[test]

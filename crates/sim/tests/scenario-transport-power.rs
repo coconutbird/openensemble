@@ -1,3 +1,5 @@
+//! Checks that the shipped transport power carries a layered Marine squad to the drop-off point.
+
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use sim::{

@@ -1,3 +1,5 @@
+//! Checks that Blood Gulch triggers load, remap, and run from the simulation tick.
+
 use sim::{EffectType, Simulation, TriggerValue, load_scenario_from_game_dir};
 
 /// Run with:

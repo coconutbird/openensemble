@@ -1,3 +1,5 @@
+//! Checks the shipped carpet-bombing power: bomb drops, fuses, and tactic damage.
+
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use sim::{

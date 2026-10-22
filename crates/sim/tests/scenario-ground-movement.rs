@@ -1,3 +1,5 @@
+//! Checks that the shipped Marine squad uses ground move actions for each member.
+
 use glam::Vec3;
 use sim::{GroundMovePhase, load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id};
 

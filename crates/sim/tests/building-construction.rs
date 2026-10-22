@@ -1,3 +1,5 @@
+//! Checks building construction commands: costs, refunds, sockets, and population cap changes.
+
 use glam::Vec3;
 use pipeline::database::hw1::gamedata::{PopsWrapper, RatesWrapper, ResourceDef, ResourcesWrapper};
 use pipeline::database::hw1::objects::{
@@ -40,7 +42,7 @@ fn direct_build_command_pays_constructs_and_defers_cap_addition() {
     let building_id = constructed_by(&world, builder_id, DIRECT);
     let building = world.get_building(building_id).unwrap();
     assert!(!building.built);
-    assert!(building.associated_sockets().is_empty());
+    assert_eq!(building.associated_sockets(), [] as [EntityId; 0]);
     assert_eq!(world.unit_rally_point(building_id, 1), None);
     assert_eq!(building.base.position, Vec3::new(12.0, 0.0, 8.0));
     assert_close(world.get_player(1).unwrap().resources.get(0), 900.0);

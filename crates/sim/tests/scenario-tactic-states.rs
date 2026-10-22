@@ -1,3 +1,5 @@
+//! Checks that layered scenarios keep the shipped tactic state contracts.
+
 use std::collections::BTreeSet;
 
 use glam::Vec3;

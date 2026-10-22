@@ -1,3 +1,5 @@
+//! Checks that the shipped rage power controls a squad and runs a landing attack.
+
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use sim::{

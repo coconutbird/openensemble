@@ -1,3 +1,5 @@
+//! Checks construction of the real command center through a Blood Gulch power socket.
+
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use pipeline::database::hw1::objects::ChildObjectType;
@@ -81,7 +83,7 @@ fn builds_real_command_center_through_blood_gulch_power_socket() {
         .expect("promotion should create the unfinished command center");
     let building = loaded.simulation.world.get_building(building_id).unwrap();
     assert!(!building.built);
-    assert!(building.associated_sockets().is_empty());
+    assert_eq!(building.associated_sockets(), [] as [EntityId; 0]);
     assert_eq!(
         loaded
             .simulation

@@ -1,3 +1,5 @@
+//! Checks that shipped scenario air bases set up their landing spots from source data.
+
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use sim::{

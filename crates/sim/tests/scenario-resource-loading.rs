@@ -1,3 +1,5 @@
+//! Checks that Blood Gulch players seed lifetime totals from layered starting resources.
+
 use sim::{configure_player_leader, load_scenario_from_game_dir};
 
 /// Run with:

@@ -1,3 +1,5 @@
+//! Checks that a Blood Gulch Marine squad moves through the authored teleporter link.
+
 use glam::Vec3;
 use sim::{
     Simulation, SquadContainmentState, WorkCommand, load_scenario_from_game_dir, spawn_squad_at,
@@ -191,15 +193,15 @@ fn assert_completed_traversal(
             .get_unit(*unit_id)
             .is_some_and(|unit| !unit.is_garrisoned())
     }));
-    assert!(
+    assert_eq!(
         loaded
             .simulation
             .world
             .get_unit(endpoints.source_unit)
             .unwrap()
             .garrison
-            .contained_unit_ids()
-            .is_empty()
+            .contained_unit_ids(),
+        [] as [sim::EntityId; 0]
     );
 }
 

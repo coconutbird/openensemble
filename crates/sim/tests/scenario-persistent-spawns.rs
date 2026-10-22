@@ -1,3 +1,5 @@
+//! Checks that shipped spawn actions survive layering and keep their live spawned squads.
+
 use glam::Vec3;
 use sim::{Entity, JoinKind, load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id};
 

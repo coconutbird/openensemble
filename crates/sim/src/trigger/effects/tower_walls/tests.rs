@@ -64,12 +64,12 @@ fn effect_requires_tactic_action_and_applies_retail_link_state() {
             .tower_wall
             .is_none()
     );
-    assert!(
+    assert_eq!(
         untouched
             .get_squad(source)
             .unwrap()
-            .associated_wall_towers()
-            .is_empty()
+            .associated_wall_towers(),
+        [] as [crate::EntityId; 0]
     );
 }
 

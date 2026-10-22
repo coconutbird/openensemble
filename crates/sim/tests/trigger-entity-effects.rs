@@ -1,3 +1,5 @@
+//! Checks trigger effects that create, kill, and destroy entities.
+
 use pipeline::database::hw1::gamedata::PopsWrapper;
 use pipeline::database::hw1::objects::PopulationAmount;
 use pipeline::database::hw1::squads::{UnitEntry, UnitsWrapper};
@@ -172,7 +174,7 @@ fn create_squads_preserves_duplicate_prototypes_and_retail_list_outputs() {
     let update = world.update_triggers_with_database(&database);
 
     assert_eq!(update.effects_applied, 1);
-    assert!(update.unsupported_effect_types.is_empty());
+    assert_eq!(update.unsupported_effect_types, Vec::<u16>::new());
     let created = script_entities(&world, script_id, 5);
     assert_eq!(created.len(), 2, "duplicate entries create distinct squads");
     assert_eq!(script_entities(&world, script_id, 6), created);
@@ -391,7 +393,7 @@ fn creation_failures_preserve_each_retail_output_contract() {
 
     assert_eq!(update.effects_applied, 2);
     assert_eq!(script_entity(&world, script_id, 3), EntityId::INVALID);
-    assert!(script_entities(&world, script_id, 4).is_empty());
+    assert_eq!(script_entities(&world, script_id, 4), Vec::<EntityId>::new());
     assert_eq!(script_entity(&world, script_id, 6), EntityId::INVALID);
     assert_eq!(script_entity(&world, script_id, 8), EntityId::INVALID);
     assert_eq!(script_entities(&world, script_id, 7), vec![retained_unit]);
@@ -418,7 +420,7 @@ fn create_squad_fly_in_without_civ_transport_keeps_retail_ground_fallback() {
 
     let update = world.update_triggers_with_database(&database);
 
-    assert!(update.unsupported_effect_types.is_empty());
+    assert_eq!(update.unsupported_effect_types, Vec::<u16>::new());
     assert_eq!(update.effects_applied, 1);
     let squads = world.squads.iter().collect::<Vec<_>>();
     let [(_, squad)] = squads.as_slice() else {

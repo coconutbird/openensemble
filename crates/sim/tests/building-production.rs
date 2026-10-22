@@ -1,3 +1,5 @@
+//! Checks building production queues: squad and unit training, costs, refunds, and population.
+
 use glam::Vec3;
 use pipeline::database::hw1::gamedata::{PopsWrapper, ResourceDef, ResourcesWrapper};
 use pipeline::database::hw1::objects::{

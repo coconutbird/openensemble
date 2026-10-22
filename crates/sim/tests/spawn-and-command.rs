@@ -1,3 +1,5 @@
+//! Checks team relations, base spawns, and queued create and move commands.
+
 use glam::Vec3;
 use pipeline::database::hw1::squads::{UnitEntry, UnitsWrapper};
 use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad};

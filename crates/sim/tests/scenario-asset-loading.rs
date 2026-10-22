@@ -1,3 +1,6 @@
+//! Checks loading of shipped scenario assets into a simulation, and the errors for missing
+//! archives.
+
 #[path = "scenario_asset_loading/catalog_assertions.rs"]
 mod catalog_assertions;
 #[path = "scenario_asset_loading/combat_assertions.rs"]
@@ -745,7 +748,7 @@ fn assert_initial_base_state(loaded: &LoadedGameScenario) {
             .expect("initial base should have a building anchor");
         assert_eq!(base.player_id, player_id);
         assert_eq!(anchor.base.player_id, player_id);
-        assert!(!anchor.proto_object_name.is_empty());
+        assert_ne!(anchor.proto_object_name, "");
     }
     assert!(
         !loaded.simulation.world.units.is_empty() || !loaded.simulation.world.squads.is_empty()

@@ -1,3 +1,5 @@
+//! Checks that scenario database tables replace base tables before the simulation is built.
+
 use era::{TeaKeys, Writer};
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -580,13 +582,8 @@ fn start_layered_cryo_power(loaded: &mut sim::LoadedGameScenario) -> (sim::Entit
 }
 
 fn assert_layered_vehicle_physics(loaded: &mut sim::LoadedGameScenario) {
-    assert!(
-        loaded
-            .simulation
-            .gameplay
-            .vehicle_physics_issues()
-            .is_empty()
-    );
+    let issues = loaded.simulation.gameplay.vehicle_physics_issues();
+    assert_eq!(issues.len(), 0, "{issues:?}");
     let profile = loaded
         .simulation
         .gameplay
@@ -613,13 +610,8 @@ fn assert_layered_vehicle_physics(loaded: &mut sim::LoadedGameScenario) {
         .gameplay
         .physics_replacement("SCENARIO_MINELAYER")
         .expect("scenario object should load replacement physics without a detonation flag");
-    assert!(
-        loaded
-            .simulation
-            .gameplay
-            .physics_replacement_issues()
-            .is_empty()
-    );
+    let issues = loaded.simulation.gameplay.physics_replacement_issues();
+    assert_eq!(issues.len(), 0, "{issues:?}");
     assert_eq!(replacement.physics_info(), "layered_clamshell");
     assert_eq!(
         replacement.collider().half_extents,

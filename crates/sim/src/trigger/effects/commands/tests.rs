@@ -33,7 +33,7 @@ fn clear_building_command_state_marks_done_and_discards_trained_squads() {
         panic!("building command state changed type");
     };
     assert!(state.is_done());
-    assert!(state.trained_squads().is_empty());
+    assert_eq!(state.trained_squads(), [] as [crate::EntityId; 0]);
 }
 
 #[test]

@@ -12,7 +12,7 @@ mod binding;
 mod checksum;
 mod condition;
 mod conditions;
-#[path = "trigger.rs"]
+#[path = "trigger/trigger.rs"]
 mod definition;
 mod effect;
 mod effects;

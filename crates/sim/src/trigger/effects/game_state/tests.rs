@@ -268,7 +268,7 @@ fn get_players_2_filters_in_roster_order_with_retail_relation_rules() {
         get_players_2(&effect, &mut script, &world),
         EffectOutcome::Applied
     );
-    assert!(player_list(&script, 1).is_empty());
+    assert_eq!(player_list(&script, 1), [] as [i32; 0]);
 }
 
 fn add_value(script: &mut TriggerScript, id: u32, var_type: VarType, value: TriggerValue) {

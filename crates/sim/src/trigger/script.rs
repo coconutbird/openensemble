@@ -8,6 +8,7 @@ use super::{Trigger, TriggerId, TriggerScriptId, TriggerValue, VarId, VarType};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum ScriptType {
+    /// No valid script type. This is the default.
     #[default]
     Invalid = 0,
     /// Scenario scripts (campaign, skirmish).

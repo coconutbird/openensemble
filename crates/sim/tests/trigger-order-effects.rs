@@ -1,3 +1,5 @@
+//! Checks trigger effects that give move, work, attack, and power orders to squads.
+
 use sim::trigger::{
     Condition, ConditionType, Effect, EffectType, Trigger, TriggerScript, TriggerValue, TriggerVar,
     VarType,
@@ -37,7 +39,7 @@ fn carpet_bomb_v3_dispatches_through_the_scenario_layered_database() {
     let update = world.update_triggers_with_database(&database);
 
     assert_eq!(update.effects_applied, 1);
-    assert!(update.unsupported_effect_types.is_empty());
+    assert_eq!(update.unsupported_effect_types, Vec::<u16>::new());
     let squad = world.get_squad(squad_id).unwrap();
     assert_eq!(squad.carpet_bomb_phase(), SquadCarpetBombPhase::Preparing);
     assert_eq!(squad.carpet_bomb_target(), Some(target));
@@ -161,7 +163,7 @@ fn work_prefers_live_entity_targets_and_accepts_v4_command_ability() {
     let update = world.update_triggers();
 
     assert_eq!(update.effects_applied, 3);
-    assert!(update.unsupported_effect_types.is_empty());
+    assert_eq!(update.unsupported_effect_types, Vec::<u16>::new());
     assert_eq!(
         world.get_squad(mover).unwrap().move_target,
         Some(target_location)
@@ -206,7 +208,7 @@ fn work_resolves_a_scenario_unit_reference_to_authoritative_garrison_state() {
     let update = world.update_triggers();
 
     assert_eq!(update.effects_applied, 1);
-    assert!(update.unsupported_effect_types.is_empty());
+    assert_eq!(update.unsupported_effect_types, Vec::<u16>::new());
     assert_eq!(
         world.get_squad(worker).unwrap().garrison.state(),
         SquadContainmentState::Garrisoning {
@@ -292,7 +294,7 @@ fn work_v4_command_ability_selects_a_tactic_attack() {
     let update = world.update_triggers_with_gameplay(&database, &gameplay);
 
     assert_eq!(update.effects_applied, 1);
-    assert!(update.unsupported_effect_types.is_empty());
+    assert_eq!(update.unsupported_effect_types, Vec::<u16>::new());
     let squad = world.get_squad(attacker).unwrap();
     assert_eq!(squad.attack_target, Some(target));
     assert_eq!(squad.attack_ability_id, Some(0));
@@ -433,7 +435,7 @@ fn move_path_uses_retail_closest_segment_and_reverse_movement() {
 
     let update = world.update_triggers();
     assert_eq!(update.effects_applied, 1);
-    assert!(update.unsupported_effect_types.is_empty());
+    assert_eq!(update.unsupported_effect_types, Vec::<u16>::new());
     let closest_segment_point = glam::Vec3::new(13.0, 0.0, 0.0);
     let squad = world.get_squad(mover).unwrap();
     assert_eq!(squad.move_target, Some(closest_segment_point));

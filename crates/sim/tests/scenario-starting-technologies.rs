@@ -1,3 +1,5 @@
+//! Checks that campaign players activate layered civilization and leader technologies.
+
 use std::env;
 
 #[test]

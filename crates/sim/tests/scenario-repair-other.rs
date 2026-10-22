@@ -1,3 +1,5 @@
+//! Checks that the shipped scenario database and tactics drive Engineer repair of other units.
+
 use glam::Vec3;
 use sim::{RepairOtherPhase, load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id};
 

@@ -1,3 +1,5 @@
+//! Checks that the scenario database default difficulty applies to every player.
+
 use pipeline::database::hw1::{Database, GameData};
 use pipeline::hw1::scenario::{PlayersWrapper, ScenarioData, ScenarioPlayer};
 use sim::load_scenario_into_world;

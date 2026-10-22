@@ -20,27 +20,40 @@ mod value_types;
 /// Errors that can occur when loading trigger scripts.
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError {
+    /// The XMB data did not parse.
     #[error("XMB parse error: {0}")]
     XmbError(#[from] pipeline::xmb::Error),
 
+    /// A file read failed.
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 
+    /// A required XML attribute is missing. The value is the attribute name.
     #[error("Missing required attribute: {0}")]
     MissingAttribute(String),
 
+    /// A required XML element is missing. The value is the element name.
     #[error("Missing required element: {0}")]
     MissingElement(String),
 
+    /// A field has a value that does not parse.
     #[error("Invalid value for {field}: {value}")]
-    InvalidValue { field: String, value: String },
+    InvalidValue {
+        /// Name of the field.
+        field: String,
+        /// Text of the value that does not parse.
+        value: String,
+    },
 
+    /// The variable type name is not known.
     #[error("Unknown variable type: {0}")]
     UnknownVarType(String),
 
+    /// The condition type ID is not known.
     #[error("Unknown condition type: {0}")]
     UnknownConditionType(i32),
 
+    /// The effect type ID is not known.
     #[error("Unknown effect type: {0}")]
     UnknownEffectType(i32),
 }

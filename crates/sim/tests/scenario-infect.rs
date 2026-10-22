@@ -1,3 +1,5 @@
+//! Checks that the shipped scenario database and tactics drive Marine infection.
+
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use sim::{
@@ -69,7 +71,7 @@ fn assert_shipped_profile(gameplay: &GameplayCatalog) {
         profile.attachment_proto_object(),
         Some("fx_sporecloud_infect")
     );
-    assert!(profile.invalid_targets().is_empty());
+    assert_eq!(profile.invalid_targets(), [] as [String; 0]);
     assert!(!profile.starts_disabled());
 }
 

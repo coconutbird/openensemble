@@ -1,3 +1,5 @@
+//! Checks that the shipped Brute uses layered jump tactics, technologies, and ability data.
+
 use glam::Vec3;
 use sim::entities::squads::SquadJumpPhase;
 use sim::{

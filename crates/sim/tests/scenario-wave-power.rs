@@ -1,3 +1,5 @@
+//! Checks the shipped wave power: damage parts, layered tactics, and thrown physics debris.
+
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use sim::{
@@ -37,9 +39,9 @@ fn shipped_damage_part_catalog_uses_layered_visual_damage_and_model_assets() {
     let parts = (0..warthog.impact_point_count())
         .filter_map(|index| warthog.impact_point(index))
         .collect::<Vec<_>>();
-    assert!(!parts.is_empty());
+    assert_ne!(parts.len(), 0);
     for part in parts {
-        assert!(!part.mesh_names().is_empty());
+        assert_ne!(part.mesh_names(), [] as [String; 0]);
         assert!(part.collider().half_extents.cmpgt(Vec3::ZERO).all());
         assert!(part.material().mass > 0.0);
         assert!(part.force_multiplier().is_finite());

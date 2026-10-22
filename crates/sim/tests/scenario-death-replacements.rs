@@ -1,3 +1,5 @@
+//! Checks that shipped death replacements select the correct database replacement object.
+
 use glam::Vec3;
 use sim::{
     load_scenario_from_game_dir, object_prototype_id, spawn_object_at, spawn_squad_at,

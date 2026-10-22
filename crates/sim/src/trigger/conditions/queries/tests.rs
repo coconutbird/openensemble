@@ -33,7 +33,7 @@ fn unit_versions_preserve_empty_player_filter_and_output_semantics() {
     condition.version = 6;
     assert!(!can_get_units(&condition, &mut script, &world));
     assert_eq!(integer(&script, 2), 0);
-    assert!(entities(&script, 3).is_empty());
+    assert_eq!(entities(&script, 3), [] as [crate::EntityId; 0]);
 
     script.get_variable_mut(1).unwrap().value = TriggerValue::PlayerList(vec![1]);
     assert!(can_get_units(&condition, &mut script, &world));

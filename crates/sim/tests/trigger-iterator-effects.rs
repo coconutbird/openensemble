@@ -1,3 +1,5 @@
+//! Checks trigger iterator effects for units, squads, players, teams, locations, and objects.
+
 use sim::trigger::{
     Condition, ConditionType, Effect, EffectType, Trigger, TriggerIterator, TriggerScript,
     TriggerValue, TriggerVar, TriggerVec3, VarType,

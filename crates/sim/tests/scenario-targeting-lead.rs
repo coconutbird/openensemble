@@ -1,3 +1,5 @@
+//! Checks that the installed scenario maps the primary Scarab targeting exception.
+
 use sim::load_scenario_from_game_dir;
 
 /// Run with:

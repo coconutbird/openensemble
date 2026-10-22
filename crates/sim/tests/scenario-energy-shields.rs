@@ -1,3 +1,5 @@
+//! Checks that shipped scenario shield actions drive the visual state of energy shields.
+
 use glam::Vec3;
 use sim::{
     EnergyShieldPhase, EnergyShieldPresentationKind, EnergyShieldVisualProfile, GameplayCatalog,

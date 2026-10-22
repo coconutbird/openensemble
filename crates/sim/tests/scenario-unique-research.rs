@@ -1,3 +1,5 @@
+//! Checks that the shipped base upgrade transforms only its own Blood Gulch building.
+
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use pipeline::database::hw1::objects::ChildObjectType;

@@ -1,3 +1,5 @@
+//! Checks that the shipped Brute Chief hand attack hits without a projectile.
+
 use glam::Vec3;
 use sim::{
     AttackQuery, AttackQueryFlags, CommandEntry, CommandExecutor, QueuedCommand, SquadMode,
@@ -126,7 +128,7 @@ fn assert_shipped_hand_attack_profile(loaded: &sim::LoadedGameScenario) {
         .expect("HandAttack should share retail attack timing");
     assert_eq!(profile.projectile, None);
     assert_close(profile.max_range, 3.0);
-    assert!(!profile.animations.is_empty());
+    assert_ne!(profile.animations.len(), 0);
     assert!(
         profile
             .animations

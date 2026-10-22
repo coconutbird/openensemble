@@ -1,3 +1,5 @@
+//! Checks that the shipped disruption power blocks cryo through the native power command path.
+
 use glam::{Vec3, Vec4};
 use sim::{
     Command, CommandEntry, CommandExecutor, EntityId, PowerCommand, PowerCommandType,

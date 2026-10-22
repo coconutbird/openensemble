@@ -1,3 +1,5 @@
+//! Checks that the shipped scenario database and tactics drive Medic healing.
+
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use sim::{

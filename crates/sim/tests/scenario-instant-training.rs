@@ -1,3 +1,5 @@
+//! Checks that the shipped Sentinel store trains at once and then recharges.
+
 use glam::Vec3;
 use sim::{
     TrainingKind, load_scenario_from_game_dir, object_prototype_id, spawn_object_at,
