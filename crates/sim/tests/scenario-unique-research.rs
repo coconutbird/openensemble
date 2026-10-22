@@ -19,7 +19,11 @@ const BASE_UPGRADE_ONE: &str = "unsc_base_upgrade1";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn shipped_base_upgrade_transforms_only_its_blood_gulch_building_instance() {
-    let mut loaded = test_support::installed_scenario("blood_gulch");
+    // The shipped `unsc_LeaderCutter` tech of the default player transforms
+    // `unsc_bldg_command_01` into `unsc_bldg_command_02`; Anders keeps it.
+    let mut settings = test_support::default_settings("blood_gulch");
+    settings.players[0].leader = Some("Anders".to_owned());
+    let mut loaded = test_support::installed_scenario_with("blood_gulch", &settings);
     let player_id = *loaded
         .simulation
         .initial_base_ids
