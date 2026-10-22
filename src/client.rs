@@ -14,6 +14,7 @@
 mod camera;
 mod controls;
 mod hud;
+mod selection;
 mod view;
 
 use std::time::Instant;
@@ -28,6 +29,7 @@ use render::wgpu;
 
 use camera::RtsCamera;
 use controls::CameraControls;
+use selection::Selection;
 
 /// The lobby of a client game.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,6 +49,8 @@ pub(crate) struct Client {
     load_error: Option<String>,
     /// The simulation player of the local human.
     local_player: sim::PlayerId,
+    /// The units that the local player selected.
+    pub(crate) selection: Selection,
     /// The client-owned RTS camera state.
     rts_camera: RtsCamera,
     /// The mouse state of the camera controls.
@@ -75,6 +79,7 @@ impl Client {
             session: None,
             load_error: None,
             local_player: 0,
+            selection: Selection::default(),
             rts_camera: RtsCamera::new(Vec3::ZERO),
             controls: CameraControls::default(),
             camera: Camera::default(),
@@ -180,14 +185,24 @@ impl Application for Client {
     }
 
     fn update(&mut self, input: &Input, ctx: &FrameContext) -> bool {
-        if input.is_key_pressed(KeyCode::Escape) {
-            return false;
+        // Retail `Clear` (Escape) clears the selection (`BUser_clearSelection`, `0x1405B1A10`).
+        if input.is_key_pressed(KeyCode::Escape) && !self.selection.is_empty() {
+            log::debug!(
+                "Clear selection: {} squads, {} units, menu {:?}",
+                self.selection.squads().len(),
+                self.selection.units().len(),
+                self.selection.menu_building()
+            );
+            self.selection.clear();
         }
         self.render_time_seconds += ctx.delta_time;
         self.frame_stats.record_frame(ctx.delta_time);
         let started = Instant::now();
         if let Some(session) = &mut self.session {
             session.advance(ctx.delta_time);
+        }
+        if let Some(world) = self.session.as_ref().and_then(ScenarioSession::world) {
+            self.selection.rebuild_squads(world, |_| 0);
         }
         self.frame_stats.record_simulation(started.elapsed());
         self.update_camera(input, ctx);
