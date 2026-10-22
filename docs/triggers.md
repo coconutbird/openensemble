@@ -1,544 +1,461 @@
 # Trigger simulation
 
-Scenario trigger systems are authoritative simulation state. The SCN loader
-reopens the selected scenario XMB from the same layered `AssetSource` used for
-the database, loads only top-level `TriggerSystem` nodes, resolves their values
-against the scenario-layered database, and attaches the resulting scripts to
-`World`. The renderer does not interpret triggers or recreate their results.
+Scenario trigger scripts are authoritative simulation state. The `sim` crate loads them, runs them
+in the fixed tick and includes them in the world checksum. The renderer does not interpret
+triggers. It reads only the results that the sim puts into `World`.
 
-## Retail scheduling reproduced
+The sim loads only the `TriggerSystem` nodes that a scenario SCN file embeds. It does not load
+the external `.triggerscript` files of powers, abilities, weapons or the skirmish AI. See
+[Gaps](#gaps).
 
-The update order follows the recovered Halo Wars implementation:
+## Code layout
 
-1. Commands, production, and entity/gameplay updates run for the fixed tick.
-2. The world trigger manager visits scripts in runtime-ID order.
-3. Each script resets its per-trigger evaluation counts and copies its active
-   trigger list into a FIFO evaluation queue.
-4. Activations during effects are unique-added to that same queue. These
-   latecomers can therefore evaluate during the current tick.
-5. Evaluating a condition tree advances its next-evaluation time and count.
-   AND/OR trees short-circuit in authored order, and zero conditions are true.
-6. A true trigger, or either branch of a conditional trigger, deactivates
-   before firing effects. A self-activation effect can consequently enqueue it
-   again during the same tick.
-7. Scripts with no active triggers are removed after their update.
+| Path (`crates/sim/src/trigger/`) | Content |
+| --- | --- |
+| `script.rs` | `TriggerScript`, `TriggerVar` and `ScriptType`. A script keeps its variables in a `BTreeMap` by sparse `VarId`. |
+| `definition.rs` | `Trigger` and `ConditionMode` (`All` for `<And>`, `Any` for `<Or>`). |
+| `condition.rs`, `effect.rs`, `effect/ids.rs` | `Condition`, `Effect` and the `ConditionType` and `EffectType` DBID enums. |
+| `binding.rs` | `VarBinding` (one-based `SigID` slot plus `VarId`) and the internal `Bindings` view. |
+| `value.rs`, `var_type.rs` | `TriggerValue` and `VarType`. |
+| `loader.rs`, `loader/value_types.rs` | `VanillaLoader` and `TriggerLoadContext`. |
+| `engine.rs` | `TriggerEngine` scheduling and the `TriggerUpdate` report. |
+| `conditions.rs`, `conditions/**` | Condition handlers. `conditions/dispatch.rs` routes by `ConditionType`. |
+| `effects.rs`, `effects/**` | Effect handlers. `effects/dispatch.rs` routes by `EffectType`. |
+| `checksum.rs` | Hash of scripts, triggers, variables and filter sets for the world checksum. |
+| `ai_analysis.rs` | `AISquadAnalysis` values that AI trigger values use. |
 
-`EvalLimit` bounds same-tick reactivation exactly at the trigger level. The
-engine also has a deterministic hard guard for malformed unbounded loops and
-reports when that guard is reached.
+`crates/sim/src/scenario/triggers.rs` reads the scenario XMB and adds each script to the
+`TriggerEngine` of `World`.
 
-## Authored data handling
+## Data model
 
-- Sparse variable IDs remain sparse; no vector-index renumbering occurs.
-- Runtime trigger IDs are assigned in authored order. Trigger-valued variables
-  are remapped from editor IDs to those runtime IDs.
-- `Input` and `Output` children retain their one-based `SigID` slots. Effects
-  and conditions resolve by signature rather than child order.
-- Scenario Unit, Squad, Object, and Entity references are remapped to current
-  generational entity IDs. Prototype and technology names resolve through the
-  active scenario-layered database.
-- Database-backed simulation ticks pass that same layered database into trigger
-  evaluation. Typed `TechStatus`, player-state, civilization, leader, relation,
-  squad-mode, difficulty, general-event, loc-string, cinematic, and
-  talking-head values are resolved to retail numeric identities during loading
-  rather than interpreted by presentation code.
-- The loader accepts retail's exported aliases `CommandType`, `Diplomacy`,
-  `Direction`, and `LocationList`. They map to the canonical
-  `TechDataCommandType`, `RelationType`, `Vector`, and `VectorList` runtime
-  types. Command names resolve to the exact `BProtoObjectCommand` ordinal table;
-  unknown names become `-1`.
-- Object-type variables retain their authored names. Retail maps those names
-  to an ordinal table made from `objects.xml` followed by `objecttypes.xml`;
-  name identity gives the same membership semantics without exposing database
-  ordinals to the renderer or making scenario overlays invalidate live values.
-- The sim projects every layered proto-object's concrete name and abstract
-  memberships into `World`. This immutable catalog is checksummed and supports
-  trigger inputs that refer to a prototype rather than a live entity.
-- A checksummed proto-squad catalog stores each layered definition's name and
-  authored child capacity. It bridges the database IDs stored by
-  trigger/live-squad state with the runtime table indices carried by production
-  commands. Matching queued work by its authoritative prototype name avoids
-  collisions between those two numeric domains.
-- Placed Unit/Building/Squad-class proto-objects use retail `createEntity`
-  semantics: even with `IsSquad=false`, they become a one-member squad unless
-  they are physics replacements. This is why Blood Gulch's teleporter trigger
-  variables correctly resolve to squads.
-- Trigger definitions and live variables, activation state, evaluation times,
-  co-op/configuration settings, per-player difficulty scalars, teleporter links,
-  general-event subscribers, pending presentation requests, and unit/squad
-  idle-action and unit revival state participate in the world checksum. Scenario loading
-  initializes every player's difficulty from the layered
-  `GameData/DifficultyDefault`; difficulty conditions use the layered Normal,
-  Hard, and Legendary thresholds.
-- Empty non-null trigger variables are initialized through their authored type.
-  In particular, empty PlayerList, TeamList, spatial, color, and cost outputs no
-  longer degrade to a boolean placeholder before their first write.
+- A `Trigger` keeps its conditions and its two effect lists as `Arc<[Condition]>` and
+  `Arc<[Effect]>`. A clone of a trigger does not copy the lists.
+- A `Condition` or an `Effect` keeps the authored DBID in `raw_type`, the `version`, and its
+  `inputs` and `outputs` as `VarBinding` lists. A DBID without an enum variant loads as
+  `ConditionType::Custom` or `EffectType::Custom`. `raw_type` keeps the original DBID.
+- Handlers find a parameter by its `SigID` slot, not by XML child order. `Bindings` searches the
+  inputs first, then the outputs. An optional parameter therefore does not move the other
+  parameters.
+- A variable can be explicitly null. A handler treats a null variable as an unused parameter.
 
-## Implemented operations
+## Loading
 
-Authoritative condition implementations currently cover primitive count,
-boolean, float, percent, hit-point, time, and string comparisons; game and
-trigger-active time checks; reached-time outputs; affordability and population
-checks; common unit/squad lifecycle queries; ownership and proto-object tests;
-retail `IsObjectType` v1/v2 across squad, unit, object, and proto-object inputs;
-basic player/team predicates; and retail `ContainsGarrisoned`,
-`HasGarrisoned`, and `IsGarrisoned` containment queries. These include
-optional contained-player/object-type filters, the version-2 count output, and
-the squad-list input.
+`VanillaLoader::from_node_with_context` parses one `TriggerSystem` node. `TriggerLoadContext`
+gives it the scenario ID maps and the scenario-layered `Database`.
 
-Player identity, diplomacy, and capacity predicates preserve their authored
-signature behavior:
+- Sparse variable IDs stay sparse. The loader does not renumber them.
+- Runtime trigger IDs follow the authored order. Trigger-valued variables change from editor IDs
+  to runtime IDs.
+- Scenario Unit, Squad, Object and Entity references change to the generational `EntityId` of
+  the placed entity. Unknown references become `EntityId::INVALID`.
+- Prototype object, prototype squad, technology, civilization, leader, player state and
+  population bucket names resolve through the layered database to retail numeric IDs.
+  Relation type, tech status, squad mode, difficulty, operator, general event and command
+  type names resolve through fixed retail tables. An unknown command name becomes `-1`.
+- The loader accepts the retail aliases `CommandType`, `Diplomacy`, `Direction`, `LocationList`
+  and `Count`. They map to `TechDataCommandType`, `RelationType`, `Vector`, `VectorList` and
+  `Integer`.
+- Object-type variables keep their authored names. Retail uses ordinals into `objects.xml`
+  followed by `objecttypes.xml`. A name gives the same membership test without database
+  ordinals.
+- Placed Unit, Building and Squad prototype objects follow retail `createEntity`. Each one
+  becomes a one-member squad, also when `IsSquad=false`, unless it is a physics replacement.
+  Trigger variables therefore resolve to squads, as in Blood Gulch.
+- An empty variable that is not null gets the default value of its authored type.
+- Conditions keep `Invert` and `Async`.
 
-- DBID 131 `PlayerInState` supports retail version 2 and compares a valid
-  player's live state with the scenario-database-resolved `PlayerState` value.
-- DBIDs 240/476 `CompareCiv` and `CompareLeader` accept only equal/not-equal
-  operators. DBID 477 `PlayerUsingLeader` compares a valid player's live
-  leader selection.
-- DBID 362 `CheckDiplomacy` gathers unique teams from its unit, unit-list,
-  squad, and squad-list inputs and checks every team against the selected
-  player or team. Stale entity handles are skipped. As in retail, a used input
-  containing only stale handles produces an empty all-match set, while an
-  invalid used player prevents fallback to the team input.
-- DBID 438 `IsSquadAtMaxSize` compares the live squad child count for exact
-  equality with the capacity loaded from its layered proto-squad definition.
-- DBID 513 `CompareProtoSquad` applies the full retail ordered-operator table to
-  the two resolved database IDs. DBID 627 `IsCoop` reads synchronized world
-  setup, and DBID 629 `IsConfigDefined` tests a retail case-insensitive ASCII
-  configuration symbol loaded into synchronized world state.
-- DBID 972 `CheckDifficulty` reads the selected player's continuous difficulty
-  scalar. Version 1 tests equality; version 2 applies its authored comparison
-  operator to the standard Easy/Normal/Hard/Legendary category derived from
-  the active layered database thresholds.
+The loader reads the same attributes as the retail loaders `BTrigger_load` (`0x140421890`),
+`BTriggerCondition_load` (`0x140434180`) and `BTriggerEffect_load` (`0x140449E20`). Neither
+reads `CommentOut`. Shipped data has 1,930 nodes with `CommentOut="true"`.
 
-Resource, technology, and combat-readiness predicates use checksummed sim state:
+## Scheduling
 
-- DBID 339 `CompareCost` compares each resource slot. Slot 3 selects retail OR
-  semantics; absent or false uses AND semantics.
-- DBID 340 `CheckResourceTotals` reads the player's lifetime resource
-  accumulator, not the spendable balance. Layered leader resources seed both
-  values, earning resources increases both, and payment/refunds affect only the
+The update order follows retail `BTriggerScript_update` (`0x140490E40`):
+
+1. Commands, production and entity updates run for the fixed tick.
+2. `TriggerEngine` visits the scripts in runtime-ID order.
+3. Each script resets the evaluation count of each trigger. It copies its active triggers into a
+   FIFO queue.
+4. An activation during an effect adds the trigger to the same queue once. The trigger can
+   therefore evaluate in the same tick.
+5. An evaluation sets the next evaluation time and increments the evaluation count. `All` and
+   `Any` stop at the first result that decides the tree, in authored order. An empty tree is
+   true.
+6. A true trigger, or a conditional trigger with a false result, deactivates before its effects
+   run. An effect can activate the same trigger again in the same tick.
+7. The engine removes a script that has no active triggers after its update.
+
+`EvalLimit` limits how many times a trigger evaluates in one tick. The engine also stops the
+update after 50,000 evaluations and sets `TriggerUpdate::infinite_loop_guard_reached`.
+
+## Results and reporting
+
+`TriggerEngine::update` returns a `TriggerUpdate`:
+
+- `effects_applied` counts effects that changed sim state.
+- `presentation_effects` counts effects that only add data for the UI or audio.
+- `effects_skipped` and `skipped_effect_types` count effects with an invalid binding or target.
+- `unsupported_condition_types` and `unsupported_effect_types` list each DBID that has no handler,
+  or that uses a version or path that the sim does not model. These lists are sorted and unique.
+
+An unsupported condition does not pass. An unsupported effect does not change state. An async
+condition always returns `ConditionResult::Waiting`.
+
+The world checksum includes trigger definitions, variables, activation state, evaluation times,
+co-op and configuration settings, difficulty scalars, teleporter links, general-event
+subscribers, pending presentation requests, and unit and squad idle state.
+
+## Sim and UI boundary
+
+- Chat and cinematic effects (DBIDs 729 and 480) add typed requests to `World`. The UI reads
+  `World::presentation_requests()`. When playback ends, it sends `acknowledge_presentation` as
+  synchronized input. The sim then fires the completion event.
+- Headless runs do not complete these requests.
+- `PlaySound` and the `DebugVar` effects are presentation effects.
+
+## Retail behavior that the sim keeps
+
+This section lists retail details that are easy to get wrong. The handler modules have the full
+logic.
+
+### Conditions
+
+- `PlayerInState` (131) v2 compares the live player state with the resolved `PlayerState`.
+- `CompareCiv` (240) and `CompareLeader` (476) accept only the equal and not-equal operators.
+- `CheckDiplomacy` (362) collects the teams of all used entity inputs. A used input with only
+  stale handles gives an empty set, and an empty set matches. An invalid used player does not
+  fall back to the team input.
+- `IsSquadAtMaxSize` (438) compares the live child count with the proto-squad capacity.
+- `CheckDifficulty` (972) v1 tests equality. v2 compares the difficulty category that the
+  layered thresholds give.
+- `CompareCost` (339) uses OR across resource slots if slot 3 is true. Otherwise it uses AND.
+- `CheckResourceTotals` (340) reads the lifetime resource total, not the balance.
+- `TechStatus` (5) v1 and v2 read the research state. An invalid tech ID compares as
+  `Unobtainable`. v2 returns false for per-unit `UniqueProtoUnitInstance` technologies, because
+  the sim does not model unique technology ownership.
+- `CompareAmmoPercent` (256) v2 writes the ratio output. A stale unit reads zero.
+- `IsUnderAttack` (461) v1 and v2 pass when the last damage time is in the authored interval.
+- `IsIdle` (264) tests the explicit idle action. A used valid unit takes precedence over the
+  squad.
+- `ComparePlayerUnitCount` (436) v2 never adds units in training. Retail
+  `BTriggerCondition_tcComparePlayerUnitCountV2` (`0x140429880`) reads slot 0 instead of slot 5
+  for `IncludeTraining`. The sim treats slot 0 as absent.
+- `ComparePlayerSquadCount` (606) adds queued `TrainSquad` work when slot 5 is true.
+- `CanGetUnits` (2) supports v5 and v6. `CanGetSquads` (4) supports v8 and v9. Other versions
+  return false, as in retail `BTriggerCondition_evaluate` (`0x140432070`).
+- `NextUnit` (140) and `NextSquad` (141) visit the current list order and mark each visited ID.
+
+### Effects
+
+- `PayCost` (50) pays only if the player can pay all slots. `RefundCost` (51) changes only the
   balance.
-- DBID 5 `TechStatus` supports versions 1 and 2 and derives global statuses from
-  the same database-backed research system used by production. Invalid tech IDs
-  compare as `Unobtainable`, matching retail. Version-2 unit scoping works for
-  ordinary technologies; per-unit `UniqueProtoUnitInstance` state remains a
-  deliberate false result until unique technology ownership is modeled.
-- DBID 256 `CompareAmmoPercent` version 2 reads a unit's authoritative current-
-  over-maximum ratio, writes the optional ratio output, and applies the authored
-  comparison operator. A stale unit reads and writes zero before comparison.
-- DBID 461 `IsUnderAttack` supports versions 1 and 2. Accepted member damage
-  records the squad's game-time timestamp; a nonzero timestamp passes when its
-  wrapping elapsed time is within the authored inclusive interval. Version 2
-  unique-adds the scalar squad to its list and skips stale handles.
-- DBID 264 `IsIdle` tests the explicit idle action rather than merely comparing
-  an entity state. The first qualifying update creates an action at duration
-  zero, later updates advance its wrapping millisecond duration once per whole
-  sim update, and conflicting orders remove it. A used valid Unit takes
-  precedence and writes its action duration, even when it is not idle. A stale
-  Unit falls through to Squad; that path tests the squad's own idle action.
+- `SetResources` and `GetResources` (277 and 278) use the balance. `SetResourcesTotals` and
+  `GetResourcesTotals` (337 and 338) use the lifetime totals.
+- `TechActivate` and `TechDeactivate` (60 and 61) use the normal technology path.
+- `GetAmmo` and `SetAmmo` (389 and 390): v1 reads a unit, v2 adds a squad. A used unit takes
+  precedence. An amount takes precedence over a percentage.
+- `CreateObject` (35) v5 and v6, `CreateSquad` (36) v6 and v7, `CreateSquads` (875) and
+  `CreateUnit` (154) v1 and v2 create database-backed entities. Authored fly-in creates the
+  civilization transport. If the player has no transport, the squad appears on the ground.
+- `Kill` and `Destroy` (37 and 38) v3 and v4: a kill leaves the dead state visible until the
+  next entity update. Destroy removes the entity at once. A kill of a `_HeroDeath` unit leaves it
+  at 1 HP with the `Down` flag. The sim keeps no per-kill score, so the `PreventScoring` input
+  has no effect.
+- `Repair` and `Damage` (318 and 325) set hit points directly. `CombatDamage` (336) uses the
+  normal shield-first damage path.
+- `ChangeOwner` (137) v3 moves the squad, its units, population and base anchor together.
+- `SetDirection` (489) v2 with turret aiming, and `Teleport` (354) of a live squad without
+  `IgnorePlot`, are reported as unsupported before any change. The sim has no hardpoint
+  orientation and no `BSquadPlotter`.
+- `Move` (66) v6 moves squads to a unit, a squad or a location, in that order of precedence. It
+  supports attack-move and queued orders.
+- `Work` (117) v3 and v4 select the work action through the tactic data of the squad: attack,
+  garrison, join, gather, capture, repair, move, hitch, unhitch or mines. If no tactic action
+  matches, the squad tries repair, capture and gather, then moves to the target. v4 `DoAbility`
+  uses the command ability. The sim resolves all squads first. If one squad gets an action type
+  that the sim does not map, or a queued order is not a move, the effect is unsupported and no
+  squad changes.
+- `Unload` (65) v3 and v4 send passengers through the normal ungarrison path.
+- `CarpetBomb` (71) v3 and v4 start the `BSquadActionCarpetBomb` attack run. No shipped
+  scenario uses DBID 71. Synthetic tests cover it.
+- List effects (146 to 151, 296, 297, 302, 308, 334, 335 and 836) keep the retail order of
+  mutation, also when an input is the same variable as the output. `SquadListShuffle` and
+  `UnitListShuffle` (297 and 302) use `cSimRand` (the MSVC `214013/2531011` LCG). They swap each
+  position with a random index in the full list. They do not use Fisher-Yates.
+- Entity filter effects (341 to 350, 355, 379) append ordered predicates. Each predicate applies
+  its inversion after the base test.
+- `SetTeleporter` (967) links a source teleporter squad to its target. See
+  [Garrison and teleporters](garrison-and-teleporters.md).
+- General-event effects (811, 812, 837 to 840, 988, 989, 1018) use the retail subscriber ID
+  layout `(index << 16) + eventType`.
 
-Player roster conditions consume authoritative `World` queries rather than
-renderer-visible counts:
+## Coverage
 
-- DBID 436 `ComparePlayerUnitCount` counts every live class-1 unit owned by the
-  player, including buildings. Its optional object type accepts either a
-  concrete proto-object name or an abstract membership. Version 1 and version
-  2 otherwise share the same live count.
-- The shipped version-2 handler at `0x140429880` checks the `IncludeTraining`
-  binding in slot 5 but accidentally uses the still-false local boolean as a
-  variable index, reading slot 0. That is an unsafe out-of-bounds access in
-  retail. The sim preserves the observable defect deterministically by treating
-  slot 0 as absent, so this condition does not add future units. The separate
-  `World::player_future_unit_count` query still models retail future-unit state
-  for systems that use it and counts only `TrainUnit` work.
-- DBID 606 `ComparePlayerSquadCount` counts live squads, optionally filters one
-  proto-squad, and correctly adds matching queued `TrainSquad` work when slot 5
-  is true. The scenario-layered proto-squad catalog resolves the filter across
-  live database IDs and queued runtime indices. Queued `TrainUnit` work never
-  contributes to a squad count.
+The coverage data comes from three sources:
 
-The installed executable handlers used for this contract were named
-`BTriggerCondition_tcComparePlayerUnitCountV1` (`0x140429800`),
-`BTriggerCondition_tcComparePlayerUnitCountV2` (`0x140429880`), and
-`BTriggerCondition_tcComparePlayerSquadCount` (`0x14042C110`) in the saved IDB.
-The resource/technology/readiness handlers were likewise verified and saved as
-`BTriggerCondition_tcTechStatusV1` (`0x1404256E0`),
-`BTriggerCondition_tcTechStatusV2` (`0x140425770`),
-`BTriggerCondition_tcIsIdle` (`0x140427D70`),
-`BTriggerCondition_tcCompareCost` (`0x140428EB0`),
-`BTriggerCondition_tcCheckResourceTotals` (`0x140428FA0`),
-`BTriggerCondition_tcIsUnderAttack` (`0x140429CF0`), and
-`BTriggerCondition_tcIsUnderAttackV2` (`0x140429D90`).
+- Engine: the effect switch in `BTriggerEffect_fire` (`0x14044A0A0`, jump table at
+  `0x14044A0ED`) has slots for DBIDs 31 to 1086. 588 DBIDs have code. 468 DBIDs jump to the
+  shared no-op block `0x14044DDD7`. `BTriggerCondition_evaluate` (`0x140432070`) has 188 DBIDs
+  in its switches and direct tests. It also tests 1059, 1081 and 1087 after the switches. Async
+  conditions read their async result there.
+- Our code: `EffectType` has 340 variants and `ConditionType` has 195. Handlers exist for 240
+  effect DBIDs (including the copy family in `is_copy_effect`) and 84 condition DBIDs.
+- Shipped data: the 33 installed scenarios (15 campaign missions, 2 tutorials, 16 skirmish maps)
+  and the 90 unique files in `data/triggerscripts` of `root.era`, `root_update.era`, `dlc01.era`
+  and `dlc02.era`. The counts include nodes with `CommentOut="true"`.
 
-Authoritative effects cover trigger activation/deactivation, integer
-increment/decrement, the retail copy-effect family, player resources and
-technology, database-backed entity creation and lifecycle, health, ownership,
-spatial queries and direct transforms, deterministic entity-list construction,
-supported scripted orders, and teleporter-destination setup.
+| Kind | Distinct DBIDs used | Implemented | Retail no-op | Missing | Scenario uses covered | External uses covered |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Effects | 471 (315 in scenarios) | 215 (196) | 26 | 235 (108) | 65,996 of 72,757 (91%) | 22,980 of 26,345 (87%) |
+| Conditions | 148 (79 in scenarios) | 76 (63) | 0 | 72 (16) | 16,638 of 17,177 (97%) | 6,199 of 7,257 (85%) |
 
-Resource and technology effects operate on the same player state used by
-production and conditions:
+"Implemented" includes 5 `DebugVar` effects that retail compiles as no-ops. The other retail
+no-ops are the other `DebugVar` effects, `KillUnits` (271), `AIRegisterHook` (855),
+`PlaySoundFile` (1084), `ConnectHitpointWidget` (638), `Breakpoint` (614) and `AIGetMemory`
+(957). They are not gaps.
 
-- DBID 50 `PayCost` subtracts the three trigger-cost slots only when the player
-  can afford all of them. An unaffordable payment is a supported no-op. DBID 51
-  `RefundCost` changes only the spendable balance.
-- DBIDs 277/278 `SetResources`/`GetResources` write and read the spendable
-  balance. DBIDs 337/338 `SetResourcesTotals`/`GetResourcesTotals` independently
-  write and read lifetime totals.
-- DBIDs 60/61 `TechActivate`/`TechDeactivate` resolve the runtime technology
-  index in the active layered database and use the normal world technology
-  path. Existing entities and future spawns therefore observe the same
-  transforms and modifiers.
-- `ModifyProtoData` and ordinary technology activation support retail proto-
-  data ordinals 3 `AmmoMax` and 58 `AmmoRegenRate`. Existing enabled units
-  reconcile immediately, future units use the effective values at spawn, and
-  proto-squad maximums retain authored member counts.
+The "covered" columns count uses of implemented DBIDs. A handler can still report a version or a
+path as unsupported. See [Partial handlers](#partial-handlers).
 
-Ammunition effects share that same synchronized unit and squad state:
+### Missing effects used by scenarios
 
-- DBID 389 `GetAmmo` version 1 reads Unit and version 2 adds Squad. A used Unit
-  takes precedence; amount and percentage outputs are written only for a valid
-  selected target. Squad current ammunition sums live ammo-enabled children,
-  while its denominator is the effective proto-squad maximum.
-- DBID 390 `SetAmmo` has the same versioned target slots and Unit precedence.
-  Amount takes precedence over percentage. Unit assignment is the retail raw
-  setter; a squad amount is converted through its proto maximum, and a squad
-  percentage assigns each current child its own maximum times that ratio.
+The table ranks the effects by the number of uses in scenarios. The number in parentheses is the
+number of scenarios. "External uses" counts uses in `data/triggerscripts`. An "inline case" is
+code in `BTriggerEffect_fire` without a separate function.
 
-Entity effects preserve the representable retail contracts:
+| DBID | Authored name | Scenario uses (scenarios) | External uses | Engine evidence |
+| ---: | --- | ---: | ---: | --- |
+| 556 | `AIMissionRemoveSquads` | 887 (13) | 52 | `BTriggerEffect_teAIMissionRemoveSquads` @ `0x140481A20` |
+| 557 | `AIMissionGetValidSquads` | 601 (13) | 54 | inline case @ `0x14044C508` |
+| 550 | `AIMissionCancel` | 577 (13) | 46 | `BTriggerEffect_teAIMissionCancel` @ `0x140480A30` |
+| 555 | `AIMissionAddSquads` | 339 (13) | 36 | `BTriggerEffect_teAIMissionAddSquads` @ `0x140481980` |
+| 130 | `SetPlayerState` | 274 (17) | 107 | inline case @ `0x14044A8BC` |
+| 133 | `ObjectiveComplete` | 238 (17) | 0 | inline case @ `0x14044A943` |
+| 183 | `ObjectiveDisplay` | 224 (17) | 2 | inline case @ `0x14044ABDA` |
+| 135 | `FlareMinimapNormal` | 193 (15) | 18 | inline case @ `0x14044A99C` |
+| 1008 | `AICreateTargetWrapper` | 189 (13) | 28 | `BTriggerEffect_teAICreateTargetWrapper` @ `0x140486B50` |
+| 1011 | `AIWrapperModifyRadius` | 189 (13) | 28 | `BTriggerEffect_teAIWrapperModifyRadius` @ `0x140486C60` |
+| 1012 | `AIWrapperModifyFlags` | 189 (13) | 28 | `BTriggerEffect_teAIWrapperModifyFlags` @ `0x140486D70` |
+| 1013 | `AIWrapperModifyParms` | 189 (13) | 28 | `BTriggerEffect_teAIWrapperModifyParms` @ `0x140486E40` |
+| 1005 | `AIMissionCreate` | 189 (13) | 20 | `BTriggerEffect_teAIMissionCreate` @ `0x140486A00` |
+| 982 | `AIMissionSetMoveAttack` | 189 (13) | 17 | `BTriggerEffect_teAIMissionSetMoveAttack` @ `0x140486460` |
+| 805 | `HintMessageShow` | 188 (15) | 35 | `BTriggerEffect_teHintMessageShow` @ `0x140472EA0` |
+| 1004 | `AICreateAreaTarget` | 184 (13) | 28 | `BTriggerEffect_teAICreateAreaTarget` @ `0x140486900` |
+| 605 | `AIGetMissions` | 155 (11) | 17 | `BTriggerEffect_teAIGetMissions` @ `0x140481C00` |
+| 815 | `HintMessageDestroy` | 151 (15) | 55 | `BTriggerEffect_teHintMessageDestroy` @ `0x140473960` |
+| 392 | `LaunchScript` | 136 (7) | 93 | inline case @ `0x14044BB18` |
+| 388 | `ChangeSquadMode` | 82 (6) | 14 | inline case @ `0x14044BA68` |
+| 1002 | `MissionResult` | 68 (17) | 0 | `BTriggerEffect_teMissionResult` @ `0x14047D510` |
+| 888 | `FloatListRemove` | 63 (5) | 0 | `BTriggerEffect_teFloatListRemove` @ `0x140478560` |
+| 59 | `LocationAdjust` | 60 (7) | 50 | inline case @ `0x14044A42F` |
+| 923 | `FlashUIElement` | 60 (3) | 26 | `BTriggerEffect_teFlashUIElement` @ `0x14047AFF0` |
+| 671 | `CopyObjectList` | 56 (3) | 0 | inline case @ `0x14044CAC2` |
+| 619 | `AIMissionGetTarget` | 53 (7) | 10 | `BTriggerEffect_teAIMissionGetTarget` @ `0x140482460` |
+| 757 | `AIMissionTargetGetLocation` | 48 (7) | 28 | `BTriggerEffect_teAIMissionTargetGetLocation` @ `0x140482BD0` |
+| 939 | `GetClosestUnit` | 42 (6) | 8 | `BTriggerEffect_teGetClosestUnit` @ `0x14047BD00` |
+| 886 | `CopyFloatList` | 42 (5) | 0 | `BTriggerEffect_teCopyFloatList` @ `0x140487470` |
+| 924 | `ConceptPermission` | 40 (4) | 6 | `BTriggerEffect_teConceptPermission` @ `0x14047B5E0` |
+| 1006 | `EnableMusicManager` | 36 (9) | 0 | `BTriggerEffect_teEnableMusicManager` @ `0x14047C470` |
+| 132 | `FlareMinimapSpoof` | 36 (3) | 3 | inline case @ `0x14044A917` |
+| 631 | `GetProtoObject` | 35 (8) | 11 | inline case @ `0x14044C82E` |
+| 515 | `PlayWorldSoundOnEntity` | 34 (2) | 0 | inline case @ `0x14044C1F8` |
+| 1060 | `TeleportUnitsOffObstruction` | 34 (4) | 0 | `BTriggerEffect_teTeleportUnitsOffObstruction` @ `0x14047E9F0` |
+| 751 | `TimeToFloat` | 33 (5) | 4 | `BTriggerEffect_teTimeToFloat` @ `0x140470880` |
+| 512 | `GetDistanceLocationLocation` | 30 (6) | 64 | inline case @ `0x14044C1AA` |
+| 1030 | `GrantAchievement` | 30 (15) | 6 | `BTriggerEffect_teGrantAchievement` @ `0x14047FF40` |
+| 537 | `SetPosition` | 29 (4) | 18 | inline case @ `0x14044C3F8` |
+| 284 | `InvertBool` | 29 (4) | 2 | inline case @ `0x14044B143` |
+| 316 | `RefCountSquadAdd` | 28 (2) | 88 | `BTriggerEffect_teRefCountSquadAdd` @ `0x14045F520` |
+| 845 | `ClearCorpseUnits` | 28 (3) | 0 | `BTriggerEffect_teClearCorpseUnits` @ `0x140474CF0` |
+| 1070 | `FilterAddJacking` | 28 (3) | 0 | inline case @ `0x14044B5F1` |
+| 968 | `SetGarrisonedCount` | 26 (1) | 18 | `BTriggerEffect_teSetGarrisonedCount` @ `0x14047C4A0` |
+| 1068 | `PatherObstructionUpdates` | 24 (1) | 0 | `BTriggerEffect_tePatherObstructionUpdates` @ `0x140461550` |
+| 874 | `GetObstructionRadius` | 23 (8) | 4 | `BTriggerEffect_teGetObstructionRadius` @ `0x1404756C0` |
+| 887 | `FloatListAdd` | 21 (5) | 0 | `BTriggerEffect_teFloatListAdd` @ `0x140478370` |
+| 820 | `SetLevel` | 14 (4) | 22 | `BTriggerEffect_teSetLevel` @ `0x140473A00` |
+| 83 | `AttachmentRemoveType` | 14 (3) | 16 | inline case @ `0x14044A66C` |
+| 160 | `PlayAnimationSquad` | 12 (3) | 0 | inline case @ `0x14044AA56` |
+| 780 | `TimerGet` | 12 (1) | 0 | `BTriggerEffect_teTimerGet` @ `0x140472950` |
+| 1069 | `PatherObstructionRebuild` | 12 (1) | 0 | `BTriggerEffect_tePatherObstructionRebuild` @ `0x140461570` |
+| 739 | `PowerInvoke` | 11 (4) | 0 | inline case @ `0x14044D323` |
+| 382 | `SetIgnoreUserInput` | 10 (2) | 8 | inline case @ `0x14044B794` |
+| 159 | `PlayAnimationUnit` | 10 (2) | 5 | inline case @ `0x14044AA3F` |
+| 910 | `SquadFlagSet` | 10 (3) | 4 | `BTriggerEffect_teSquadFlagSet` @ `0x14047ABA0` |
+| 1032 | `ResetAbilityTimer` | 10 (3) | 0 | `BTriggerEffect_teResetAbilityTimer` @ `0x140480010` |
+| 554 | `LocationAdjustDir` | 9 (2) | 23 | `BTriggerEffect_teLocationAdjustDir` @ `0x14046A9E0` |
+| 934 | `ConceptSetParameters` | 9 (2) | 8 | `BTriggerEffect_teConceptSetParameters` @ `0x14047B8E0` |
+| 498 | `AsInt` | 8 (2) | 43 | inline case @ `0x14044C09B` |
+| 767 | `GetGarrisonedSquads` | 8 (1) | 14 | `BTriggerEffect_teGetGarrisonedSquads` @ `0x140470990` |
+| 319 | `UnitFlagSet` | 8 (2) | 2 | `BTriggerEffect_teUnitFlagSet` @ `0x14045FC50` |
+| 738 | `MegaTurretAttack` | 8 (3) | 2 | `BTriggerEffect_teMegaTurretAttack` @ `0x14046D130` |
+| 180 | `MathHitpoints` | 8 (1) | 0 | inline case @ `0x14044B189` |
+| 779 | `TimerSet` | 8 (1) | 0 | `BTriggerEffect_teTimerSet` @ `0x1404728A0` |
+| 1031 | `AIAddTeleporterZone` | 8 (1) | 0 | `BTriggerEffect_teAIAddTeleporterZone` @ `0x140486EF0` |
+| 505 | `GetLegalSquads` | 7 (6) | 12 | `BTriggerEffect_teGetLegalSquads` @ `0x140468F30` |
+| 506 | `GetLegalTechs` | 7 (6) | 4 | `BTriggerEffect_teGetLegalTechs` @ `0x140468FE0` |
+| 459 | `GetTechResearcherType` | 7 (6) | 1 | inline case @ `0x14044BE4D` |
+| 279 | `MathResources` | 7 (6) | 0 | inline case @ `0x14044B0F8` |
+| 458 | `GetSquadTrainerType` | 7 (6) | 0 | inline case @ `0x14044BDFB` |
+| 726 | `UITogglePowerOverlay` | 6 (2) | 38 | inline case @ `0x14044D1EF` |
+| 765 | `EventFilterGameState` | 6 (2) | 30 | `BTriggerEffect_teEventFilterGameState` @ `0x140474EA0` |
+| 595 | `CopyObject` | 6 (1) | 0 | inline case @ `0x14044CEC2` |
+| 979 | `LocationListGetByIndex` | 6 (1) | 0 | `BTriggerEffect_teLocationListGetByIndex` @ `0x14047C6E0` |
+| 983 | `Infect` | 6 (1) | 0 | `BTriggerEffect_teInfect` @ `0x14047CC50` |
+| 164 | `UserMessage` | 5 (2) | 122 | inline case @ `0x14044A985` |
+| 173 | `GetPlayers` | 5 (4) | 34 | inline case @ `0x14044AB2E` |
+| 544 | `AIScoreMissionTargets` | 5 (3) | 22 | `BTriggerEffect_teAIScoreMissionTargets` @ `0x140480900` |
+| 970 | `PlayerListGetSize` | 5 (3) | 22 | `BTriggerEffect_tePlayerListGetSize` @ `0x140474CD0` |
+| 564 | `AISetScoringParms` | 5 (3) | 18 | `BTriggerEffect_teAISetScoringParms` @ `0x140481570` |
+| 551 | `AIGetMissionTargets` | 5 (3) | 17 | inline case @ `0x14044C465` |
+| 545 | `AISortMissionTargets` | 5 (3) | 16 | `BTriggerEffect_teAISortMissionTargets` @ `0x1404809B0` |
+| 311 | `RefCountUnitAdd` | 5 (2) | 10 | `BTriggerEffect_teRefCountUnitAdd` @ `0x14045EFE0` |
+| 312 | `RefCountUnitRemove` | 5 (2) | 2 | `BTriggerEffect_teRefCountUnitRemove` @ `0x14045F230` |
+| 853 | `GetClosestSquad` | 4 (1) | 20 | `BTriggerEffect_teGetClosestSquad` @ `0x140475240` |
+| 781 | `TimerSetPaused` | 4 (1) | 16 | `BTriggerEffect_teTimerSetPaused` @ `0x1404729F0` |
+| 828 | `EventFilterNumeric` | 4 (1) | 6 | `BTriggerEffect_teEventFilterNumeric` @ `0x1404750A0` |
+| 190 | `MathPercent` | 4 (2) | 0 | inline case @ `0x14044B6A0` |
+| 533 | `LightsetAnimate` | 4 (1) | 0 | `BTriggerEffect_teLightsetAnimate` @ `0x14046A880` |
+| 737 | `PowerClear` | 4 (2) | 0 | `BTriggerEffect_tePowerClear` @ `0x14046F890` |
+| 808 | `HintGlowToggle` | 4 (2) | 0 | `BTriggerEffect_teHintGlowToggle` @ `0x140473160` |
+| 822 | `GetLevel` | 4 (2) | 0 | `BTriggerEffect_teGetLevel` @ `0x140473AD0` |
+| 981 | `LocationListGetClosest` | 4 (1) | 0 | `BTriggerEffect_teLocationListGetClosest` @ `0x14047C820` |
+| 1049 | `ChatForceSubtitles` | 4 (2) | 0 | `BTriggerEffect_teChatForceSubtitles` @ `0x1404803F0` |
+| 57 | `LaunchProjectile` | 2 (2) | 38 | inline case @ `0x14044A3AC` |
+| 943 | `GetNPCPlayersByName` | 2 (2) | 18 | `BTriggerEffect_teGetNPCPlayersByName` @ `0x14047BA90` |
+| 393 | `GetPlayerTeam` | 2 (1) | 14 | inline case @ `0x14044BB2F` |
+| 359 | `Settle` | 2 (1) | 6 | `BTriggerEffect_teSettle` @ `0x1404627D0` |
+| 775 | `SetOverrideTint` | 2 (1) | 6 | `BTriggerEffect_teSetOverrideTint` @ `0x140471E00` |
+| 891 | `RepairByCombatValue` | 2 (2) | 5 | `BTriggerEffect_teRepairByCombatValue` @ `0x140478710` |
+| 710 | `SetUnitAttackTarget` | 2 (1) | 0 | `BTriggerEffect_teSetUnitAttackTarget` @ `0x14046EBA0` |
+| 941 | `TeamSetDiplomacy` | 2 (1) | 0 | `BTriggerEffect_teTeamSetDiplomacy` @ `0x14047B060` |
+| 1022 | `PowerUserShutdown` | 2 (1) | 0 | `BTriggerEffect_tePowerUserShutdown` @ `0x14047E090` |
+| 1027 | `ChangeControlledPlayer` | 2 (1) | 0 | `BTriggerEffect_teChangeControlledPlayer` @ `0x14047FDC0` |
+| 294 | `LerpLocation` | 1 (1) | 44 | inline case @ `0x14044B1F8` |
+| 186 | `CalculatePercentTime` | 1 (1) | 2 | `BTriggerEffect_teCalculatePercentTime` @ `0x14045CA80` |
+| 521 | `SetFollowCam` | 1 (1) | 0 | `BTriggerEffect_teSetFollowCam` @ `0x14046A060` |
 
-- DBID 35 `CreateObject` versions 5/6 creates a standalone database-backed
-  mobile unit or building, supports authored facing and version-6 `NoPhysics`,
-  writes the invalid-entity sentinel on failure, and applies retail clear/add
-  behavior to its optional object-list output.
-- DBID 36 `CreateSquad` versions 6/7 creates the full proto-squad roster with
-  version-7 facing, optional rally or attack-move movement, and scalar/list
-  outputs. Authored fly-in/fly-off inputs create the civilization's trigger
-  transport, contain the squad for its incoming flight, release it at the
-  drop-off, apply facing and rally state, then remove the outgoing carrier.
-- DBID 875 `CreateSquads` creates one full database-backed squad for every
-  ordered ProtoSquadList entry, including duplicates. Its first output replaces
-  a SquadList; its second optionally clears and then appends, matching retail's
-  distinct output contracts. Authored fly-ins partition whole squads across a
-  capacity-aware, `TransportMax`-bounded carrier group and share the same
-  authoritative containment, flight, drop-off, facing, rally/attack-move, and
-  cleanup lifecycle. If the player has no usable civilization transport, both
-  creation effects retain retail's ground fallback.
-- DBID 154 `CreateUnit` versions 1/2 promotes an allowed proto-object into the
-  retail one-member wrapper squad, returns its leader unit and squad, preserves
-  `StartBuilt` for buildings, and supports version-2 facing. On failure, retail
-  invalidates scalar outputs but leaves list outputs unchanged; the sim keeps
-  that distinction.
-- DBIDs 37/38 `Kill`/`Destroy` versions 3/4 accept their Unit, UnitList, Squad,
-  SquadList, Object, and ObjectList slots in retail order. A kill leaves dead
-  state observable until the next entity update. Destroy removes the entity and
-  invalidates its generational ID immediately. Squad lifecycle cascades to all
-  member units. A regular kill of a scenario-layered `_HeroDeath` unit or squad
-  instead leaves the unit alive at one HP with its independent `Down` flag;
-  immediate destruction still removes it. Retail's prevent-scoring flag is
-  currently vacuous because no scoring subsystem exists yet.
+Retail sends `CopyObject` (595), `IntToCount` (568), 567 and 700 to the same copy block
+(`0x14044CEC2`) as the copy effects 85 to 103. `is_copy_effect` in `effects.rs` does not include
+them.
 
-Health and ownership effects mutate the same checksummed state used by combat,
-population, conditions, and rendering:
+### Missing conditions used by scenarios
 
-- DBID 174 `GetHealth` versions 2/3 reproduces retail target collection and
-  writes optional aggregate HP, HP ratio, shields, and shield ratio outputs.
-  Version 3 adds Unit and UnitList inputs. Maximums are accumulated per used
-  input while current values follow retail's unique target list, including its
-  observable overlap behavior.
-- DBIDs 318/325 `Repair`/`Damage` accept squad/unit scalar and list inputs,
-  prefer absolute values over percentages for each channel, and divide only
-  absolute values when `Spread` is true. Repair clamps at the player-modified
-  maximum; direct damage clamps at zero. Like retail's raw setters, direct
-  damage does not emit a combat event or clear the unit's explicit alive flag.
-- DBID 336 `CombatDamage` versions 1/2 uses the normal shield-first damage path,
-  updates the squad damage timestamp, and applies the target's layered mortal,
-  tactic-`Revive`, or `_HeroDeath` zero-HP behavior. Version-2
-  `OverrideRevive=true` reproduces retail's pre-damage check: it only marks a
-  tactic-`Revive` unit that was already at zero HP, which dies on the following
-  entity update. The same lethal event still hibernates the unit, and hero-down
-  units are unaffected. Prevent-scoring behavior remains vacuous without a
-  scoring subsystem.
-- DBID 137 `ChangeOwner` version 3 transfers each selected squad and its member
-  units. Live population, built population-cap contributions, and an included
-  base anchor move to the new player atomically. DBID 193 `GetOwner` reads that
-  authoritative unit/squad ownership directly.
+| DBID | Authored name | Scenario uses (scenarios) | External uses | Engine evidence |
+| ---: | --- | ---: | ---: | --- |
+| 575 | `CompareProtoObject` | 168 (8) | 101 | inline case @ `0x140432242` |
+| 547 | `CompareAIMissionState` | 78 (10) | 28 | inline case @ `0x140432C5F` |
+| 956 | `CanGetRandomLocation` | 59 (13) | 1 | `BTriggerCondition_tcCanGetRandomLocation` @ `0x140430600` |
+| 835 | `CanGetOneObject` | 56 (3) | 0 | `BTriggerCondition_tcCanGetOneObject` @ `0x14042EB50` |
+| 885 | `CanGetOneFloat` | 42 (5) | 0 | `BTriggerCondition_tcCanGetOneFloat` @ `0x14042EFA0` |
+| 763 | `CheckPop` | 36 (7) | 11 | `BTriggerCondition_tcCheckPop` @ `0x14042DD40` |
+| 844 | `CanGetCorpseUnits` | 28 (3) | 0 | `BTriggerCondition_tcCanGetCorpseUnits` @ `0x14042EC70` |
+| 386 | `CheckModeChange` | 25 (3) | 4 | `BTriggerCondition_tcCheckModeChange` @ `0x1404294F0` |
+| 576 | `CompareTech` | 21 (6) | 4 | inline case @ `0x140432242` |
+| 604 | `IsAttached` | 10 (1) | 0 | inline case @ `0x140432F57` |
+| 314 | `RefCountUnit` | 5 (2) | 36 | `BTriggerCondition_tcRefCountUnit` @ `0x1404281F0` |
+| 558 | `CanGetUnitsAlongRay` | 4 (1) | 0 | inline case @ `0x140432CF6` |
+| 714 | `CanGetUnitLaunchLocation` | 2 (1) | 0 | `BTriggerCondition_tcCanGetUnitLaunchLocation` @ `0x14042D0D0` |
+| 743 | `CanGetGreatestThreat` | 2 (1) | 0 | `BTriggerCondition_tcCanGetGreatestThreat` @ `0x14042D600` |
+| 1028 | `CompareUnit` | 2 (1) | 0 | inline case @ `0x1404336BD` |
+| 20 | `ASYNCPlayerSelectingUnit` | 1 (1) | 0 | async result in `BTriggerCondition_evaluate` |
 
-Spatial effects likewise operate only on world transforms; the renderer reads
-their result rather than interpreting trigger logic:
+### Missing DBIDs used only by external scripts
 
-- DBID 189 `GetLocation` versions 1/2 preserves retail's unit/squad/object
-  precedence and leaves the output unchanged for a stale selected handle.
-- DBID 499 `GetDirection` versions 1/2 returns normalized forward and optional
-  right/up vectors. A missing or stale entity writes retail's
-  `cInvalidVector=(-1,-1,-1)`. DBID 500 `GetDirectionFromLocations` normalizes
-  the vector from its first location to its second.
-- DBID 489 `SetDirection` versions 1/2 follows the distinct retail collection
-  rules: version 1 updates squads and their members, while version 2 updates
-  backing unit/object transforms only. Turret-hardpoint aiming is reported
-  unsupported before mutation because hardpoint orientation state is not yet
-  simulated.
-- DBID 354 `Teleport` version 3 supports exact squad placement when
-  `IgnorePlot=true`, resets authoritative orders/containment, and resynchronizes
-  every member from its formation offset. Object-only version-2/3 teleports are
-  also authoritative. Squad placement that requests retail's `BSquadPlotter`
-  is reported unsupported before any squad or object moves. Object obstruction
-  fallback/search remains a fidelity gap; without a valid plotted alternative,
-  the sim uses the authored destination.
+These DBIDs occur only in `data/triggerscripts`. They become important when the sim loads those
+scripts.
 
-Entity-list effects build targets from authoritative world state:
+Effects (127 DBIDs):
 
-- Conditions 2/4 implement the shipped v5/v6 `CanGetUnits` and v8/v9
-  `CanGetSquads` search paths. The older versions preserve pool-order stable
-  filtering; the newer global paths preserve player/roster order and retail's
-  unordered rejection. Their distinct empty-PlayerList behavior, spherical
-  precedence over oriented boxes, area liveness rules, object/proto/filter
-  predicates, output order, and version-9 `IgnoreAir` leader test are retained.
+- AI: 32 DBIDs, 776 uses. `AIFactoidSubmit` (993), `AIRemoveFromMissions` (612),
+  `AITopicLotto` (625), `AIAnalyzeKBSquadList` (673), `AISetPlayerAssetModifier` (1035),
+  `AISetFocus` (711), `AITopicModifyTickets` (591), `AITopicCreate` (589), and 24 more.
+- AI bids: 14 DBIDs, 345 uses. `BidQuery` (778), `BidDelete` (373), `BidSetQueueLimits` (871),
+  `BidCreatePower` (958), `BidCreateBuilding` (370), `BidCreateTech` (371), `BidPurchase` (391),
+  `BidCreateSquad` (372), and 6 more.
+- AI knowledge base: 11 DBIDs, 272 uses. `KBSQInit` (663), `KBSQExecute` (665),
+  `KBSquadListFilter` (691), `KBBQExecute` (449), `KBAddSquadsToKB` (985), and 6 more.
+- Hint concepts: 5 DBIDs, 90 uses. `ConceptSetState` (925), `ConceptSetPrecondition` (926),
+  `ConceptGetParameters` (849), `ConceptStartSub` (927), `ConceptResetCooldown` (971).
+- UI input: 6 DBIDs, 84 uses. `UIUnlock` (330), `InputUILocation` (84), `InputUIButton` (529),
+  `InputUISquadList` (639), `InputUIPlaceSquads` (771), `InputUILocationMinigame` (892).
+- DLC game modes: 7 DBIDs, 74 uses. `TugOfWarMarkPlayersAsTrailing` (1071), `setCTFCount`
+  (1083), `GetCTFFlag` (1074), `GetCTFFlagCarrier` (1075), `TowSetVisible` (1079), `TowSetScore`
+  (1080), `ClearCTFFlagOrCarrier` (1082).
+- Other: 52 DBIDs, 1,128 uses. `Shutdown` (56), `ModifyProtoSquadData` (829), `ShowMessage`
+  (904), `PowerChargeUseOf` (77), `AttachmentAddObject` (363), `AsTime` (716),
+  `GetDistanceUnitLocation` (111), `RefCountSquadRemove` (317), `MathLocation` (295),
+  `TableLoad` (796), and 42 more.
 
-- DBIDs 122/123 write the unique current team roster and the selected team's
-  players in world order. Version-2 DBIDs 124-127 mutate PlayerList and TeamList
-  variables with retail clear, unique-add, ordered removal, and self-alias
-  behavior; IDs are data values and are not silently validated against the
-  current roster.
-- DBID 265 `GetGameTime` writes wrapping 32-bit game milliseconds plus its
-  optional delta. DBID 267 `GetGameTimeRemaining` writes the saturating time to
-  its target. Both query authoritative sim time rather than renderer time.
+Conditions (56 DBIDs):
 
-- DBID 112 `GetUnits` version 3 selects explicitly live class-1 units by an
-  optional player and concrete/abstract object type. When both location and
-  distance are used, the search is an inclusive circular X/Z obstruction
-  query; otherwise it follows retail's all-player roster order. A UnitList
-  filter can contain unit IDs directly or squad IDs whose children should be
-  selected, matching the retail handler's deliberately loose entity-ID use.
-  Global dead-entry removal preserves retail's unordered swap behavior.
-- DBID 113 `GetSquads` version 4 supports player, proto-squad, circular-area,
-  exact list-membership, and object-type filters. Every current child must
-  match the object type. Empty squads pass that all-children test in a global
-  query but cannot enter an area result because retail spatial lookup tests a
-  squad through a leader unit. Global dead, filter-list, and object-type
-  rejection occurs in retail's same sequential unordered-removal order.
-- DBIDs 146/147 write UnitList/SquadList sizes. DBIDs 148/149 optionally clear
-  a destination, validate only the scalar entity, and unique-add two authored
-  lists without silently purging stale generational handles. DBIDs 150/151
-  preserve list order while removing the scalar and then each listed value.
-  Aliasing an input with the destination follows retail's mutation order,
-  including its observable every-other-element result for a self-aliased
-  remove list. DBID 836 applies that same mutation contract to ObjectList.
-- DBID 630 writes a live squad's proto-squad ID or retail's invalid `-1`
-  sentinel. DBID 818 copies a typed loc-string ID through the ordinary retail
-  copy path.
-- DBIDs 296/308 partition SquadList/UnitList values by a preferred count or a
-  clamped percentage rounded to nearest-even. Count takes precedence. Retail's
-  unusual mutation order is preserved: unit partition clears its source before
-  its two outputs, while squad partition leaves the source untouched. DBIDs
-  297/302 shuffle in place with shipping `cSimRand`: every position swaps with
-  an inclusive full-list index produced by the MSVC `214013/2531011` LCG,
-  rather than using Fisher-Yates.
-- DBIDs 334/335 compute stable only-left, only-right, and intersection lists.
-  Both sources are copied before outputs are cleared, so source/output aliasing
-  follows retail exactly.
+- UI input: 13 DBIDs, 77 uses. The `UILocation*`, `UISquadList*` and `UILocationMinigame*`
+  result conditions, and `UIButtonPressed` (527).
+- AI: 5 DBIDs, 132 uses. `AICanGetDifficultySetting` (920), `AITopicIsActive` (600),
+  `AITopicGetTickets` (1059), `AICanGetFocusTopic` (883), `BidState` (586).
+- Hint concepts: `ConceptGetCommand` (930), `ConceptGetStateChange` (931).
+- Other: 36 DBIDs, 896 uses. `CheckAndSetFalse` (1056), `CanRetrieveExternals` (192),
+  `CanRemoveOneInteger` (563), `RefCountSquad` (315), `CanRetrieveExternalLocation` (440),
+  `CanUsePower` (27), `ProtoObjectListContains` (577), `CanGetHoverPoint` (990), and 28 more.
 
-DBIDs 152/153 attach a checksummed iterator to the current UnitList or
-SquadList variable and reset its per-entity visited sets. Conditions 140/141
-`NextUnit`/`NextSquad` scan the list's current order, mark the first unvisited
-ID, and write it to the authored output. Self-reactivation through the normal
-FIFO trigger scheduler can therefore consume a whole list during one fixed
-tick; reattachment resets traversal, while edits to the attached list are seen
-by the next condition evaluation.
+### Partial handlers
 
-Entity filters are authoritative, ordered, checksummed trigger values:
+These handlers exist but do not cover all shipped uses:
 
-- DBIDs 341–348 clear a set or append `IsAlive`, copied UnitList/SquadList
-  membership, player, team, proto-object, proto-squad, and object-type
-  predicates. Predicates are ANDed in insertion order and each applies its
-  authored inversion after its base test.
-- DBID 355 appends `IsIdle`. Units test their explicit idle action; squads use
-  retail's virtual squad predicate, which requires every valid current child
-  unit to be idle and therefore considers an empty squad idle.
-- DBID 379 appends a directed diplomacy-relation predicate. A used Player input
-  takes precedence over Team; an invalid used player does not fall back, and no
-  predicate is appended when no reference team resolves. Missing entity teams
-  compare as Neutral, and inversion is applied after the raw relation match.
-- DBIDs 349/350 filter copied UnitList/SquadList sources into stable passed and
-  failed outputs. Stale handles are omitted from both. Outputs are written
-  passed then failed, including the retail behavior where a shared output is
-  left with the failed list. An empty set passes every valid handle.
-- Proto-object and object-type predicates require every current valid child of
-  a squad to match at least one supplied type; missing children are skipped and
-  empty squads pass. A proto-squad predicate checks a squad directly and a unit
-  through its current parent squad.
-- `IsAlive` reproduces `BEntityFilterIsAlive`, `tcIsAliveV3`, and
-  `tcIsDeadV3`: units require their explicit alive flag and reject independent
-  `Down`/`IsHibernating` flags; squads additionally reject either flag on any
-  current child. Inversion is applied only after this complete base test.
+- `SetCamera` (884) accepts only v4. Retail `BTriggerEffect_teSetCamera` (`0x140477280`) also
+  handles v2 and v3. Shipped data has 11 v3 uses.
+- `CreateObject` (35) v4, `ChangeOwner` (137) v2 and `MovePath` (439) v1 are reported as
+  unsupported. Retail does nothing for these versions, so the state is the same.
+- `SetDirection` (489) turret aiming and `Teleport` (354) squad plotting are unsupported. Object
+  teleports do not search for a free position when the destination is obstructed.
+- `Work` (117) does not queue orders other than a move. It does not map all tactic action types,
+  for example `Mines` without the command ability.
+- `TechStatus` (5) v2 returns false for `UniqueProtoUnitInstance` technologies.
+- Async conditions always wait. The sim has no async consensus and no UI input delivery.
 
-Scripted orders mutate the same squad movement and containment state consumed
-by physics, checksums, and rendering:
+## Gaps
 
-- DBID 65 `Unload` versions 3/4 treats its Squad/SquadList inputs as container
-  squads. Version 4 optionally restricts the contained passenger squads; an
-  empty filter means all passengers. Passengers are dispatched under their
-  current owners and enter the normal authoritative ungarrison lifecycle.
-- DBID 71 `CarpetBomb` supports the two source-active signatures. Version 3 accepts a Flying unit,
-  resolves its parent squad, and uses the squad's current position as the attack-run origin.
-  Version 4 accepts a proto-squad carrying the `Flying` flag, refuses a squad with any returning
-  `MoveAir` child, and obtains the base only from child zero; a non-`MoveAir` lead therefore keeps
-  the retail invalid-base result even when a later child has a base. Optional distance/count
-  inputs default to 20/1. The resulting checksummed squad action owns its ground-target list,
-  per-member attack progress, persistent `IgnoreLeash` flag, `MoveAir` launch/return requests, and
-  lead-position dragging. Position attacks use the ordinary tactic selector and shared ranged
-  executor, including animation tags, hardpoint launch anchors, ammunition, projectiles, and area
-  damage; actions authored only for air targets are rejected. Installed campaign/tutorial trigger
-  catalogs contain no DBID 71 instance, so this contract is covered by named-source and synthetic
-  scenario-trigger regressions rather than a fabricated shipped fixture.
-- DBID 66 `Move` version 6 and DBID 117 `Work` versions 3/4 support the
-  currently representable location-target path when `AttackMove`, `QueueOrder`,
-  and `DoAbility` are false. Squad-list values are consumed first, the valid
-  scalar squad is unique-added, stale target entities fall through according
-  to retail target precedence, and every surviving current squad receives the
-  location order.
-- A live unit/squad target, attack-move, queued order, or AI-command ability is
-  reported unsupported before any recipient changes. Retail resolves those
-  generic work commands through action/tactic, army queue, and ability state
-  that the sim does not yet model; treating them as ordinary movement or attack
-  would create divergent game state.
+In order of shipped use:
 
-Blood Gulch's DBID 967 links each source teleporter squad to its target through
-the normal fixed simulation tick. The authoritative garrison lifecycle then
-consumes that link; see [Garrison and teleporters](garrison-and-teleporters.md).
+1. AI mission effects and conditions (DBIDs 550 to 557, 605, 619, 757, 982, 1004 to 1013, 547).
+   13 campaign missions use them. The sim has no trigger AI mission system.
+2. Objectives, player state and mission result: `SetPlayerState` (130), `ObjectiveComplete`
+   (133), `ObjectiveDisplay` (183) and `MissionResult` (1002). All 17 campaign scenarios use
+   them. A campaign cannot end without them.
+3. External trigger scripts. Retail loads `TriggerScript` and `CommandTriggerScript` in
+   `BProtoPower_load` (`0x14034EB96`), `TriggerScript` in `BWeapon_loadWeapon` (`0x1403FFE52`),
+   `ExternalTriggerScript` in `BScenario_load` (`0x14037A616`), and the skirmish AI script in
+   `sub_14014E4D0`. `LaunchScript` (392) starts a script at run time. The `database` crate parses
+   the power and weapon fields, but the sim does not use them. `ScriptType::Power`, `Ability` and
+   `TriggerScript` exist, but nothing loads these script types.
+4. Hints and UI: `HintMessageShow` (805), `HintMessageDestroy` (815), `FlareMinimapNormal`
+   (135), `FlashUIElement` (923), `ConceptPermission` (924) and the UI input effects and
+   conditions.
+5. The other rows of the tables above.
 
-General events and UI completion use an explicit sim/UI boundary:
+Not gaps: the retail no-op DBIDs listed in [Coverage](#coverage). The DLC game modes (capture
+the flag, tug of war) use only external scripts.
 
-- DBIDs 811/1018 create checksummed retail subscribers, including the exact
-  `(index << 16) + eventType` ID layout, optional player filtering, and counted
-  firing. DBIDs 812/837 reset ordinary or counted state; DBIDs 838–840 append
-  copied camera, entity, and entity-list filters; DBIDs 988/989 preserve the
-  disabled-delete and clear-filter behavior.
-- Condition 813 reads subscriber fired/count state. Conditions 905/906 read the
-  dedicated chat/cinematic-completed subscribers; chat version 2 applies its
-  optional wrapping game-time delay from the recorded fire time.
-- DBIDs 729/480 enqueue typed chat or cinematic requests in authoritative
-  `World` state. The renderer reads `World::presentation_requests()` as UI and
-  submits `acknowledge_presentation` as synchronized input when playback ends.
-  The sim then fires the matching completion event. Headless simulation never
-  fabricates an immediate completion.
+## Audit tool
 
-The installed executable effect dispatcher and every standalone handler
-inspected for this slice were named, commented, and saved in the IDB:
-`BTriggerScript_update` (`0x140490E40`), `BTriggerEffect_fire`
-(`0x14044A0A0`), `BTriggerEffect_teKillV3` (`0x14044EE80`),
-`BTriggerEffect_teKillV4` (`0x14044F0B0`), `BTriggerEffect_teDestroyV3`
-(`0x14044F410`), `BTriggerEffect_teDestroyV4` (`0x14044F650`),
-`BTriggerEffect_teCreateObjectV5` (`0x1404505B0`),
-`BTriggerEffect_teCreateObjectV6` (`0x140450800`),
-`BTriggerEffect_teCreateSquadV6` (`0x140450A70`),
-`BTriggerEffect_teCreateSquadV7` (`0x1404511B0`),
-`BTriggerEffect_tePayCost` (`0x140451B50`),
-`BTriggerEffect_teRefundCost` (`0x140451BF0`),
-`BTriggerEffect_teCreateUnitV1` (`0x140459FD0`),
-`BTriggerEffect_teCreateUnitV2` (`0x14045A360`), and
-`BTriggerEffect_teGetResourcesTotals` (`0x14045DF00`). The shipping compiler
-inlined technology activation/deactivation and the other resource get/set cases
-into `BTriggerEffect_fire`; they have no standalone functions to rename.
+`scenario-trigger-audit` prints the DBIDs that each scenario uses and the result of the first
+trigger update:
 
-The spatial/health/ownership handlers were also recovered, named, commented,
-and saved as `BTriggerEffect_teGetLocationV1` (`0x140458B50`),
-`BTriggerEffect_teGetLocationV2` (`0x140458BF0`),
-`BTriggerEffect_teGetOwner` (`0x140458CC0`),
-`BTriggerEffect_teChangeOwnerV3` (`0x1404593A0`),
-`BTriggerEffect_teGetHealthV2` (`0x14045B880`),
-`BTriggerEffect_teGetHealthV3` (`0x14045BD00`),
-`BTriggerEffect_teRepair` (`0x14045F700`),
-`BTriggerEffect_teDamage` (`0x1404601C0`),
-`BTriggerEffect_teCombatDamageV1` (`0x140460B40`),
-`BTriggerEffect_teCombatDamageV2` (`0x140460FF0`),
-`BTriggerEffect_teTeleportV2` (`0x1404618B0`),
-`BTriggerEffect_teTeleportV3` (`0x1404620A0`),
-`BTriggerEffect_teSetDirectionV1` (`0x140467F80`),
-`BTriggerEffect_teSetDirectionV2` (`0x1404684B0`),
-`BTriggerEffect_teGetDirectionV1` (`0x140468C40`), and
-`BTriggerEffect_teGetDirectionV2` (`0x140468D30`). DBID 500
-`GetDirectionFromLocations` is compiler-inlined in `BTriggerEffect_fire` and
-has no standalone routine to rename.
+```sh
+cargo run -j 4 -p sim --bin scenario-trigger-audit -- "$OPENENSEMBLE_GAME_DIR" PHXscn01 blood_gulch
+```
 
-The target-list and scripted-order routines were recovered and saved as
-`BTriggerEffect_teUnloadV3` (`0x140453870`),
-`BTriggerEffect_teUnloadV4` (`0x1404539E0`),
-`BTriggerEffect_teMoveV6` (`0x140453BF0`),
-`BTriggerEffect_teGetUnitsV3` (`0x140456FD0`),
-`BTriggerEffect_teGetSquadsV4` (`0x140457520`),
-`BTriggerEffect_teWorkV3` (`0x140457C70`),
-`BTriggerEffect_teWorkV4` (`0x1404582F0`),
-`BTriggerEffect_teUnitListAdd` (`0x140459BC0`),
-`BTriggerEffect_teSquadListAdd` (`0x140459D40`), and the shared
-`BTriggerEffect_teUnitOrSquadListRemove` (`0x140459EC0`). DBIDs 146/147 list
-size are compiler-inlined as direct writes in `BTriggerEffect_fire`.
+Set these environment variables for more output:
 
-The DBID 71 signatures and `BSquadActionCarpetBomb`/`BUnitActionMoveAir` interaction were recovered
-from the named 2008 source. No additional installed-executable function was inspected for that
-slice.
+- `OPENENSEMBLE_AUDIT_DBIDS`: a comma-separated list of DBIDs. The tool prints their bindings
+  before and after the update.
+- `OPENENSEMBLE_AUDIT_SCENARIO_IDS`: scenario object IDs to print.
+- `OPENENSEMBLE_AUDIT_OBJECTIVES`, `OPENENSEMBLE_AUDIT_RAW_VARIABLES`,
+  `OPENENSEMBLE_AUDIT_ENTITIES`, `OPENENSEMBLE_AUDIT_PRESENTATION`: print objectives, raw
+  variables, entities or presentation state.
 
-The list-processing, iterator, and filter handlers were recovered as
-`BTriggerVarIterator_attachIterator` (`0x140447C20`),
-`BTriggerCondition_tcNextUnit` (`0x140426BA0`),
-`BTriggerCondition_tcNextSquad` (`0x140426CC0`),
-`BTriggerEffect_teSquadListPartition` (`0x14045E9C0`),
-`BTriggerEffect_teUnitListPartition` (`0x14045EBD0`),
-`BTriggerVarEntityIDList_shuffle` (`0x1404B2750`),
-`BTriggerEffect_teUnitOrSquadListDiff` (`0x140460820`),
-`BTriggerEffect_teUnitListFilter` (`0x140461650`), and
-`BTriggerEffect_teSquadListFilter` (`0x140461780`). The shared filter-set
-workers are `BEntityFilterSet_clearFilters` (`0x140216CA0`),
-`BEntityFilterSet_addEntityFilterIsAlive` (`0x140216D20`),
-`BEntityFilterSet_addEntityFilterInList` (`0x140216E60`),
-`BTriggerEffect_teEntityFilterAddInList` (`0x1404614D0`),
-`BEntityFilterSet_addEntityFilterPlayers` (`0x140216F10`),
-`BEntityFilterSet_addEntityFilterTeams` (`0x140216FC0`),
-`BEntityFilterSet_addEntityFilterProtoObjects` (`0x140217070`),
-`BEntityFilterSet_addEntityFilterProtoSquads` (`0x140217120`),
-`BEntityFilterSet_addEntityFilterObjectTypes` (`0x1402171D0`),
-`BEntityFilterSet_addEntityFilterIsIdle` (`0x140216DC0`),
-`BTriggerEffect_teEntityFilterAddDiplomacy` (`0x1404615B0`),
-`BEntityFilterSet_addEntityFilterRelationType` (`0x140217340`),
-`BEntityFilterSet_validateAndTestUnit` (`0x1402180E0`),
-`BEntityFilterSet_validateAndTestSquad` (`0x140218190`),
-`BEntityFilterSet_filterUnits` (`0x1402182F0`), and
-`BEntityFilterSet_filterSquads` (`0x1402184D0`).
+The first update reaches only part of each script. Use the tables in [Coverage](#coverage) for
+the full list of gaps.
 
-`PlaySound` and `DebugVar(String)` are recognized presentation/debug effects.
-Chat and cinematic requests are also counted as presentation work after their
-checksummed request state is created. Rendering/audio code consumes that state
-without implementing or duplicating trigger logic.
-
-Unknown DBIDs are retained in loaded definitions. Unsupported conditions do
-not pass accidentally, unsupported effects do not mutate state, and both are
-reported as sorted unique DBID lists by `TriggerUpdate`.
-
-The `scenario-trigger-audit` sim binary prints authored DBID catalogs and the
-first authoritative update report for installed scenarios. Its campaign-wide
-regression loads all 15 `PHXscn` missions plus both tutorials against their own
-layered database and verifies the aliased variables remain typed. Prototype
-object/squad lists resolve names against that same database; squad-list
-multiplicity is retained because retail uses repeated entries as a creation
-count. The regression also requires every campaign's initial trigger update to
-terminate. This exposes handler gaps without mistaking a trigger parse failure
-for gameplay coverage.
-
-## Remaining parity work
-
-- Implement the rest of the retail condition/effect catalog, especially
-  objectives, the remaining list element types and advanced filters, AI,
-  and powers.
-- Model death presentation duration, scoring, full squad plot-search, object
-  obstruction fallback, generic entity-target work, alternate order queues,
-  AI-command abilities, turret hardpoints, and the remaining optional effect
-  paths needed to reproduce every retail side effect rather than reporting a
-  bounded fidelity gap.
-- Add retail async-condition consensus and UI-input delivery. Async conditions
-  currently remain in `Waiting` state.
-- Load external, power, and ability trigger-script lifecycles in addition to
-  embedded scenario systems.
-- Purge invalidated entity handles from trigger lists during updates as retail
-  does; scalar generation checks are already safe.
-- Render and play all supported presentation-request kinds while keeping those
-  adapters read-only except for explicit synchronized completion input.
+The ignored test `crates/sim/tests/scenario-campaign-trigger-loading.rs` loads all 15 campaign
+missions and both tutorials. It checks the variable types and that the first update ends.

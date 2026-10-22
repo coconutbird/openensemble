@@ -1,11 +1,7 @@
-//! Trigger system for scripted game events.
+//! Retail trigger scripts for scripted game events.
 //!
-//! This is a hybrid system that supports:
-//! - Loading vanilla `.triggerscript` files (XMB format)
-//! - Custom scripts via an embedded scripting language (future)
-//!
-//! Both compile to the same internal representation and execute
-//! through the same deterministic engine.
+//! `VanillaLoader` parses the `TriggerSystem` nodes of a scenario XMB into a `TriggerScript`.
+//! `TriggerEngine` runs the scripts deterministically in the fixed simulation tick.
 
 mod ai_analysis;
 mod binding;
