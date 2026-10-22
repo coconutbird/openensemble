@@ -208,9 +208,6 @@ impl TerrainViewer {
                 "Compositor debug mode: {} ({mode_name})",
                 self.compositor_debug_mode
             );
-            if let Some(compositor) = &mut self.compositor {
-                compositor.mark_all_dirty();
-            }
         }
     }
 
@@ -222,26 +219,6 @@ impl TerrainViewer {
         if input.is_key_pressed(KeyCode::N) {
             self.bump_power = (self.bump_power + 0.25).min(4.0);
             log::info!("Bump power: {:.2}", self.bump_power);
-        }
-    }
-
-    fn update_compositor_lod(&mut self) {
-        if self.chunk_centers.is_empty() {
-            return;
-        }
-        let Some(compositor) = &mut self.compositor else {
-            return;
-        };
-        let camera_position = [
-            self.camera.position.x,
-            self.camera.position.y,
-            self.camera.position.z,
-        ];
-        if compositor.update_lod(camera_position, &self.chunk_centers, &self.lod_config) {
-            log::debug!(
-                "LOD updated: {} dirty chunks",
-                compositor.dirty_chunk_count()
-            );
         }
     }
 
@@ -582,7 +559,6 @@ impl Application for TerrainViewer {
         self.advance_simulation(ctx.delta_time);
         let camera_state = self.synchronize_camera_presentation();
         self.camera.update(input, ctx.delta_time, camera_state);
-        self.update_compositor_lod();
         true
     }
 

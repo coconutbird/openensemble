@@ -2,10 +2,9 @@
 //!
 //! Split into sub-modules:
 //! - `input` — keyboard/mouse handling, debug mode switching, UI
-//! - `render` — GPU initialization and render pass logic
+//! - `rendering` — `WorldView` creation, frame cameras and captures
 
 mod input;
-mod presentation;
 mod rendering;
 
 use std::path::{Path, PathBuf};
@@ -16,20 +15,12 @@ use pipeline::source::{AssetSource, StdFileProvider};
 use pipeline::xtd;
 use pipeline::xtt;
 use render::environment::EnvironmentMap;
-use render::lighting::LocalLightSet;
-use render::postprocess::{HDR_COLOR_FORMAT, ToneMapResources};
-use render::terrain::{
-    Camera, CompositorResources, LodConfig, SimulationCameraAdapter, TerrainScene,
-};
-use render::ugx::{
-    Unit as UgxUnit, UnitRenderer as UgxUnitRenderer, UnitScene as UgxUnitScene,
-    UnitSceneRenderer as UgxUnitSceneRenderer,
-};
+use render::terrain::{Camera, LodConfig, SimulationCameraAdapter, TerrainScene};
+use render::ugx::{Unit as UgxUnit, UnitScene as UgxUnitScene};
 use render::ui::SimulationTimerAdapter;
-use render::wgpu;
+use render::world_view::WorldView;
 
 use crate::capture::{CaptureConfig, CaptureState};
-use crate::types::GpuResources;
 
 struct TerrainLoadInputs {
     terrain: xtd::XtdFile,
@@ -58,16 +49,12 @@ pub struct TerrainViewer {
     pub simulation_clock: sim::Simulation,
     /// All decoded terrain data (mesh, textures, splat, decals, foliage, roads).
     pub scene: Option<TerrainScene>,
-    /// Scenario GLS/FLS constants used by every lit renderer.
+    /// Scenario GLS/FLS constants. The `WorldView` takes them when the viewer creates it.
     pub lightset: Option<hw1::LightSetData>,
-    /// Runtime local lights shared by all lit world renderers.
-    pub local_lights: LocalLightSet,
     /// Scenario-global HDR environment cubemap used by reflective materials.
     pub environment: Option<EnvironmentMap>,
     /// Authored scenario sky visual, resolved directly through VIS/UGX.
     pub sky_unit: Option<UgxUnit>,
-    /// GPU resources for the camera-relative authored sky visual.
-    pub sky_renderer: Option<UgxUnitRenderer>,
     pub camera: Camera,
     /// Renderer-local application state for sim-authored camera directives.
     pub camera_adapter: SimulationCameraAdapter,
@@ -76,37 +63,20 @@ pub struct TerrainViewer {
     pub show_info: bool,
     pub wireframe: bool,
     pub load_error: Option<String>,
-    pub gpu: Option<GpuResources>,
-    /// Linear color format shared by all scene pipelines.
-    pub scene_format: wgpu::TextureFormat,
-    /// HDR scene target, luminance reduction, and presentation pipeline.
-    pub tone_map_resources: Option<ToneMapResources>,
+    /// GPU resources that draw the loaded scenario.
+    pub world_view: Option<WorldView>,
     /// Monotonic render time used by authored material and foliage animation.
     pub render_time_seconds: f32,
     /// Display mode. Mode 0 is the retail-style lit terrain view.
     pub debug_mode: u32,
     /// Normal map strength (gBumpPower in game, scales XY components).
     pub bump_power: f32,
-    /// GPU terrain texture compositor (for pre-baked chunk textures).
-    pub compositor: Option<CompositorResources>,
-    /// Bind group for compositor (separate from main texture bind group).
-    pub compositor_bind_group: Option<wgpu::BindGroup>,
     /// Debug mode for compositor: 0=normal, 1=UV, 2=chunk ID, 3=alpha, 4=layer0.
     pub compositor_debug_mode: u32,
     /// LOD configuration for distance-based compositing quality.
     pub lod_config: LodConfig,
-    /// Pre-calculated chunk center positions [x, y, z] for LOD calculations.
-    pub chunk_centers: Vec<[f32; 3]>,
-    /// Foliage GPU resources (pipeline, textures, bind groups).
-    pub foliage_resources: Option<crate::foliage::FoliageResources>,
-    /// Shadow map resources (pipeline, depth texture, light VP).
-    pub shadow_resources: Option<crate::shadow::ShadowResources>,
-    /// Road GPU resources (pipeline, vertex buffer, textures).
-    pub road_resources: Option<crate::roads::RoadResources>,
     /// Visual assets bound to entities in the authoritative simulation world.
     pub ugx_scene: Option<UgxUnitScene>,
-    /// Presentation-only GPU resources for simulation entity placements.
-    pub ugx_scene_renderer: Option<UgxUnitSceneRenderer>,
     /// Whether the GPU placement roster must be synchronized from `ugx_scene`.
     pub ugx_roster_dirty: bool,
     /// Optional deterministic top-down capture-and-exit state.
@@ -124,32 +94,21 @@ impl TerrainViewer {
             simulation_clock: sim::Simulation::new(),
             scene: None,
             lightset: None,
-            local_lights: LocalLightSet::default(),
             environment: None,
             sky_unit: None,
-            sky_renderer: None,
             camera: Camera::default(),
             camera_adapter: SimulationCameraAdapter::default(),
             timer_adapter: SimulationTimerAdapter::default(),
             show_info: true,
             wireframe: false,
             load_error: None,
-            gpu: None,
-            scene_format: HDR_COLOR_FORMAT,
-            tone_map_resources: None,
+            world_view: None,
             render_time_seconds: 0.0,
             debug_mode: 0,
             bump_power: 1.0,
-            compositor: None,
-            compositor_bind_group: None,
             compositor_debug_mode: 0,
             lod_config: LodConfig::default(),
-            chunk_centers: Vec::new(),
-            foliage_resources: None,
-            shadow_resources: None,
-            road_resources: None,
             ugx_scene: None,
-            ugx_scene_renderer: None,
             ugx_roster_dirty: false,
             capture: None,
         }
@@ -208,12 +167,11 @@ impl TerrainViewer {
         self.lightset = inputs.lightset;
         self.environment = inputs.environment;
         self.sky_unit = inputs.sky;
-        self.sky_renderer = None;
+        self.world_view = None;
         if let Some(lightset) = &self.lightset {
             self.bump_power = lightset.terrain_bump_strength;
         }
         self.ugx_scene = inputs.ugx_scene;
-        self.ugx_scene_renderer = None;
         self.ugx_roster_dirty = false;
 
         // Load entire terrain scene in one call

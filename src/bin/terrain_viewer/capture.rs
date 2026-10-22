@@ -10,10 +10,10 @@ use glam::{Mat4, Vec2, Vec3};
 use num_traits::ToPrimitive;
 use render::terrain::{
     AlbedoData, FoliageQNChunk, FoliageSet, NORMALIZED_TERRAIN_Y_OFFSET, RawXtdData, TerrainMesh,
+    parse_foliage_index_buffer,
 };
 use render::wgpu;
-
-use crate::foliage::parse_foliage_index_buffer;
+use render::world_view::WorldCamera;
 
 /// Default width and height of a top-down validation capture.
 pub const DEFAULT_CAPTURE_SIZE: u32 = 2048;
@@ -204,6 +204,20 @@ pub struct ValidationCamera {
     pub position: Vec3,
     /// Distance that keeps every foliage placement visible in this overview.
     pub foliage_fade_start: f32,
+}
+
+impl ValidationCamera {
+    /// Returns the `WorldView` camera for a viewport of `viewport` pixels.
+    #[must_use]
+    pub fn world_camera(&self, viewport: [u32; 2]) -> WorldCamera {
+        WorldCamera {
+            view_projection: self.view_projection,
+            world_to_view: self.world_to_view,
+            position: self.position,
+            depth_unproject: self.depth_unproject,
+            viewport,
+        }
+    }
 }
 
 /// Fits an orthographic camera to the decoded terrain bounds.

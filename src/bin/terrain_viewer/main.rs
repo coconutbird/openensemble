@@ -1,19 +1,13 @@
 //! Terrain viewer for Halo Wars XTD/XTT data.
 //!
-//! Uses packed XTD vertex textures, the GPU XTT compositor, terrain-conforming
-//! roads, and foliage reconstructed from the XTT index buffers.
+//! Loads a scenario and draws it with `render::world_view::WorldView`: packed XTD
+//! vertex textures, the GPU XTT compositor, terrain-conforming roads, and foliage
+//! reconstructed from the XTT index buffers.
 //! WASD + mouse to fly around the terrain.
 //! Display mode 0 is the retail-style lit terrain view.
 
 mod camera;
 mod capture;
-mod dynamic_alpha;
-mod foliage;
-mod gpu;
-mod resources;
-mod roads;
-mod shadow;
-mod types;
 mod viewer;
 
 use anyhow::{Context, Result, bail};
