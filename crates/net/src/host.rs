@@ -74,7 +74,7 @@ impl NetHost {
         loop {
             match self.transport.try_recv_from() {
                 Ok(Some((packet, addr))) => {
-                    if let Some(client_id) = self.handle_packet(packet.clone(), addr).await? {
+                    if let Some(client_id) = self.handle_packet(&packet, addr).await? {
                         received.push((client_id, packet));
                     }
                 }
@@ -89,7 +89,7 @@ impl NetHost {
     /// Handle an incoming packet.
     async fn handle_packet(
         &mut self,
-        packet: NetPacket,
+        packet: &NetPacket,
         addr: SocketAddr,
     ) -> Result<Option<u64>, HostError> {
         match packet.packet_type {
