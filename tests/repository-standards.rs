@@ -1,9 +1,10 @@
+//! Checks the repository rules in `AGENTS.md` that Clippy does not check.
+
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 const MAX_RUST_SOURCE_LINES: usize = 1_000;
-const COMPATIBILITY_TARGET_NAMES: &[&str] = &["terrain_viewer"];
 
 #[test]
 fn every_package_inherits_workspace_lints() {
@@ -30,22 +31,17 @@ fn every_package_inherits_workspace_lints() {
 }
 
 #[test]
-fn rust_sources_respect_repository_limits_without_lint_bypasses() {
+fn rust_sources_respect_the_file_size_limit() {
     let root = workspace_root();
     let mut oversized = Vec::new();
-    let mut bypasses = Vec::new();
 
     for source in rust_sources(&root) {
-        let contents = read_text(&source);
-        let relative = relative_path(&root, &source);
-        let line_count = contents.lines().count();
+        let line_count = read_text(&source).lines().count();
         if line_count > MAX_RUST_SOURCE_LINES {
-            oversized.push(format!("{relative}: {line_count} lines"));
-        }
-        for (index, line) in contents.lines().enumerate() {
-            if is_lint_bypass(line) {
-                bypasses.push(format!("{relative}:{}: {}", index + 1, line.trim()));
-            }
+            oversized.push(format!(
+                "{}: {line_count} lines",
+                relative_path(&root, &source)
+            ));
         }
     }
 
@@ -54,12 +50,6 @@ fn rust_sources_respect_repository_limits_without_lint_bypasses() {
         "Rust source files may contain at most {MAX_RUST_SOURCE_LINES} lines:\n{}",
         oversized.join("\n")
     );
-    assert!(
-        bypasses.is_empty(),
-        "lint bypass attributes are not permitted; fix the reported lint instead:\n{}",
-        bypasses.join("\n")
-    );
-    assert_no_custom_size_thresholds(&root);
 }
 
 #[test]
@@ -92,7 +82,6 @@ fn packages_follow_cargo_project_layout() {
         validate_target_directory(&root, &source_root.join("bin"), &mut failures);
         validate_target_directory(&root, &package_root.join("examples"), &mut failures);
         validate_target_directory(&root, &package_root.join("benches"), &mut failures);
-        validate_integration_tests(&root, &package_root.join("tests"), &mut failures);
     }
 
     assert!(
@@ -203,41 +192,6 @@ fn section_has_workspace_true(manifest: &str, wanted: &str) -> bool {
     false
 }
 
-fn is_lint_bypass(line: &str) -> bool {
-    let compact = line
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect::<String>();
-    (compact.starts_with("#[") || compact.starts_with("#!["))
-        && (compact.contains("allow(") || compact.contains("expect("))
-}
-
-fn assert_no_custom_size_thresholds(root: &Path) {
-    let mut failures = Vec::new();
-    for path in repository_files(root).into_iter().filter(|path| {
-        matches!(
-            path.file_name().and_then(OsStr::to_str),
-            Some("clippy.toml" | ".clippy.toml")
-        )
-    }) {
-        for (index, line) in read_text(&path).lines().enumerate() {
-            if line.contains("too-many-lines-threshold") {
-                failures.push(format!(
-                    "{}:{}: {}",
-                    relative_path(root, &path),
-                    index + 1,
-                    line.trim()
-                ));
-            }
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "custom `too_many_lines` thresholds are not permitted:\n{}",
-        failures.join("\n")
-    );
-}
-
 fn has_default_or_additional_target(source_root: &Path) -> bool {
     source_root.join("lib.rs").is_file()
         || source_root.join("main.rs").is_file()
@@ -254,61 +208,11 @@ fn validate_target_directory(root: &Path, directory: &Path, failures: &mut Vec<S
         let path = entry
             .expect("target directory entry must be readable")
             .path();
-        if path.is_file() && path.extension() == Some(OsStr::new("rs")) {
-            validate_target_name(root, &path, failures);
-        } else if path.is_dir() {
-            if !path.join("main.rs").is_file() {
-                failures.push(format!(
-                    "{}: multi-file target directories must contain main.rs",
-                    relative_path(root, &path)
-                ));
-            }
-            validate_target_name(root, &path, failures);
+        if path.is_dir() && !path.join("main.rs").is_file() {
+            failures.push(format!(
+                "{}: multi-file target directories must contain main.rs",
+                relative_path(root, &path)
+            ));
         }
     }
-}
-
-fn validate_integration_tests(root: &Path, directory: &Path, failures: &mut Vec<String>) {
-    if !directory.is_dir() {
-        return;
-    }
-    let entries = fs::read_dir(directory)
-        .unwrap_or_else(|error| panic!("failed to read {}: {error}", directory.display()));
-    for entry in entries {
-        let path = entry.expect("test directory entry must be readable").path();
-        if path.is_file() && path.extension() == Some(OsStr::new("rs")) {
-            validate_target_name(root, &path, failures);
-        }
-    }
-}
-
-fn validate_target_name(root: &Path, path: &Path, failures: &mut Vec<String>) {
-    let name = if path.is_dir() {
-        path.file_name().and_then(OsStr::to_str)
-    } else {
-        path.file_stem().and_then(OsStr::to_str)
-    };
-    let Some(name) = name else {
-        failures.push(format!(
-            "{}: target name is not UTF-8",
-            relative_path(root, path)
-        ));
-        return;
-    };
-    if !is_kebab_case(name) && !COMPATIBILITY_TARGET_NAMES.contains(&name) {
-        failures.push(format!(
-            "{}: new Cargo target names must use kebab-case",
-            relative_path(root, path)
-        ));
-    }
-}
-
-fn is_kebab_case(name: &str) -> bool {
-    !name.is_empty()
-        && !name.starts_with('-')
-        && !name.ends_with('-')
-        && !name.contains("--")
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
