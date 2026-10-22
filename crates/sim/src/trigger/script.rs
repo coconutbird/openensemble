@@ -87,13 +87,6 @@ impl TriggerVar {
         self
     }
 
-    /// Mark as input parameter.
-    #[must_use]
-    pub fn as_input(mut self) -> Self {
-        self.is_input = true;
-        self
-    }
-
     /// Mark as output parameter.
     #[must_use]
     pub fn as_output(mut self) -> Self {
@@ -170,13 +163,6 @@ impl TriggerScript {
         self
     }
 
-    /// Set the script type.
-    #[must_use]
-    pub fn with_type(mut self, script_type: ScriptType) -> Self {
-        self.script_type = script_type;
-        self
-    }
-
     /// Add a variable to the script.
     pub fn add_variable(&mut self, var: TriggerVar) {
         let editor_id = var.editor_id;
@@ -202,14 +188,6 @@ impl TriggerScript {
     /// Get a mutable variable by ID.
     pub fn get_variable_mut(&mut self, id: VarId) -> Option<&mut TriggerVar> {
         self.variables.get_mut(&id)
-    }
-
-    /// Get a variable by editor ID.
-    #[must_use]
-    pub fn get_variable_by_editor_id(&self, editor_id: VarId) -> Option<&TriggerVar> {
-        self.var_editor_to_id
-            .get(&editor_id)
-            .and_then(|id| self.get_variable(*id))
     }
 
     /// Get a trigger by ID.
