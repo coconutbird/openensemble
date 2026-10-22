@@ -5,10 +5,13 @@ use glam::Vec3;
 #[test]
 fn get_points_reads_authoritative_world_geometry_and_clears_missing_lines() {
     let mut world = World::new();
-    world.configure_design_lines([(
-        17,
-        vec![Vec3::new(30.0, 2.0, 10.0), Vec3::new(60.0, 5.0, 40.0)],
-    )]);
+    world.configure_design_objects(
+        Vec::new(),
+        [(
+            17,
+            vec![Vec3::new(30.0, 2.0, 10.0), Vec3::new(60.0, 5.0, 40.0)],
+        )],
+    );
     let mut script = TriggerScript::new(1);
     add_var(
         &mut script,

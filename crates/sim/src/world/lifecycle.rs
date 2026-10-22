@@ -1,6 +1,6 @@
 //! Shared retail-style entity kill and immediate-destroy operations.
 
-use super::{World, design_lines, events, presentation, scoring, team};
+use super::{World, design_objects, events, presentation, scoring, team};
 use crate::entity_id::{EntityClass, EntityId};
 
 impl World {
@@ -24,7 +24,7 @@ impl World {
         self.fog_of_war_enabled = true;
         self.black_map_cleared = false;
         self.scenario_score = scoring::ScenarioScoreState::default();
-        self.design_lines = design_lines::DesignLineState::default();
+        self.design_objects = design_objects::DesignObjectState::default();
         self.objectives.clear();
         self.terrain_bounds = None;
         self.playable_bounds = None;

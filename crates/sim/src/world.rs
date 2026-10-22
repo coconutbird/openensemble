@@ -32,7 +32,7 @@ mod cryo;
 mod custom_commands;
 mod death_replacements;
 mod death_spawns;
-mod design_lines;
+mod design_objects;
 mod detonate;
 mod events;
 mod flight;
@@ -99,7 +99,7 @@ pub use bounds::WorldBounds;
 pub(crate) use combat::SquadAttackContext;
 pub use construction::{ConstructionError, ConstructionQueueResult};
 pub use custom_commands::{CustomCommand, CustomCommandFlags};
-pub use design_lines::DesignLineId;
+pub use design_objects::{DesignLineId, DesignSphere};
 pub(crate) use events::EventEntityParameter;
 pub use events::{
     ChatRequest, CinematicRequest, GeneralEvent, GeneralEventType, ImpactEffectRequest,
@@ -163,8 +163,8 @@ pub struct World {
     black_map_cleared: bool,
     /// Scenario-authored campaign scoring configuration.
     scenario_score: scoring::ScenarioScoreState,
-    /// Scenario-authored path geometry keyed by retail design-line ID.
-    design_lines: design_lines::DesignLineState,
+    /// Scenario-authored design spheres and lines (`BWorld+624`).
+    design_objects: design_objects::DesignObjectState,
     /// Scenario-authored objectives in their retail manager order.
     objectives: Vec<ObjectiveState>,
     /// Full horizontal terrain extent loaded from the active scenario XTD.
@@ -246,7 +246,7 @@ impl World {
             fog_of_war_enabled: true,
             black_map_cleared: false,
             scenario_score: scoring::ScenarioScoreState::default(),
-            design_lines: design_lines::DesignLineState::default(),
+            design_objects: design_objects::DesignObjectState::default(),
             objectives: Vec::new(),
             terrain_bounds: None,
             playable_bounds: None,

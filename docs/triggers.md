@@ -266,6 +266,13 @@ logic.
 - `LaunchScript` (392) v4 sets each external from a non-null input: 2 unit, 3 unit list, 4 squad,
   5 squad list, 6 player, 7 power, 8 cost, 11 location, 12 location list, 13 float. Power
   variables load as strings, so only an integer power value becomes an external.
+- `CanGetDesignSpheres` (974, `0x140430C50`) reads the scenario design spheres
+  (`BDesignObjectManager_load` `0x140200530`, kept in `World::design_spheres`). It matches the
+  type without case, or every sphere if the type is null, and always overwrites the center and
+  radius lists. The `Creeps` and `CrateMaker` scripts that `SkirmishWorld` launches still need
+  `CheckPlacement` (82), `CanGetRandomLocation` (956), `MarkerSquadsInArea` (980),
+  `RandomLocation` (55) v4 with obstruction tests, `GetDistanceLocationLocation` (512) and
+  `SetLevel` (820) (issue #24).
 
 ## Coverage
 

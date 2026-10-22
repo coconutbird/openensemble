@@ -24,7 +24,7 @@ impl World {
         checksum.hash_u32(u32::from(self.fog_of_war_enabled));
         checksum.hash_u32(u32::from(self.black_map_cleared));
         self.scenario_score.hash_state(&mut checksum);
-        self.design_lines.hash_state(&mut checksum);
+        self.design_objects.hash_state(&mut checksum);
         self.hash_objectives(&mut checksum);
         hash_optional_bounds(&mut checksum, self.terrain_bounds);
         hash_optional_bounds(&mut checksum, self.playable_bounds);

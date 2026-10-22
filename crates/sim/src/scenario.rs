@@ -37,7 +37,7 @@ mod garrison;
 mod animation_requests;
 pub(crate) mod child_objects;
 mod coordinates;
-mod design_lines;
+mod design_objects;
 mod forbids;
 mod objectives;
 pub(crate) mod parking_lots;
@@ -125,9 +125,9 @@ pub enum ScenarioAssetLoadError {
     /// The scenario's synchronized XSD simulation terrain was malformed.
     #[error("failed to load scenario simulation terrain: {0}")]
     Terrain(#[from] pipeline::xsd::Error),
-    /// Scenario-authored design-line path geometry was malformed.
-    #[error("failed to load scenario design lines: {0}")]
-    DesignLines(#[from] pipeline::hw1::scenario::DesignLineError),
+    /// Scenario-authored design spheres or lines were malformed.
+    #[error("failed to load scenario design objects: {0}")]
+    DesignObjects(#[from] pipeline::hw1::scenario::DesignObjectError),
     /// Scenario-authored objective state was malformed.
     #[error("failed to load scenario objectives: {0}")]
     Objectives(#[from] pipeline::hw1::scenario::ObjectiveError),
@@ -229,8 +229,8 @@ pub fn load_scenario_from_game_dir(
     }
     let objectives = pipeline::hw1::scenario::parse_objectives(&trigger_document)?;
     objectives::load_objectives(&mut simulation.world, &objectives);
-    let design_lines = pipeline::hw1::scenario::parse_design_lines(&trigger_document)?;
-    design_lines::load_design_lines(&mut simulation.world, &design_lines);
+    let design_objects = pipeline::hw1::scenario::parse_design_objects(&trigger_document)?;
+    design_objects::load_design_objects(&mut simulation.world, &design_objects);
     forbids::apply_scenario_forbids(
         &mut simulation.world,
         &content.database,

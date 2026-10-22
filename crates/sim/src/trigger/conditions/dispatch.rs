@@ -172,6 +172,9 @@ fn evaluate_query_condition(
         ConditionType::SquadLocationDistance => {
             spatial::squad_location_distance(condition, script, world)
         }
+        ConditionType::CanGetDesignSpheres => {
+            spatial::can_get_design_spheres(condition, script, world)
+        }
         ConditionType::EventTriggered => events::event_triggered(condition, script, world),
         ConditionType::ChatCompleted => events::chat_completed(condition, script, world),
         ConditionType::CinematicCompleted => events::cinematic_completed(world),

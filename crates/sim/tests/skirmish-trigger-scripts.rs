@@ -91,3 +91,42 @@ fn skirmish_scripts_run_the_new_handlers_without_unsupported_ids() {
         .is_none_or(|script| !script.is_trigger_active(0));
     assert!(left_first_trigger);
 }
+
+/// `SkirmishWorld` "Find Design Spheres" (`CanGetDesignSpheres`, 974) finds the six `Creeps`
+/// design spheres of `blood_gulch` (`BDesignObjectManager_load`).
+#[test]
+#[ignore = "requires a local Halo Wars DE installation"]
+fn skirmish_world_finds_the_blood_gulch_creep_design_spheres() {
+    let mut loaded = test_support::installed_scenario("blood_gulch");
+    let database = &loaded.content.database;
+    let scenario = &mut loaded.simulation;
+    assert_eq!(scenario.world.design_spheres().len(), 6);
+
+    scenario
+        .launch_trigger_script(
+            &mut loaded.source,
+            database,
+            "SkirmishWorld.triggerscript",
+            TriggerExternals::default(),
+        )
+        .expect("SkirmishWorld parses")
+        .expect("SkirmishWorld exists");
+    let mut unsupported_conditions = Vec::new();
+    for _ in 0..30 {
+        let update = scenario
+            .world
+            .update_triggers_with_gameplay(database, &scenario.gameplay);
+        unsupported_conditions.extend(update.unsupported_condition_types);
+        scenario.world.game_time_ms += 50;
+    }
+    assert!(
+        !unsupported_conditions.contains(&974),
+        "{unsupported_conditions:?}"
+    );
+
+    // The scenario spheres reach the world in SCN order, in world axes (X and Z swap).
+    let first = &scenario.world.design_spheres()[0];
+    assert_eq!(first.type_name, "Creeps");
+    assert!((first.center.x - 268.722).abs() < 1e-3 && (first.center.z - 447.258).abs() < 1e-3);
+    assert!((first.radius - 55.0).abs() < f32::EPSILON);
+}
