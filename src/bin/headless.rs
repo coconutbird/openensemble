@@ -17,8 +17,6 @@ use std::time::{Duration, Instant};
 /// Headless server configuration.
 #[derive(Debug, Clone)]
 pub struct HeadlessConfig {
-    /// Path to the game directory (defaults to `OPENENSEMBLE_GAME_DIR` or cwd).
-    pub game_dir: Option<String>,
     /// Map/scenario to load (e.g., "`skirmish/blood_gulch`").
     pub map_name: Option<String>,
     /// Random seed for deterministic simulation.
@@ -36,7 +34,6 @@ pub struct HeadlessConfig {
 impl Default for HeadlessConfig {
     fn default() -> Self {
         Self {
-            game_dir: None,
             map_name: None,
             random_seed: 42,
             game_speed: 1.0,
