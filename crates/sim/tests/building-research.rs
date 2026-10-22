@@ -15,6 +15,7 @@ use sim::{
     EntityId, MS_PER_TICK, ResearchError, ResearchQueueResult, Simulation, TechStatus,
     object_prototype_id, serialize_command, spawn_object_at, technology_prototype_id,
 };
+use test_support::assert_close;
 
 const BARRACKS: &str = "test_barracks";
 const UPGRADE_ONE: &str = "test_marine_upgrade1";
@@ -404,13 +405,6 @@ fn assert_resources(world: &sim::World, expected: [f32; 4]) {
     for (actual, expected) in actual.into_iter().zip(expected) {
         assert_close(actual, expected);
     }
-}
-
-fn assert_close(actual: f32, expected: f32) {
-    assert!(
-        (actual - expected).abs() <= 1.0e-6,
-        "{actual} != {expected}"
-    );
 }
 
 fn enqueue_research(simulation: &mut Simulation, building_id: EntityId, technology_id: i32) {

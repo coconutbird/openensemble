@@ -11,6 +11,7 @@ use sim::{
     BuildingCommand, ConstructionError, ConstructionKind, EntityId, MS_PER_TICK, Simulation, World,
     object_prototype_id, object_runtime_id, spawn_object_at,
 };
+use test_support::assert_close;
 
 const BUILDER: &str = "test_builder";
 const DIRECT: &str = "test_direct_building";
@@ -685,11 +686,4 @@ fn command(command_type: &str, target: &str) -> ObjectCommand {
         command_type: Some(command_type.to_owned()),
         ..ObjectCommand::default()
     }
-}
-
-fn assert_close(actual: f32, expected: f32) {
-    assert!(
-        (actual - expected).abs() <= 1.0e-6,
-        "{actual} != {expected}"
-    );
 }
