@@ -52,7 +52,11 @@ fn debug_button_row(ui: &mut egui::Ui, debug_mode: &mut u32, buttons: &[(&str, u
 
 impl TerrainViewer {
     fn synchronize_camera_presentation(&mut self) -> sim::PlayerPresentationState {
-        let Some(simulation) = &self.simulation else {
+        let Some(simulation) = self
+            .session
+            .as_ref()
+            .and_then(|session| session.simulation.as_ref())
+        else {
             return sim::PlayerPresentationState::default();
         };
         self.camera_adapter.synchronize_at_time(
@@ -73,7 +77,10 @@ impl TerrainViewer {
     }
 
     fn spawn_player_marines(&mut self, player_id: sim::PlayerId) {
-        let (Some(simulation), Some(content)) = (&mut self.simulation, &self.game_content) else {
+        let Some(session) = &mut self.session else {
+            return;
+        };
+        let (Some(simulation), Some(content)) = (&mut session.simulation, &session.content) else {
             return;
         };
         let base_id = simulation.get_initial_base_id(player_id).or_else(|| {
@@ -101,7 +108,10 @@ impl TerrainViewer {
     }
 
     fn move_player_squads_to_camera(&mut self, player_id: sim::PlayerId) {
-        let Some(simulation) = &self.simulation else {
+        let Some(session) = &mut self.session else {
+            return;
+        };
+        let Some(simulation) = &session.simulation else {
             return;
         };
         let recipients = simulation
@@ -121,11 +131,9 @@ impl TerrainViewer {
         let target = glam::Vec3::new(self.camera.position.x, y, self.camera.position.z);
         let command =
             sim::WorkCommand::user_work(i32::from(player_id), recipients, target, None, false);
-        let exec_time = self
-            .simulation_clock
-            .game_time_ms
-            .saturating_add(sim::MS_PER_TICK);
-        self.simulation_clock
+        let exec_time = session.clock.game_time_ms.saturating_add(sim::MS_PER_TICK);
+        session
+            .clock
             .command_queue
             .enqueue_work(command, exec_time, u64::from(player_id));
         log::info!(
@@ -137,37 +145,9 @@ impl TerrainViewer {
     }
 
     fn advance_simulation(&mut self, dt_seconds: f32) {
-        let TerrainViewer {
-            simulation: Some(simulation),
-            game_content: Some(content),
-            simulation_clock,
-            asset_source: Some(source),
-            ugx_scene: Some(scene),
-            ugx_roster_dirty,
-            trigger_loop_warning_time_ms,
-            ..
-        } = self
-        else {
-            return;
-        };
-        simulation_clock.update_with_scenario(dt_seconds, simulation, &content.database);
-        warn_about_trigger_loops(&simulation.world, trigger_loop_warning_time_ms);
-        if scene.roster_matches_with_gameplay(&simulation.world, &simulation.gameplay) {
-            return;
+        if let Some(session) = &mut self.session {
+            session.advance(dt_seconds);
         }
-        let active_proto_names =
-            render::ugx::simulation_proto_names(&simulation.world).collect::<Vec<_>>();
-        let loaded_visuals = content.load_visuals_for(source, active_proto_names.iter().copied());
-        if loaded_visuals > 0 {
-            log::info!("Loaded {loaded_visuals} visuals for the updated sim roster");
-        }
-        *ugx_roster_dirty |= scene.sync_world_with_gameplay(
-            source,
-            &simulation.world,
-            &simulation.gameplay,
-            &content.visuals,
-            &content.database.objects,
-        );
     }
 
     fn update_display_toggles(&mut self, input: &Input) {
@@ -249,7 +229,10 @@ impl TerrainViewer {
     }
 
     fn draw_hint_callouts(&self, ctx: &egui::Context) {
-        let (Some(simulation), Some(content)) = (&self.simulation, &self.game_content) else {
+        let Some(session) = &self.session else {
+            return;
+        };
+        let (Some(simulation), Some(content)) = (&session.simulation, &session.content) else {
             return;
         };
         let screen = ctx.screen_rect();
@@ -290,7 +273,10 @@ impl TerrainViewer {
     }
 
     fn draw_game_timer(&mut self, ctx: &egui::Context) {
-        let (Some(simulation), Some(content)) = (&self.simulation, &self.game_content) else {
+        let Some(session) = &self.session else {
+            return;
+        };
+        let (Some(simulation), Some(content)) = (&session.simulation, &session.content) else {
             return;
         };
         let Some(timer) = self.timer_adapter.synchronize(&simulation.world, 1, true) else {
@@ -330,7 +316,7 @@ impl TerrainViewer {
     }
 
     fn draw_objective_pointers(&self, ctx: &egui::Context) {
-        let Some(simulation) = &self.simulation else {
+        let Some(simulation) = self.simulation() else {
             return;
         };
         let screen = ctx.screen_rect();
@@ -373,7 +359,7 @@ impl TerrainViewer {
     }
 
     fn draw_icon_objects(&self, ctx: &egui::Context) {
-        let Some(simulation) = &self.simulation else {
+        let Some(simulation) = self.simulation() else {
             return;
         };
         let screen = ctx.screen_rect();
@@ -406,7 +392,7 @@ impl TerrainViewer {
     }
 
     fn draw_screen_fade(&self, ctx: &egui::Context) {
-        let Some(simulation) = &self.simulation else {
+        let Some(simulation) = self.simulation() else {
             return;
         };
         let Some([red, green, blue, alpha]) = render::ui::screen_fade_rgba(&simulation.world)
@@ -435,7 +421,7 @@ impl TerrainViewer {
             "Camera: ({:.1}, {:.1}, {:.1})",
             self.camera.position.x, self.camera.position.y, self.camera.position.z
         ));
-        if let Some(scene) = &self.scene {
+        if let Some(scene) = self.session.as_ref().map(|session| &session.scene) {
             let size = scene.mesh.size();
             ui.separator();
             ui.label(format!("Vertices: {}", scene.mesh.positions.len()));
@@ -447,7 +433,11 @@ impl TerrainViewer {
             ui.label("Terrain path: packed GPU patches");
             ui.label("Material: oracle unique-map compositor");
         }
-        if let Some(environment) = &self.environment {
+        if let Some(environment) = self
+            .session
+            .as_ref()
+            .and_then(|session| session.environment.as_ref())
+        {
             ui.label(format!(
                 "Environment: {} ({}², {} mips)",
                 environment.path(),
@@ -459,11 +449,13 @@ impl TerrainViewer {
             ui.separator();
             ui.colored_label(egui::Color32::RED, error);
         }
-        if let Some(simulation) = &self.simulation {
+        if let Some(session) = &self.session
+            && let Some(simulation) = &session.simulation
+        {
             ui.separator();
             ui.label(format!(
                 "Simulation: tick {}, {} players, {} initial bases, {} squads, {} units/buildings, {} projectiles",
-                self.simulation_clock.tick,
+                session.clock.tick,
                 simulation.world.player_count(),
                 simulation.initial_base_ids.len(),
                 simulation.world.squads.len(),
@@ -471,7 +463,11 @@ impl TerrainViewer {
                 simulation.world.projectiles.len(),
             ));
         }
-        if let Some(scene) = &self.ugx_scene {
+        if let Some(scene) = self
+            .session
+            .as_ref()
+            .and_then(|session| session.units.as_ref())
+        {
             ui.label(format!(
                 "UGX presentation: {} placements from {} sim entities, {} unique visuals",
                 scene.placement_count(),
@@ -601,24 +597,4 @@ impl Application for TerrainViewer {
     fn resize_gpu(&mut self, device: &wgpu::Device, width: u32, height: u32) {
         self.resize_gpu_resources(device, width, height);
     }
-}
-
-/// Logs a warning when the last trigger update crossed the evaluation warning limit.
-///
-/// A script that activates its own triggers again in one update (for example because an effect
-/// that it needs is not implemented) evaluates up to the loop guard in each tick. That makes each
-/// tick slow. The warning names the cause, at most one time for each second of game time.
-fn warn_about_trigger_loops(world: &sim::World, last_warning_ms: &mut Option<u32>) {
-    if !world.trigger_engine().performance_warning_reached() {
-        return;
-    }
-    let now = world.game_time_ms;
-    if last_warning_ms.is_some_and(|last| now.saturating_sub(last) < 1_000) {
-        return;
-    }
-    *last_warning_ms = Some(now);
-    log::warn!(
-        "Trigger update at {now} ms evaluated more conditions than the warning limit; a trigger \
-         script loops in one update"
-    );
 }

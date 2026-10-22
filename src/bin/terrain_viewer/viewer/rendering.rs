@@ -4,16 +4,11 @@
 //! top-down captures. The `Application` callbacks call `resize_gpu_resources` and
 //! `render_scene`.
 
-use num_traits::ToPrimitive;
+use openensemble::session::{begin_camera_shakes, world_camera};
 use render::app::RenderContext;
-use render::lighting::LocalLightView;
-use render::particle::ParticleScene;
 use render::terrain::RawXtdData;
-use render::ugx::AnimationCameraShake;
 use render::wgpu;
-use render::world_view::{
-    WorldCamera, WorldFrame, WorldView, WorldViewInputs, WorldViewSettings, WorldViewUnits,
-};
+use render::world_view::{WorldFrame, WorldViewSettings};
 
 use super::TerrainViewer;
 use crate::capture::{
@@ -24,32 +19,18 @@ use crate::capture::{
 
 impl TerrainViewer {
     fn initialize_world_view(&mut self, ctx: &RenderContext<'_>) {
-        if self.world_view.is_some() || self.load_error.is_some() {
+        if self.load_error.is_some() {
             return;
         }
-        let Some(scene) = &self.scene else {
+        let Some(session) = &self.session else {
             return;
         };
-        if let Some(raw_data) = &scene.raw_xtd_data {
+        if session.world_view.is_some() {
+            return;
+        }
+        if let Some(raw_data) = &session.scene.raw_xtd_data {
             self.write_decoded_capture_references(raw_data);
         }
-        let units = match (&self.ugx_scene, &self.simulation) {
-            (Some(scene), Some(simulation)) => Some(WorldViewUnits {
-                scene,
-                world: &simulation.world,
-            }),
-            _ => None,
-        };
-        let inputs = WorldViewInputs {
-            terrain: scene,
-            lightset: self.lightset.take(),
-            environment: self.environment.as_ref(),
-            sky: self.sky_unit.as_ref(),
-            units,
-            asset_source: self.asset_source.as_mut(),
-            size: [ctx.size.0, ctx.size.1],
-            output_format: ctx.format,
-        };
         let settings = WorldViewSettings {
             debug_mode: self.debug_mode,
             compositor_debug_mode: self.compositor_debug_mode,
@@ -59,37 +40,26 @@ impl TerrainViewer {
             details: true,
             scenario_tone_map: true,
         };
-        match WorldView::new(ctx.device, ctx.queue, inputs, &settings) {
-            Ok(world_view) => {
-                self.world_view = Some(world_view);
-                // The GPU has the composited atlas, so release the decoded XTT albedo.
-                if let Some(scene) = &mut self.scene {
-                    scene.albedo = None;
-                }
-            }
-            Err(error) => {
-                log::error!("{error}");
-                self.load_error = Some(error.to_string());
-            }
-        }
-    }
-
-    fn sync_unit_roster(&mut self, ctx: &RenderContext<'_>) {
-        if !self.ugx_roster_dirty {
+        let Some(session) = &mut self.session else {
             return;
+        };
+        if let Err(error) = session.create_world_view(
+            ctx.device,
+            ctx.queue,
+            [ctx.size.0, ctx.size.1],
+            ctx.format,
+            &settings,
+        ) {
+            log::error!("{error}");
+            self.load_error = Some(error.to_string());
         }
-        if let (Some(world_view), Some(scene), Some(simulation)) =
-            (&mut self.world_view, &self.ugx_scene, &self.simulation)
-        {
-            world_view.sync_units(ctx.device, ctx.queue, scene, &simulation.world);
-        }
-        self.ugx_roster_dirty = false;
     }
 
     fn write_decoded_capture_references(&self, raw_data: &RawXtdData) {
-        let (Some(capture), Some(scene)) = (&self.capture, &self.scene) else {
+        let (Some(capture), Some(session)) = (&self.capture, &self.session) else {
             return;
         };
+        let scene = &session.scene;
         if let Some(albedo) = &scene.albedo {
             match write_xtt_reference(capture.config(), albedo) {
                 Ok(path) => log::info!("Wrote decoded XTT atlas oracle to {}", path.display()),
@@ -127,52 +97,17 @@ impl TerrainViewer {
         }
     }
 
-    /// Starts the visible animation camera shakes on the camera adapter.
-    fn begin_camera_shakes(&mut self, view: LocalLightView, shakes: Vec<AnimationCameraShake>) {
-        for shake in shakes {
-            // The terrain viewer does not yet expose entity selection. Retail
-            // suppresses the two shipped checkSelected tags unless their owner
-            // is selected, so conservatively suppress them here too.
-            if shake.check_selected()
-                || view
-                    .project_sphere(shake.position().to_array(), 1.0)
-                    .is_none()
-            {
-                continue;
-            }
-            self.camera_adapter.begin_animation_shake(
-                shake.duration_seconds(),
-                shake.strength(),
-                self.render_time_seconds,
-            );
-        }
-    }
-
     fn capture_camera(&self, size: (u32, u32)) -> Option<ValidationCamera> {
         let config = self
             .capture
             .as_ref()
             .filter(|capture| capture.is_pending())?
             .config();
-        let scene = self.scene.as_ref()?;
+        let scene = &self.session.as_ref()?.scene;
         Some(match (config.center, config.span) {
             (Some(center), Some(span)) => top_down_detail_camera(&scene.mesh, size, center, span),
             _ => top_down_camera(&scene.mesh, size),
         })
-    }
-
-    fn interactive_camera(&self, size: (u32, u32)) -> WorldCamera {
-        let width = size.0.to_f32().expect("surface width must fit f32");
-        let height = size.1.to_f32().expect("surface height must fit f32");
-        let world_to_view = self.camera.view_matrix();
-        let projection = self.camera.projection_matrix(width / height);
-        WorldCamera {
-            view_projection: projection * world_to_view,
-            world_to_view,
-            position: self.camera.position,
-            depth_unproject: ParticleScene::perspective_depth_unproject(projection),
-            viewport: [size.0, size.1],
-        }
     }
 
     fn capture_frame(
@@ -184,14 +119,22 @@ impl TerrainViewer {
         path: &std::path::Path,
         include_details: bool,
     ) -> anyhow::Result<()> {
-        let world_view = self
+        let session = self
+            .session
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("the world view is unavailable"))?;
+        let world = session
+            .simulation
+            .as_ref()
+            .map(|simulation| &simulation.world);
+        let world_view = session
             .world_view
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("the world view is unavailable"))?;
         let target = CaptureTarget::new(ctx.device, size, ctx.format)?;
         let frame = WorldFrame {
             camera: camera.world_camera([size, size]),
-            world: self.simulation.as_ref().map(|simulation| &simulation.world),
+            world,
             time_seconds: self.render_time_seconds,
             settings: WorldViewSettings {
                 debug_mode,
@@ -233,8 +176,9 @@ impl TerrainViewer {
         };
 
         let foliage_cameras = self
-            .scene
+            .session
             .as_ref()
+            .map(|session| &session.scene)
             .and_then(|scene| {
                 scene.raw_xtd_data.as_ref().map(|raw| {
                     scene
@@ -306,33 +250,43 @@ impl TerrainViewer {
         if let Some(capture) = &mut self.capture {
             capture.finish();
         }
-        if let Some(world_view) = &mut self.world_view {
+        if let Some(world_view) = self
+            .session
+            .as_mut()
+            .and_then(|session| session.world_view.as_mut())
+        {
             world_view.end_offscreen(ctx.device);
         }
     }
 
     /// Recreates the GPU resources that depend on the window size.
     pub(super) fn resize_gpu_resources(&mut self, device: &wgpu::Device, width: u32, height: u32) {
-        if let Some(world_view) = &mut self.world_view {
-            world_view.resize(device, width, height);
+        if let Some(session) = &mut self.session {
+            session.resize(device, width, height);
         }
     }
 
     /// Records the GPU commands of one frame.
     pub(super) fn render_scene(&mut self, ctx: &mut RenderContext<'_>) {
         self.initialize_world_view(ctx);
-        if self.world_view.is_none() {
-            return;
-        }
-        self.sync_unit_roster(ctx);
         let capture_camera = self.capture_camera(ctx.size);
         let camera = capture_camera.map_or_else(
-            || self.interactive_camera(ctx.size),
+            || world_camera(&self.camera, ctx.size),
             |camera| camera.world_camera([ctx.size.0, ctx.size.1]),
         );
+        let Some(session) = &mut self.session else {
+            return;
+        };
+        if session.world_view.is_none() {
+            return;
+        }
+        session.sync_world_view_units(ctx.device, ctx.queue);
         let frame = WorldFrame {
             camera,
-            world: self.simulation.as_ref().map(|simulation| &simulation.world),
+            world: session
+                .simulation
+                .as_ref()
+                .map(|simulation| &simulation.world),
             time_seconds: self.render_time_seconds,
             settings: WorldViewSettings {
                 debug_mode: self.debug_mode,
@@ -346,19 +300,24 @@ impl TerrainViewer {
                 scenario_tone_map: true,
             },
         };
-        let Some(world_view) = &mut self.world_view else {
+        let Some(world_view) = &mut session.world_view else {
             return;
         };
         let camera_shakes = world_view.update(ctx.device, ctx.queue, &frame);
         let dirty_chunks = world_view.dirty_terrain_chunk_count();
-        self.begin_camera_shakes(camera.light_view(), camera_shakes);
+        begin_camera_shakes(
+            &mut self.camera_adapter,
+            camera.light_view(),
+            camera_shakes,
+            self.render_time_seconds,
+        );
         if self.capture.as_ref().is_some_and(CaptureState::is_pending) {
             if dirty_chunks == 0 {
                 self.capture_top_down(ctx);
             }
             return;
         }
-        if let Some(world_view) = &self.world_view {
+        if let Some(world_view) = &session.world_view {
             world_view.encode(ctx.encoder, ctx.view);
         }
     }

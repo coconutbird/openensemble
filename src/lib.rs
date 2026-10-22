@@ -1,7 +1,14 @@
 //! Shared code for the `OpenEnsemble` executables.
 //!
-//! This library holds the installation policy that the executables share. It finds the
-//! directory of the installed game.
+//! This library holds the code that the game client (`openensemble`) and the `terrain_viewer`
+//! share:
+//!
+//! - [`game_dir`] finds the directory of the installed game.
+//! - [`session`] loads a scenario, steps its simulation and makes the `WorldView` that draws it.
+//! - [`frame_stats`] measures the frame, simulation and render times.
+
+pub mod frame_stats;
+pub mod session;
 
 use std::path::PathBuf;
 use std::sync::LazyLock;
