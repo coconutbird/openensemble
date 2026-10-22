@@ -587,7 +587,9 @@ fn attack_move_acquires_an_enemy_then_resumes_its_destination() {
     world.configure_standard_team_relations();
     let squad_id = world.create_squad_at(1, Vec3::ZERO);
     let attacker_id = world.create_unit_at(1, Vec3::ZERO);
-    world.get_unit_mut(attacker_id).unwrap().proto_object_name = "test_attacker".to_owned();
+    let attacker = world.get_unit_mut(attacker_id).unwrap();
+    attacker.proto_object_name = "test_attacker".to_owned();
+    attacker.configure_authored_line_of_sight(20.0);
     assert!(world.attach_unit_to_squad(attacker_id, squad_id));
     let squad = world.get_squad_mut(squad_id).unwrap();
     squad.aggro_distance = 20.0;
@@ -596,18 +598,6 @@ fn attack_move_acquires_an_enemy_then_resumes_its_destination() {
     world.get_unit_mut(target_id).unwrap().proto_object_name = "test_target".to_owned();
     let destination = Vec3::new(40.0, 0.0, 0.0);
     assert!(world.issue_squad_move_order_to_position(1, squad_id, destination, true, false,));
-
-    let concrete = world.concrete_attack_target(1, target_id).unwrap();
-    let attacker = world.get_unit(attacker_id).unwrap();
-    eprintln!(
-        "visible={} selected={} can_auto={} target={:?}",
-        world.is_entity_visible_from_player(1, target_id),
-        world
-            .selected_ranged_action(attacker, &concrete, &gameplay, true)
-            .is_some(),
-        world.squad_can_auto_attack_target(world.get_squad(squad_id).unwrap(), &concrete, &gameplay),
-        world.attack_move_target(squad_id, &gameplay),
-    );
 
     world.update_entities_with_gameplay(0.05, &gameplay);
     let squad = world.get_squad(squad_id).unwrap();
