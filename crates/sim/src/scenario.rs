@@ -231,7 +231,11 @@ pub fn load_scenario_from_game_dir(
     objectives::load_objectives(&mut simulation.world, &objectives);
     let design_lines = pipeline::hw1::scenario::parse_design_lines(&trigger_document)?;
     design_lines::load_design_lines(&mut simulation.world, &design_lines);
-    forbids::apply_scenario_forbids(&mut simulation.world, &content.database, &trigger_document);
+    forbids::apply_scenario_forbids(
+        &mut simulation.world,
+        &content.database,
+        scenario_data.players(),
+    );
     triggers::load_trigger_systems(&mut simulation, &content.database, &trigger_document)?;
     triggers::preload_trigger_scripts(&mut simulation, &mut source, &content.database);
     let animation_requests = triggers::scripted_animation_requests(&simulation)
@@ -406,7 +410,7 @@ fn configure_players(world: &mut World, players: &[ScenarioPlayer], db: &Databas
         player.name.clone_from(&scenario_player.name);
         player.civ_id = find_name_index(&db.civs, &scenario_player.civ, |civ| &civ.name);
         let leader_id =
-            find_name_index(&db.leaders, &scenario_player.leader1, |leader| &leader.name);
+            find_name_index(&db.leaders, &scenario_player.leader, |leader| &leader.name);
         player.leader_id = leader_id;
         apply_leader_population(player, db, leader_id, population_names);
         resources::apply_leader_starting_resources(player, db, leader_id);
@@ -416,9 +420,11 @@ fn configure_players(world: &mut World, players: &[ScenarioPlayer], db: &Databas
         } else {
             PlayerType::ComputerAi
         };
-        if scenario_player.supplies != 0.0 || scenario_player.power != 0.0 {
-            player.resources.set(0, scenario_player.supplies);
-            player.resources.set(1, scenario_player.power);
+        let supplies = scenario_player.resource("Supplies");
+        let power = scenario_player.resource("Power");
+        if supplies != 0.0 || power != 0.0 {
+            player.resources.set(0, supplies);
+            player.resources.set(1, power);
         }
         player.initialize_resource_totals();
     }
@@ -728,7 +734,9 @@ pub const fn scenario_object_direction_to_world(direction: [f32; 3]) -> [f32; 3]
 }
 
 fn scenario_position(object: &ScenarioObject) -> Vec3 {
-    Vec3::from_array(scenario_object_position_to_world(object.position_vec3()))
+    Vec3::from_array(scenario_object_position_to_world(
+        object.position_vec3().unwrap_or_default(),
+    ))
 }
 
 fn scenario_forward(object: &ScenarioObject) -> Vec3 {

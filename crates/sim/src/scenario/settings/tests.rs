@@ -17,10 +17,11 @@ fn visual_variation_map_retains_only_explicit_placement_values() {
     )
     .expect("valid scenario XML");
 
+    // `BScenario_loadObject` reads the index with `strtol`, so `bad` gives `0`.
     assert_eq!(
         visual_variation_indices(scenario.objects())
             .into_iter()
             .collect::<Vec<_>>(),
-        vec![(10, 2), (12, -1), (14, 0), (15, 3)]
+        vec![(10, 2), (12, -1), (13, 0), (14, 0), (15, 3)]
     );
 }

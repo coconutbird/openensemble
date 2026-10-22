@@ -54,7 +54,7 @@ fn test_load_into_world() {
         objects
             .entries
             .iter()
-            .filter(|entry| entry.is_squad)
+            .filter(|entry| entry.is_squad == Some(true))
             .count()
     });
     assert_eq!(loaded.world.squads.len(), squad_count);

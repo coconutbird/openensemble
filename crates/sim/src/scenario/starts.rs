@@ -94,7 +94,7 @@ fn create_initial_base(
     axes: ScenarioPositionAxes,
 ) -> Option<BaseId> {
     let (proto_index, proto) = initial_base_proto(world, database, player_id)?;
-    let position = Vec3::from_array(axes.position_to_world(start.position_vec3()));
+    let position = Vec3::from_array(axes.position_to_world(start.position_vec3()?));
     let forward = Vec3::from_array(axes.direction_to_world(start.forward_vec3()));
     if !position.is_finite() || !forward.is_finite() {
         return None;

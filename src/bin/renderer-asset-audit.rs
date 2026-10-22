@@ -22,7 +22,7 @@ fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|| "blood_gulch".to_owned());
     let game_dir = openensemble::game_dir().to_string_lossy().into_owned();
     let (mut world, mut source) = hw1::World::load(&game_dir)?;
-    world.swap_scenario(&mut source, &scenario);
+    world.swap_scenario(&mut source, &scenario)?;
 
     if print_particle_xml_if_requested(&arguments, &mut source)? {
         return Ok(());
@@ -138,7 +138,7 @@ fn print_placement_height_oracle(world: &hw1::World) {
     let mut sample_count = 0_u32;
     println!("placement height oracle (delta from authored Y):");
     for object in scenario.objects() {
-        let position = object.position_vec3();
+        let position = object.position_vec3().unwrap_or_default();
         let direct = height_delta(&raw, position[0], position[2], position[1]);
         let transposed = height_delta(&raw, position[2], position[0], position[1]);
         if let (Some(direct), Some(transposed)) = (direct, transposed) {
@@ -165,7 +165,7 @@ fn print_placement_height_oracle(world: &hw1::World) {
     }
     println!("  player-start height deltas (direct, transposed):");
     for start in scenario.positions() {
-        let [x, y, z] = start.position_vec3();
+        let [x, y, z] = start.position_vec3().unwrap_or_default();
         let direct = height_delta(&raw, x, z, y);
         let transposed = height_delta(&raw, z, x, y);
         println!("    number={}: {direct:?}, {transposed:?}", start.number);
@@ -180,7 +180,7 @@ fn print_proto_height_oracle(
 ) {
     let mut errors = BTreeMap::<String, (f32, f32, u32)>::new();
     for object in objects {
-        let [x, y, z] = object.position_vec3();
+        let [x, y, z] = object.position_vec3().unwrap_or_default();
         let (Some(direct), Some(transposed)) =
             (height_delta(raw, x, z, y), height_delta(raw, z, x, y))
         else {
@@ -239,7 +239,7 @@ fn print_axis_height_oracle(
         let mut error = 0.0_f32;
         let mut count = 0_u32;
         for object in objects {
-            let [x, y, z] = object.position_vec3();
+            let [x, y, z] = object.position_vec3().unwrap_or_default();
             let [world_x, world_z] = transform(x, z, extent);
             if let Some(delta) = height_delta(raw, world_x, world_z, y) {
                 error += delta.abs();
@@ -336,7 +336,7 @@ fn print_scenario_placements(world: &hw1::World) {
     }
     println!("player start positions:");
     for position in scenario.positions() {
-        let authored_position = position.position_vec3();
+        let authored_position = position.position_vec3().unwrap_or_default();
         let authored_forward = position.forward_vec3();
         println!(
             "  player={} number={} default_camera={} authored={authored_position:?} world={:?} authored_forward={authored_forward:?} world_forward={:?}",
@@ -349,7 +349,7 @@ fn print_scenario_placements(world: &hw1::World) {
     }
     println!("scenario objects:");
     for object in scenario.objects() {
-        let authored_position = object.position_vec3();
+        let authored_position = object.position_vec3().unwrap_or_default();
         println!(
             "  id={} proto={:?} editor={:?} authored={authored_position:?} world={:?} forward={:?} right={:?}",
             object.id,

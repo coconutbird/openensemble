@@ -3,7 +3,7 @@ use pipeline::database::hw1::{ProtoObject, Squad, Tech};
 
 #[test]
 fn scn_player_lists_seed_distinct_authoritative_forbid_state() {
-    let document = Document::from_xml(
+    let scenario = pipeline::hw1::scenario::ScenarioData::from_xml_str(
         r#"<Scenario>
             <Players>
                 <Player Name="One">
@@ -38,7 +38,7 @@ fn scn_player_lists_seed_distinct_authoritative_forbid_state() {
     let mut world = World::new();
     world.init_players(2);
 
-    apply_scenario_forbids(&mut world, &database, &document);
+    apply_scenario_forbids(&mut world, &database, scenario.players());
 
     // Proto IDs are table indices; the authored `dbid` values are not IDs.
     let first = world.get_player(1).unwrap();

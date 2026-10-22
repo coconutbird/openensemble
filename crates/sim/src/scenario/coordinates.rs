@@ -29,8 +29,9 @@ impl ScenarioPositionAxes {
             .iter()
             .filter(|start| is_player_start(start.number, max_players))
         {
-            let authored = Self::AuthoredWorld.position_to_world(start.position_vec3());
-            let transposed = Self::Transposed.position_to_world(start.position_vec3());
+            let position = start.position_vec3().unwrap_or_default();
+            let authored = Self::AuthoredWorld.position_to_world(position);
+            let transposed = Self::Transposed.position_to_world(position);
             let Some(authored_distance) = nearest_unit_start_distance_squared(scenario, authored)
             else {
                 continue;
@@ -83,7 +84,8 @@ fn nearest_unit_start_distance_squared(
         .filter_map(scenario_proto_name)
         .filter(|(_, name)| name.to_ascii_lowercase().starts_with("sys_unitstart"))
         .map(|(object, _)| {
-            let position = scenario_object_position_to_world(object.position_vec3());
+            let position =
+                scenario_object_position_to_world(object.position_vec3().unwrap_or_default());
             let delta_x = position[0] - player_position[0];
             let delta_z = position[2] - player_position[2];
             delta_x.mul_add(delta_x, delta_z * delta_z)

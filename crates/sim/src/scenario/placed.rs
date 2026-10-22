@@ -37,7 +37,7 @@ pub(super) fn create_scenario_object(
     database: &Database,
 ) -> Option<EntityId> {
     let (prototype_index, prototype) =
-        match scenario_proto(database, &object.proto_name, Some(object.is_squad))? {
+        match scenario_proto(database, &object.proto_name, object.is_squad)? {
             ScenarioProto::Squad(ProtoSquadEntry::Squad(_)) => {
                 return Some(create_scenario_squad(world, object, database));
             }
