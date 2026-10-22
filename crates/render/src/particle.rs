@@ -754,9 +754,12 @@ impl ParticleRenderer {
 impl WorldRenderer for ParticleRenderer {
     fn render_phase<'pass>(&'pass self, phase: RenderPhase, pass: &mut wgpu::RenderPass<'pass>) {
         match phase {
-            RenderPhase::World => self.render_color(pass),
+            RenderPhase::Particles => self.render_color(pass),
             RenderPhase::Distortion => self.render_distortion(pass),
-            RenderPhase::Sky | RenderPhase::Shadow { .. } | RenderPhase::LocalShadow { .. } => {}
+            RenderPhase::Sky
+            | RenderPhase::World
+            | RenderPhase::Shadow { .. }
+            | RenderPhase::LocalShadow { .. } => {}
         }
     }
 }

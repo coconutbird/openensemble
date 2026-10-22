@@ -560,6 +560,39 @@ impl TerrainViewer {
         }
     }
 
+    /// Draws the particles over the lit world. The depth is read-only, so the particles can
+    /// sample it for soft fading.
+    fn render_particle_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        color_view: &wgpu::TextureView,
+        depth_view: &wgpu::TextureView,
+        include_details: bool,
+    ) {
+        if !include_details {
+            return;
+        }
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Particle Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: color_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth_view,
+                depth_ops: None,
+                stencil_ops: None,
+            }),
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        self.render_units(RenderPhase::Particles, &mut render_pass);
+    }
+
     fn render_distortion_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -579,10 +612,7 @@ impl TerrainViewer {
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                }),
+                depth_ops: None,
                 stencil_ops: None,
             }),
             occlusion_query_set: None,
@@ -672,6 +702,12 @@ impl TerrainViewer {
             tone_map.scene_view(),
             &depth_view,
             wgpu::LoadOp::Clear(scene_clear_color(&lighting)),
+            include_details,
+        );
+        self.render_particle_pass(
+            &mut encoder,
+            tone_map.scene_view(),
+            &depth_view,
             include_details,
         );
         self.render_distortion_pass(
@@ -816,6 +852,7 @@ impl TerrainViewer {
             wgpu::LoadOp::Clear(scene_clear_color(lighting)),
             true,
         );
+        self.render_particle_pass(ctx.encoder, tone_map.scene_view(), depth_view, true);
         self.render_distortion_pass(ctx.encoder, tone_map.distortion_view(), depth_view, true);
         tone_map.encode(ctx.encoder, ctx.view);
     }

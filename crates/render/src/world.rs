@@ -9,7 +9,10 @@ pub enum RenderPhase {
     Sky,
     /// Lit world geometry, including authored transparent draw order.
     World,
-    /// Signed screen-space distortion vectors.
+    /// Depth-tested particles after the world geometry. The pass binds the scene depth read-only,
+    /// so that the particles can sample it for soft fading.
+    Particles,
+    /// Signed screen-space distortion vectors. The pass binds the scene depth read-only.
     Distortion,
     /// One directional shadow-map cascade.
     Shadow {

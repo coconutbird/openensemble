@@ -157,6 +157,7 @@ impl WorldRenderer for Renderer {
             RenderPhase::LocalShadow { pass: pass_index } => {
                 self.render_local_shadow(pass, pass_index);
             }
+            RenderPhase::Particles => {}
         }
     }
 }
