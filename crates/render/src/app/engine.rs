@@ -149,7 +149,8 @@ impl<A: Application> ApplicationHandler for Engine<A> {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        // egui gets each event first. The application input ignores the events that egui uses.
+        // egui gets each event first. The application input ignores most of the events that
+        // egui uses, but it always gets the mouse button releases (see `InputState`).
         let egui_consumed =
             if let (Some(window), Some(egui_state)) = (&self.window, &mut self.egui_state) {
                 egui_state
@@ -159,9 +160,7 @@ impl<A: Application> ApplicationHandler for Engine<A> {
             } else {
                 false
             };
-        if !egui_consumed {
-            self.input_state.handle_event(&event);
-        }
+        self.input_state.handle_event(&event, egui_consumed);
 
         match &event {
             WindowEvent::CloseRequested => {

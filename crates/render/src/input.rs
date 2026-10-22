@@ -16,10 +16,17 @@ pub struct Input {
     pub keys_pressed: HashSet<KeyCode>,
     /// Keys released this frame
     pub keys_released: HashSet<KeyCode>,
-    /// Mouse position (x, y)
+    /// Mouse position (x, y) in physical pixels from the top-left corner of the window
     pub mouse_position: (f64, f64),
     /// Mouse buttons held (left, middle, right)
     pub mouse_buttons: [bool; 3],
+    /// Mouse buttons pressed this frame (left, middle, right)
+    pub mouse_buttons_pressed: [bool; 3],
+    /// Mouse buttons released this frame (left, middle, right)
+    pub mouse_buttons_released: [bool; 3],
+    /// Mouse wheel movement in this frame, in lines. A positive value is a wheel turn up,
+    /// away from the user.
+    pub scroll_delta: f32,
     /// Gamepad state (if connected)
     pub gamepad: GamepadState,
 }
@@ -41,6 +48,51 @@ impl Input {
     #[must_use]
     pub fn is_key_released(&self, key: KeyCode) -> bool {
         self.keys_released.contains(&key)
+    }
+
+    /// Check if a mouse button is currently held
+    #[must_use]
+    pub fn is_mouse_held(&self, button: MouseButton) -> bool {
+        self.mouse_buttons[button.index()]
+    }
+
+    /// Check if a mouse button was pressed this frame
+    #[must_use]
+    pub fn is_mouse_pressed(&self, button: MouseButton) -> bool {
+        self.mouse_buttons_pressed[button.index()]
+    }
+
+    /// Check if a mouse button was released this frame
+    ///
+    /// A release arrives even when the user interface uses the event, so that a drag that
+    /// ends over a window still ends. A button that the user interface got the press of
+    /// does not give a release.
+    #[must_use]
+    pub fn is_mouse_released(&self, button: MouseButton) -> bool {
+        self.mouse_buttons_released[button.index()]
+    }
+}
+
+/// Platform-agnostic mouse buttons
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MouseButton {
+    /// Left button
+    Left,
+    /// Middle button (wheel click)
+    Middle,
+    /// Right button
+    Right,
+}
+
+impl MouseButton {
+    /// Index of the button in the mouse button arrays of [`Input`]
+    #[must_use]
+    pub const fn index(self) -> usize {
+        match self {
+            Self::Left => 0,
+            Self::Middle => 1,
+            Self::Right => 2,
+        }
     }
 }
 

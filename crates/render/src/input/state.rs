@@ -1,13 +1,18 @@
 //! Conversion of window and gamepad events into an [`Input`].
 
 use gilrs::{Axis, Button, Gilrs};
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use num_traits::ToPrimitive;
+use winit::event::{ElementState, MouseButton as WinitMouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{KeyCode as WinitKeyCode, PhysicalKey};
 
-use super::{GamepadButton, Input, KeyCode};
+use super::{GamepadButton, Input, KeyCode, MouseButton};
 
 /// The axis value below which a gamepad stick reads as zero.
 const STICK_DEADZONE: f32 = 0.15;
+
+/// The pixel distance of a precise (touchpad) scroll that counts as one wheel line. egui uses
+/// the same value.
+const PIXELS_PER_SCROLL_LINE: f64 = 50.0;
 
 /// Keeps the [`Input`] of the current frame up to date from window and gamepad events.
 ///
@@ -29,9 +34,14 @@ impl InputState {
         &self.input
     }
 
-    pub(crate) fn handle_event(&mut self, event: &WindowEvent) {
+    /// Applies one window event.
+    ///
+    /// If the user interface used the event (`ui_consumed`), only a mouse button release
+    /// and the cursor position change the input, so that a drag that ends over the user
+    /// interface still ends.
+    pub(crate) fn handle_event(&mut self, event: &WindowEvent, ui_consumed: bool) {
         match event {
-            WindowEvent::KeyboardInput { event, .. } => {
+            WindowEvent::KeyboardInput { event, .. } if !ui_consumed => {
                 if let PhysicalKey::Code(key) = event.physical_key {
                     self.key_input(key, event.state, event.repeat);
                 }
@@ -40,17 +50,42 @@ impl InputState {
                 self.input.mouse_position = (position.x, position.y);
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                let index = match button {
-                    MouseButton::Left => Some(0),
-                    MouseButton::Middle => Some(1),
-                    MouseButton::Right => Some(2),
-                    _ => None,
-                };
-                if let Some(index) = index {
-                    self.input.mouse_buttons[index] = *state == ElementState::Pressed;
+                if let Some(button) = convert_mouse_button(*button) {
+                    self.mouse_input(button, *state, ui_consumed);
                 }
             }
+            WindowEvent::MouseWheel { delta, .. } if !ui_consumed => self.mouse_wheel(*delta),
             _ => {}
+        }
+    }
+
+    fn mouse_input(&mut self, button: MouseButton, state: ElementState, ui_consumed: bool) {
+        let index = button.index();
+        match state {
+            ElementState::Pressed => {
+                if !ui_consumed && !self.input.mouse_buttons[index] {
+                    self.input.mouse_buttons[index] = true;
+                    self.input.mouse_buttons_pressed[index] = true;
+                }
+            }
+            ElementState::Released => {
+                if self.input.mouse_buttons[index] {
+                    self.input.mouse_buttons[index] = false;
+                    self.input.mouse_buttons_released[index] = true;
+                }
+            }
+        }
+    }
+
+    fn mouse_wheel(&mut self, delta: MouseScrollDelta) {
+        let lines = match delta {
+            MouseScrollDelta::LineDelta(_, lines) => lines,
+            MouseScrollDelta::PixelDelta(position) => (position.y / PIXELS_PER_SCROLL_LINE)
+                .to_f32()
+                .unwrap_or(0.0),
+        };
+        if lines.is_finite() {
+            self.input.scroll_delta += lines;
         }
     }
 
@@ -167,7 +202,20 @@ impl InputState {
     pub(crate) fn end_frame(&mut self) {
         self.input.keys_pressed.clear();
         self.input.keys_released.clear();
+        self.input.mouse_buttons_pressed = [false; 3];
+        self.input.mouse_buttons_released = [false; 3];
+        self.input.scroll_delta = 0.0;
         self.input.gamepad.buttons_pressed.clear();
+    }
+}
+
+/// Convert winit mouse button to our platform-agnostic button
+fn convert_mouse_button(button: WinitMouseButton) -> Option<MouseButton> {
+    match button {
+        WinitMouseButton::Left => Some(MouseButton::Left),
+        WinitMouseButton::Middle => Some(MouseButton::Middle),
+        WinitMouseButton::Right => Some(MouseButton::Right),
+        _ => None,
     }
 }
 
@@ -271,6 +319,41 @@ fn convert_key(key: WinitKeyCode) -> Option<KeyCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mouse_sequence_tracks_edges_scroll_and_consumed_events() {
+        let mut state = InputState::new();
+
+        state.mouse_input(MouseButton::Left, ElementState::Pressed, false);
+        state.mouse_input(MouseButton::Right, ElementState::Pressed, true);
+        state.mouse_wheel(MouseScrollDelta::LineDelta(0.0, 1.0));
+        state.mouse_wheel(MouseScrollDelta::PixelDelta(
+            winit::dpi::PhysicalPosition::new(0.0, -25.0),
+        ));
+        let input = state.input();
+        assert!(input.is_mouse_held(MouseButton::Left));
+        assert!(input.is_mouse_pressed(MouseButton::Left));
+        assert!(!input.is_mouse_held(MouseButton::Right));
+        assert!(!input.is_mouse_pressed(MouseButton::Right));
+        assert!((input.scroll_delta - 0.5).abs() < f32::EPSILON);
+
+        state.end_frame();
+        let input = state.input();
+        assert!(input.is_mouse_held(MouseButton::Left));
+        assert!(!input.is_mouse_pressed(MouseButton::Left));
+        assert!(input.scroll_delta.abs() < f32::EPSILON);
+
+        // The user interface uses the release, but the drag that started outside it ends.
+        state.mouse_input(MouseButton::Left, ElementState::Released, true);
+        state.mouse_input(MouseButton::Right, ElementState::Released, false);
+        let input = state.input();
+        assert!(!input.is_mouse_held(MouseButton::Left));
+        assert!(input.is_mouse_released(MouseButton::Left));
+        assert!(!input.is_mouse_released(MouseButton::Right));
+
+        state.end_frame();
+        assert!(!state.input().is_mouse_released(MouseButton::Left));
+    }
 
     #[test]
     fn keyboard_sequence_tracks_held_pressed_and_released_keys() {
