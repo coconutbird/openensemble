@@ -34,7 +34,7 @@ see [hwde-shader-comparison.md](hwde-shader-comparison.md).
 
 | Area | Engine evidence | Our status | Notes |
 |---|---|---|---|
-| Scaleform UI screens (`.gfx`) | `scaleform.gfx` @ `0x140f7f448` (`sub_140B85400`); 26 screens, for example `hud_reticle.gfx` @ `0x1411a7b40` (`sub_14022D3D0`) | Missing | `src/main.rs` shows only an `egui` placeholder menu. No `.gfx` or `FlashFonts.xml` (`0x1411ab110`) loader exists. |
+| Scaleform UI screens (`.gfx`) | `scaleform.gfx` @ `0x140f7f448` (`sub_140B85400`); 26 screens, for example `hud_reticle.gfx` @ `0x1411a7b40` (`sub_14022D3D0`) | Missing | The client (`src/client/hud.rs`) draws an `egui` interface. No `.gfx` or `FlashFonts.xml` (`0x1411ab110`) loader exists. |
 | HUD and minimap | `Minimap` @ `0x141181580` (`sub_1400735E0`), `ImageMinimap` @ `0x14119a998` | Partial | `crates/render/src/terrain/icons.rs` projects icon positions. No minimap or HUD draws. |
 | HP bars and selection decals | `BDatabase_setupHPBars` @ `0x1401ece90`; `SelectionDecalIntensity` @ `0x1411a0018` | Missing | `ensemble-assets` parses the `hpbars.xml` references. `render` does not draw bars or decals. |
 | Audio (Wwise banks, `soundInfo.xml`) | `sound\wwise_2013\GeneratedSoundBanks\Windows\` @ `0x1411e7e40` (`sub_140007CA0`), `init.bnk` (`sub_140007CE0`), `soundInfo.xml` @ `0x1411c9310` (`sub_1405E5550`) | Missing | `crates/render/src/terrain_effect.rs` resolves TFX sound actions but nothing plays them. No audio crate is a dependency. |
@@ -47,7 +47,8 @@ see [hwde-shader-comparison.md](hwde-shader-comparison.md).
 | Controller configuration | `uiControlDefaults.xml` @ `0x141181890` (`sub_14007BDA0`) | Missing | `crates/render/src/input/` reads `gilrs` and keyboard input with fixed bindings. |
 | Terrain self-illumination and environment-mask passes | `gputerraincomposite.bin` programs | Missing | The compositor implements the specular pass only. See [hwde-shader-comparison.md](hwde-shader-comparison.md). |
 | Multiplayer session and lobby | WinSock imports (`WSASendTo`, `WSARecvFrom`); `OOSEvent` @ `0x1411c9d50` | Partial | `crates/net/src/` has a generic UDP host and client. No executable uses `net`. No session, lobby or out-of-sync report exists, and the packet format is not the retail format. |
-| Game executable | retail game loop | Partial | `src/main.rs` opens a window with a placeholder menu. `src/bin/headless.rs` runs the simulation without a renderer. |
+| Game executable | retail game loop | Partial | `src/main.rs` (client in `src/client/`) loads a 1v1 skirmish, steps the simulation through `openensemble::session` and draws it with `WorldView`. `src/bin/headless.rs` runs the simulation without a renderer. |
+| User camera (`BUser`) | `BUser_resetCameraDefaults` @ `0x140598C00`, `BUser_updateCameraControls` @ `0x140580220`, `BUser_updateScrolling` @ `0x14057D9A0`, `BUser_handleInput` @ `0x14058F250` | Partial | `src/client/camera.rs` uses the `startup\game.cfg` yaw, pitch, zoom, field of view, turn, zoom and scroll values, and the pitch from the zoom. `src/client/controls.rs` has the edge scroll border and corner rules. Missing: mouse wheel zoom, auto zoom (`CameraAutoZoom*`), `CameraLimits` and `LockCameraToWorld` height limits, and the analog stick ramp (`ScrollRampPoint`, `ScrollRampSpeed`, `ScrollExp`). |
 
 The engine strings show no water or ocean renderer; the only match is the sky material string.
 Havok physics and ragdolls belong to the simulation, not to this document.

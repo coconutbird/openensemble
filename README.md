@@ -40,6 +40,12 @@ its `[patch]` section points the git dependencies of `ensemble-assets` at `../en
 `openensemble::game_dir` (`src/lib.rs`) uses `OPENENSEMBLE_GAME_DIR` if the path exists.
 Otherwise, it uses the current directory.
 
+The root library (`src/lib.rs`) also holds the code that the executables share:
+
+- `openensemble::session`: loads a scenario, steps its simulation, refreshes the unit visuals and
+  makes the `WorldView` that draws it.
+- `openensemble::frame_stats`: measures the frame, simulation and render times.
+
 ## Crates
 
 | Crate | Purpose |
@@ -55,7 +61,7 @@ Otherwise, it uses the current directory.
 
 | Executable | Purpose |
 |---|---|
-| `openensemble` (`src/main.rs`) | Window with a placeholder `egui` menu. |
+| `openensemble` (`src/main.rs`, `src/client/`) | Game client. Loads a 1v1 skirmish as the human player, steps the simulation and draws it with `WorldView` under an RTS camera. |
 | `headless` (`src/bin/headless.rs`) | Runs the simulation without a renderer. |
 | `terrain_viewer` (`src/bin/terrain_viewer/`) | Loads a scenario and shows it with `WorldView`: terrain, foliage, roads, units and effects. Steps the simulation, moves the camera and writes top-down captures. |
 | `renderer-asset-audit` (`src/bin/renderer-asset-audit.rs`) | Prints an inventory of the visual features that the installed assets use. |
@@ -64,6 +70,17 @@ Otherwise, it uses the current directory.
 
 ## Run
 
+- To play Blood Gulch, run `cargo run --release --bin openensemble`.
+- To play a different scenario, add the scenario name, for example
+  `cargo run --release --bin openensemble -- tundra`. Add `--seed N` to change the random seed.
+- Client controls:
+  - `W`, `A`, `S`, `D`, the arrow keys or the mouse at a window edge scroll the camera.
+  - `Q` and `E` or a drag with the middle mouse button turn the camera.
+  - `Page Up` and `Page Down` zoom the camera.
+  - `Shift` makes the scroll and the zoom faster.
+  - `Escape` quits.
+- The client camera uses the retail values of `startup\game.cfg` (yaw, pitch, zoom, field of
+  view, scroll, turn and zoom speeds). The client shows the frame rate in the top-left corner.
 - To open the terrain viewer on Blood Gulch, run `cargo run --release --bin terrain_viewer`.
 - To open a different scenario, add the scenario name or an `.xtd` path:
   `cargo run --release --bin terrain_viewer -- <SCENARIO>`.
