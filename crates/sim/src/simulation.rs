@@ -32,31 +32,6 @@ pub enum SimState {
     Paused,
 }
 
-/// Command handler trait for processing commands.
-pub trait CommandHandler {
-    /// Process a work command.
-    fn handle_work(&mut self, cmd: &crate::commands::WorkCommand);
-    /// Process a power command.
-    fn handle_power(&mut self, cmd: &crate::commands::PowerCommand);
-    /// Process a building command.
-    fn handle_building(&mut self, cmd: &crate::commands::BuildingCommand);
-    /// Process a game command.
-    fn handle_game(&mut self, cmd: &crate::commands::GameCommand);
-}
-
-/// Simulation update result.
-#[derive(Debug, Default)]
-pub struct SimUpdateResult {
-    /// Number of commands processed.
-    pub commands_processed: usize,
-    /// Current game time after update.
-    pub game_time: u32,
-    /// Current tick number.
-    pub tick: u64,
-    /// Sync checksum after update.
-    pub checksum: u32,
-}
-
 /// Deterministic simulation loop.
 #[derive(Debug)]
 pub struct Simulation {
@@ -144,22 +119,28 @@ impl Simulation {
     ///
     /// Returns the commands that were processed this frame.
     pub fn update(&mut self, dt_seconds: f32) -> Vec<CommandEntry> {
+        self.advance_fixed_ticks(dt_seconds, Self::tick_once)
+    }
+
+    /// Adds `dt_seconds` to the accumulator and runs `tick` once for each full fixed tick.
+    ///
+    /// Returns the commands of all ticks in tick order. Returns no commands if the simulation
+    /// does not run.
+    fn advance_fixed_ticks(
+        &mut self,
+        dt_seconds: f32,
+        mut tick: impl FnMut(&mut Self) -> Vec<CommandEntry>,
+    ) -> Vec<CommandEntry> {
         if self.state != SimState::Running {
             return Vec::new();
         }
 
-        let dt_ms = dt_seconds * 1_000.0 * self.speed;
-        self.accumulated_ms += dt_ms;
-
+        self.accumulated_ms += dt_seconds * 1_000.0 * self.speed;
         let mut all_commands = Vec::new();
-
-        // Process fixed timestep ticks
         while self.accumulated_ms >= MS_PER_TICK_F32 {
             self.accumulated_ms -= MS_PER_TICK_F32;
-            let commands = self.tick_once();
-            all_commands.extend(commands);
+            all_commands.extend(tick(self));
         }
-
         all_commands
     }
 
@@ -261,23 +242,7 @@ impl Simulation {
     /// This is the high-level API that processes multiple ticks
     /// based on real-time delta, executing commands and updating entities.
     pub fn update_with_world(&mut self, dt_seconds: f32, world: &mut World) -> Vec<CommandEntry> {
-        if self.state != SimState::Running {
-            return Vec::new();
-        }
-
-        let dt_ms = dt_seconds * 1_000.0 * self.speed;
-        self.accumulated_ms += dt_ms;
-
-        let mut all_commands = Vec::new();
-
-        // Process fixed timestep ticks
-        while self.accumulated_ms >= MS_PER_TICK_F32 {
-            self.accumulated_ms -= MS_PER_TICK_F32;
-            let commands = self.tick_with_world(world);
-            all_commands.extend(commands);
-        }
-
-        all_commands
+        self.advance_fixed_ticks(dt_seconds, |sim| sim.tick_with_world(world))
     }
 
     /// Advance fixed ticks while executing commands with the active database.
@@ -287,17 +252,9 @@ impl Simulation {
         world: &mut World,
         database: &Database,
     ) -> Vec<CommandEntry> {
-        if self.state != SimState::Running {
-            return Vec::new();
-        }
-
-        self.accumulated_ms += dt_seconds * 1_000.0 * self.speed;
-        let mut all_commands = Vec::new();
-        while self.accumulated_ms >= MS_PER_TICK_F32 {
-            self.accumulated_ms -= MS_PER_TICK_F32;
-            all_commands.extend(self.tick_with_world_and_database(world, database));
-        }
-        all_commands
+        self.advance_fixed_ticks(dt_seconds, |sim| {
+            sim.tick_with_world_and_database(world, database)
+        })
     }
 
     /// Advance fixed ticks against an authoritative loaded scenario.
@@ -307,16 +264,35 @@ impl Simulation {
         scenario: &mut LoadedScenario,
         database: &Database,
     ) -> Vec<CommandEntry> {
-        if self.state != SimState::Running {
-            return Vec::new();
-        }
+        self.advance_fixed_ticks(dt_seconds, |sim| sim.tick_with_scenario(scenario, database))
+    }
+}
 
-        self.accumulated_ms += dt_seconds * 1_000.0 * self.speed;
-        let mut all_commands = Vec::new();
-        while self.accumulated_ms >= MS_PER_TICK_F32 {
-            self.accumulated_ms -= MS_PER_TICK_F32;
-            all_commands.extend(self.tick_with_scenario(scenario, database));
-        }
-        all_commands
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_runs_whole_fixed_ticks_and_keeps_remainder() {
+        let mut sim = Simulation::new();
+        assert!(sim.update(1.0).is_empty());
+        assert_eq!(sim.tick, 0);
+
+        sim.start();
+        sim.update(0.125);
+        assert_eq!(sim.tick, 2);
+        sim.update(0.0625);
+        assert_eq!(sim.tick, 3);
+        assert_eq!(sim.game_time_ms, 150);
+
+        sim.pause();
+        sim.update(1.0);
+        assert_eq!(sim.tick, 3);
+
+        sim.resume();
+        sim.speed = 2.0;
+        sim.update(0.0375);
+        assert_eq!(sim.tick, 5);
+        assert_eq!(sim.game_time_ms, 250);
     }
 }
