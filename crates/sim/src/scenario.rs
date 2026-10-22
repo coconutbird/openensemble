@@ -312,6 +312,11 @@ fn load_scenario_into_world_with_max_players(
             .as_ref()
             .and_then(|game_data| game_data.construction_damage_multiplier),
     );
+    world.set_game_over_delay(
+        db.game_data
+            .as_ref()
+            .and_then(|game_data| game_data.game_over_delay),
+    );
     let mut scenario_id_to_entity_id = HashMap::new();
     let mut scenario_id_to_unit_id = HashMap::new();
     let players = scenario.players.as_ref().map_or(&[][..], |w| &w.entries);

@@ -100,10 +100,15 @@ impl World {
         })
     }
 
+    /// Run one trigger-manager update. Like `BWorld_update`, there is no trigger update after
+    /// the game ended.
     fn run_trigger_update(
         &mut self,
         update: impl FnOnce(&mut TriggerEngine, &mut Self) -> TriggerUpdate,
     ) -> TriggerUpdate {
+        if self.is_game_over() {
+            return TriggerUpdate::default();
+        }
         let mut engine = std::mem::take(&mut self.triggers.engine);
         self.triggers.updating = true;
         let result = update(&mut engine, self);

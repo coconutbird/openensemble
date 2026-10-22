@@ -479,6 +479,12 @@ impl<'database> CommandExecutor<'database> {
             return;
         };
         match cmd.game_type {
+            GameCommandType::Resign => {
+                let _resigned = world.resign_player(player_id);
+            }
+            GameCommandType::Disconnect => {
+                let _disconnected = world.disconnect_player(player_id);
+            }
             GameCommandType::SetGlobalRallyPoint => {
                 let _set = world.set_player_rally_point(
                     player_id,

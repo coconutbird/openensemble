@@ -167,8 +167,9 @@ subscribers, pending presentation requests, and unit and squad idle state.
 - `ShowMessage` (904) stores the last message of each target player. The UI reads
   `World::trigger_message`.
 - `SetPlayerState` (130) queues a `PlayerStateChange` with the retail world event (53 resigned,
-  54 defeated, 56 won). The game layer reads `World::take_player_state_changes`. The sim does not
-  yet kill the units of a defeated player or end the game.
+  54 defeated, 56 won). The game layer reads `World::take_player_state_changes`. Each event
+  checks for game over at once (`BWorld_checkForGameOver`); the client reads
+  `World::game_result`. After the game ended, the trigger manager does not update again.
 
 ## Retail behavior that the sim keeps
 
@@ -498,8 +499,8 @@ In order of shipped use:
    13 campaign missions use them. The sim has no trigger AI mission system.
 2. Objectives and mission result: `ObjectiveComplete` (133), `ObjectiveDisplay` (183) and
    `MissionResult` (1002). All 17 campaign scenarios use them. A campaign cannot end without
-   them. `SetPlayerState` (130) changes the player state, but nothing consumes the queued
-   changes yet (game over, unit cleanup, AI shutdown).
+   them. `SetPlayerState` (130) ends a skirmish (`World::game_result`), but the AI manager does
+   not learn that a player left (`BAIManager_onPlayerLeft`).
 3. External trigger script starts. `TriggerEngine::launch_script` exists, but nothing calls it
    for the game-mode world and player scripts (`BScenario_load`), the skirmish AI script
    (`BAI_startSkirmishAIScript` `0x14014E4D0`), `ExternalTriggerScript` in `BScenario_load`

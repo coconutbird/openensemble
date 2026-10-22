@@ -166,10 +166,16 @@ impl Simulation {
     /// This is the high-level API that:
     /// 1. Drains commands ready for this tick
     /// 2. Executes them against the world
-    /// 3. Updates all entities
+    /// 3. Kills the units of players who resigned or were defeated
+    /// 4. Updates all entities
     ///
-    /// Returns the commands that were processed.
+    /// After the game ended, the world updates only for the gamedata `GameOverDelay`
+    /// ([`World::advance_game_over_delay`]); later ticks do nothing. Returns the commands that
+    /// were processed.
     pub fn tick_with_world(&mut self, world: &mut World) -> Vec<CommandEntry> {
+        if !world.advance_game_over_delay(SECONDS_PER_TICK) {
+            return Vec::new();
+        }
         // Get commands for this tick
         let commands = self.tick_once();
         world.game_time_ms = self.game_time_ms;
@@ -177,6 +183,7 @@ impl Simulation {
         // Execute commands
         let executor = CommandExecutor::new();
         executor.execute_all(world, &commands);
+        world.update_player_unit_cleanup();
 
         // Update entities (movement, etc.)
         world.update_player_resources(SECONDS_PER_TICK);
@@ -190,15 +197,20 @@ impl Simulation {
     /// Process one tick with world state and the active game database.
     ///
     /// This variant also executes database-backed game commands such as
-    /// `CreateSquad` and `CreateObject`.
+    /// `CreateSquad` and `CreateObject`. It ends the game like
+    /// [`tick_with_world`](Self::tick_with_world).
     pub fn tick_with_world_and_database(
         &mut self,
         world: &mut World,
         database: &Database,
     ) -> Vec<CommandEntry> {
+        if !world.advance_game_over_delay(SECONDS_PER_TICK) {
+            return Vec::new();
+        }
         let commands = self.tick_once();
         world.game_time_ms = self.game_time_ms;
         CommandExecutor::with_database(database).execute_all(world, &commands);
+        world.update_player_unit_cleanup();
         world.update_player_resources(SECONDS_PER_TICK);
         world.update_player_power_recharges(database);
         let _custom_commands = world.update_custom_commands(SECONDS_PER_TICK);
@@ -208,16 +220,21 @@ impl Simulation {
         commands
     }
 
-    /// Process one authoritative scenario tick with its gameplay catalog.
+    /// Process one authoritative scenario tick with its gameplay catalog. It ends the game like
+    /// [`tick_with_world`](Self::tick_with_world).
     pub fn tick_with_scenario(
         &mut self,
         scenario: &mut LoadedScenario,
         database: &Database,
     ) -> Vec<CommandEntry> {
+        if !scenario.world.advance_game_over_delay(SECONDS_PER_TICK) {
+            return Vec::new();
+        }
         let commands = self.tick_once();
         scenario.world.game_time_ms = self.game_time_ms;
         CommandExecutor::with_database_and_gameplay(database, &scenario.gameplay)
             .execute_all(&mut scenario.world, &commands);
+        scenario.world.update_player_unit_cleanup();
         scenario.world.update_player_resources(SECONDS_PER_TICK);
         scenario.world.update_player_power_recharges(database);
         let _custom_commands = scenario.world.update_custom_commands(SECONDS_PER_TICK);

@@ -52,7 +52,7 @@ impl World {
         self.bases.clear();
         self.next_base_id = 0;
         self.triggers = super::triggers::WorldTriggers::default();
-        self.game_end.player_state_changes.clear();
+        self.game_end = super::game_end::GameEndState::default();
     }
 
     /// Kill an entity, optionally removing it immediately.

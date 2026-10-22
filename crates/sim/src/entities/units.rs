@@ -261,6 +261,8 @@ pub struct Unit {
     pub(crate) change_mode: change_mode::UnitChangeMode,
     /// Containment state and immutable container capabilities.
     pub garrison: UnitGarrison,
+    /// Prototype flag `UngarrisonToGaia`; the defeat cleanup does not kill this unit.
+    ungarrison_to_gaia: bool,
     /// Finite or unlimited resource payload exposed by gatherable units.
     pub(crate) resource_node: gather::UnitResourceNode,
     /// Per-unit retail gather action connected by squad work.
@@ -404,6 +406,7 @@ impl Default for Unit {
             tactic_state: tactic_state::UnitTacticState::default(),
             change_mode: change_mode::UnitChangeMode::default(),
             garrison: UnitGarrison::default(),
+            ungarrison_to_gaia: false,
             resource_node: gather::UnitResourceNode::default(),
             gather: gather::UnitGatherAction::default(),
             capture: capture::UnitCapture::default(),
@@ -888,6 +891,15 @@ impl Unit {
             self.move_target = Some(target);
             self.state = UnitState::Moving;
         }
+    }
+
+    /// Return whether the prototype has the `UngarrisonToGaia` flag (`BProtoObject` `+1067 & 4`).
+    pub(crate) const fn ungarrison_to_gaia(&self) -> bool {
+        self.ungarrison_to_gaia
+    }
+
+    pub(crate) const fn set_ungarrison_to_gaia(&mut self, enabled: bool) {
+        self.ungarrison_to_gaia = enabled;
     }
 }
 

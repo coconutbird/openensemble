@@ -337,6 +337,7 @@ fn configure_unit_traits(
     );
     unit.set_auto_attackable(!prototype_has_flag(proto, "DontAutoAttackMe"));
     unit.set_ignores_squad_ai(prototype_has_flag(proto, "IgnoreSquadAI"));
+    unit.set_ungarrison_to_gaia(prototype_has_flag(proto, "UngarrisonToGaia"));
     unit.configure_turn_in_place(prototype_has_flag(proto, "TurnInPlace"));
     unit.set_invulnerable(
         prototype_has_flag(proto, "Invulnerable")

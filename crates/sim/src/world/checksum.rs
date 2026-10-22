@@ -186,6 +186,7 @@ fn hash_units(checksum: &mut SyncChecksum, units: &EntityManager<Unit>) {
         unit.hash_flight_state(checksum);
         checksum.hash_u32(u32::from(unit.auto_attackable_setting()));
         checksum.hash_u32(u32::from(unit.ignores_squad_ai()));
+        checksum.hash_u32(u32::from(unit.ungarrison_to_gaia()));
         checksum.hash_u32(u32::from(unit.is_invulnerable()));
         checksum.hash_u32(u32::from(unit.is_being_boarded()));
         checksum.hash_u32(u32::from(unit.is_jump_pull_untargetable()));

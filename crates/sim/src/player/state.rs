@@ -104,6 +104,11 @@ impl Player {
         self.end_state.units_cleanup_pending
     }
 
+    /// Clear the cleanup flag after the world killed the units of this player.
+    pub(crate) const fn clear_units_cleanup_pending(&mut self) {
+        self.end_state.units_cleanup_pending = false;
+    }
+
     pub(crate) fn hash_end_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_u32(u32::from(self.end_state.disconnected));
         checksum.hash_u32(self.end_state.end_time_seconds.unwrap_or(u32::MAX));

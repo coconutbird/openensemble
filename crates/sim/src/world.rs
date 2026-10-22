@@ -106,7 +106,7 @@ pub use events::{
     ChatRequest, CinematicRequest, GeneralEvent, GeneralEventType, ImpactEffectRequest,
     ImpactSurface, PresentationRequest,
 };
-pub use game_end::GameType;
+pub use game_end::{GameResult, GameType};
 pub use garrison::GarrisonError;
 pub use health::UnitHealth;
 pub use hitch::HitchError;
