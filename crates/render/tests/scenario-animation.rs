@@ -4,6 +4,16 @@
 
 use render::ugx::{UnitScene, simulation_proto_names};
 
+/// Particle diagnostics for textures that no shipped archive contains.
+///
+/// The PFX files reference `art\effects\impacts\plasma\plasma_fog_fx` and
+/// `art\effects\impacts\flesh\cells_orange_01_df`. No `.era` file of the installed game has these
+/// textures, so the renderer reports the fallback and the disabled set.
+const SHIPPED_TEXTURE_GAPS: [&str; 2] = [
+    "particle effect 'art\\effects\\impacts\\flesh\\hunterflesh_med_01' emitter 'bloodsplat' disabled 1 unavailable optional texture sets",
+    "particle effect 'art\\effects\\impacts\\fx_proj_missile_01\\missile_impact_01' emitter 'plasmaParticles' reused a decoded texture for 1 missing stages",
+];
+
 /// Run with:
 /// `OPENENSEMBLE_GAME_DIR=<HaloWarsDE> cargo test -p render --test scenario-animation -- --ignored`
 #[test]
@@ -25,12 +35,7 @@ fn phx03_renderer_loads_only_the_animation_selected_by_authoritative_sim_state()
         scene.particle_effect_count() > 0,
         "PHXscn03 should decode at least one authored PFX graph"
     );
-    assert_eq!(
-        scene.particle_effect_issue_count(),
-        0,
-        "{:#?}",
-        scene.particle_effect_issues()
-    );
+    assert_only_shipped_texture_gaps(&scene);
 
     let update = loaded
         .simulation
@@ -45,12 +50,7 @@ fn phx03_renderer_loads_only_the_animation_selected_by_authoritative_sim_state()
         &loaded.content.database.objects,
     ));
     assert!(scene.particle_effect_count() > 0);
-    assert_eq!(
-        scene.particle_effect_issue_count(),
-        0,
-        "{:#?}",
-        scene.particle_effect_issues()
-    );
+    assert_only_shipped_texture_gaps(&scene);
 
     for scenario_id in [1958, 616] {
         let entity_id = loaded
@@ -65,4 +65,10 @@ fn phx03_renderer_loads_only_the_animation_selected_by_authoritative_sim_state()
         assert_eq!(placement.animation_revision(), 1);
         assert!(placement.unit().has_scripted_animation());
     }
+}
+
+fn assert_only_shipped_texture_gaps(scene: &UnitScene) {
+    let mut issues = scene.particle_effect_issues().to_vec();
+    issues.sort();
+    assert_eq!(issues, SHIPPED_TEXTURE_GAPS);
 }
