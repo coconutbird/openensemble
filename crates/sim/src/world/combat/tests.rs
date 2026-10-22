@@ -8,36 +8,25 @@ use pipeline::database::hw1::techs::{EffectTarget, EffectsWrapper, TechEffect};
 use pipeline::database::hw1::weapontypes::DamageModifier;
 use pipeline::database::hw1::{DamageType, Database, ProtoObject, Tech, WeaponType};
 
-fn combat_catalog(area_damage: Option<AreaDamageProfile>) -> GameplayCatalog {
-    combat_catalog_with_lead(area_damage, 0.0)
-}
-
-fn combat_catalog_with_lead(
-    area_damage: Option<AreaDamageProfile>,
-    max_velocity_lead: f32,
-) -> GameplayCatalog {
-    combat_catalog_with_tuning(
-        area_damage,
-        max_velocity_lead,
-        AttackAccuracyProfile::default(),
-    )
-}
-
-fn combat_catalog_with_tuning(
-    area_damage: Option<AreaDamageProfile>,
-    max_velocity_lead: f32,
-    accuracy: AttackAccuracyProfile,
-) -> GameplayCatalog {
-    combat_catalog_with_minimum_range(area_damage, max_velocity_lead, accuracy, 0.0, false)
-}
-
-fn combat_catalog_with_minimum_range(
+/// Fixture options for `combat_catalog`. The defaults give the baseline attacker.
+#[derive(Clone, Copy, Default)]
+struct CombatCatalogOptions {
     area_damage: Option<AreaDamageProfile>,
     max_velocity_lead: f32,
     accuracy: AttackAccuracyProfile,
     min_range: f32,
+    /// Map the attacker to the `Scn07Scarab` code prototype object.
     scenario_scarab: bool,
-) -> GameplayCatalog {
+}
+
+fn combat_catalog(options: CombatCatalogOptions) -> GameplayCatalog {
+    let CombatCatalogOptions {
+        area_damage,
+        max_velocity_lead,
+        accuracy,
+        min_range,
+        scenario_scarab,
+    } = options;
     let mut database = Database::new();
     if scenario_scarab {
         database.game_data = Some(GameData {
@@ -141,16 +130,15 @@ fn combat_catalog_with_minimum_range(
 
 #[test]
 fn moving_at_full_speed_selects_the_authored_moving_accuracy() {
-    let gameplay = combat_catalog_with_tuning(
-        None,
-        0.0,
-        AttackAccuracyProfile {
+    let gameplay = combat_catalog(CombatCatalogOptions {
+        accuracy: AttackAccuracyProfile {
             accuracy: 1.0,
             moving_accuracy: -1.0,
             moving_max_deviation: 10.0,
             ..AttackAccuracyProfile::default()
         },
-    );
+        ..CombatCatalogOptions::default()
+    });
     let (mut world, attacker_id, _) = combat_world();
     let attacker = world.get_unit_mut(attacker_id).unwrap();
     attacker.speed = 10.0;
@@ -173,7 +161,10 @@ fn moving_at_full_speed_selects_the_authored_moving_accuracy() {
 
 #[test]
 fn moving_target_velocity_is_led_by_the_launched_projectile() {
-    let gameplay = combat_catalog_with_lead(None, 2.0);
+    let gameplay = combat_catalog(CombatCatalogOptions {
+        max_velocity_lead: 2.0,
+        ..CombatCatalogOptions::default()
+    });
     let (mut world, _, target_id) = combat_world();
     let target = world.get_unit_mut(target_id).unwrap();
     target.base.velocity = Vec3::Z * 4.0;
@@ -191,8 +182,11 @@ fn moving_target_velocity_is_led_by_the_launched_projectile() {
 
 #[test]
 fn scenario_scarab_primary_attack_does_not_lead_a_moving_target() {
-    let gameplay =
-        combat_catalog_with_minimum_range(None, 2.0, AttackAccuracyProfile::default(), 0.0, true);
+    let gameplay = combat_catalog(CombatCatalogOptions {
+        max_velocity_lead: 2.0,
+        scenario_scarab: true,
+        ..CombatCatalogOptions::default()
+    });
     let (mut world, _, target_id) = combat_world();
     let target = world.get_unit_mut(target_id).unwrap();
     target.base.velocity = Vec3::Z * 4.0;
@@ -209,7 +203,7 @@ fn scenario_scarab_primary_attack_does_not_lead_a_moving_target() {
 
 #[test]
 fn projectile_fallback_launches_and_aims_at_retail_simulation_centers() {
-    let gameplay = combat_catalog(None);
+    let gameplay = combat_catalog(CombatCatalogOptions::default());
     let (mut world, attacker_id, target_id) = combat_world();
     let attacker = world.get_unit_mut(attacker_id).unwrap();
     attacker.obstruction_half_extents = Vec3::new(1.0, 2.0, 1.5);
@@ -265,8 +259,10 @@ fn combat_world() -> (World, EntityId, EntityId) {
 
 #[test]
 fn commanded_attack_holds_and_cannot_fire_inside_authored_minimum_range() {
-    let gameplay =
-        combat_catalog_with_minimum_range(None, 0.0, AttackAccuracyProfile::default(), 5.0, false);
+    let gameplay = combat_catalog(CombatCatalogOptions {
+        min_range: 5.0,
+        ..CombatCatalogOptions::default()
+    });
     let (mut world, attacker_id, target_id) = combat_world();
     world
         .get_unit_mut(attacker_id)
@@ -295,8 +291,10 @@ fn commanded_attack_holds_and_cannot_fire_inside_authored_minimum_range() {
 
 #[test]
 fn automatic_attack_move_skips_targets_inside_authored_minimum_range() {
-    let gameplay =
-        combat_catalog_with_minimum_range(None, 0.0, AttackAccuracyProfile::default(), 5.0, false);
+    let gameplay = combat_catalog(CombatCatalogOptions {
+        min_range: 5.0,
+        ..CombatCatalogOptions::default()
+    });
     let mut world = World::with_seed(53);
     world.init_players(2);
     world.get_player_mut(1).unwrap().team_id = 1;
@@ -330,7 +328,7 @@ fn automatic_attack_move_skips_targets_inside_authored_minimum_range() {
 
 #[test]
 fn automatic_attack_move_requires_team_visibility() {
-    let gameplay = combat_catalog(None);
+    let gameplay = combat_catalog(CombatCatalogOptions::default());
     let mut world = World::with_seed(59);
     world.init_players(2);
     world.get_player_mut(1).unwrap().team_id = 1;
@@ -362,7 +360,7 @@ fn automatic_attack_move_requires_team_visibility() {
 
 #[test]
 fn in_range_squad_attack_updates_the_retail_last_attacked_clock() {
-    let gameplay = combat_catalog(None);
+    let gameplay = combat_catalog(CombatCatalogOptions::default());
     let (mut world, attacker_id, target_id) = combat_world();
     world
         .get_unit_mut(attacker_id)
@@ -395,7 +393,7 @@ fn hand_attack_uses_shared_timing_and_instant_damage_executor() {
 
 #[test]
 fn authored_tag_launches_projectile_and_impact_mutates_sim_hitpoints() {
-    let gameplay = combat_catalog(None);
+    let gameplay = combat_catalog(CombatCatalogOptions::default());
     let (mut world, attacker_id, target_id) = combat_world();
 
     world.update_entities_with_gameplay(0.05, &gameplay);
@@ -426,7 +424,7 @@ fn authored_tag_launches_projectile_and_impact_mutates_sim_hitpoints() {
 
 #[test]
 fn projectile_hp_bounty_banks_then_commits_when_the_ordered_target_dies() {
-    let gameplay = combat_catalog(None);
+    let gameplay = combat_catalog(CombatCatalogOptions::default());
     let mut world = World::with_seed(43);
     world.init_players(2);
     world.get_player_mut(1).unwrap().team_id = 1;
@@ -475,7 +473,7 @@ fn projectile_hp_bounty_banks_then_commits_when_the_ordered_target_dies() {
 
 #[test]
 fn lethal_weapon_damage_records_authoritative_killer_identity() {
-    let gameplay = combat_catalog(None);
+    let gameplay = combat_catalog(CombatCatalogOptions::default());
     let mut world = World::new();
     world.init_players(2);
     world.get_player_mut(1).unwrap().team_id = 3;
@@ -517,7 +515,10 @@ fn guaranteed_projectile_miss_is_deterministic_and_does_not_damage_the_target() 
         max_deviation: 100.0,
         ..AttackAccuracyProfile::default()
     };
-    let gameplay = combat_catalog_with_tuning(None, 0.0, accuracy);
+    let gameplay = combat_catalog(CombatCatalogOptions {
+        accuracy,
+        ..CombatCatalogOptions::default()
+    });
     let (world, target_id, deviation) = run_guaranteed_miss(&gameplay);
     let (repeat, repeat_target_id, repeat_deviation) = run_guaranteed_miss(&gameplay);
 
@@ -558,7 +559,10 @@ fn projectile_impact_applies_its_launch_time_area_damage_to_world_state() {
         ignores_y_axis: false,
         friendly_fire: false,
     };
-    let gameplay = combat_catalog(Some(area_damage));
+    let gameplay = combat_catalog(CombatCatalogOptions {
+        area_damage: Some(area_damage),
+        ..CombatCatalogOptions::default()
+    });
     let (mut world, _, target_id) = combat_world();
     let secondary_id = world.create_unit_at(2, Vec3::new(1.5, 0.0, 0.0));
     let secondary = world.get_unit_mut(secondary_id).unwrap();
@@ -579,7 +583,7 @@ fn projectile_impact_applies_its_launch_time_area_damage_to_world_state() {
 
 #[test]
 fn attack_move_acquires_an_enemy_then_resumes_its_destination() {
-    let gameplay = combat_catalog(None);
+    let gameplay = combat_catalog(CombatCatalogOptions::default());
     let mut world = World::with_seed(51);
     world.init_players(2);
     world.get_player_mut(1).unwrap().team_id = 1;
