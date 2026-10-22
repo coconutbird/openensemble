@@ -21,7 +21,6 @@ xcore = { path = "crates/xcore" }
 motion = { path = "crates/motion" }
 render = { path = "crates/render" }
 sim = { path = "crates/sim" }
-net = { path = "crates/net" }
 data = { path = "crates/data" }
 
 # ensemble-assets (sibling repo) — single dependency for all game data
@@ -39,17 +38,10 @@ egui = "0.31"
 egui-wgpu = "0.31"
 egui-winit = "0.31"
 
-# Audio (pure Rust)
-rodio = "0.20"
-
 # Math and linear algebra
 glam = "0.29"
 half = "2.4"
 num-traits = "0.2"
-
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 
 # Error handling
 thiserror = "2.0"
@@ -61,11 +53,7 @@ env_logger = "0.11"
 
 # Binary parsing (useful for game formats)
 byteorder = "1.5"
-binrw = "0.15"
 zerocopy = { version = "0.8", features = ["derive"] }
-
-# XML parsing
-quick-xml = "0.37"
 
 [patch."https://github.com/coconutbird/ensemble-formats.git"]
 bdt = { path = "../ensemble-formats/crates/bdt" }
@@ -90,7 +78,6 @@ workspace = true
 xcore = { workspace = true }
 render = { workspace = true }
 sim = { workspace = true }
-net = { workspace = true }
 data = { workspace = true }
 pipeline = { workspace = true }
 log = { workspace = true }

@@ -10,6 +10,5 @@ workspace = true
 [dependencies]
 pipeline = { workspace = true }
 log = { workspace = true }
-glam.workspace = true
 
 [dev-dependencies]
