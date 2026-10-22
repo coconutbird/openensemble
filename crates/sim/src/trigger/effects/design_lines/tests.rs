@@ -183,6 +183,61 @@ fn copy_effects_and_type_failures_are_routed_atomically() {
     assert_eq!(script.get_variable(4).unwrap().value, before);
 }
 
+#[test]
+fn list_effects_read_aliased_inputs_before_they_change_the_destination() {
+    let mut script = TriggerScript::new(1);
+    add_var(
+        &mut script,
+        1,
+        VarType::DesignLineList,
+        TriggerValue::DesignLineList(vec![1, 2, 1]),
+    );
+    add_var(&mut script, 2, VarType::Bool, TriggerValue::Bool(true));
+    add_var(&mut script, 3, VarType::Bool, TriggerValue::Bool(false));
+    add_var(&mut script, 4, VarType::Integer, TriggerValue::Int(0));
+
+    let add = |clear| {
+        Effect::new(1, EffectType::DesignLineListAdd)
+            .with_input_at(2, 1)
+            .with_input_at(3, clear)
+            .with_output_at(4, 1)
+    };
+    assert_eq!(
+        execute(&add(2), &mut script, &World::new()),
+        Some(EffectOutcome::Applied)
+    );
+    assert_eq!(lines(&script, 1), &[1, 2, 1]);
+    assert_eq!(
+        execute(&add(3), &mut script, &World::new()),
+        Some(EffectOutcome::Applied)
+    );
+    assert_eq!(lines(&script, 1), &[1, 2, 1, 1, 2, 1]);
+    assert_eq!(
+        execute(&add(4), &mut script, &World::new()),
+        Some(EffectOutcome::Skipped)
+    );
+    assert_eq!(lines(&script, 1), &[1, 2, 1, 1, 2, 1]);
+
+    script.get_variable_mut(1).unwrap().value = TriggerValue::DesignLineList(vec![1, 2, 1, 3]);
+    let remove = |remove_duplicates| {
+        Effect::new(2, EffectType::DesignLineListRemove)
+            .with_input_at(2, 1)
+            .with_input_at(3, 3)
+            .with_input_at(4, remove_duplicates)
+            .with_output_at(5, 1)
+    };
+    assert_eq!(
+        execute(&remove(4), &mut script, &World::new()),
+        Some(EffectOutcome::Skipped)
+    );
+    assert_eq!(lines(&script, 1), &[1, 2, 1, 3]);
+    assert_eq!(
+        execute(&remove(3), &mut script, &World::new()),
+        Some(EffectOutcome::Applied)
+    );
+    assert_eq!(lines(&script, 1), [] as [i32; 0]);
+}
+
 fn add_var(script: &mut TriggerScript, id: u32, var_type: VarType, value: TriggerValue) {
     script.add_variable(TriggerVar::new(id, var_type).with_value(value));
 }
