@@ -268,7 +268,7 @@ pub struct TerrainLight {
 /// One TFX route into an existing runtime subsystem.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TerrainEffectAction {
-    /// Starts a PFX through [`crate::particle::ParticleEffect`].
+    /// Starts a PFX through [`crate::particle::ParticleEffectRuntime`].
     Particle(String),
     /// Places a short-lived terrain-conforming impact decal.
     ImpactDecal(TerrainImpactDecal),

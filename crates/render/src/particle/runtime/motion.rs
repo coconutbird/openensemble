@@ -1,10 +1,11 @@
 //! Per-particle forces, motion, magnets, and terrain collision.
 
 use glam::{EulerRot, Mat4, Quat, Vec3};
+use pipeline::database::hw1::pfx::{ParticleMagnetKind, ParticleRuntimeDefinition};
 
 use super::emitter::RuntimeParticle;
 use super::random::RetailRandom;
-use crate::particle::{ParticleMagnetKind, ParticleRuntimeDefinition};
+use super::sampling::{sample_varying, sample_vector_property};
 
 pub(super) fn integrate_particle(
     particle: &mut RuntimeParticle,
@@ -14,26 +15,23 @@ pub(super) fn integrate_particle(
 ) {
     let random = particle.random_values;
     let alpha = particle.life_alpha(end_time);
-    let acceleration = definition.timing.acceleration.sample(random[2]);
+    let acceleration = sample_varying(definition.timing.acceleration, random[2]);
     let mut force = particle.velocity * acceleration;
     if definition.force.use_internal_gravity() {
-        force.y += definition.force.internal_gravity.sample(random[1]);
+        force.y += sample_varying(definition.force.internal_gravity, random[1]);
     }
     if definition.force.use_internal_wind() {
-        let delay = definition
-            .force
-            .internal_wind_delay
-            .sample(random[3])
-            .max(0.0);
+        let delay = sample_varying(definition.force.internal_wind_delay, random[3]).max(0.0);
         if end_time - particle.birth_time >= delay {
-            let direction = definition.force.internal_wind_direction.sample(random[1]);
-            let speed = definition.force.internal_wind_speed.sample(random[2]);
+            let direction = sample_varying(definition.force.internal_wind_direction, random[1]);
+            let speed = sample_varying(definition.force.internal_wind_speed, random[2]);
             let (sin, cos) = direction.to_radians().sin_cos();
             force += Vec3::new(sin, 0.0, cos) * speed;
         }
     }
     particle.velocity += force * duration;
-    let speed = definition.speed.sample_with_progression_random(
+    let speed = sample_vector_property(
+        &definition.speed,
         alpha,
         [random[0], random[2], random[0], random[3]],
         particle.progression_random,
@@ -112,10 +110,10 @@ pub(super) fn collide_with_terrain(
         particle.velocity
     };
     world_velocity.y = -world_velocity.y;
-    let loss = definition
-        .timing
-        .collision_energy_loss
-        .sample(particle.random_values[0]);
+    let loss = sample_varying(
+        definition.timing.collision_energy_loss,
+        particle.random_values[0],
+    );
     world_velocity *= (1.0 - loss).max(0.0);
     if tied {
         let inverse = transform.inverse();

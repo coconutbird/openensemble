@@ -1,20 +1,18 @@
 use glam::Mat4;
+use pipeline::database::hw1::pfx::{self, ParticleEmitterShape, ParticleEmitterShapeKind};
 use pipeline::xmb::Document;
 
 use super::random::RetailRandom;
 use super::shape::emission_position;
 use super::{ParticleEmitterRuntime, ParticleEmitterState, ParticleNestedEvent};
-use crate::particle::{
-    ParticleEffect, ParticleEmitterShape, ParticleEmitterShapeKind, ParticleMaterial,
-    ParticleRenderContext,
-};
+use crate::particle::{ParticleMaterial, ParticleRenderContext};
 
 fn runtime_from_emitter(emitter_data: &str, extra: &str) -> ParticleEmitterRuntime {
     let document = Document::from_xml(&format!(
         "<ParticleEffect><ParticleEmitter><EmitterData>{emitter_data}</EmitterData>{extra}</ParticleEmitter></ParticleEffect>"
     ))
     .expect("test XML should parse");
-    let mut effect = ParticleEffect::from_document(&document).expect("test effect should adapt");
+    let mut effect = pfx::parse(&document).expect("test effect should parse");
     ParticleEmitterRuntime::new(effect.emitters.remove(0), 7, Mat4::IDENTITY)
 }
 

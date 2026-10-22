@@ -4,14 +4,15 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 
 use glam::Mat4;
+use pipeline::database::hw1::pfx::{ParticleEffect, ParticleEmitterKind};
+use pipeline::hw1::pfx::{self, canonical_effect_path};
 use pipeline::source::{AssetSource, StdFileProvider};
 use sim::World as SimWorld;
 
 use crate::particle::{
-    ParticleEffect, ParticleEffectRuntime, ParticleEmitterKind, ParticleEmitterState,
-    ParticleInstance, ParticleMaterial, ParticleNestedEvent, ParticleRenderContext,
-    ParticleRenderer, ParticleScene, ParticleSceneTextures, ParticleTextureArray,
-    canonical_effect_path,
+    ParticleEffectRuntime, ParticleEmitterState, ParticleInstance, ParticleMaterial,
+    ParticleNestedEvent, ParticleRenderContext, ParticleRenderer, ParticleScene,
+    ParticleSceneTextures, ParticleTextureArray, load_particle_material,
 };
 use crate::ugx::{UnitAttachment, UnitAttachmentKind, UnitAttachmentTrigger, UnitRenderer};
 use crate::{RenderPhase, WorldRenderer, wgpu};
@@ -43,7 +44,7 @@ impl ParticleAssets {
                 continue;
             }
             self.assets.insert(key.clone(), None);
-            let effect = match ParticleEffect::load(source, &path) {
+            let effect = match pfx::load(source, &path) {
                 Ok(effect) => effect,
                 Err(error) => {
                     self.issues.push(error.to_string());
@@ -66,7 +67,7 @@ impl ParticleAssets {
                     if matches!(&emitter.kind, ParticleEmitterKind::NestedEffect(_)) {
                         return None;
                     }
-                    match emitter.load_material(source) {
+                    match load_particle_material(&emitter.material, source) {
                         Ok(material) => {
                             if material.unavailable_texture_sets > 0 {
                                 self.issues.push(format!(
@@ -911,7 +912,7 @@ fn append_effect_instances(
 
 #[cfg(test)]
 mod tests {
-    use crate::particle::canonical_effect_path;
+    use pipeline::hw1::pfx::canonical_effect_path;
 
     #[test]
     fn attachment_and_nested_paths_share_one_cache_identity() {

@@ -3,9 +3,9 @@
 use std::f32::consts::{PI, TAU};
 
 use glam::{EulerRot, Quat, Vec3};
+use pipeline::database::hw1::pfx::{ParticleEmitterShape, ParticleEmitterShapeKind};
 
 use super::random::RetailRandom;
-use crate::particle::{ParticleEmitterShape, ParticleEmitterShapeKind};
 
 pub(super) fn emission_position(shape: &ParticleEmitterShape, random: &mut RetailRandom) -> Vec3 {
     let local = match shape.kind {

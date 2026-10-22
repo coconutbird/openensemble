@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use glam::{FloatExt, Mat4};
 use num_traits::ToPrimitive;
+use pipeline::database::hw1::pfx;
 use pipeline::hw1;
 use pipeline::ugx::Reader;
 use pipeline::ugx::types::material::material_flags;
@@ -604,7 +605,7 @@ fn audit_particles(source: &mut Source, run_runtime: bool, load_materials: bool)
             continue;
         };
         report.parsed += 1;
-        match render::particle::ParticleEffect::from_document(&document) {
+        match pfx::parse(&document) {
             Ok(effect) => {
                 report.renderer_adapted += 1;
                 report.renderer_emitters += effect.emitters.len();
@@ -622,7 +623,7 @@ fn audit_particles(source: &mut Source, run_runtime: bool, load_materials: bool)
                             .any(|channel| channel.to_bits() != 1.0_f32.to_bits()),
                     );
                     match &emitter.kind {
-                        render::particle::ParticleEmitterKind::Render(_) => {
+                        pfx::ParticleEmitterKind::Render(_) => {
                             report.renderer_render_emitters += 1;
                             if load_materials {
                                 audit_particle_material(
@@ -634,7 +635,7 @@ fn audit_particles(source: &mut Source, run_runtime: bool, load_materials: bool)
                                 );
                             }
                         }
-                        render::particle::ParticleEmitterKind::NestedEffect(_) => {
+                        pfx::ParticleEmitterKind::NestedEffect(_) => {
                             report.renderer_nested_emitters += 1;
                         }
                     }
@@ -659,7 +660,7 @@ fn audit_particles(source: &mut Source, run_runtime: bool, load_materials: bool)
 fn audit_particle_material(
     source: &mut Source,
     path: &str,
-    emitter: &render::particle::ParticleEmitter,
+    emitter: &pfx::ParticleEmitter,
     cache: &mut ParticleMaterialAuditCache,
     report: &mut ParticleReport,
 ) {
@@ -713,7 +714,7 @@ fn audit_particle_material(
             .count();
     }
     if resampled_layers > 0 || fallback_layers > 0 || unavailable_texture_sets > 0 {
-        match emitter.load_material(source) {
+        match render::particle::load_particle_material(&emitter.material, source) {
             Ok(material) => {
                 let actual_resampled = material
                     .diffuse
@@ -759,7 +760,7 @@ fn audit_particle_material(
 
 fn record_particle_material_error(
     path: &str,
-    emitter: &render::particle::ParticleEmitter,
+    emitter: &pfx::ParticleEmitter,
     error: &str,
     report: &mut ParticleReport,
 ) {
@@ -790,7 +791,7 @@ fn particle_texture_audit_key(path: &str) -> String {
 
 fn record_particle_prewarm(
     path: &str,
-    emitter: &render::particle::ParticleEmitter,
+    emitter: &pfx::ParticleEmitter,
     report: &mut ParticleReport,
 ) {
     let initial_update = emitter.runtime.timing.initial_update;
@@ -806,7 +807,7 @@ fn record_particle_prewarm(
 }
 
 fn audit_particle_runtime(
-    emitter: render::particle::ParticleEmitter,
+    emitter: pfx::ParticleEmitter,
     emitter_index: usize,
     report: &mut ParticleReport,
 ) {

@@ -2,12 +2,13 @@
 
 use glam::Mat4;
 
-use super::ParticleEffect;
+use pipeline::database::hw1::pfx::ParticleEffect;
 
 mod appearance;
 mod emitter;
 mod motion;
 mod random;
+mod sampling;
 mod shape;
 
 #[cfg(test)]

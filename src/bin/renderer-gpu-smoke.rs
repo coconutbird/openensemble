@@ -2,13 +2,14 @@
 //! by the terrain-viewer scenario under test.
 
 use glam::{Mat4, Vec3};
+use pipeline::database::hw1::pfx;
 use pipeline::xmb::Document;
 use render::lighting::{LocalLight, LocalLightBuffer, LocalLightSet};
 use render::local_shadow::{
     LOCAL_SHADOW_DEPTH_BIAS, LOCAL_SHADOW_FORMAT, LocalShadowMap, LocalShadowRequest,
 };
 use render::particle::{
-    ParticleBlendMode, ParticleEffect, ParticleEffectRuntime, ParticleInstance, ParticleMaterial,
+    ParticleBlendMode, ParticleEffectRuntime, ParticleInstance, ParticleMaterial,
     ParticleRenderContext, ParticleRenderer, ParticleScene, ParticleSceneTextures,
 };
 use render::postprocess::{DISTORTION_FORMAT, HDR_COLOR_FORMAT};
@@ -260,7 +261,7 @@ fn create_particle_runtime() -> anyhow::Result<ParticleEffectRuntime> {
             </ParticleEmitter>
         </ParticleEffect>"#,
     )?;
-    let effect = ParticleEffect::from_document(&document)?;
+    let effect = pfx::parse(&document)?;
     Ok(ParticleEffectRuntime::new(&effect, 7, Mat4::IDENTITY))
 }
 

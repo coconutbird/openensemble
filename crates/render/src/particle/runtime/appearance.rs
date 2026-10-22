@@ -2,13 +2,16 @@
 
 use glam::{Mat4, Vec3, Vec4};
 use num_traits::ToPrimitive;
+use pipeline::database::hw1::pfx::{
+    ParticleEmitter, ParticleEmitterKind, ParticleTextureDefinition,
+};
 
 use super::ParticleRenderContext;
 use super::emitter::RuntimeParticle;
-use crate::particle::{
-    ParticleEmitter, ParticleGeometry, ParticleInstance, ParticleMaterial, ParticleTextureArray,
-    ParticleTextureDefinition,
+use super::sampling::{
+    sample_color, sample_scalar_progression, sample_scalar_property, sample_vector_property,
 };
+use crate::particle::{ParticleGeometry, ParticleInstance, ParticleMaterial, ParticleTextureArray};
 
 pub(super) struct AppearanceSample {
     pub(super) color: [f32; 4],
@@ -34,8 +37,8 @@ pub(super) fn particle_instance(
     context: ParticleRenderContext,
 ) -> Option<ParticleInstance> {
     let geometry = match emitter.kind {
-        crate::particle::ParticleEmitterKind::Render(geometry) => geometry,
-        crate::particle::ParticleEmitterKind::NestedEffect(_) => return None,
+        ParticleEmitterKind::Render(particle_type) => ParticleGeometry::from(particle_type),
+        ParticleEmitterKind::NestedEffect(_) => return None,
     };
     let alpha = particle.life_alpha(current_time);
     let appearance = sample(emitter, particle, alpha, None, material, context);
@@ -68,8 +71,8 @@ pub(super) fn segment_instance(
     context: ParticleRenderContext,
 ) -> Option<ParticleInstance> {
     let geometry = match emitter.kind {
-        crate::particle::ParticleEmitterKind::Render(geometry) => geometry,
-        crate::particle::ParticleEmitterKind::NestedEffect(_) => return None,
+        ParticleEmitterKind::Render(particle_type) => ParticleGeometry::from(particle_type),
+        ParticleEmitterKind::NestedEffect(_) => return None,
     };
     let alpha = particle.life_alpha(current_time);
     let mut appearance = sample(
@@ -130,19 +133,22 @@ fn sample(
         distance_alpha,
         runtime.timing.beam_intensity_by_length(),
     );
-    let source = runtime.color.sample(color_alpha, random[0]);
-    let opacity = runtime.opacity.sample_with_progression_random(
+    let source = sample_color(&runtime.color, color_alpha, random[0]);
+    let opacity = sample_scalar_property(
+        &runtime.opacity,
         opacity_alpha,
         random[3],
         progression_random,
     );
     let color = tint_color(emitter, source, opacity, context);
-    let intensity = runtime.intensity.sample_with_progression_random(
+    let intensity = sample_scalar_property(
+        &runtime.intensity,
         intensity_alpha,
         random[0],
         progression_random,
     );
-    let mut scale = runtime.scale.sample_with_progression_random(
+    let mut scale = sample_vector_property(
+        &runtime.scale,
         life_alpha,
         [random[1], random[2], random[0], random[3]],
         progression_random,
@@ -150,7 +156,8 @@ fn sample(
     if let Some(distance) = distance_alpha
         && runtime.scale.use_progression[1]
     {
-        let distance_scale = runtime.scale.progression[1].sample(distance, progression_random);
+        let distance_scale =
+            sample_scalar_progression(&runtime.scale.progression[1], distance, progression_random);
         scale = scale.map(|value| value * distance_scale);
     }
     AppearanceSample {

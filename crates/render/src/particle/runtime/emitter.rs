@@ -4,16 +4,18 @@ use std::{mem, sync::LazyLock};
 
 use glam::{Mat4, Vec3};
 use num_traits::ToPrimitive;
+use pipeline::database::hw1::pfx::{
+    ParticleEmitter, ParticleEmitterKind, ParticleTextureDefinition, ParticleTrailEmission,
+    ParticleTrailUv, ParticleType, ParticleVarying,
+};
 
 use super::appearance::{SegmentDescriptor, particle_instance, segment_instance};
 use super::motion::{apply_magnets, collide_with_terrain, integrate_particle};
 use super::random::RetailRandom;
+use super::sampling::sample_varying;
 use super::shape::{emission_direction, emission_position};
 use super::{ParticleEmitterState, ParticleNestedEvent, ParticleRenderContext};
-use crate::particle::{
-    ParticleEmitter, ParticleEmitterKind, ParticleGeometry, ParticleInstance, ParticleMaterial,
-    ParticleTextureDefinition, ParticleTrailEmission, ParticleTrailUv,
-};
+use crate::particle::{ParticleInstance, ParticleMaterial};
 
 const RANDOM_TABLE_SIZE: usize = 4096;
 const MAX_UPDATE_STEP: f32 = 0.1;
@@ -85,11 +87,10 @@ impl ParticleEmitterRuntime {
         let transform = runtime_transform(&emitter, transform);
         let mut random = RetailRandom::from_seed(seed);
         let prewarm = sample_time(emitter.runtime.timing.initial_update, &mut random);
-        let rate = emitter
-            .runtime
-            .timing
-            .emission_rate
-            .sample(random.range_f32(-1.0, 1.0));
+        let rate = sample_varying(
+            emitter.runtime.timing.emission_rate,
+            random.range_f32(-1.0, 1.0),
+        );
         let emission_interval = if rate > f32::EPSILON {
             rate.recip()
         } else {
@@ -443,10 +444,10 @@ impl ParticleEmitterRuntime {
         let index = self.random.index(RANDOM_TABLE_SIZE);
         let random_values = Self::particle_random_values(index);
         let timing = &self.emitter.runtime.timing;
-        let lifetime = timing.particle_life.sample(random_values[0]).max(0.0);
+        let lifetime = sample_varying(timing.particle_life, random_values[0]).max(0.0);
         let mut position = emission_position(&self.emitter.runtime.shape, &mut self.random);
         let mut velocity = emission_direction(&self.emitter.runtime.shape, &mut self.random)
-            * timing.velocity.sample(random_values[0]);
+            * sample_varying(timing.velocity, random_values[0]);
         let mut rotation = initial_rotation(&self.emitter, velocity, &mut self.random);
         let angular_velocity = initial_angular_velocity(&self.emitter, &mut self.random);
         if !timing.tied_to_emitter() {
@@ -454,7 +455,7 @@ impl ParticleEmitterRuntime {
             velocity = transform.transform_vector3(velocity);
             rotation = motion_rotation(&self.emitter, velocity).unwrap_or(rotation);
         }
-        let distance = timing.initial_distance.sample(random_values[0]);
+        let distance = sample_varying(timing.initial_distance, random_values[0]);
         if distance.abs() > f32::EPSILON {
             position += velocity.normalize_or_zero() * distance;
         }
@@ -483,13 +484,8 @@ impl ParticleEmitterRuntime {
         }
         let index = self.random.index(RANDOM_TABLE_SIZE);
         let random_values = Self::particle_random_values(index);
-        let lifetime = self
-            .emitter
-            .runtime
-            .timing
-            .particle_life
-            .sample(random_values[0])
-            .max(0.0);
+        let lifetime =
+            sample_varying(self.emitter.runtime.timing.particle_life, random_values[0]).max(0.0);
         let position = control_position(&self.emitter, transform);
         let up_axis = if self.emitter.runtime.timing.tied_to_emitter() {
             Vec3::Y
@@ -771,9 +767,7 @@ impl ParticleEmitterRuntime {
         matches!(
             self.emitter.kind,
             ParticleEmitterKind::Render(
-                ParticleGeometry::Beam
-                    | ParticleGeometry::BeamVertical
-                    | ParticleGeometry::BeamHorizontal
+                ParticleType::Beam | ParticleType::BeamVertical | ParticleType::BeamHorizontal
             )
         )
     }
@@ -781,7 +775,7 @@ impl ParticleEmitterRuntime {
     fn is_trail(&self) -> bool {
         matches!(
             self.emitter.kind,
-            ParticleEmitterKind::Render(ParticleGeometry::Trail | ParticleGeometry::TrailCross)
+            ParticleEmitterKind::Render(ParticleType::Trail | ParticleType::TrailCross)
         )
     }
 }
@@ -845,7 +839,7 @@ fn initial_rotation(emitter: &ParticleEmitter, velocity: Vec3, random: &mut Reta
 fn motion_rotation(emitter: &ParticleEmitter, velocity: Vec3) -> Option<f32> {
     let aligns = matches!(
         emitter.kind,
-        ParticleEmitterKind::Render(ParticleGeometry::UpFacing | ParticleGeometry::VelocityAligned)
+        ParticleEmitterKind::Render(ParticleType::UpFacing | ParticleType::VelocityAligned)
     );
     let horizontal = Vec3::new(velocity.x, 0.0, velocity.z);
     (aligns && horizontal.length_squared() > 1.0e-6).then(|| -horizontal.x.atan2(horizontal.z))
@@ -882,8 +876,8 @@ fn control_transform(emitter: &ParticleEmitter, transform: Mat4, position: Vec3)
     with_translation(transform, position - transform.transform_vector3(offset))
 }
 
-fn sample_time(varying: crate::particle::ParticleVarying, random: &mut RetailRandom) -> f32 {
-    varying.sample(random.range_f32(-1.0, 1.0)).max(0.0)
+fn sample_time(varying: ParticleVarying, random: &mut RetailRandom) -> f32 {
+    sample_varying(varying, random.range_f32(-1.0, 1.0)).max(0.0)
 }
 
 fn runtime_transform(emitter: &ParticleEmitter, transform: Mat4) -> Mat4 {

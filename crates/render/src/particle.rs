@@ -32,16 +32,7 @@ use gpu::{
 use image::substitute_failed_particle_layers;
 use packed::{PackedParticleInstance, PackedParticleMaterial, PackedParticleScene};
 
-pub(crate) use effect::canonical_effect_path;
-pub use effect::{
-    ParticleColorDefinition, ParticleColorKey, ParticleColorKind, ParticleColorProgression,
-    ParticleEffect, ParticleEffectError, ParticleEmitter, ParticleEmitterKind,
-    ParticleEmitterShape, ParticleEmitterShapeKind, ParticleEmitterTiming, ParticleForceDefinition,
-    ParticleMagnetDefinition, ParticleMagnetKind, ParticleMaterialDefinition, ParticlePaletteEntry,
-    ParticleRuntimeDefinition, ParticleScalarKey, ParticleScalarProgression,
-    ParticleScalarProperty, ParticleTextureDefinition, ParticleTextureStage, ParticleTrailEmission,
-    ParticleTrailUv, ParticleUvAnimation, ParticleVarying, ParticleVectorProperty,
-};
+pub use effect::load_particle_material;
 pub use runtime::{
     ParticleEffectRuntime, ParticleEmitterRuntime, ParticleEmitterState, ParticleNestedEvent,
     ParticleRenderContext,
