@@ -712,7 +712,8 @@ fn audit_particle_material(
             .count();
     }
     if resampled_layers > 0 || fallback_layers > 0 || unavailable_texture_sets > 0 {
-        match render::particle::load_particle_material(&emitter.material, source) {
+        match render::particle::load_particle_material(&emitter.material, source, &mut cache.arrays)
+        {
             Ok(material) => {
                 let actual_resampled = material
                     .diffuse
@@ -978,6 +979,7 @@ struct ParticleReport {
 #[derive(Default)]
 struct ParticleMaterialAuditCache {
     textures: BTreeMap<String, Result<[u32; 2], String>>,
+    arrays: render::particle::ParticleTextureCache,
 }
 
 #[derive(Debug, Default)]

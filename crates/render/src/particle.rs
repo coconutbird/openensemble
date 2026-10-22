@@ -6,6 +6,8 @@
 //! The authored emitter runtime resolves PFX timing, motion, appearance, beams,
 //! and trails into the same instance stream used by direct callers.
 
+use std::sync::Arc;
+
 use glam::{Mat4, Vec3};
 use num_traits::ToPrimitive;
 use pipeline::ddx::DdxTexture;
@@ -24,6 +26,7 @@ mod packed;
 mod runtime;
 #[cfg(test)]
 mod tests;
+mod texture_cache;
 
 use gpu::{
     create_instance_buffer, create_material_bind_group, create_material_layout, create_pipeline,
@@ -32,11 +35,12 @@ use gpu::{
 use image::substitute_failed_particle_layers;
 use packed::{PackedParticleInstance, PackedParticleMaterial, PackedParticleScene};
 
-pub use effect::load_particle_material;
+pub use effect::{load_particle_material, particle_material_texture_sets};
 pub use runtime::{
     ParticleEffectRuntime, ParticleEmitterRuntime, ParticleEmitterState, ParticleNestedEvent,
     ParticleRenderContext,
 };
+pub use texture_cache::ParticleTextureCache;
 
 const SHADER: &str = include_str!("particle.wgsl");
 const COLOR_VERTEX_COUNT: u32 = 12;
@@ -273,8 +277,13 @@ impl ParticleImage {
         let bytes = source
             .resolve_with_fallback(&canonical, &[".ddx"])
             .ok_or_else(|| ParticleError::TextureNotFound(canonical.clone()))?;
+        Self::decode(canonical, &bytes)
+    }
+
+    /// Decodes the DDX bytes of the particle texture at the canonical path `canonical`.
+    fn decode(canonical: String, bytes: &[u8]) -> Result<Self, ParticleError> {
         let texture =
-            DdxTexture::from_bytes(&bytes).map_err(|error| ParticleError::TextureDecode {
+            DdxTexture::from_bytes(bytes).map_err(|error| ParticleError::TextureDecode {
                 path: canonical.clone(),
                 reason: error.to_string(),
             })?;
@@ -298,7 +307,7 @@ impl ParticleImage {
 /// on unrelated texture-array load order.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParticleTextureArray {
-    layers: Vec<ParticleImage>,
+    layers: Arc<[ParticleImage]>,
     resampled_layer_count: usize,
     fallback_layer_count: usize,
 }
@@ -333,26 +342,19 @@ impl ParticleTextureArray {
             actual: layers.len(),
         })?;
         Ok(Self {
-            layers,
+            layers: layers.into(),
             resampled_layer_count,
             fallback_layer_count: 0,
         })
     }
 
-    /// Loads all named DDX layers from PFX-style texture references.
-    ///
-    /// # Errors
+    /// Builds an array from the decode results of its authored stages.
     ///
     /// Failed stages reuse the first stage in the set that decodes. Returns an
     /// error when no authored stage can be decoded or array validation fails.
-    pub fn load(
-        source: &mut AssetSource<StdFileProvider>,
-        paths: &[String],
+    fn from_decoded(
+        decoded: Vec<Result<ParticleImage, ParticleError>>,
     ) -> Result<Self, ParticleError> {
-        let decoded = paths
-            .iter()
-            .map(|path| ParticleImage::load(source, path))
-            .collect::<Vec<_>>();
         let (layers, fallback_layer_count) = substitute_failed_particle_layers(decoded)?;
         let mut array = Self::new(layers)?;
         array.fallback_layer_count = fallback_layer_count;
@@ -765,7 +767,7 @@ impl WorldRenderer for ParticleRenderer {
 }
 
 /// Particle asset or upload error.
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error)]
 pub enum ParticleError {
     /// The requested DDX texture was absent.
     #[error("particle texture not found: {0}")]

@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 
 use glam::Mat4;
-use pipeline::database::hw1::pfx::{ParticleEffect, ParticleEmitterKind};
+use pipeline::database::hw1::pfx::{ParticleEffect, ParticleEmitter, ParticleEmitterKind};
 use pipeline::hw1::pfx::{self, canonical_effect_path};
 use pipeline::source::{AssetSource, StdFileProvider};
 use sim::World as SimWorld;
@@ -12,7 +12,8 @@ use sim::World as SimWorld;
 use crate::particle::{
     ParticleEffectRuntime, ParticleEmitterState, ParticleInstance, ParticleMaterial,
     ParticleNestedEvent, ParticleRenderContext, ParticleRenderer, ParticleScene,
-    ParticleSceneTextures, ParticleTextureArray, load_particle_material,
+    ParticleSceneTextures, ParticleTextureArray, ParticleTextureCache, load_particle_material,
+    particle_material_texture_sets,
 };
 use crate::ugx::{UnitAttachment, UnitAttachmentKind, UnitAttachmentTrigger, UnitRenderer};
 use crate::{RenderPhase, WorldRenderer, wgpu};
@@ -28,6 +29,7 @@ pub(super) struct ParticleAsset {
 #[derive(Clone, Debug, Default)]
 pub(super) struct ParticleAssets {
     assets: HashMap<String, Option<Arc<ParticleAsset>>>,
+    textures: ParticleTextureCache,
     issues: Vec<String>,
 }
 
@@ -37,29 +39,24 @@ impl ParticleAssets {
         source: &mut AssetSource<StdFileProvider>,
         paths: impl IntoIterator<Item = String>,
     ) {
-        let mut pending = paths.into_iter().collect::<VecDeque<_>>();
-        while let Some(path) = pending.pop_front() {
-            let key = canonical_effect_path(&path).to_ascii_lowercase();
-            if self.assets.contains_key(&key) {
-                continue;
-            }
-            self.assets.insert(key.clone(), None);
-            let effect = match pfx::load(source, &path) {
+        let effects = self.load_effects(source, paths);
+        self.textures.prefetch(
+            source,
+            effects
+                .iter()
+                .filter_map(|(_, effect)| effect.as_ref().ok())
+                .flat_map(|effect| &effect.emitters)
+                .filter(|emitter| !matches!(&emitter.kind, ParticleEmitterKind::NestedEffect(_)))
+                .flat_map(|emitter| particle_material_texture_sets(&emitter.material)),
+        );
+        for (key, effect) in effects {
+            let effect = match effect {
                 Ok(effect) => effect,
                 Err(error) => {
-                    self.issues.push(error.to_string());
+                    self.issues.push(error);
                     continue;
                 }
             };
-            for nested in effect.emitters.iter().filter_map(|emitter| {
-                if let ParticleEmitterKind::NestedEffect(path) = &emitter.kind {
-                    Some(path.clone())
-                } else {
-                    None
-                }
-            }) {
-                pending.push_back(nested);
-            }
             let materials = effect
                 .emitters
                 .iter()
@@ -67,41 +64,82 @@ impl ParticleAssets {
                     if matches!(&emitter.kind, ParticleEmitterKind::NestedEffect(_)) {
                         return None;
                     }
-                    match load_particle_material(&emitter.material, source) {
-                        Ok(material) => {
-                            if material.unavailable_texture_sets > 0 {
-                                self.issues.push(format!(
-                                    "particle effect '{key}' emitter '{}' disabled {} unavailable optional texture sets",
-                                    emitter.name, material.unavailable_texture_sets
-                                ));
-                            }
-                            let fallback_layers = material
-                                .diffuse
-                                .iter()
-                                .chain(std::iter::once(&material.intensity))
-                                .flatten()
-                                .map(ParticleTextureArray::fallback_layer_count)
-                                .sum::<usize>();
-                            if fallback_layers > 0 {
-                                self.issues.push(format!(
-                                    "particle effect '{key}' emitter '{}' reused a decoded texture for {fallback_layers} missing stages",
-                                    emitter.name
-                                ));
-                            }
-                            Some(material)
-                        }
-                        Err(error) => {
-                            self.issues.push(format!(
-                                "particle effect '{key}' emitter '{}' material: {error}",
-                                emitter.name
-                            ));
-                            None
-                        }
-                    }
+                    self.load_material(source, &key, emitter)
                 })
                 .collect();
             self.assets
                 .insert(key, Some(Arc::new(ParticleAsset { effect, materials })));
+        }
+    }
+
+    /// Load the PFX graphs of `paths` and their nested effects in breadth-first order.
+    ///
+    /// Each graph is loaded one time. The result keeps the load order and the error of each graph
+    /// that does not load.
+    fn load_effects(
+        &mut self,
+        source: &mut AssetSource<StdFileProvider>,
+        paths: impl IntoIterator<Item = String>,
+    ) -> Vec<(String, Result<ParticleEffect, String>)> {
+        let mut effects = Vec::new();
+        let mut pending = paths.into_iter().collect::<VecDeque<_>>();
+        while let Some(path) = pending.pop_front() {
+            let key = canonical_effect_path(&path).to_ascii_lowercase();
+            if self.assets.contains_key(&key) {
+                continue;
+            }
+            self.assets.insert(key.clone(), None);
+            let effect = pfx::load(source, &path).map_err(|error| error.to_string());
+            if let Ok(effect) = &effect {
+                pending.extend(effect.emitters.iter().filter_map(|emitter| {
+                    if let ParticleEmitterKind::NestedEffect(path) = &emitter.kind {
+                        Some(path.clone())
+                    } else {
+                        None
+                    }
+                }));
+            }
+            effects.push((key, effect));
+        }
+        effects
+    }
+
+    fn load_material(
+        &mut self,
+        source: &mut AssetSource<StdFileProvider>,
+        key: &str,
+        emitter: &ParticleEmitter,
+    ) -> Option<ParticleMaterial> {
+        match load_particle_material(&emitter.material, source, &mut self.textures) {
+            Ok(material) => {
+                if material.unavailable_texture_sets > 0 {
+                    self.issues.push(format!(
+                        "particle effect '{key}' emitter '{}' disabled {} unavailable optional texture sets",
+                        emitter.name, material.unavailable_texture_sets
+                    ));
+                }
+                let fallback_layers = material
+                    .diffuse
+                    .iter()
+                    .chain(std::iter::once(&material.intensity))
+                    .flatten()
+                    .map(ParticleTextureArray::fallback_layer_count)
+                    .sum::<usize>();
+                if fallback_layers > 0 {
+                    self.issues.push(format!(
+                        "particle effect '{key}' emitter '{}' reused a decoded texture for {fallback_layers} missing stages",
+                        emitter.name
+                    ));
+                }
+                Some(material)
+            }
+            Err(error) => {
+                self.issues.push(format!(
+                    "particle effect '{key}' emitter '{}' material: {error}",
+                    emitter.name
+                ));
+                None
+            }
         }
     }
 
