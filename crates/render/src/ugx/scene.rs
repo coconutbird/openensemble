@@ -35,7 +35,6 @@ pub use renderer::{
     AnimationCameraShake, AnimationTerrainAlpha, AnimationTerrainAlphaShape, UnitSceneRenderer,
     simulation_entity_secondary_transform,
 };
-pub use sim::{scenario_object_direction_to_world, scenario_object_position_to_world};
 
 /// One decoded visual bound to an entity in the simulation world.
 #[derive(Clone, Debug)]
@@ -772,6 +771,11 @@ fn simulation_unit_model_transform(unit: &sim::Unit) -> Option<Mat4> {
     }
 }
 
+/// Build the object matrix of a ground unit from its position and planar facing.
+///
+/// Retail keeps the entity frame as right, up, forward and position rows and maps a local
+/// point to `position + x * right + y * up + z * forward` with `right = up × forward`
+/// (`BWorld_createEntity` @ `0x1405C7D50`). The columns here are the same vectors.
 fn simulation_model_transform(position: Vec3, world_forward: Vec3) -> Option<Mat4> {
     if !position.is_finite() || !world_forward.is_finite() {
         return None;

@@ -267,8 +267,8 @@ fn loads_implicit_class_zero_visual_objects_and_preserves_scenario_mapping() {
     assert!(object.is_visual());
     assert_eq!(object.proto_object_id, 1);
     assert_eq!(object.proto_object_name, "env_harvest_forebridge_01");
-    assert_eq!(object.base.position, Vec3::new(7.0, 2.0, 5.0));
-    assert_eq!(object.base.forward, Vec3::NEG_X);
+    assert_eq!(object.base.position, Vec3::new(5.0, 2.0, 7.0));
+    assert_eq!(object.base.forward, Vec3::NEG_Z);
 }
 
 #[test]

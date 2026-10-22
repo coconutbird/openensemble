@@ -10,10 +10,7 @@ use super::objects::{StartMarkers, ground_height};
 use super::placement::engine_positions;
 use super::player_setup::{ActivePlayer, PlayerSetup};
 use super::prototypes::code_proto_object;
-use super::{
-    ScenarioData, create_squad_from_prototype, placed, scenario_object_direction_to_world,
-    scenario_object_position_to_world,
-};
+use super::{ScenarioData, create_squad_from_prototype, placed};
 use crate::entities::BaseId;
 use crate::player::{GAIA_PLAYER, PlayerId};
 use crate::prototypes::{object_entry_by_name_trim_both, proto_id, squad_by_name_trim_query};
@@ -109,12 +106,9 @@ impl SpawnPoints {
     }
 }
 
-/// World position (ground-tied) and forward of an engine-frame spawn point.
-fn world_transform(world: &World, point: Vec3, forward: Vec3) -> (Vec3, Vec3) {
-    let mut position = Vec3::from_array(scenario_object_position_to_world(point.to_array()));
-    position.y = ground_height(world, position);
-    let forward = Vec3::from_array(scenario_object_direction_to_world(forward.to_array()));
-    (position, forward)
+/// World position (ground-tied) of a spawn point. The start frame is already the world frame.
+fn ground_tied(world: &World, point: Vec3) -> Vec3 {
+    Vec3::new(point.x, ground_height(world, point), point.z)
 }
 
 /// Create the leader starting units and squads of one player. Returns `false` if the player
@@ -163,7 +157,8 @@ fn create_player_units(
         if squad_by_name_trim_query(database, &squad.proto_squad).is_none() {
             continue;
         }
-        let (position, forward) = world_transform(world, point, frame.forward);
+        let position = ground_tied(world, point);
+        let forward = frame.forward;
         // A `FlyIn` squad uses the civ transport in retail unless `NoBirthAnims` is defined.
         // No retail leader sets `FlyIn`, so the squad spawns in place.
         let _squad_id = create_squad_from_prototype(
@@ -195,7 +190,8 @@ fn create_leader_units(
         else {
             continue;
         };
-        let (position, forward) = world_transform(world, point, frame.forward);
+        let position = ground_tied(world, point);
+        let forward = frame.forward;
         let Some((_, Some(unit_id))) = placed::create_object_entity(
             world,
             database,
@@ -249,8 +245,7 @@ fn set_rally_start(
     let Some(point) = StartMarkers::find(&markers.rally_starts, start.rally_start_object) else {
         return;
     };
-    let mut position = Vec3::from_array(scenario_object_position_to_world(point));
-    position.y = ground_height(world, position);
+    let position = ground_tied(world, Vec3::from_array(point));
     let single_base = {
         let mut bases = world
             .units
@@ -287,7 +282,8 @@ fn create_empty_bases(
         let Some(frame) = StartFrame::new(position) else {
             continue;
         };
-        let (position, forward) = world_transform(world, frame.origin, frame.forward);
+        let position = ground_tied(world, frame.origin);
+        let forward = frame.forward;
         let _created = placed::create_object_entity(
             world,
             database,

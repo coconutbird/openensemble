@@ -1,5 +1,6 @@
 //! Checks the tick-0 state of a 1v1 Blood Gulch skirmish against `BScenario_load`.
 
+use glam::Vec3;
 use sim::PlayerType;
 
 fn count_units(world: &sim::World, proto: &str, player: Option<u8>) -> usize {
@@ -99,6 +100,121 @@ fn blood_gulch_1v1_matches_the_retail_tick_zero_setup() {
         .find_map(|(_, script)| script.name.starts_with("SkirmishAI").then_some(script))
         .and_then(|script| script.externals.cost);
     assert_eq!(ai_cost, Some(sim::trigger::TriggerCost::default()));
+}
+
+/// `BScenario_loadObject` @ `0x14037D6A0` and `BScenario_loadPosition` @ `0x14037F430` read
+/// `Position` and `Forward` as authored. The `.scn` frame is the XSD terrain frame, so a
+/// ground object sits on the terrain at its authored X and Z.
+///
+/// Each ground object of the `.scn` has its authored Y within 1.5 of the terrain (largest
+/// difference 0.83, teleporter 5). Three `.sc2` trees on cliff edges differ by up to 4.5, so
+/// the `.sc2` and `.sc3` decorations check the mean difference (0.30 and 0.10). With X and Z
+/// swapped, the means are 13.9, 17.9 and 17.9.
+///
+/// Run with:
+/// `OPENENSEMBLE_GAME_DIR=<HaloWarsDE> cargo test -p sim --test skirmish-setup -- --ignored`
+#[test]
+#[ignore = "requires a local Halo Wars DE installation"]
+fn blood_gulch_objects_and_starts_sit_at_their_authored_positions() {
+    let loaded = test_support::installed_scenario("blood_gulch");
+    let world = &loaded.simulation.world;
+    let content = &loaded.content;
+    let files = [
+        (".scn", content.scenario_data.as_ref().unwrap().objects()),
+        (".sc2", content.scenario_sc2.as_ref().unwrap().objects()),
+        (".sc3", content.scenario_sc3.as_ref().unwrap().objects()),
+    ];
+    for (file, objects) in files {
+        let mut height_error = 0.0;
+        let mut ground_objects = 0_u16;
+        for object in objects {
+            let Some(&entity_id) = loaded.simulation.scenario_id_to_entity_id.get(&object.id)
+            else {
+                continue;
+            };
+            let authored = Vec3::from_array(object.position_vec3().expect("authored position"));
+            let position = world.entity_position(entity_id).expect("live entity");
+            let label = format!("{file} object {} {}", object.id, object.proto_name);
+            assert!(
+                (position.x - authored.x).abs() < 1.0e-3
+                    && (position.z - authored.z).abs() < 1.0e-3,
+                "{label} sits at {position}, authored at {authored}"
+            );
+            if object.no_tie_to_ground() {
+                test_support::assert_close(position.y, authored.y);
+                continue;
+            }
+            let ground = world
+                .terrain_height(authored, true)
+                .expect("terrain below the object");
+            test_support::assert_close(position.y, ground);
+            let error = (ground - authored.y).abs();
+            assert!(
+                file != ".scn" || error <= 1.5,
+                "{label}: terrain height {ground} at the authored position, authored Y {}",
+                authored.y
+            );
+            height_error += error;
+            ground_objects += 1;
+        }
+        assert!(
+            ground_objects > 10,
+            "{file}: {ground_objects} ground objects"
+        );
+        let mean = height_error / f32::from(ground_objects);
+        assert!(mean < 0.5, "{file}: mean terrain height difference {mean}");
+    }
+
+    // Blood Gulch uses `Grouped` placement. The first `<Position>` has `Number="2"` at
+    // (767.8011, 0, 782.4996) with `Forward="0.6755,0,-0.7374"`, the second `Number="1"` at
+    // (178.2391, 0, 212.1466). `BScenario_assignPlayerPositions` @ `0x140383A90` gives the
+    // positions of number 1 to the team of the first shuffled player. The placement stream of
+    // seed 0 shuffles the team of player 2 first, so player 1 takes the start of number 2.
+    let positions = content.scenario_data.as_ref().unwrap().positions();
+    assert_eq!(
+        positions
+            .iter()
+            .map(|position| position.number)
+            .collect::<Vec<_>>(),
+        [2, 1]
+    );
+    for (player, hq, start, forward) in [
+        (
+            1,
+            "unsc_bldg_command_03",
+            [767.801_1, 782.499_6],
+            [0.675_5, -0.737_4],
+        ),
+        (
+            2,
+            "cov_bldg_builder_02",
+            [178.239_1, 212.146_6],
+            [-0.644_2, 0.764_8],
+        ),
+    ] {
+        let hq = world
+            .units
+            .iter()
+            .find(|(_, unit)| unit.proto_object_name == hq && unit.base.player_id == player)
+            .map(|(_, unit)| unit)
+            .expect("starting HQ");
+        let expected = Vec3::new(start[0], 0.0, start[1]);
+        assert!(
+            (hq.base.position.x - expected.x).abs() < 1.0e-3
+                && (hq.base.position.z - expected.z).abs() < 1.0e-3,
+            "player {player} HQ at {}, start at {expected}",
+            hq.base.position
+        );
+        let expected_forward = Vec3::new(forward[0], 0.0, forward[1]).normalize();
+        assert!(
+            hq.base
+                .forward
+                .normalize()
+                .abs_diff_eq(expected_forward, 1.0e-3),
+            "player {player} HQ forward {}, start forward {expected_forward}",
+            hq.base.forward
+        );
+    }
 }
 
 /// The name and Player external of each trigger script, in script ID order.

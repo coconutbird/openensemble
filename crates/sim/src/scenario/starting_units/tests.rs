@@ -113,7 +113,7 @@ fn starting_squad_uses_its_offset_in_the_start_frame_and_unused_starts_get_gaia_
     // `BScenario_createStartingUnits` @ 0x140384760: the first starting unit takes the start
     // position; the squad takes `start + x * right + y * up + z * forward` with
     // `right = up x forward`. Forward (1, 0, 0) gives right (0, 0, -1), so offset (60, 0, -20)
-    // lands at (100, 0, 200) + (-20, 0, -60) = (80, 0, 140), (140, 0, 80) in world axes.
+    // lands at (100, 0, 200) + (-20, 0, -60) = (80, 0, 140). The start frame is the world frame.
     // The unused second start gets `SkirmishEmptyBaseObject` for Gaia (0x1403855D9).
     let loaded = load(
         r#"<Positions>
@@ -123,11 +123,11 @@ fn starting_squad_uses_its_offset_in_the_start_frame_and_unused_starts_get_gaia_
     );
     let world = &loaded.world;
 
-    assert_eq!(units(world, "socket"), [(1, Vec3::new(200.0, 0.0, 100.0))]);
-    assert_eq!(units(world, "jeep"), [(1, Vec3::new(140.0, 0.0, 80.0))]);
+    assert_eq!(units(world, "socket"), [(1, Vec3::new(100.0, 0.0, 200.0))]);
+    assert_eq!(units(world, "jeep"), [(1, Vec3::new(80.0, 0.0, 140.0))]);
     assert_eq!(
         units(world, "empty_socket"),
-        [(GAIA_PLAYER, Vec3::new(500.0, 0.0, 400.0))]
+        [(GAIA_PLAYER, Vec3::new(400.0, 0.0, 500.0))]
     );
 }
 
@@ -156,11 +156,11 @@ fn unit_start_and_rally_start_markers_are_consumed_and_used() {
             .iter()
             .all(|(_, object)| !object.proto_object_name.ends_with("_start"))
     );
-    assert_eq!(units(world, "socket"), [(1, Vec3::new(200.0, 0.0, 100.0))]);
-    assert_eq!(units(world, "jeep"), [(1, Vec3::new(210.0, 0.0, 130.0))]);
+    assert_eq!(units(world, "socket"), [(1, Vec3::new(100.0, 0.0, 200.0))]);
+    assert_eq!(units(world, "jeep"), [(1, Vec3::new(130.0, 0.0, 210.0))]);
     assert_eq!(
         world.player_rally_point(1).map(RallyPoint::position),
-        Some(Vec3::new(250.0, 0.0, 150.0))
+        Some(Vec3::new(150.0, 0.0, 250.0))
     );
     // Every start position is used, so no empty base appears.
     assert_eq!(units(world, "empty_socket"), []);

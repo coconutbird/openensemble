@@ -14,7 +14,7 @@ fn sphere(id: i32, type_name: &str, position: [f32; 3], radius: f32) -> Scenario
 }
 
 #[test]
-fn loads_points_in_canonical_world_axes() {
+fn loads_points_in_the_authored_frame() {
     let objects = DesignObjects {
         spheres: Vec::new(),
         lines: vec![
@@ -38,9 +38,9 @@ fn loads_points_in_canonical_world_axes() {
         world.design_line_points(7),
         Some(
             [
-                Vec3::new(3.0, 2.0, 1.0),
-                Vec3::new(6.0, 5.0, 4.0),
-                Vec3::new(9.0, 8.0, 7.0),
+                Vec3::new(1.0, 2.0, 3.0),
+                Vec3::new(4.0, 5.0, 6.0),
+                Vec3::new(7.0, 8.0, 9.0),
             ]
             .as_slice()
         )
@@ -74,13 +74,14 @@ fn duplicate_ids_use_the_last_authored_line_like_retail_lookup() {
     assert_eq!(world.design_line_count(), 1);
     assert_eq!(
         world.design_line_points(4),
-        Some([Vec3::new(30.0, 20.0, 10.0)].as_slice())
+        Some([Vec3::new(10.0, 20.0, 30.0)].as_slice())
     );
 }
 
 /// `BDesignObjectManager_load` appends spheres in document order, also for duplicate IDs.
+/// `BDesignSphere_load` reads `Position` as authored (`BXMLAttribute_getValueAsVector`).
 #[test]
-fn spheres_keep_document_order_and_world_axes_and_change_the_checksum() {
+fn spheres_keep_document_order_and_authored_positions_and_change_the_checksum() {
     let objects = DesignObjects {
         spheres: vec![
             sphere(24, "Creeps", [447.0, 0.0, 268.0], 55.0),
@@ -98,12 +99,12 @@ fn spheres_keep_document_order_and_world_axes_and_change_the_checksum() {
         [
             DesignSphere {
                 type_name: "Creeps".to_owned(),
-                center: Vec3::new(268.0, 0.0, 447.0),
+                center: Vec3::new(447.0, 0.0, 268.0),
                 radius: 55.0,
             },
             DesignSphere {
                 type_name: "creeps".to_owned(),
-                center: Vec3::new(3.0, 2.0, 1.0),
+                center: Vec3::new(1.0, 2.0, 3.0),
                 radius: 20.0,
             },
         ]

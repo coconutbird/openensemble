@@ -41,6 +41,15 @@ available, the sim materializes the leader starting unit's completed
 `SkirmishEmptyBaseObject` mapping. Either path creates a normal building entity
 and registers it as the player's authoritative `Base` anchor.
 
+Scenario objects, start positions, unit and rally start markers, design spheres and
+design lines keep their authored `.scn` coordinates. The `.scn` frame is the world frame
+of the simulation and of the XSD terrain. `BScenario_loadObject` @ `0x14037D6A0` and
+`BScenario_loadPosition` @ `0x14037F430` read `Position`, `Forward` and `Right` with
+`BXMLAttribute_getValueAsVector` @ `0x1406217A0` and only normalize the directions. A
+ground object then takes the terrain height at its X and Z. The object matrix has the
+rows right, up, forward and position, with `right = up × forward`
+(`BWorld_createEntity` @ `0x1405C7D50`).
+
 The opt-in real-asset integration test loads both the database and Blood Gulch
 from an installed game, verifies all canonical database tables remain
 resolvable beside the final scenario layer, and checks that SCN players and

@@ -148,8 +148,7 @@ fn print_placement_height_oracle(world: &hw1::World) {
         }
         let proto = object.proto_name.to_ascii_lowercase();
         if proto.contains("teleporter") || proto.contains("base_socket") {
-            let world_position = render::ugx::scenario_object_position_to_world(position);
-            let terrain_position = terrain_position(&raw, world_position);
+            let terrain_position = terrain_position(&raw, position);
             println!(
                 "  id={} proto={:?} direct={direct:?} transposed={transposed:?} terrain_position={terrain_position:?}",
                 object.id, object.proto_name,
@@ -337,23 +336,18 @@ fn print_scenario_placements(world: &hw1::World) {
         let authored_position = position.position_vec3().unwrap_or_default();
         let authored_forward = position.forward_vec3();
         println!(
-            "  player={} number={} default_camera={} authored={authored_position:?} world={:?} authored_forward={authored_forward:?} world_forward={:?}",
-            position.player,
-            position.number,
-            position.default_camera,
-            render::ugx::scenario_object_position_to_world(authored_position),
-            render::ugx::scenario_object_direction_to_world(authored_forward),
+            "  player={} number={} default_camera={} authored={authored_position:?} authored_forward={authored_forward:?}",
+            position.player, position.number, position.default_camera,
         );
     }
     println!("scenario objects:");
     for object in scenario.objects() {
         let authored_position = object.position_vec3().unwrap_or_default();
         println!(
-            "  id={} proto={:?} editor={:?} authored={authored_position:?} world={:?} forward={:?} right={:?}",
+            "  id={} proto={:?} editor={:?} authored={authored_position:?} forward={:?} right={:?}",
             object.id,
             object.proto_name,
             object.editor_name,
-            render::ugx::scenario_object_position_to_world(authored_position),
             object.forward_vec3(),
             object.right_vec3(),
         );

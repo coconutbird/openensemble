@@ -27,7 +27,7 @@ const MOVEMENT_SCENARIO: &str = r#"<Scenario>
 const COLLISION_SCENARIO: &str = r#"<Scenario>
     <Players><Player Name="Cutter" Team="1" /></Players>
     <Objects>
-        <Object IsSquad="true" Player="1" ID="10" Position="0,0,-25" Forward="0,0,1">
+        <Object IsSquad="true" Player="1" ID="10" Position="-25,0,0" Forward="1,0,0">
             unsc_veh_warthog_01
         </Object>
         <Object Player="0" ID="20" Position="0,0,0">test_blocker</Object>

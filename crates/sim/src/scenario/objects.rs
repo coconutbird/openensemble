@@ -8,8 +8,7 @@ use pipeline::database::hw1::Database;
 use super::player_setup::PlayerSetup;
 use super::prototypes::code_proto_object_index;
 use super::{
-    LoadedScenario, ScenarioObject, apply_scenario_visual_variation, placed,
-    representative_unit_id, scenario_object_direction_to_world, scenario_object_position_to_world,
+    LoadedScenario, ScenarioObject, apply_scenario_visual_variation, placed, representative_unit_id,
 };
 use crate::prototypes::{ScenarioProto, scenario_proto};
 use crate::world::World;
@@ -83,11 +82,11 @@ pub(super) fn load_objects(
                 continue;
             }
         }
-        let mut position = Vec3::from_array(scenario_object_position_to_world(authored_position));
+        let mut position = Vec3::from_array(authored_position);
         if !object.no_tie_to_ground() {
             position.y = ground_height(&scenario.world, position);
         }
-        let forward = Vec3::from_array(scenario_object_direction_to_world(object.forward_vec3()));
+        let forward = Vec3::from_array(object.forward_vec3());
         let Some(entity_id) = placed::create_scenario_object(
             &mut scenario.world,
             database,

@@ -416,8 +416,8 @@ fn assert_design_line_state(scenario: &str, loaded: &LoadedGameScenario) {
         .design_line_points(1875)
         .expect("PHXscn10 AlphaToLZ design line");
     assert_eq!(points.len(), 4);
-    assert_eq!(points[0], glam::Vec3::new(159.6148, 6.0555, 147.6894));
-    assert_eq!(points[1], glam::Vec3::new(213.9123, 9.1885, 348.0874));
+    assert_eq!(points[0], glam::Vec3::new(147.6894, 6.0555, 159.6148));
+    assert_eq!(points[1], glam::Vec3::new(348.0874, 9.1885, 213.9123));
 
     let output = world
         .trigger_engine()

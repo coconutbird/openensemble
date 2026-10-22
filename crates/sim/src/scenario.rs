@@ -467,8 +467,8 @@ fn set_sim_bounds(world: &mut World, scenario: &ScenarioData) {
         return;
     }
     let [min_x, min_z, max_x, max_z] = scenario.sim_bounds();
-    let first = Vec3::from_array(scenario_object_position_to_world([min_x, 0.0, min_z]));
-    let second = Vec3::from_array(scenario_object_position_to_world([max_x, 0.0, max_z]));
+    let first = Vec3::new(min_x, 0.0, min_z);
+    let second = Vec3::new(max_x, 0.0, max_z);
     let _set = world.set_playable_bounds(first, second);
 }
 
@@ -724,22 +724,6 @@ fn apply_squad_physics_settings(world: &mut World, squad_id: EntityId) {
 
 fn valid_nonnegative(value: Option<f32>) -> Option<f32> {
     value.filter(|value| value.is_finite() && *value >= 0.0)
-}
-
-/// Convert an authored scenario position into canonical terrain-world axes.
-///
-/// `BScenario_loadPosition` @ `0x14037F430` and `BScenario_loadObject` @ `0x14037D6A0` read
-/// start positions and objects in one frame (`sub_1406217A0`). The simulation swaps the X
-/// and Z axes of that frame for both.
-#[must_use]
-pub const fn scenario_object_position_to_world(position: [f32; 3]) -> [f32; 3] {
-    [position[2], position[1], position[0]]
-}
-
-/// Convert an authored scenario direction into canonical terrain-world axes.
-#[must_use]
-pub const fn scenario_object_direction_to_world(direction: [f32; 3]) -> [f32; 3] {
-    scenario_object_position_to_world(direction)
 }
 
 /// Load a test scenario with eight default lobby slots, so that each controllable player

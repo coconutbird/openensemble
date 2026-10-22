@@ -111,9 +111,9 @@ fn skirmish_world_finds_the_blood_gulch_creep_design_spheres() {
         "{unsupported_conditions:?}"
     );
 
-    // The scenario spheres reach the world in SCN order, in world axes (X and Z swap).
+    // The scenario spheres reach the world in SCN order, at their authored positions.
     let first = &scenario.world.design_spheres()[0];
     assert_eq!(first.type_name, "Creeps");
-    assert!((first.center.x - 268.722).abs() < 1e-3 && (first.center.z - 447.258).abs() < 1e-3);
+    assert!((first.center.x - 447.258).abs() < 1e-3 && (first.center.z - 268.722).abs() < 1e-3);
     assert!((first.radius - 55.0).abs() < f32::EPSILON);
 }

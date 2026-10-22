@@ -90,7 +90,10 @@ pub(super) fn assert_hint_callout_state(scenario: &str, loaded: &LoadedGameScena
     let expected = match scenario {
         "PHXscn03" => Some((22934, glam::Vec3::new(368.8735, -33.8938, 635.7485))),
         "PHXscn11" => Some((25992, glam::Vec3::new(469.1019, 35.2007, 572.122))),
-        "PHXscn15" => Some((24788, glam::Vec3::new(249.8237, -2.2667, 492.1157))),
+        // Flood squads of player 2 start within 70 of the B2 door area (286.65, 489.76), and no
+        // squad of players 2 to 4 is near the C2 door area. "Door C2 - ready to activate" then
+        // puts the callout at the C2 console (variable 11025).
+        "PHXscn15" => Some((24788, glam::Vec3::new(409.6534, -1.8746, 261.9008))),
         _ => None,
     };
     let Some((string_id, location)) = expected else {
