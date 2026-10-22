@@ -196,6 +196,11 @@ descriptive names in `xgameFinal.exe.i64` before it was saved.
   therefore participate in last-loaded-wins resolution, and that exact layered
   database builds the sim world, production definitions, triggers, gameplay
   animation catalog, and presentation content.
+- `World::training_quote` and `World::research_quote` give a presentation client the price,
+  population, build or research points and the remaining `<TrainLimit>` count
+  (`BUnit_getTrainLimitRemaining` @ `0x1404D0590`, −1 = `None`) or the technology status of
+  one menu item. They do the same command checks as the queue functions and do not change the
+  world. The game client builds its building menu on them (`src/client/hud/building_menu.rs`).
 
 ## Validation
 

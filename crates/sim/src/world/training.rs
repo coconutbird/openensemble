@@ -16,6 +16,23 @@ use pipeline::database::hw1::{Database, Squad as ProtoSquad};
 /// Maximum work items accepted from one training command.
 pub const MAX_TRAIN_BATCH: u32 = 256;
 
+/// Price, population and train limit of one training menu item, before the player queues it.
+///
+/// Presentation clients use it to enable a menu item like retail `BUser_handleInputCommandMenu`
+/// (`0x140594EF0`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrainingQuote {
+    /// The resources that one item costs now (with the cost escalation for standalone units).
+    pub cost: Resources,
+    /// The population that one item reserves.
+    pub population_costs: Vec<PopulationCost>,
+    /// The build points of one item.
+    pub total_points: f32,
+    /// The items that the building can still queue under its `<TrainLimit>`, or `None` if no
+    /// limit applies (retail `BUnit_getTrainLimitRemaining` (`0x1404D0590`) returns −1).
+    pub train_limit_remaining: Option<u32>,
+}
+
 /// Number of requested training items accepted by authoritative validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrainingQueueResult {
@@ -458,6 +475,50 @@ impl World {
                 total_points: task.total_points,
                 queued,
             }))
+    }
+
+    /// Returns the price, population and train limit of one training item of a building.
+    ///
+    /// The function does the same command checks as [`Self::queue_training`] and does not change
+    /// the world. The train limit count is the one of `BUnitActionBuilding_getTrainLimit`
+    /// (`0x1404F9D30`): the limit minus the live children, the current item and the queued items.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the player, building or prototype is invalid, or when the building
+    /// does not offer the command.
+    pub fn training_quote(
+        &self,
+        player_id: PlayerId,
+        building_id: EntityId,
+        database: &Database,
+        kind: TrainingKind,
+        prototype_id: i32,
+    ) -> Result<TrainingQuote, TrainingError> {
+        let definition = training_definition(
+            database,
+            kind,
+            prototype_id,
+            self.get_player(player_id)
+                .map(|player| &player.technologies),
+        )?;
+        let limit =
+            self.validate_training_command(player_id, building_id, database, &definition)?;
+        let cost = if kind == TrainingKind::Unit {
+            self.object_cost(database, player_id, prototype_id)?
+        } else {
+            definition.cost
+        };
+        let train_limit_remaining = limit.map(|rule| {
+            rule.count
+                .saturating_sub(self.training_limit_count(building_id, &definition, rule))
+        });
+        Ok(TrainingQuote {
+            cost,
+            population_costs: definition.population_costs,
+            total_points: definition.total_points,
+            train_limit_remaining,
+        })
     }
 
     pub(super) fn refund_training_task(&mut self, task: &TrainingTask) {

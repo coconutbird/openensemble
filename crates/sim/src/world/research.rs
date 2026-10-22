@@ -19,6 +19,20 @@ pub enum ResearchQueueResult {
     CompletedInstantly,
 }
 
+/// Status, price and research points of one research menu item, before the player queues it.
+///
+/// Presentation clients use it to enable a menu item like retail `BUser_handleInputCommandMenu`
+/// (`0x140594EF0`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResearchQuote {
+    /// The retail technology status for the building (`BTechTree_getTechStatus`, `0x140416980`).
+    pub status: TechStatus,
+    /// The resources that the research costs.
+    pub cost: Resources,
+    /// The research points of the technology.
+    pub total_points: f32,
+}
+
 /// Rejection produced while validating authoritative research work.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ResearchError {
@@ -241,6 +255,38 @@ impl World {
                 total_points: task.total_points,
                 queued,
             }))
+    }
+
+    /// Returns the status, price and research points of one research item of a building.
+    ///
+    /// The function does the same command checks as [`Self::queue_research`] and does not change
+    /// the world. A technology with the `UniqueProtoUnitInstance` flag gets the status of the
+    /// building's own technology node.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the player, building or technology is invalid, or when the building
+    /// does not offer the technology.
+    pub fn research_quote(
+        &self,
+        player_id: PlayerId,
+        building_id: EntityId,
+        database: &Database,
+        technology_id: i32,
+    ) -> Result<ResearchQuote, ResearchError> {
+        let technology = technology_by_id(database, technology_id)
+            .ok_or(ResearchError::TechnologyNotFound(technology_id))?;
+        self.validate_research_command(player_id, building_id, database, technology)?;
+        Ok(ResearchQuote {
+            status: self.building_technology_status(
+                player_id,
+                building_id,
+                database,
+                technology_id,
+            )?,
+            cost: technology_cost(database, technology)?,
+            total_points: research_points(technology)?,
+        })
     }
 
     /// Validate, pay for, and enqueue exactly one technology item.

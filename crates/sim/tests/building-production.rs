@@ -476,6 +476,47 @@ fn player_forbids_gate_new_squad_and_unit_training() {
     ));
 }
 
+#[test]
+fn quotes_give_menu_prices_and_the_remaining_train_limit_without_change() {
+    let database = production_database(true);
+    let (mut world, barracks_id) = production_world(&database, 3.0, 500.0);
+    let marine_id = squad_prototype_id(&database, MARINE).unwrap();
+    let drone_id = object_prototype_id(&database, DRONE).unwrap();
+    let upgrade_id = technology_prototype_id(&database, UPGRADE).unwrap();
+    let checksum_before = world.checksum();
+
+    let marine = world
+        .training_quote(1, barracks_id, &database, TrainingKind::Squad, marine_id)
+        .unwrap();
+    assert_close(marine.cost.get(0), 100.0);
+    assert_close(marine.total_points, 0.1);
+    assert_eq!(marine.train_limit_remaining, Some(1));
+    let drone = world
+        .training_quote(1, barracks_id, &database, TrainingKind::Unit, drone_id)
+        .unwrap();
+    assert_close(drone.cost.get(0), 25.0);
+    assert_eq!(drone.train_limit_remaining, None);
+    let upgrade = world
+        .research_quote(1, barracks_id, &database, upgrade_id)
+        .unwrap();
+    assert_eq!(upgrade.status, TechStatus::Available);
+    assert_close(upgrade.cost.get(0), 50.0);
+    assert_close(upgrade.total_points, 0.05);
+    assert_eq!(world.checksum(), checksum_before);
+
+    world
+        .queue_training(1, barracks_id, &database, TrainingKind::Squad, marine_id, 1)
+        .unwrap();
+    let marine = world
+        .training_quote(1, barracks_id, &database, TrainingKind::Squad, marine_id)
+        .unwrap();
+    assert_eq!(marine.train_limit_remaining, Some(0));
+    assert!(matches!(
+        world.training_quote(2, barracks_id, &database, TrainingKind::Squad, marine_id),
+        Err(TrainingError::PlayerNotFound(2) | TrainingError::BuildingNotOwned { .. })
+    ));
+}
+
 fn enqueue_training(clock: &mut Simulation, command: BuildingCommand) {
     clock
         .command_queue

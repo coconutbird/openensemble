@@ -132,13 +132,13 @@ pub use presentation::{
     ScreenFadeOverlay, ScreenFadeSequence, TriggerMessage,
 };
 pub use production::ProductionUpdate;
-pub use research::{ResearchError, ResearchQueueResult, technology_prototype_id};
+pub use research::{ResearchError, ResearchQueueResult, ResearchQuote, technology_prototype_id};
 pub use scoring::ScenarioScoreInfo;
 pub use technology::TechnologyError;
 #[cfg(test)]
 pub(crate) use terrain::flat_test_terrain;
 pub use timers::{GameTimer, GameTimerAudience};
-pub use training::{MAX_TRAIN_BATCH, TrainingError, TrainingQueueResult};
+pub use training::{MAX_TRAIN_BATCH, TrainingError, TrainingQueueResult, TrainingQuote};
 pub(crate) use training::{TriggerTrainingRequest, TriggerTrainingResult};
 pub(crate) use transports::{
     TransportGroupPlan, TransportGroupRequest, average_transport_position, plan_transport_groups,
