@@ -94,7 +94,7 @@ pub use scenario::{
 };
 pub use serialize::{SerializeError, deserialize_command, serialize_command};
 pub use session::{ClientState, PlayerInfo, Session, SessionState};
-pub use simulation::{MS_PER_TICK, SimState, Simulation, TICK_RATE};
+pub use simulation::{MS_PER_TICK, ScenarioTick, SimState, Simulation, TICK_RATE};
 pub use spawn::{
     MAX_SPAWN_BATCH, SpawnError, object_prototype_id, spawn_object_at, spawn_squad_at,
     spawn_squad_from_base, spawn_squad_from_base_by_name, spawn_squads_at, squad_prototype_id,

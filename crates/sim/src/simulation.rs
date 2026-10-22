@@ -8,6 +8,7 @@ use crate::executor::CommandExecutor;
 use crate::random::Random;
 use crate::scenario::LoadedScenario;
 use crate::sync::SyncChecksum;
+use crate::trigger::TriggerUpdate;
 use crate::world::World;
 use pipeline::database::hw1::Database;
 
@@ -222,13 +223,16 @@ impl Simulation {
 
     /// Process one authoritative scenario tick with its gameplay catalog. It ends the game like
     /// [`tick_with_world`](Self::tick_with_world).
+    ///
+    /// Returns the processed commands and the trigger update of the tick. A tick after the
+    /// game-over delay returns an empty result.
     pub fn tick_with_scenario(
         &mut self,
         scenario: &mut LoadedScenario,
         database: &Database,
-    ) -> Vec<CommandEntry> {
+    ) -> ScenarioTick {
         if !scenario.world.advance_game_over_delay(SECONDS_PER_TICK) {
-            return Vec::new();
+            return ScenarioTick::default();
         }
         let commands = self.tick_once();
         scenario.world.game_time_ms = self.game_time_ms;
@@ -248,10 +252,10 @@ impl Simulation {
             database,
             &scenario.gameplay,
         );
-        let _triggers = scenario
+        let triggers = scenario
             .world
             .update_triggers_with_gameplay(database, &scenario.gameplay);
-        commands
+        ScenarioTick { commands, triggers }
     }
 
     /// Update the simulation with world integration.
@@ -281,8 +285,19 @@ impl Simulation {
         scenario: &mut LoadedScenario,
         database: &Database,
     ) -> Vec<CommandEntry> {
-        self.advance_fixed_ticks(dt_seconds, |sim| sim.tick_with_scenario(scenario, database))
+        self.advance_fixed_ticks(dt_seconds, |sim| {
+            sim.tick_with_scenario(scenario, database).commands
+        })
     }
+}
+
+/// Result of one authoritative scenario tick ([`Simulation::tick_with_scenario`]).
+#[derive(Debug, Clone, Default)]
+pub struct ScenarioTick {
+    /// Commands that the tick processed.
+    pub commands: Vec<CommandEntry>,
+    /// The trigger update of the tick, with its unsupported effect and condition types.
+    pub triggers: TriggerUpdate,
 }
 
 #[cfg(test)]

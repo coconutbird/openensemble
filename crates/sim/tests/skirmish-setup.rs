@@ -100,3 +100,142 @@ fn script_list(world: &sim::World) -> Vec<(String, Option<i32>)> {
         .map(|(_, script)| (script.name.clone(), script.externals.player))
         .collect()
 }
+
+/// Simulated time of the 1v1 run: three minutes.
+const RUN_MS: u32 = 180_000;
+
+/// Script files whose effects and conditions name the source of an unsupported type.
+const SCRIPT_FILES: [&str; 6] = [
+    "SkirmishWorld.triggerscript",
+    "SkirmishPlayer.triggerscript",
+    "SkirmishAI_raw_.triggerscript",
+    "Creeps.triggerscript",
+    "CrateMaker3.triggerscript",
+    "CrateMakerMed.triggerscript",
+];
+
+/// Runs the 1v1 for a few simulated minutes: the starting HQs complete after their build points
+/// and the game-mode scripts defeat nobody early.
+#[test]
+#[ignore = "requires a local Halo Wars DE installation"]
+fn blood_gulch_1v1_runs_minutes_without_an_early_defeat() {
+    let mut loaded = test_support::installed_scenario("blood_gulch");
+    let database = &loaded.content.database;
+    let hqs = [(1, "unsc_bldg_command_03"), (2, "cov_bldg_builder_02")].map(|(player, proto)| {
+        let id = loaded
+            .simulation
+            .world
+            .units
+            .iter()
+            .find(|(_, unit)| unit.proto_object_name == proto && unit.base.player_id == player)
+            .map(|(id, _)| id)
+            .expect("starting HQ");
+        let build_points = database
+            .objects
+            .iter()
+            .find(|object| object.name == proto)
+            .and_then(|object| object.build_points)
+            .expect("HQ build points");
+        (id, build_points)
+    });
+
+    let mut clock = sim::Simulation::new();
+    let mut built_at = [None; 2];
+    let mut unsupported_effects = std::collections::BTreeMap::<u16, u32>::new();
+    let mut unsupported_conditions = std::collections::BTreeMap::<u16, u32>::new();
+    while loaded.simulation.world.game_time() < RUN_MS {
+        let tick = clock.tick_with_scenario(&mut loaded.simulation, database);
+        for raw_type in tick.triggers.unsupported_effect_types {
+            *unsupported_effects.entry(raw_type).or_default() += 1;
+        }
+        for raw_type in tick.triggers.unsupported_condition_types {
+            *unsupported_conditions.entry(raw_type).or_default() += 1;
+        }
+        let world = &loaded.simulation.world;
+        for ((hq, _), built) in hqs.iter().zip(&mut built_at) {
+            if built.is_none() && world.get_unit(*hq).is_some_and(|unit| unit.built) {
+                *built = Some(world.game_time());
+            }
+        }
+    }
+
+    let world = &loaded.simulation.world;
+    let mut resident = std::collections::BTreeMap::<String, u32>::new();
+    for (name, _) in script_list(world) {
+        *resident.entry(name).or_default() += 1;
+    }
+    println!("resident scripts after {RUN_MS} ms: {resident:?}");
+    println!("HQs built at {built_at:?} ms");
+    let library = world.trigger_engine().script_library();
+    let sources = |raw_type: u16, effect: bool| {
+        SCRIPT_FILES
+            .iter()
+            .filter(|file| {
+                let sim::trigger::LibraryScript::Parsed(script) = library.get(file) else {
+                    return false;
+                };
+                script.triggers.iter().any(|trigger| {
+                    if effect {
+                        trigger.effects().any(|item| item.raw_type == raw_type)
+                    } else {
+                        trigger
+                            .conditions
+                            .iter()
+                            .any(|item| item.raw_type == raw_type)
+                    }
+                })
+            })
+            .map(|file| file.trim_end_matches(".triggerscript"))
+            .collect::<Vec<_>>()
+    };
+    for (kind, counts, effect) in [
+        ("effect", &unsupported_effects, true),
+        ("condition", &unsupported_conditions, false),
+    ] {
+        let mut ranked = counts.iter().collect::<Vec<_>>();
+        ranked.sort_by(|left, right| right.1.cmp(left.1).then(left.0.cmp(right.0)));
+        println!("unsupported {kind} types: {}", ranked.len());
+        for (raw_type, ticks) in ranked {
+            println!(
+                "  {kind} {raw_type}: {ticks} ticks, in {:?}",
+                sources(*raw_type, effect)
+            );
+        }
+    }
+    for ((_, build_points), built) in hqs.iter().zip(built_at) {
+        // `BUnitActionBuilding_update` @ `0x1404F4B70` advances the unbuilt HQ by the elapsed
+        // seconds against its authored `BuildPoints`; no work-rate or quick-build scalar applies.
+        let built = f64::from(built.expect("the starting HQ completes"));
+        let build_ms = f64::from(*build_points) * 1000.0;
+        assert!(
+            (build_ms..=build_ms + 1000.0).contains(&built),
+            "HQ built at {built} ms, build points {build_points}"
+        );
+    }
+    for player in [1, 2] {
+        assert_eq!(
+            world.get_player(player).unwrap().state,
+            sim::PlayerState::Playing,
+            "player {player} must not lose early"
+        );
+    }
+    assert_eq!(world.game_result(), None);
+    // `SkirmishWorld` ends once its last trigger deactivates (`BTriggerScript_update`). The
+    // player and AI scripts stay resident.
+    let launched = script_list(world)
+        .into_iter()
+        .filter(|(name, _)| {
+            ["SkirmishWorld", "SkirmishPlayer", "SkirmishAI_raw_"]
+                .iter()
+                .any(|prefix| name.starts_with(prefix))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        launched,
+        [
+            ("SkirmishPlayer.triggerscript".to_owned(), Some(1)),
+            ("SkirmishPlayer.triggerscript".to_owned(), Some(2)),
+            ("SkirmishAI_raw_.triggerscript".to_owned(), Some(2)),
+        ]
+    );
+}
