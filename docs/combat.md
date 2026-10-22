@@ -590,13 +590,14 @@ sources and likewise introduced no additional IDA functions requiring rename.
 - The authoritative world retains a checksummed effective veterancy gate. The
   installed-scenario loader snapshots retail's case-insensitive startup config
   before mounting the scenario ERA, then requires both its `Veterancy`
-  definition and the raw root-level `AllowVeterancy` flag. The latter retains
-  retail's missing-element `false` and present-empty-element `true` defaults.
+  definition and the root-level `AllowVeterancy` flag, which `pipeline`
+  decodes into `ScenarioData::allow_veterancy`. The flag retains retail's
+  missing-element `false` and present-empty-element `true` defaults.
   A disabled effective gate suppresses
   prototype starting levels and their unit scalars, combat and trigger XP,
   Board level inheritance, and later Spartan-to-vehicle propagation. The
-  `ScenarioData`-only helper defaults the gate on because that lossy pipeline
-  representation does not currently retain the raw flag.
+  `ScenarioData`-only helper `load_scenario_into_world` still defaults the
+  gate on and does not read `ScenarioData::allow_veterancy`.
 - When an AOE primary target resolves through a proxy to an external shield,
   other candidate centers within the shield's authored X/Y volume are removed
   before damage-pool normalization. The original primary remains eligible for

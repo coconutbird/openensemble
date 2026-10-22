@@ -6,8 +6,6 @@ use crate::gameplay::{
     AreaDamageProfile, AttackAccuracyProfile, AttackAnimation, AttackProfile, ImpactEffectProfile,
     ImpactEffectSize, ProjectilePerturbanceProfile, ProjectileProfile,
 };
-use byteorder::{BigEndian, ByteOrder};
-use half::f16;
 use pipeline::database::hw1::tactics::{Action, TacticData, Weapon};
 use pipeline::database::hw1::{Database, ProtoObject};
 
@@ -339,7 +337,7 @@ fn shield_impact_forward_matches_retail_special_cases() {
 #[test]
 fn terrain_collision_offsets_ground_zero_above_the_triangle_surface() {
     let mut world = World::new();
-    world.configure_terrain_simulation(&flat_xsd()).unwrap();
+    world.configure_flat_test_terrain(0.0);
     let projectile_id = world.projectiles.allocate_id();
     let source_id = EntityId::new(EntityClass::Unit, 0);
     let target_id = EntityId::new(EntityClass::Unit, 1);
@@ -406,7 +404,7 @@ fn terrain_collision_offsets_ground_zero_above_the_triangle_surface() {
 #[test]
 fn world_routes_xsd_height_into_tracking_ground_avoidance() {
     let mut world = World::new();
-    world.configure_terrain_simulation(&flat_xsd()).unwrap();
+    world.configure_flat_test_terrain(0.0);
     let projectile_id = world.projectiles.allocate_id();
     let profile = ProjectileProfile {
         proto_object_id: 71,
@@ -573,24 +571,4 @@ fn parallel_segment_outside_box_does_not_intersect() {
         )
         .is_none()
     );
-}
-
-fn flat_xsd() -> Vec<u8> {
-    let mut header = vec![0_u8; 32];
-    BigEndian::write_i32(&mut header[0..4], 4);
-    BigEndian::write_i32(&mut header[4..8], 8);
-    BigEndian::write_f32(&mut header[8..12], 1.0);
-    BigEndian::write_f32(&mut header[12..16], 1.0);
-    BigEndian::write_i32(&mut header[16..20], 8);
-    BigEndian::write_i32(&mut header[20..24], 8);
-    BigEndian::write_f32(&mut header[24..28], 1.0);
-    BigEndian::write_i32(&mut header[28..32], 1);
-    let mut heights = vec![0_u8; 8 * 8 * 2];
-    for sample in heights.as_chunks_mut::<2>().0 {
-        BigEndian::write_u16(sample, f16::from_f32(0.0).to_bits());
-    }
-    let mut writer = ecf::Writer::new(0);
-    writer.add_chunk(0x1111, header);
-    writer.add_chunk(0x2222, heights);
-    writer.finalize().unwrap()
 }

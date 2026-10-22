@@ -1,7 +1,6 @@
 use super::*;
 use crate::trigger::{EffectType, TriggerVar, VarType};
-use byteorder::{BigEndian, ByteOrder};
-use half::f16;
+use crate::world::flat_test_terrain;
 
 #[test]
 fn random_location_uses_retail_radius_distribution_rotation_and_rng_stream() {
@@ -36,7 +35,7 @@ fn random_location_snaps_to_the_authoritative_xsd_height_grid() {
     set_float(&mut script, 3, 0.0);
     let effect = random_location_effect();
     let mut world = World::new();
-    world.configure_terrain_simulation(&flat_xsd(23.5)).unwrap();
+    world.configure_terrain_simulation(flat_test_terrain(100.0, 23.5));
 
     assert_eq!(
         random_location(&effect, &mut script, &mut world),
@@ -101,25 +100,4 @@ fn output(script: &TriggerScript) -> TriggerVec3 {
         TriggerValue::Vector(value) => value,
         ref value => panic!("expected vector output, found {value:?}"),
     }
-}
-
-fn flat_xsd(height: f32) -> Vec<u8> {
-    let mut header = vec![0_u8; 32];
-    BigEndian::write_i32(&mut header[0..4], 4);
-    BigEndian::write_i32(&mut header[4..8], 8);
-    BigEndian::write_f32(&mut header[8..12], 1.0);
-    BigEndian::write_f32(&mut header[12..16], 1.0);
-    BigEndian::write_i32(&mut header[16..20], 8);
-    BigEndian::write_i32(&mut header[20..24], 8);
-    BigEndian::write_f32(&mut header[24..28], 100.0);
-    BigEndian::write_i32(&mut header[28..32], 1);
-
-    let mut heights = vec![0_u8; 8 * 8 * 2];
-    for sample in heights.as_chunks_mut::<2>().0 {
-        BigEndian::write_u16(sample, f16::from_f32(height).to_bits());
-    }
-    let mut writer = ecf::Writer::new(0);
-    writer.add_chunk(0x1111, header);
-    writer.add_chunk(0x2222, heights);
-    writer.finalize().unwrap()
 }

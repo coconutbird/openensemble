@@ -132,7 +132,8 @@ pub use production::ProductionUpdate;
 pub use research::{ResearchError, ResearchQueueResult, technology_prototype_id};
 pub use scoring::ScenarioScoreInfo;
 pub use technology::TechnologyError;
-pub use terrain::TerrainLoadError;
+#[cfg(test)]
+pub(crate) use terrain::flat_test_terrain;
 pub use timers::{GameTimer, GameTimerAudience};
 pub use training::{
     MAX_TRAIN_BATCH, TrainingError, TrainingQueueResult, object_runtime_id, squad_runtime_id,

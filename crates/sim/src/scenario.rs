@@ -36,7 +36,6 @@ mod garrison;
 
 mod animation_requests;
 pub(crate) mod child_objects;
-mod config;
 mod coordinates;
 mod design_lines;
 mod forbids;
@@ -60,8 +59,6 @@ pub(crate) use units::{
 
 // Re-export scenario types from pipeline for convenience
 pub use coordinates::ScenarioPositionAxes;
-pub use design_lines::DesignLineLoadError;
-pub use objectives::ObjectiveLoadError;
 pub use pipeline::hw1::scenario::{ScenarioData, ScenarioObject, ScenarioPlayer, ScenarioPosition};
 pub(crate) use prototypes::{PlacedUnitKind, classify_proto_object};
 use prototypes::{
@@ -129,13 +126,13 @@ pub enum ScenarioAssetLoadError {
     Trigger(#[from] crate::trigger::LoadError),
     /// The scenario's synchronized XSD simulation terrain was malformed.
     #[error("failed to load scenario simulation terrain: {0}")]
-    Terrain(#[from] crate::world::TerrainLoadError),
+    Terrain(#[from] pipeline::xsd::Error),
     /// Scenario-authored design-line path geometry was malformed.
     #[error("failed to load scenario design lines: {0}")]
-    DesignLines(#[from] DesignLineLoadError),
+    DesignLines(#[from] pipeline::hw1::scenario::DesignLineError),
     /// Scenario-authored objective state was malformed.
     #[error("failed to load scenario objectives: {0}")]
-    Objectives(#[from] ObjectiveLoadError),
+    Objectives(#[from] pipeline::hw1::scenario::ObjectiveError),
 }
 
 impl LoadedScenario {
@@ -175,7 +172,7 @@ pub fn load_scenario_from_game_dir(
     scenario: &str,
 ) -> Result<LoadedGameScenario, ScenarioAssetLoadError> {
     let mut source = pipeline::hw1::loader::load_game_dir(game_dir);
-    let config_symbols = config::load_startup_config(&mut source);
+    let config_symbols = pipeline::hw1::startup::load_startup_config(&mut source);
     if !source.load_scenario(scenario) {
         return Err(ScenarioAssetLoadError::ScenarioArchiveNotFound {
             scenario: scenario.to_owned(),
@@ -212,14 +209,13 @@ pub fn load_scenario_from_game_dir(
             path: scenario_path.clone(),
         }
     })?;
-    let scenario_allows_veterancy = settings::allows_veterancy(&trigger_document);
-    let visual_variation_indices = settings::visual_variation_indices(&trigger_document);
+    let visual_variation_indices = settings::visual_variation_indices(scenario_data.objects());
     let mut simulation = load_scenario_into_world_with_max_players(
         scenario_data,
         &content.database,
         max_players,
         gameplay,
-        scenario_allows_veterancy,
+        scenario_data.allow_veterancy,
         Some(&visual_variation_indices),
         Some(&config_symbols),
     );
@@ -228,17 +224,15 @@ pub fn load_scenario_from_game_dir(
         let maximum = Vec3::from_array(terrain.header.world_max);
         let _configured = simulation.world.configure_terrain_bounds(minimum, maximum);
     }
-    if let Some(xsd_path) = content
-        .scenario
-        .as_ref()
-        .and_then(pipeline::hw1::scenario::ScenarioDescriptor::xtd_path)
-        .and_then(|path| path.strip_suffix(".xtd").map(|base| format!("{base}.xsd")))
-        && let Some(xsd) = source.resolve_exact(&xsd_path)
+    if let Some(descriptor) = &content.scenario
+        && let Some(terrain) = descriptor.read_simulation_terrain(&mut source)?
     {
-        simulation.world.configure_terrain_simulation(&xsd)?;
+        simulation.world.configure_terrain_simulation(terrain);
     }
-    objectives::load_objectives(&mut simulation.world, &trigger_document)?;
-    design_lines::load_design_lines(&mut simulation.world, &trigger_document)?;
+    let objectives = pipeline::hw1::scenario::parse_objectives(&trigger_document)?;
+    objectives::load_objectives(&mut simulation.world, &objectives);
+    let design_lines = pipeline::hw1::scenario::parse_design_lines(&trigger_document)?;
+    design_lines::load_design_lines(&mut simulation.world, &design_lines);
     forbids::apply_scenario_forbids(&mut simulation.world, &content.database, &trigger_document);
     triggers::load_trigger_systems(&mut simulation, &content.database, &trigger_document)?;
     let animation_requests = triggers::scripted_animation_requests(&simulation)
@@ -330,7 +324,7 @@ fn load_scenario_into_world_with_max_players(
             continue;
         };
         let visual_variation_index = visual_variation_indices
-            .map_or(obj.visual_variation_index, |indices| {
+            .map_or(obj.visual_variation_index.unwrap_or(0), |indices| {
                 indices.get(&obj.id).copied().unwrap_or(-1)
             });
         apply_scenario_visual_variation(&mut world, entity_id, visual_variation_index);

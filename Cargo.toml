@@ -29,7 +29,6 @@ render-test-support = { path = "crates/render-test-support" }
 
 # ensemble-assets (sibling repo) — single dependency for all game data
 pipeline = { path = "../ensemble-assets/crates/pipeline" }
-ecf = { path = "../ensemble-formats/crates/ecf" }
 era = { path = "../ensemble-formats/crates/era" }
 lgt = { path = "../ensemble-formats/crates/lgt" }
 
@@ -68,6 +67,7 @@ era = { path = "../ensemble-formats/crates/era" }
 uax = { path = "../ensemble-formats/crates/uax" }
 ugx = { path = "../ensemble-formats/crates/ugx" }
 xmb = { path = "../ensemble-formats/crates/xmb" }
+xsd = { path = "../ensemble-formats/crates/xsd" }
 xtd = { path = "../ensemble-formats/crates/xtd" }
 xtt = { path = "../ensemble-formats/crates/xtt" }
 

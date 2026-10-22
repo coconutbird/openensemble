@@ -1,255 +1,42 @@
-//! Retail XSD simulation-terrain loading and height queries.
+//! Retail XSD simulation-terrain height, surface and collision queries.
 
 use super::World;
 use crate::sync::SyncChecksum;
-use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use glam::Vec3;
-use half::f16;
 use num_traits::ToPrimitive;
+use pipeline::xsd;
 
-const XSD_VERSION: i32 = 4;
-const XSD_HEADER_CHUNK: u64 = 0x1111;
-const XSD_HEIGHTS_CHUNK: u64 = 0x2222;
-const XSD_TILE_TYPES_CHUNK: u64 = 0x8888;
-const XSD_HEADER_SIZE: usize = 32;
-const HEIGHT_BLOCK_AXIS: usize = 8;
-const HEIGHT_BLOCK_SIZE: usize = HEIGHT_BLOCK_AXIS * HEIGHT_BLOCK_AXIS;
-
-/// Failure while parsing the scenario's retail XSD simulation terrain.
-#[derive(Debug, thiserror::Error)]
-pub enum TerrainLoadError {
-    /// The outer Ensemble Common Format container was invalid.
-    #[error("invalid XSD container: {0}")]
-    Container(#[from] ecf::Error),
-    /// A required retail XSD chunk was absent.
-    #[error("XSD is missing required chunk 0x{0:04X}")]
-    MissingChunk(u64),
-    /// The XSD header was shorter than the retail version-4 layout.
-    #[error("XSD header is truncated: expected at least {expected} bytes, found {actual}")]
-    TruncatedHeader {
-        /// The minimum header size, in bytes.
-        expected: usize,
-        /// The size of the header data that the file has, in bytes.
-        actual: usize,
-    },
-    /// The XSD header used an unsupported version or byte order.
-    #[error("unsupported XSD version bytes {0:02X?}")]
-    UnsupportedVersion([u8; 4]),
-    /// Terrain grid dimensions or scale were not usable.
-    #[error("invalid XSD terrain dimensions: {0}")]
-    InvalidDimensions(&'static str),
-    /// The height chunk did not contain the cache-aligned retail grid.
-    #[error("XSD height grid is truncated: expected {expected} bytes, found {actual}")]
-    TruncatedHeights {
-        /// The size that the height grid needs, in bytes.
-        expected: usize,
-        /// The size of the height chunk, in bytes.
-        actual: usize,
-    },
-    /// The optional tile-type chunk did not contain the row-major data grid.
-    #[error("XSD tile-type grid is truncated: expected {expected} bytes, found {actual}")]
-    TruncatedTileTypes {
-        /// The size that the tile-type grid needs, in bytes.
-        expected: usize,
-        /// The size of the tile-type chunk, in bytes.
-        actual: usize,
-    },
-}
-
-#[derive(Debug, Clone, Copy)]
-enum XsdEndian {
-    Big,
-    Little,
-}
-
-impl XsdEndian {
-    fn from_version(bytes: &[u8]) -> Result<Self, TerrainLoadError> {
-        let version_bytes: [u8; 4] = bytes
-            .get(..4)
-            .ok_or(TerrainLoadError::TruncatedHeader {
-                expected: XSD_HEADER_SIZE,
-                actual: bytes.len(),
-            })?
-            .try_into()
-            .expect("the checked XSD version slice has four bytes");
-        if BigEndian::read_i32(&version_bytes) == XSD_VERSION {
-            Ok(Self::Big)
-        } else if LittleEndian::read_i32(&version_bytes) == XSD_VERSION {
-            Ok(Self::Little)
-        } else {
-            Err(TerrainLoadError::UnsupportedVersion(version_bytes))
-        }
-    }
-
-    fn read_i32(self, bytes: &[u8]) -> i32 {
-        match self {
-            Self::Big => BigEndian::read_i32(bytes),
-            Self::Little => LittleEndian::read_i32(bytes),
-        }
-    }
-
-    fn read_f32(self, bytes: &[u8]) -> f32 {
-        match self {
-            Self::Big => BigEndian::read_f32(bytes),
-            Self::Little => LittleEndian::read_f32(bytes),
-        }
-    }
-
-    fn read_u16(self, bytes: &[u8]) -> u16 {
-        match self {
-            Self::Big => BigEndian::read_u16(bytes),
-            Self::Little => LittleEndian::read_u16(bytes),
-        }
-    }
-}
-
-/// Immutable simulation height grid loaded from a scenario XSD.
+/// Immutable simulation height grid decoded from a scenario XSD.
 #[derive(Debug)]
 pub(super) struct TerrainSimulation {
-    data_axis: usize,
-    data_tile_scale: f32,
-    height_axis: usize,
-    cache_axis: usize,
-    height_tile_scale: f32,
-    heights: Vec<f32>,
-    tile_types: Option<Vec<u8>>,
+    terrain: xsd::Terrain,
     fingerprint: u32,
 }
 
 impl TerrainSimulation {
-    fn from_xsd(bytes: &[u8]) -> Result<Self, TerrainLoadError> {
-        let container = ecf::Reader::new(bytes)?;
-        let header = container
-            .chunk_data_by_id(XSD_HEADER_CHUNK)
-            .map_err(|error| missing_chunk(error, XSD_HEADER_CHUNK))?;
-        let heights = container
-            .chunk_data_by_id(XSD_HEIGHTS_CHUNK)
-            .map_err(|error| missing_chunk(error, XSD_HEIGHTS_CHUNK))?;
-        let tile_types = match container.chunk_data_by_id(XSD_TILE_TYPES_CHUNK) {
-            Ok(tile_types) => Some(tile_types),
-            Err(ecf::Error::ChunkNotFound(_)) => None,
-            Err(error) => return Err(TerrainLoadError::Container(error)),
-        };
-        Self::from_chunks_with_tile_types(&header, &heights, tile_types.as_deref())
-    }
-
-    #[cfg(test)]
-    fn from_chunks(header: &[u8], height_bytes: &[u8]) -> Result<Self, TerrainLoadError> {
-        Self::from_chunks_with_tile_types(header, height_bytes, None)
-    }
-
-    fn from_chunks_with_tile_types(
-        header: &[u8],
-        height_bytes: &[u8],
-        tile_type_bytes: Option<&[u8]>,
-    ) -> Result<Self, TerrainLoadError> {
-        if header.len() < XSD_HEADER_SIZE {
-            return Err(TerrainLoadError::TruncatedHeader {
-                expected: XSD_HEADER_SIZE,
-                actual: header.len(),
-            });
-        }
-        let endian = XsdEndian::from_version(header)?;
-        let data_axis = positive_usize(endian.read_i32(&header[4..8]), "data tile axis")?;
-        let data_tile_scale = endian.read_f32(&header[8..12]);
-        let height_axis = positive_usize(endian.read_i32(&header[16..20]), "height axis")?;
-        let cache_axis = positive_usize(endian.read_i32(&header[20..24]), "cache axis")?;
-        let height_tile_scale = endian.read_f32(&header[24..28]);
-        if cache_axis < height_axis || !cache_axis.is_multiple_of(HEIGHT_BLOCK_AXIS) {
-            return Err(TerrainLoadError::InvalidDimensions(
-                "cache axis must contain the height grid and be divisible by eight",
-            ));
-        }
-        if !height_tile_scale.is_finite() || height_tile_scale <= 0.0 {
-            return Err(TerrainLoadError::InvalidDimensions(
-                "height tile scale must be finite and positive",
-            ));
-        }
-        if !data_tile_scale.is_finite() || data_tile_scale <= 0.0 {
-            return Err(TerrainLoadError::InvalidDimensions(
-                "data tile scale must be finite and positive",
-            ));
-        }
-        let sample_count =
-            cache_axis
-                .checked_mul(cache_axis)
-                .ok_or(TerrainLoadError::InvalidDimensions(
-                    "cache-aligned height grid overflows memory",
-                ))?;
-        let expected_bytes = sample_count.checked_mul(size_of::<u16>()).ok_or(
-            TerrainLoadError::InvalidDimensions("height byte count overflows memory"),
-        )?;
-        if height_bytes.len() < expected_bytes {
-            return Err(TerrainLoadError::TruncatedHeights {
-                expected: expected_bytes,
-                actual: height_bytes.len(),
-            });
-        }
-        let heights: Vec<f32> = height_bytes[..expected_bytes]
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|sample| f16::from_bits(endian.read_u16(sample)).to_f32())
-            .collect();
-        if heights.iter().any(|height| !height.is_finite()) {
-            return Err(TerrainLoadError::InvalidDimensions(
-                "height samples must be finite",
-            ));
-        }
-        let tile_types = if let Some(bytes) = tile_type_bytes {
-            let expected =
-                data_axis
-                    .checked_mul(data_axis)
-                    .ok_or(TerrainLoadError::InvalidDimensions(
-                        "tile-type grid overflows memory",
-                    ))?;
-            if bytes.len() < expected {
-                return Err(TerrainLoadError::TruncatedTileTypes {
-                    expected,
-                    actual: bytes.len(),
-                });
-            }
-            Some(bytes[..expected].to_vec())
-        } else {
-            None
-        };
-        let fingerprint = terrain_fingerprint(
-            data_axis,
-            data_tile_scale,
-            height_axis,
-            cache_axis,
-            height_tile_scale,
-            heights.as_slice(),
-            tile_types.as_deref(),
-        );
-        Ok(Self {
-            data_axis,
-            data_tile_scale,
-            height_axis,
-            cache_axis,
-            height_tile_scale,
-            heights,
-            tile_types,
+    fn new(terrain: xsd::Terrain) -> Self {
+        let fingerprint = terrain_fingerprint(&terrain);
+        Self {
+            terrain,
             fingerprint,
-        })
+        }
     }
 
     fn surface_type(&self, position: Vec3) -> Option<u8> {
         if !position.is_finite() {
             return None;
         }
-        let tile_types = self.tile_types.as_ref()?;
         let x = checked_grid_coordinate(
-            world_to_grid(position.x, self.data_tile_scale),
-            self.data_axis,
+            world_to_grid(position.x, self.terrain.data_tile_scale),
+            self.terrain.data_axis,
             true,
         )?;
         let z = checked_grid_coordinate(
-            world_to_grid(position.z, self.data_tile_scale),
-            self.data_axis,
+            world_to_grid(position.z, self.terrain.data_tile_scale),
+            self.terrain.data_axis,
             true,
         )?;
-        tile_types.get(z * self.data_axis + x).copied()
+        self.terrain.tile_type(x, z)
     }
 
     fn height(&self, position: Vec3, clamp: bool) -> Option<f32> {
@@ -257,21 +44,21 @@ impl TerrainSimulation {
             return None;
         }
         let x = checked_grid_coordinate(
-            world_to_grid(position.x, self.height_tile_scale),
-            self.height_axis,
+            world_to_grid(position.x, self.terrain.height_tile_scale),
+            self.terrain.height_axis,
             clamp,
         )?;
         let z = checked_grid_coordinate(
-            world_to_grid(position.z, self.height_tile_scale),
-            self.height_axis,
+            world_to_grid(position.z, self.terrain.height_tile_scale),
+            self.terrain.height_axis,
             clamp,
         )?;
         let x = i32::try_from(x).ok()?;
         let z = i32::try_from(z).ok()?;
-        let world_x = x.to_f32()? * self.height_tile_scale;
-        let world_z = z.to_f32()? * self.height_tile_scale;
-        let x_fraction = (position.x - world_x) / self.height_tile_scale;
-        let z_fraction = (position.z - world_z) / self.height_tile_scale;
+        let world_x = x.to_f32()? * self.terrain.height_tile_scale;
+        let world_z = z.to_f32()? * self.terrain.height_tile_scale;
+        let x_fraction = (position.x - world_x) / self.terrain.height_tile_scale;
+        let z_fraction = (position.z - world_z) / self.terrain.height_tile_scale;
         let bottom = interpolate(
             self.height_sample(x, z, true)?,
             self.height_sample(x + 1, z, true)?,
@@ -286,20 +73,13 @@ impl TerrainSimulation {
     }
 
     const fn tile_scale(&self) -> f32 {
-        self.height_tile_scale
+        self.terrain.height_tile_scale
     }
 
     fn height_sample(&self, x: i32, z: i32, clamp: bool) -> Option<f32> {
-        let x = checked_grid_coordinate(x, self.height_axis, clamp)?;
-        let z = checked_grid_coordinate(z, self.height_axis, clamp)?;
-        let blocks_per_axis = self.cache_axis / HEIGHT_BLOCK_AXIS;
-        let block_x = (x / HEIGHT_BLOCK_AXIS) * HEIGHT_BLOCK_SIZE;
-        let block_z = (z / HEIGHT_BLOCK_AXIS) * blocks_per_axis * HEIGHT_BLOCK_SIZE;
-        let local_x = x % HEIGHT_BLOCK_AXIS;
-        let local_z = (z % HEIGHT_BLOCK_AXIS) * HEIGHT_BLOCK_AXIS;
-        self.heights
-            .get(block_z + block_x + local_z + local_x)
-            .copied()
+        let x = checked_grid_coordinate(x, self.terrain.height_axis, clamp)?;
+        let z = checked_grid_coordinate(z, self.terrain.height_axis, clamp)?;
+        self.terrain.height_sample(x, z)
     }
 
     fn projectile_segment_intersection(&self, start: Vec3, end: Vec3) -> Option<Vec3> {
@@ -329,28 +109,29 @@ impl TerrainSimulation {
         if !start.is_finite()
             || !end.is_finite()
             || direction.length_squared() <= f32::EPSILON
-            || self.height_axis < 2
+            || self.terrain.height_axis < 2
         {
             return None;
         }
-        let maximum_world = (self.height_axis - 1).to_f32()? * self.height_tile_scale;
+        let maximum_world =
+            (self.terrain.height_axis - 1).to_f32()? * self.terrain.height_tile_scale;
         let (entry, exit) = clip_segment_xz(start, direction, maximum_world)?;
         let clipped_start = start + direction * entry;
         if clipped_start.y < self.height(clipped_start, false)? {
             return None;
         }
         let clipped_end = start + direction * exit;
-        let maximum_cell = i32::try_from(self.height_axis - 2).ok()?;
+        let maximum_cell = i32::try_from(self.terrain.height_axis - 2).ok()?;
         let (minimum_x, maximum_x) = cell_span(
             clipped_start.x,
             clipped_end.x,
-            self.height_tile_scale,
+            self.terrain.height_tile_scale,
             maximum_cell,
         )?;
         let (minimum_z, maximum_z) = cell_span(
             clipped_start.z,
             clipped_end.z,
-            self.height_tile_scale,
+            self.terrain.height_tile_scale,
             maximum_cell,
         )?;
         let mut nearest = None;
@@ -370,10 +151,10 @@ impl TerrainSimulation {
     }
 
     fn tile_triangles(&self, x: i32, z: i32) -> Option<[[Vec3; 3]; 2]> {
-        let x1 = x.to_f32()? * self.height_tile_scale;
-        let z1 = z.to_f32()? * self.height_tile_scale;
-        let x2 = x1 + self.height_tile_scale;
-        let z2 = z1 + self.height_tile_scale;
+        let x1 = x.to_f32()? * self.terrain.height_tile_scale;
+        let z1 = z.to_f32()? * self.terrain.height_tile_scale;
+        let x2 = x1 + self.terrain.height_tile_scale;
+        let z2 = z1 + self.terrain.height_tile_scale;
         let y0 = self.height_sample(x, z, true)?;
         let y1 = self.height_sample(x, z + 1, true)?;
         let y2 = self.height_sample(x + 1, z + 1, true)?;
@@ -388,8 +169,8 @@ impl TerrainSimulation {
 
     pub(super) fn hash_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_u32(self.fingerprint);
-        checksum.hash_u32(u32::try_from(self.height_axis).unwrap_or(u32::MAX));
-        checksum.hash_f32(self.height_tile_scale);
+        checksum.hash_u32(u32::try_from(self.terrain.height_axis).unwrap_or(u32::MAX));
+        checksum.hash_f32(self.terrain.height_tile_scale);
     }
 }
 
@@ -478,21 +259,6 @@ fn segment_triangle_fraction(start: Vec3, direction: Vec3, triangle: [Vec3; 3]) 
         .then(|| fraction.clamp(0.0, 1.0))
 }
 
-fn missing_chunk(error: ecf::Error, chunk_id: u64) -> TerrainLoadError {
-    if matches!(error, ecf::Error::ChunkNotFound(_)) {
-        TerrainLoadError::MissingChunk(chunk_id)
-    } else {
-        TerrainLoadError::Container(error)
-    }
-}
-
-fn positive_usize(value: i32, field: &'static str) -> Result<usize, TerrainLoadError> {
-    usize::try_from(value)
-        .ok()
-        .filter(|value| *value > 0)
-        .ok_or(TerrainLoadError::InvalidDimensions(field))
-}
-
 fn world_to_grid(world: f32, tile_scale: f32) -> i32 {
     let coordinate = world / tile_scale;
     coordinate.to_i32().unwrap_or_else(|| {
@@ -516,25 +282,17 @@ fn checked_grid_coordinate(value: i32, axis: usize, clamp: bool) -> Option<usize
     }
 }
 
-fn terrain_fingerprint(
-    data_axis: usize,
-    data_tile_scale: f32,
-    height_axis: usize,
-    cache_axis: usize,
-    height_tile_scale: f32,
-    heights: &[f32],
-    tile_types: Option<&[u8]>,
-) -> u32 {
+fn terrain_fingerprint(terrain: &xsd::Terrain) -> u32 {
     let mut checksum = SyncChecksum::new();
-    checksum.hash_u32(u32::try_from(data_axis).unwrap_or(u32::MAX));
-    checksum.hash_f32(data_tile_scale);
-    checksum.hash_u32(u32::try_from(height_axis).unwrap_or(u32::MAX));
-    checksum.hash_u32(u32::try_from(cache_axis).unwrap_or(u32::MAX));
-    checksum.hash_f32(height_tile_scale);
-    for &height in heights {
+    checksum.hash_u32(u32::try_from(terrain.data_axis).unwrap_or(u32::MAX));
+    checksum.hash_f32(terrain.data_tile_scale);
+    checksum.hash_u32(u32::try_from(terrain.height_axis).unwrap_or(u32::MAX));
+    checksum.hash_u32(u32::try_from(terrain.cache_axis).unwrap_or(u32::MAX));
+    checksum.hash_f32(terrain.height_tile_scale);
+    for &height in &terrain.heights {
         checksum.hash_f32(height);
     }
-    if let Some(tile_types) = tile_types {
+    if let Some(tile_types) = &terrain.tile_types {
         checksum.hash_u32(1);
         checksum.hash_bytes(tile_types);
     } else {
@@ -543,16 +301,25 @@ fn terrain_fingerprint(
     checksum.value()
 }
 
+/// Build an 8 by 8 flat terrain with a unit data tile scale for tests.
+#[cfg(test)]
+pub(crate) fn flat_test_terrain(height_tile_scale: f32, height: f32) -> xsd::Terrain {
+    xsd::Terrain {
+        byte_order: xsd::ByteOrder::Big,
+        data_axis: xsd::HEIGHT_BLOCK_AXIS,
+        data_tile_scale: 1.0,
+        height_axis: xsd::HEIGHT_BLOCK_AXIS,
+        cache_axis: xsd::HEIGHT_BLOCK_AXIS,
+        height_tile_scale,
+        heights: vec![height; xsd::HEIGHT_BLOCK_SIZE],
+        tile_types: None,
+    }
+}
+
 impl World {
-    /// Load the retail scenario XSD used by synchronized terrain queries.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TerrainLoadError`] when the ECF container, version-4 header,
-    /// or cache-blocked height grid is malformed.
-    pub fn configure_terrain_simulation(&mut self, bytes: &[u8]) -> Result<(), TerrainLoadError> {
-        self.terrain_simulation = Some(TerrainSimulation::from_xsd(bytes)?);
-        Ok(())
+    /// Use the decoded scenario XSD for synchronized terrain queries.
+    pub fn configure_terrain_simulation(&mut self, terrain: xsd::Terrain) {
+        self.terrain_simulation = Some(TerrainSimulation::new(terrain));
     }
 
     /// Return whether retail XSD simulation terrain is available.
@@ -593,25 +360,7 @@ impl World {
 
     #[cfg(test)]
     pub(super) fn configure_flat_test_terrain(&mut self, height: f32) {
-        let heights = vec![height; HEIGHT_BLOCK_SIZE];
-        self.terrain_simulation = Some(TerrainSimulation {
-            data_axis: HEIGHT_BLOCK_AXIS,
-            data_tile_scale: 1.0,
-            height_axis: HEIGHT_BLOCK_AXIS,
-            cache_axis: HEIGHT_BLOCK_AXIS,
-            height_tile_scale: 1.0,
-            fingerprint: terrain_fingerprint(
-                HEIGHT_BLOCK_AXIS,
-                1.0,
-                HEIGHT_BLOCK_AXIS,
-                HEIGHT_BLOCK_AXIS,
-                1.0,
-                &heights,
-                None,
-            ),
-            heights,
-            tile_types: None,
-        });
+        self.configure_terrain_simulation(flat_test_terrain(1.0, height));
     }
 }
 
