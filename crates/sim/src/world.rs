@@ -36,6 +36,7 @@ mod design_objects;
 mod detonate;
 mod events;
 mod flight;
+mod game_end;
 mod game_settings;
 mod garrison;
 mod gather;
@@ -105,6 +106,7 @@ pub use events::{
     ChatRequest, CinematicRequest, GeneralEvent, GeneralEventType, ImpactEffectRequest,
     ImpactSurface, PresentationRequest,
 };
+pub use game_end::GameType;
 pub use garrison::GarrisonError;
 pub use health::UnitHealth;
 pub use hitch::HitchError;
@@ -225,8 +227,8 @@ pub struct World {
     next_base_id: u16,
     /// Authoritative trigger scripts and the world events that wait for them.
     triggers: triggers::WorldTriggers,
-    /// Player state changes that the game did not take yet.
-    player_state_changes: Vec<crate::player::PlayerStateChange>,
+    /// Game type, player state changes and the game result.
+    game_end: game_end::GameEndState,
 }
 
 impl Default for World {
@@ -277,7 +279,7 @@ impl World {
             bases: BTreeMap::new(),
             next_base_id: 0,
             triggers: triggers::WorldTriggers::default(),
-            player_state_changes: Vec::new(),
+            game_end: game_end::GameEndState::default(),
         }
     }
 

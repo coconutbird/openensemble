@@ -52,6 +52,7 @@ impl World {
         hash_squads(&mut checksum, &self.squads);
         hash_projectiles(&mut checksum, &self.projectiles);
         hash_bases(&mut checksum, &self.bases);
+        self.game_end.hash_state(&mut checksum);
         self.hash_player_state_changes(&mut checksum);
         self.triggers.hash_state(&mut checksum);
         checksum.value()
