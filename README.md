@@ -6,14 +6,17 @@ game. The renderer uses `wgpu`. You must own the game: this repository contains 
 
 ## Repositories
 
-The project has three repositories. Each repository depends on the one before it through path
-dependencies:
+The project has three repositories. Each repository uses the one before it:
 
 1. [`ensemble-formats`](https://github.com/coconutbird/ensemble-formats): parsers and writers
    for the game file formats.
 2. [`ensemble-assets`](https://github.com/coconutbird/ensemble-assets): game data loading
    (`pipeline`) and the game database.
 3. `openensemble` (this repository): the simulation, the renderer and the executables.
+
+`openensemble` uses `../ensemble-formats` and `../ensemble-assets` through path dependencies, and
+its `[patch]` section points the git dependencies of `ensemble-assets` at `../ensemble-formats`.
+`ensemble-assets` uses `ensemble-formats` through git dependencies.
 
 ## Build
 
