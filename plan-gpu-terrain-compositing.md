@@ -392,7 +392,7 @@ Modify `src/bin/terrain_viewer.rs`:
 4. Modify terrain shader to sample from composited atlas instead of per-pixel splatting
 
 ```rust
-// In Application3D::render_3d():
+// In Application::render_3d():
 fn render_3d(&mut self, ctx: &mut RenderContext) {
     // ... existing setup ...
 
