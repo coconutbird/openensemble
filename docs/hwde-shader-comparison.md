@@ -1,87 +1,93 @@
-# PC Terrain Shader Comparison
+# PC terrain shader comparison
 
-The comparison source is the HLSL freshly decompiled from the PC shader
-bundles by `d3dasm.exe --emit hlsl`. Legacy source-derived descriptions are not
-used because they do not describe the binaries being rendered here.
+This document records how the terrain renderer follows the PC terrain shaders of Halo Wars DE.
+The reference is HLSL that `d3dasm.exe --emit hlsl` decompiles from the PC shader bundles. The
+legacy game source tree is not a reference.
 
-## Corrections made from the fresh decompile
+## Shader bundles
 
-| Area | Correct behavior |
+| Bundle | Decompiled programs | Renderer shader |
+|---|---:|---|
+| `gputerrainxbox.bin` | 28 | `crates/render/src/terrain/shaders/terrain_gpu.wesl` |
+| `gputerraincomposite.bin` | 9 | `crates/render/src/terrain/shaders/terrain_composite.wesl` |
+| `terrainfoliage.bin` | 8 | `crates/render/src/terrain/shaders/foliage.wesl` |
+| `terrainheightfield.bin` | 13 | `crates/render/src/terrain/shaders/terrain_heightfield.wesl` |
+| `terrainroads.bin` | 3 | `crates/render/src/terrain/shaders/terrain_roads.wesl` |
+
+## Terrain geometry
+
+| Area | Behavior |
 |---|---|
-| Packed terrain position | Native XTD source `(x, z)` is linear index `x * width + z`, but viewer/material world `(x, z)` corresponds to source `(z, x)`. The upload transposes texels, swaps packed R/B and the X/Z reconstruction constants, then leaves the shader's `.yx` sample and `.zyx` decode unchanged. |
-| Terrain Y decode | Subtract the DXBC default `g_yOffset = 0.00048828125` before multiplying by the Y range. Foliage and roads intentionally do not use that terrain-only bias. |
-| Terrain patches | 16 cells per patch and 17 vertices per side, with final-edge clamping. Levels 0/1/2/3 select factors 16/8/4/2, patch metadata follows the same source-to-world transpose, and shared edges take the finer neighbor. |
-| Terrain position LOD | The main domain variant uses normalized global X as its explicit position-texture LOD; the renderer supplies the required generated mip. |
-| Terrain alpha | Static XTD alpha is sampled by generated terrain vertices and interpolated. The pixel shader combines it with the dynamic-alpha bit and applies the `0.66666` threshold. |
-| XTT chunk axes | XTT `(grid_x, grid_z)` maps to world `(z, x)`; the atlas slot is `grid_x * 16 + grid_z`. |
-| Repeating material UV | Uses the shader's independent `(Z, X)` convention; this is not the chunk-address convention. |
-| Foliage random | One scalar `fract((fract(index * 0.0012385598) * 257 + 1)^2)` drives both jitter axes, rotation, and height. |
-| Foliage UV | The PC vertex shader passes runtime UV through from structured-buffer offset 24. XML source V is inverted while packing that runtime geometry, equivalent to the Xbox shader's `1 - norm0.w`. |
-| Foliage placement | The oracle local grid is `x = index / 64 + 0.5`, `z = index & 63`, followed by scalar jitter. The XTD visual parent already selects the viewer world chunk, so its origin stays fixed while only the local grid and blade geometry are transposed to viewer `(x, z) = (local z, local x)`. |
-| Foliage indices | Big-endian packed `u32`: blade type in the upper half, blade/vertex index in the lower half, with strip restarts. |
-| Foliage DDS | DXGI 98/99 is BC7, decoded through the local `../ensemble-formats` crate rather than the previous BC3 approximation. |
+| Packed terrain position | Native XTD source `(x, z)` is linear index `x * width + z`. Viewer world `(x, z)` is source `(z, x)`. The upload transposes the texels and swaps packed R/B and the X/Z reconstruction constants. The shader keeps the `.yx` sample and the `.zyx` decode. |
+| Terrain Y decode | Subtract the default `g_yOffset = 1/2048` before the multiplication by the Y range. Foliage and roads do not use this bias. |
+| Terrain patches | A patch has 16 cells and 17 vertices on each side. Reads at the last edge clamp. Levels 0/1/2/3 select factors 16/8/4/2. Shared edges use the finer neighbor. |
+| Tessellation | `wgpu` has no tessellation stages. A fixed indexed carrier mesh, quantized to the fractional-even domain locations, replaces the hull and domain stages. |
+| Position LOD | The main domain variant uses normalized global X as the LOD of the position texture. The renderer supplies the generated mip. |
+| Terrain alpha | The generated terrain vertices sample the static XTD alpha. The pixel shader combines it with the dynamic-alpha bit and applies the `0.66666` threshold. |
+| XTT chunk axes | XTT `(grid_x, grid_z)` is world `(z, x)`. The atlas slot is `grid_x * 16 + grid_z`. |
+| Repeating material UV | The shader uses an independent `(Z, X)` convention. This is not the chunk address convention. |
 
 ## GPU compositor
 
-The compositor writes per-chunk albedo, normal, and colored-specular results
-into matching atlases. It supports eight splat layers, alpha channels, decal
-transforms, and every atlas mip. Hardware sRGB sampling/output performs the
-linearization and encoding around the blend.
+`crates/render/src/terrain/compositing.rs` writes the albedo, normal and colored specular of each
+chunk into matching atlases. It supports eight splat layers, alpha channels, decal transforms and
+all atlas mips. Hardware sRGB sampling and output do the linearization and the encoding.
 
-Chunk alpha and decal masks use spatial 64-pixel tiles instead of texture-array
-layers, so maps with more than 256 chunks do not exceed the common array-layer
-limit. The output atlas selects the largest power-of-two chunk resolution up to
-512 that fits the device's 2D texture limit; Fort Deen's 20×20 grid uses 256
-pixels per chunk in a 5120×5120 atlas on an 8192-limit device.
+The chunk alpha and decal masks use 64-pixel tiles, not texture array layers. Thus maps with more
+than 256 chunks do not exceed the array layer limit. The atlas uses the largest power-of-two chunk
+size, up to 512, that fits the 2D texture limit of the device. For example, Fort Deen (20×20
+chunks) uses 256 pixels for each chunk in a 5120×5120 atlas on a device with an 8192 limit.
 
-Blood Gulch's XTT bytes identify 256 linkers. Linker order increments XTT
-`grid_x` first, which is world Z; compositor placement transposes that into the
-world-facing atlas. All 256 request the specular pass; none requests a self or
-environment-mask pass. The retail-lit path reads the composited atlases in mode
-0, which is the canonical viewer output. Mode 12 exposes the unique albedo atlas
-directly as a compositor diagnostic.
+The compositor rebuilds only dirty chunks. It does not use variable resolution for each chunk; the
+mip chain gives the distance falloff.
 
 ## Main terrain material
 
-The default retail-lit material implements the decompiled bundle's normal fade,
-XTD light texture, AO ordering, SH fill, directional/local illumination,
-specular response, cascaded VSM, radial/planar fog, and blackmap calculations.
-Mode 0 is therefore the canonical final presentation; the other modes isolate
-intermediate channels for diagnosis.
+The retail-lit material implements the normal fade, the XTD light texture, the AO order, SH fill,
+directional and local lights, specular, cascaded VSM shadows, radial and planar fog, and the
+blackmap. The compositor implements the specular pass only. The self-illumination and
+environment-mask passes are not implemented. Blood Gulch does not use them: all 256 linkers ask
+for the specular pass only.
 
-## Foliage material
+## Foliage
 
-The viewer reconstructs active blades from the XTT strip data rather than
-inventing placements. The pixel-lit path uses two-sided normals, directional
-and local diffuse light, SH fill, cascaded shadows, blackmap, fog, the 0.6666
-opacity threshold, and the 400–500 distance fade found in the fresh shaders.
-Albedo and opacity uploads include mip chains to keep the alpha-tested sprites
-stable under minification.
+| Area | Behavior |
+|---|---|
+| Indices | Big-endian `u32`. The upper 16 bits select the blade type. The lower 16 bits encode `blade_index * 10 + vertex`. `0xffff` is a strip restart. |
+| Parent chunk | A QN parent is an index into the XTD visual chunk vector, not the XTT linker vector. Its `(grid_x, grid_z)` is the viewer chunk. For example, parent 96 is chunk `(0, 6)`. |
+| Placement | The local grid is `x = index / 64 + 0.5`, `z = index & 63`, then the scalar jitter. Only the local offset, the blade geometry and the normal are transposed to viewer `(x, z)`. The parent chunk origin does not move. |
+| Random value | One scalar `fract((fract(index * 0.0012385598) * 257 + 1)^2)` drives both jitter axes, the rotation and the height. |
+| UV | The PC vertex shader reads the runtime UV at structured-buffer offset 24. The packer inverts the XML source V. This is the same as `1 - norm0.w` in the Xbox shader. |
+| Textures | DXGI formats 98/99 are BC7. The `ensemble-formats` DDX decoder decodes them. The uploads include full mip chains. |
+| Lighting | The pixel-lit variant uses two-sided normals, directional, SH and local light, cascaded shadows, blackmap, fog, the `0.6666` alpha test and the 400–500 distance fade. The shadow caster uses its own alpha-tested path. |
 
-QN parent IDs index the XTD visual-chunk vector directly; they must never be
-looked up in the XTT linker vector. The resulting coordinates are already the
-viewer chunk origin. The oracle placement and RNG are evaluated in its packed
-local 64×64 grid, then that local offset is transposed without moving the
-parent chunk. For example, parent 96 remains viewer chunk `(0, 6)`.
+## Roads and heightfield patches
 
-## Canonical check
+The viewer draws roads with the terrain-conforming, TBN, material, light, shadow and fog behavior
+of `terrainroads`. `TerrainPatchRenderer` (`crates/render/src/terrain/patch.rs`) implements the
+`terrainheightfield` patches. The compositor applies the XTT terrain decals. Blood Gulch has no
+road data.
 
-Run `cargo run --locked --bin terrain_viewer`. The viewer must start in mode 0
-(`Retail Lit`) with compositor debug mode 0. Mode 12 is the composited-albedo
-diagnostic. Mode 13 is the orientation diagnostic: red marks
-the `(0,0)` corner, blue `+X`, green `+Z`, and yellow the opposite corner.
+## Viewer check
 
-For an automated oracle image, run:
+Run `cargo run --locked --bin terrain_viewer`. The viewer starts in display mode 0 (`Retail Lit`)
+with compositor debug mode 0. Mode 12 shows the composited albedo atlas. Mode 13 shows the
+orientation: red marks the `(0, 0)` corner, blue `+X`, green `+Z` and yellow the opposite corner.
+
+On Blood Gulch, a correct start creates 256 compositor chunks, 4096 terrain patches and 299
+foliage draws with 21,294 blades, without a `wgpu` validation error.
+
+To write a top-down capture, run this command:
 
 ```text
 cargo run --locked --bin terrain_viewer -- --capture-top-down target/terrain-captures/complete-xz-transform.png --capture-size 2048
 ```
 
-The companion `.height.png` and `.alignment.png` images expose terrain versus
-texture registration, while `.foliage-map.png` plots the exact decoded blade
-locations and each `.foliage-N-view.png` frames a deterministic dense region.
+The capture also writes companion images: `.height.png` and `.alignment.png` show the terrain
+against the texture registration, `.foliage-map.png` plots the decoded blade locations, and each
+`.foliage-N-view.png` frames a dense foliage region.
 
-Use this focused capture for the lower-right rock diagnostic:
+To capture the rock in the lower-right corner, run this command:
 
 ```text
 cargo run --locked --bin terrain_viewer -- --capture-top-down target/terrain-captures/bottom-right-landmark-complete-xz.png --capture-size 768 --capture-center 880 880 --capture-span 224

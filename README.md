@@ -1,0 +1,102 @@
+# OpenEnsemble
+
+OpenEnsemble is a Rust reimplementation of the Halo Wars engine (Halo Wars Definitive Edition).
+The simulation must match vanilla Halo Wars, so that a game can stay in lockstep with the retail
+game. The renderer uses `wgpu`. You must own the game: this repository contains no game data.
+
+## Repositories
+
+The project has three repositories. Each repository depends on the one before it through path
+dependencies:
+
+1. [`ensemble-formats`](https://github.com/coconutbird/ensemble-formats): parsers and writers
+   for the game file formats.
+2. [`ensemble-assets`](https://github.com/coconutbird/ensemble-assets): game data loading
+   (`pipeline`) and the game database.
+3. `openensemble` (this repository): the simulation, the renderer and the executables.
+
+## Build
+
+1. Clone the three repositories into the same parent directory:
+
+   ```sh
+   git clone https://github.com/coconutbird/ensemble-formats
+   git clone https://github.com/coconutbird/ensemble-assets
+   git clone https://github.com/coconutbird/openensemble
+   ```
+
+2. Copy `.env.example` to `.env`.
+3. In `.env`, set `OPENENSEMBLE_GAME_DIR` to the Halo Wars DE installation directory.
+4. Build the workspace:
+
+   ```sh
+   cd openensemble
+   cargo build --workspace
+   ```
+
+`openensemble::game_dir` (`src/lib.rs`) uses `OPENENSEMBLE_GAME_DIR` if the path exists.
+Otherwise, it uses the current directory.
+
+## Crates
+
+| Crate | Purpose |
+|---|---|
+| `crates/motion` | Skeletal animation sampling and attachment transforms, shared by `sim` and `render`. |
+| `crates/sim` | Deterministic lockstep simulation: commands, entities, orders, powers and triggers. |
+| `crates/render` | `wgpu` renderer: UGX models, terrain, particles, lights, shadows, terrain effects and the window loop. |
+| `crates/net` | UDP host and client transport. No executable uses it yet. |
+| `crates/test-support` | Test helpers that load the installed game. Use only as a dev-dependency. |
+| `crates/render-test-support` | Scene helpers for the renderer tests. Use only as a dev-dependency. |
+
+## Executables
+
+| Executable | Purpose |
+|---|---|
+| `openensemble` (`src/main.rs`) | Window with a placeholder `egui` menu. |
+| `headless` (`src/bin/headless.rs`) | Runs the simulation without a renderer. |
+| `terrain_viewer` (`src/bin/terrain_viewer/`) | Shows a scenario: terrain, foliage, roads, units and effects. Writes top-down captures. |
+| `renderer-asset-audit` (`src/bin/renderer-asset-audit.rs`) | Prints an inventory of the visual features that the installed assets use. |
+| `renderer-gpu-smoke` (`src/bin/renderer-gpu-smoke.rs`) | Creates renderer pipelines that the viewer does not always create, without a window. |
+| `scenario-trigger-audit` (`crates/sim/src/bin/`) | Prints the trigger DBIDs of installed scenarios. |
+
+## Run
+
+- To open the terrain viewer on Blood Gulch, run `cargo run --release --bin terrain_viewer`.
+- To open a different scenario, add the scenario name or an `.xtd` path:
+  `cargo run --release --bin terrain_viewer -- <SCENARIO>`.
+- To see the viewer options, run `cargo run --bin terrain_viewer -- --help`.
+- To run the simulation without a window, run `cargo run --bin headless -- --ticks 1000`.
+
+## Tests
+
+- To run the tests that do not need the game, run `cargo test --workspace`.
+- To run the tests that load the installed game, set `OPENENSEMBLE_GAME_DIR`, then run
+  `cargo test --workspace -- --ignored`.
+- Before a commit, make sure that `cargo clippy --workspace --all-targets -- -D warnings`
+  completes without warnings.
+
+Read [AGENTS.md](AGENTS.md) before you change the code.
+
+## Status
+
+- Simulation coverage: [docs/simulation-coverage.md](docs/simulation-coverage.md).
+- Trigger effects and conditions: [docs/triggers.md](docs/triggers.md).
+- Renderer and application coverage: [docs/render-coverage.md](docs/render-coverage.md).
+- Terrain shaders: [docs/hwde-shader-comparison.md](docs/hwde-shader-comparison.md).
+- Mechanics:
+  - [aircraft-avoidance.md](docs/aircraft-avoidance.md)
+  - [capture.md](docs/capture.md)
+  - [combat.md](docs/combat.md)
+  - [energy-shields.md](docs/energy-shields.md)
+  - [entity-management.md](docs/entity-management.md)
+  - [garrison-and-teleporters.md](docs/garrison-and-teleporters.md)
+  - [gathering.md](docs/gathering.md)
+  - [healing.md](docs/healing.md)
+  - [infection.md](docs/infection.md)
+  - [movement-and-physics.md](docs/movement-and-physics.md)
+  - [production.md](docs/production.md)
+  - [repair-other.md](docs/repair-other.md)
+  - [research.md](docs/research.md)
+
+Known defects are in the
+[issue tracker](https://github.com/coconutbird/openensemble/issues).
