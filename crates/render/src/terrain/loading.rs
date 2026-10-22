@@ -15,7 +15,7 @@ use super::types::{
 use pipeline::ddx::DdxTexture;
 use pipeline::hw1::terrain::terrain_texture_path;
 use pipeline::source::{AssetSource, StdFileProvider};
-use pipeline::xtd::XtdVisualChunk;
+use pipeline::xtd::{XtdFile, XtdVisualChunk};
 use pipeline::xtt::{ActiveDecalInfo, FoliageSetInfo, XttFile};
 use rayon::prelude::*;
 
@@ -361,27 +361,37 @@ pub fn extract_decal_data(xtt: &XttFile) -> (Vec<DecalInstance>, Vec<ChunkDecalD
     (decal_instances, chunk_decal_data)
 }
 
-/// Resolve the world-grid coordinates of a foliage parent XTD visual chunk.
-fn foliage_parent_grid(visual_chunks: &[XtdVisualChunk], parent_index: u32) -> Option<(i32, i32)> {
-    let parent_index = usize::try_from(parent_index).ok()?;
-    let parent = visual_chunks.get(parent_index)?;
-    Some((parent.grid_x, parent.grid_z))
+/// Resolves the chunk grid coordinates of a foliage parent quad node.
+///
+/// The parent is an index into the retail quad-node array, not into the XTD visual chunk
+/// vector. `BTerrainIOLoader_processXTDVisualChunk` stores visual chunk `(grid_x, grid_z)` at
+/// quad node `grid_x * num_x_chunks + grid_z`.
+fn foliage_parent_grid(
+    visual_chunks: &[XtdVisualChunk],
+    num_x_chunks: i32,
+    parent_index: u32,
+) -> Option<(i32, i32)> {
+    let parent_index = i64::from(parent_index);
+    visual_chunks.iter().find_map(|chunk| {
+        let quad_node = i64::from(chunk.grid_x) * i64::from(num_x_chunks) + i64::from(chunk.grid_z);
+        (quad_node == parent_index).then_some((chunk.grid_x, chunk.grid_z))
+    })
 }
 
 /// Extract foliage QN chunks from XTT.
 #[must_use]
-pub fn extract_foliage_chunks(
-    xtt: &XttFile,
-    visual_chunks: &[XtdVisualChunk],
-) -> Vec<FoliageQNChunk> {
+pub fn extract_foliage_chunks(xtt: &XttFile, xtd: &XtdFile) -> Vec<FoliageQNChunk> {
     let mut foliage_chunks = Vec::new();
 
     for qn in &xtt.foliage.qn_chunks {
-        let Some((grid_x, grid_z)) = foliage_parent_grid(visual_chunks, qn.qn_parent_index) else {
+        let Some((grid_x, grid_z)) = foliage_parent_grid(
+            &xtd.visual_chunks,
+            xtd.header.num_x_chunks,
+            qn.qn_parent_index,
+        ) else {
             log::warn!(
-                "Skipping foliage chunk whose parent {} is missing from {} XTD visual chunks",
+                "Skipping foliage chunk whose parent quad node {} has no XTD visual chunk",
                 qn.qn_parent_index,
-                visual_chunks.len()
             );
             continue;
         };
@@ -681,7 +691,8 @@ mod tests {
     use pipeline::xtd::XtdVisualChunk;
 
     #[test]
-    fn foliage_parent_preserves_raw_xtd_visual_chunk_coordinates() {
+    fn foliage_parent_is_an_x_major_quad_node_index() {
+        // The XTD stores the visual chunks with grid X as the fastest axis.
         let chunks = [
             XtdVisualChunk {
                 grid_x: 0,
@@ -700,9 +711,10 @@ mod tests {
             },
         ];
 
-        assert_eq!(foliage_parent_grid(&chunks, 1), Some((1, 0)));
-        assert_eq!(foliage_parent_grid(&chunks, 2), Some((0, 1)));
-        assert_eq!(foliage_parent_grid(&chunks, 3), None);
+        assert_eq!(foliage_parent_grid(&chunks, 2, 0), Some((0, 0)));
+        assert_eq!(foliage_parent_grid(&chunks, 2, 1), Some((0, 1)));
+        assert_eq!(foliage_parent_grid(&chunks, 2, 2), Some((1, 0)));
+        assert_eq!(foliage_parent_grid(&chunks, 2, 3), None);
     }
 
     #[test]

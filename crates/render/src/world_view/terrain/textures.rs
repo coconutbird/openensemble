@@ -249,8 +249,8 @@ fn populate_alpha_data<'a>(
 
         for row in 0..ALPHA_CHUNK_SIZE_USIZE {
             for column in 0..ALPHA_CHUNK_SIZE_USIZE {
-                // XTT stores x=Z and y=X, so transpose while building the texture.
-                let source_index = column * ALPHA_CHUNK_SIZE_USIZE + row;
+                // XTT alpha maps are row-major: rows along world Z, columns along world X.
+                let source_index = row * ALPHA_CHUNK_SIZE_USIZE + column;
                 let atlas_x = chunk_x * ALPHA_CHUNK_SIZE_USIZE + column;
                 let atlas_y = chunk_z * ALPHA_CHUNK_SIZE_USIZE + row;
                 let target_index = (atlas_y * atlas_width + atlas_x) * ALPHA_CHANNEL_COUNT;
@@ -484,18 +484,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn alpha_chunks_are_transposed_into_spatial_atlas_tiles() {
+    fn alpha_chunks_keep_their_rows_along_world_z() {
         let chunk_grid = TerrainChunkGrid::from_terrain_dimension(128).expect("valid grid");
         let mut alpha_map = vec![0; ALPHA_CHUNK_SIZE_USIZE * ALPHA_CHUNK_SIZE_USIZE];
         let source_column = 3;
         let source_row = 5;
-        alpha_map[source_column * ALPHA_CHUNK_SIZE_USIZE + source_row] = 211;
+        alpha_map[source_row * ALPHA_CHUNK_SIZE_USIZE + source_column] = 211;
         let alpha_maps = [alpha_map];
         let mut atlas = empty_alpha_atlas(chunk_grid);
 
         populate_alpha_data(
             &mut atlas,
-            [(0, 1, alpha_maps.as_slice())],
+            [(1, 0, alpha_maps.as_slice())],
             0,
             1,
             chunk_grid,

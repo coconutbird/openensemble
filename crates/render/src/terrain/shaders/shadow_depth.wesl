@@ -131,8 +131,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     // Transform to light clip space
     out.clip_position = camera.view_proj * vec4<f32>(pos, 1.0);
     out.alpha_uv = vec2<f32>(u, v);
-    // Static XTD alpha remains in authored SCN axes, transposed from world X/Z.
-    out.static_alpha = textureSampleLevel(t_alpha, s_alpha, out.alpha_uv.yx, 0.0).r;
+    // The static XTD alpha uses U along world X and V along world Z.
+    out.static_alpha = textureSampleLevel(t_alpha, s_alpha, out.alpha_uv, 0.0).r;
 
     return out;
 }

@@ -5,13 +5,13 @@
 
 use crate::wgpu;
 
-/// Accepted-axis terrain position texture and the constants required to decode
-/// its normalized Y channel back into world space.
+/// Terrain position texture and the constants required to decode its normalized
+/// Y channel back into world space.
 ///
-/// The position texture stores logical `(x, z)` at texture coordinate `(z, x)`.
-/// Keeping that convention in one shared type prevents model, decal, trail,
-/// and terrain-effect renderers from independently reintroducing the old
-/// diagonal mirror bug.
+/// The texture keeps the native X-major atlas order: world grid point `(x, z)` is
+/// at texture coordinate `(z, x)`. The world frame is the retail frame of the
+/// scenario `.scn` and the simulation XSD terrain. All renderers that sample the
+/// heightfield share this type, so they all use the same mapping.
 #[derive(Clone, Copy)]
 pub struct TerrainHeightfield<'a> {
     /// Packed terrain position texture used by the canonical terrain renderer.

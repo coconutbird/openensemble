@@ -233,7 +233,7 @@ pub struct WorldBindings<'a> {
     pub environment: Option<&'a EnvironmentMap>,
     /// Directional variance-shadow array.
     pub directional_shadow: Option<&'a wgpu::TextureView>,
-    /// Accepted-axis terrain position texture for conforming materials.
+    /// Terrain position texture in native X-major order, for conforming materials.
     pub terrain_heightfield: Option<TerrainHeightfield<'a>>,
     /// Oracle-packed local-light storage shared with terrain and foliage.
     pub local_lights: Option<&'a LocalLightBuffer>,

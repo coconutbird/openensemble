@@ -218,7 +218,7 @@ impl TerrainPatchInstance {
 /// Optional world textures shared by terrain-patch batches.
 #[derive(Clone, Copy, Default)]
 pub struct TerrainPatchWorldBindings<'a> {
-    /// Canonical accepted-axis terrain position texture.
+    /// Terrain position texture in native X-major order.
     pub heightfield: Option<TerrainHeightfield<'a>>,
     /// Bit-packed dynamic terrain visibility mask.
     pub terrain_alpha: Option<&'a wgpu::TextureView>,

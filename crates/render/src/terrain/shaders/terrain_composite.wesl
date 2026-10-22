@@ -106,12 +106,13 @@ fn rotate_decal_uv(
     center: vec2<f32>,
     uv_scale: vec2<f32>,
 ) -> vec2<f32> {
-    // Exact direct-decal transform from compositor shader #4/#5.
+    // Direct-decal transform from compositor shader #4/#5. The chunk UV runs
+    // along world X and world Z.
     let negative_center = uv_scale * -center.yx;
     let sine = sin(rotation);
     let cosine = cos(rotation);
     let negative_sine = sin(-rotation);
-    let input_uv = uv.yx;
+    let input_uv = uv;
     return vec2<f32>(
         cosine * uv_scale.x * input_uv.x
             + sine * uv_scale.y * input_uv.y
@@ -135,7 +136,8 @@ fn fs_main(in: VertexOutput) -> CompositeOutput {
     let alpha_uv = alpha_texel / vec2<f32>(alpha_dimensions);
     let alpha_low = textureSampleLevel(t_alpha_atlas, s_alpha, alpha_uv, 0.0);
     let alpha_high = textureSampleLevel(t_alpha_atlas_hi, s_alpha, alpha_uv, 0.0);
-    let tiling_uv = vec2<f32>(f32(grid_z) + in.uv.y, f32(grid_x) + in.uv.x);
+    // The material tiling runs along world X and world Z, one unit per chunk.
+    let tiling_uv = vec2<f32>(f32(grid_x) + in.uv.x, f32(grid_z) + in.uv.y);
     let layer_base = chunk_index * 8u;
     let base_layer = chunk_layers[layer_base];
     let base_uv = tiling_uv * texture_scales[base_layer];
@@ -238,7 +240,7 @@ fn fs_main(in: VertexOutput) -> CompositeOutput {
     } else if params.debug_mode == 4u {
         albedo = sample_albedo(base_uv, base_layer);
     } else if params.debug_mode == 5u {
-        albedo = vec3<f32>(tiling_uv / vec2<f32>(f32(chunks_z), f32(chunks_x)), 0.0);
+        albedo = vec3<f32>(tiling_uv / vec2<f32>(f32(chunks_x), f32(chunks_z)), 0.0);
     }
 
     var out: CompositeOutput;

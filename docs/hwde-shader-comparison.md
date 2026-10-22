@@ -16,16 +16,20 @@ legacy game source tree is not a reference.
 
 ## Terrain geometry
 
+The renderer uses one world frame: the retail frame of the scenario `.scn` and the simulation
+XSD terrain. No upload, decoder or shader swaps the X and Z axes to compensate for another one.
+
 | Area | Behavior |
 |---|---|
-| Packed terrain position | Native XTD source `(x, z)` is linear index `x * width + z`. Viewer world `(x, z)` is source `(z, x)`. The upload transposes the texels and swaps packed R/B and the X/Z reconstruction constants. The shader keeps the `.yx` sample and the `.zyx` decode. |
+| Packed terrain position | The XTD atlas is X-major: world grid point `(x, z)` is linear index `x * width + z`. The upload keeps this order and the packed channels. The shaders sample texture coordinate `(z, x)` (the `.yx` swizzle) and decode `.zyx` with the native X/Z constants. |
 | Terrain Y decode | Subtract the default `g_yOffset = 1/2048` before the multiplication by the Y range. Foliage and roads do not use this bias. |
-| Terrain patches | A patch has 16 cells and 17 vertices on each side. Reads at the last edge clamp. Levels 0/1/2/3 select factors 16/8/4/2. Shared edges use the finer neighbor. |
+| Terrain patches | A patch has 16 cells and 17 vertices on each side. Reads at the last edge clamp. Levels 0/1/2/3 select factors 16/8/4/2. Shared edges use the finer neighbor. The XTD patch levels and bounding boxes are Z-major: patch `(x, z)` is index `z * patches + x`. |
 | Tessellation | `wgpu` has no tessellation stages. A fixed indexed carrier mesh, quantized to the fractional-even domain locations, replaces the hull and domain stages. |
 | Position LOD | The main domain variant uses normalized global X as the LOD of the position texture. The renderer supplies the generated mip. |
+| Auxiliary maps | The AO, static alpha and light textures are Z-major. The domain shader samples them with the unswizzled coordinate `(x, z)`. |
 | Terrain alpha | The generated terrain vertices sample the static XTD alpha. The pixel shader combines it with the dynamic-alpha bit and applies the `0.66666` threshold. |
-| XTT chunk axes | XTT `(grid_x, grid_z)` is world `(z, x)`. The atlas slot is `grid_x * 16 + grid_z`. |
-| Repeating material UV | The shader uses an independent `(Z, X)` convention. This is not the chunk address convention. |
+| XTT chunk axes | XTT `(grid_x, grid_z)` is world chunk `(x, z)`. The atlas slot is `grid_z * chunks + grid_x`. Each 64×64 chunk alpha map is row-major with rows along world Z. |
+| Repeating material UV | The compositor tiles the materials with U along world X and V along world Z, one unit for each chunk. |
 
 ## GPU compositor
 
@@ -54,8 +58,8 @@ for the specular pass only.
 | Area | Behavior |
 |---|---|
 | Indices | Big-endian `u32`. The upper 16 bits select the blade type. The lower 16 bits encode `blade_index * 10 + vertex`. `0xffff` is a strip restart. |
-| Parent chunk | A QN parent is an index into the XTD visual chunk vector, not the XTT linker vector. Its `(grid_x, grid_z)` is the viewer chunk. For example, parent 96 is chunk `(0, 6)`. |
-| Placement | The local grid is `x = index / 64 + 0.5`, `z = index & 63`, then the scalar jitter. Only the local offset, the blade geometry and the normal are transposed to viewer `(x, z)`. The parent chunk origin does not move. |
+| Parent chunk | A QN parent is an index into the retail quad-node array, not into the XTD visual chunk vector. `BTerrainIOLoader_processXTDVisualChunk` stores visual chunk `(grid_x, grid_z)` at quad node `grid_x * num_x_chunks + grid_z`. For example, parent 96 is chunk `(6, 0)`. |
+| Placement | The local grid is `x = index / 64 + 0.5`, `z = index & 63`, then the scalar jitter. The chunk origin is `(grid_x * 64, grid_z * 64)`. The blade geometry and the normal rotate in the X/Z plane without an axis swap. |
 | Random value | One scalar `fract((fract(index * 0.0012385598) * 257 + 1)^2)` drives both jitter axes, the rotation and the height. |
 | UV | The PC vertex shader reads the runtime UV at structured-buffer offset 24. The packer inverts the XML source V. This is the same as `1 - norm0.w` in the Xbox shader. |
 | Textures | DXGI formats 98/99 are BC7. The `ensemble-formats` DDX decoder decodes them. The uploads include full mip chains. |

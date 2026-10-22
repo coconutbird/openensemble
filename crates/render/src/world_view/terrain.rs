@@ -87,18 +87,19 @@ impl TerrainChunkGrid {
         ]
     }
 
-    /// Converts the XTT linker's texture-grid axes into terrain world axes.
+    /// Checks the XTT linker coordinates against the chunk grid.
     ///
-    /// XTT `grid_x` advances along world Z, while XTT `grid_z` advances along
-    /// world X. This is the same diagonal transpose used when placing linker
-    /// data in the unique terrain atlas.
+    /// XTT `grid_x` advances along world X and XTT `grid_z` advances along world Z.
     pub(crate) fn world_chunk_coords(self, grid_x: i32, grid_z: i32) -> Option<(u32, u32)> {
-        let world_x = u32::try_from(grid_z).ok()?;
-        let world_z = u32::try_from(grid_x).ok()?;
+        let world_x = u32::try_from(grid_x).ok()?;
+        let world_z = u32::try_from(grid_z).ok()?;
         (world_x < self.width && world_z < self.height).then_some((world_x, world_z))
     }
 
     /// Converts XTT coordinates to the unique-atlas slot sampled by terrain.
+    ///
+    /// The atlas is row-major with rows along world Z, so the slot is
+    /// `grid_z * width + grid_x`.
     pub(crate) fn chunk_index(self, grid_x: i32, grid_z: i32) -> Option<usize> {
         let (world_x, world_z) = self.world_chunk_coords(grid_x, grid_z)?;
         let index = world_z.checked_mul(self.width)?.checked_add(world_x)?;
@@ -116,7 +117,7 @@ pub(super) struct TerrainResources {
     pub camera_bind_group_layout: wgpu::BindGroupLayout,
     pub camera_bind_group: wgpu::BindGroup,
     pub texture_bind_group: wgpu::BindGroup,
-    /// Accepted-axis packed position texture shared with terrain-conform UGX.
+    /// Packed position texture in native X-major order, shared with terrain-conform UGX.
     pub position_texture_view: wgpu::TextureView,
     /// Dynamic packed terrain visibility mask shared with conforming visuals.
     pub terrain_alpha_view: wgpu::TextureView,
@@ -162,19 +163,19 @@ mod tests {
     use super::TerrainChunkGrid;
 
     #[test]
-    fn xtt_chunk_axes_are_transposed_into_world_axes() {
+    fn xtt_chunk_axes_are_world_axes() {
         let grid = TerrainChunkGrid::from_terrain_dimension(1024).expect("valid grid");
-        assert_eq!(grid.world_chunk_coords(2, 3), Some((3, 2)));
+        assert_eq!(grid.world_chunk_coords(2, 3), Some((2, 3)));
         assert_eq!(grid.world_chunk_coords(-1, 0), None);
-        assert_eq!(grid.world_chunk_coords(0, 16), None);
+        assert_eq!(grid.world_chunk_coords(16, 0), None);
     }
 
     #[test]
-    fn terrain_chunk_indices_follow_transposed_shader_axes() {
+    fn terrain_chunk_indices_are_rows_along_world_z() {
         let grid = TerrainChunkGrid::from_terrain_dimension(1024).expect("valid grid");
         assert_eq!(grid.chunk_index(0, 0), Some(0));
-        assert_eq!(grid.chunk_index(0, 1), Some(1));
-        assert_eq!(grid.chunk_index(1, 0), Some(16));
+        assert_eq!(grid.chunk_index(1, 0), Some(1));
+        assert_eq!(grid.chunk_index(0, 1), Some(16));
         assert_eq!(grid.chunk_index(15, 15), Some(255));
         assert_eq!(grid.chunk_index(16, 0), None);
         assert_eq!(grid.chunk_index(0, -1), None);
@@ -186,7 +187,7 @@ mod tests {
         assert_eq!(grid.width(), 14);
         assert_eq!(grid.height(), 14);
         assert_eq!(grid.total_chunks(), 196);
-        assert_eq!(grid.chunk_index(1, 0), Some(14));
+        assert_eq!(grid.chunk_index(0, 1), Some(14));
         assert_eq!(grid.chunk_index(13, 13), Some(195));
         assert_eq!(grid.chunk_index(14, 0), None);
     }

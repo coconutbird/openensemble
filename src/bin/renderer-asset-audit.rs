@@ -259,13 +259,14 @@ fn terrain_position(
     let last = dimension.checked_sub(1)?.to_f32()?;
     let grid_x = grid_position[0].round().clamp(0.0, last).to_u32()?;
     let grid_z = grid_position[2].round().clamp(0.0, last).to_u32()?;
-    let index = grid_z.checked_mul(dimension)?.checked_add(grid_x)?;
+    // The packed atlas is X-major: grid point (x, z) is at x * dimension + z.
+    let index = grid_x.checked_mul(dimension)?.checked_add(grid_z)?;
     let packed = *raw.packed_positions.get(index.to_usize()?)?;
     let displacement = pipeline::xtd::unpack_position(packed, &raw.mid, &raw.range);
     Some([
-        grid_position[0] * raw.tile_scale + displacement[2],
+        grid_position[0] * raw.tile_scale + displacement[0],
         grid_position[1],
-        grid_position[2] * raw.tile_scale + displacement[0],
+        grid_position[2] * raw.tile_scale + displacement[2],
     ])
 }
 
@@ -298,7 +299,8 @@ fn terrain_height(raw: &pipeline::xtd::RawTerrainData, world_x: f32, world_z: f3
 }
 
 fn packed_height(raw: &pipeline::xtd::RawTerrainData, x: u32, z: u32) -> Option<f32> {
-    let index = z.checked_mul(raw.num_verts_per_axis)?.checked_add(x)?;
+    // The packed atlas is X-major: grid point (x, z) is at x * dimension + z.
+    let index = x.checked_mul(raw.num_verts_per_axis)?.checked_add(z)?;
     let packed = *raw.packed_positions.get(index.to_usize()?)?;
     let normalized = ((packed >> 10) & 0x3ff).to_f32()? / 1023.0;
     Some((normalized - render::terrain::NORMALIZED_TERRAIN_Y_OFFSET) * raw.range[1] - raw.mid[1])
@@ -315,7 +317,6 @@ fn print_scenario_placements(world: &hw1::World) {
         .map(|descriptor| descriptor.max_players);
     println!("scenario max players: {max_players:?}");
     println!("scenario sim bounds: {:?}", scenario.sim_bounds());
-    println!("scenario object and player-start axes: Transposed");
     if let Some(raw) = world
         .terrain_data
         .as_ref()
@@ -336,7 +337,7 @@ fn print_scenario_placements(world: &hw1::World) {
         let authored_position = position.position_vec3().unwrap_or_default();
         let authored_forward = position.forward_vec3();
         println!(
-            "  player={} number={} default_camera={} authored={authored_position:?} authored_forward={authored_forward:?}",
+            "  player={} number={} default_camera={} position={authored_position:?} forward={authored_forward:?}",
             position.player, position.number, position.default_camera,
         );
     }
@@ -344,7 +345,7 @@ fn print_scenario_placements(world: &hw1::World) {
     for object in scenario.objects() {
         let authored_position = object.position_vec3().unwrap_or_default();
         println!(
-            "  id={} proto={:?} editor={:?} authored={authored_position:?} forward={:?} right={:?}",
+            "  id={} proto={:?} editor={:?} position={authored_position:?} forward={:?} right={:?}",
             object.id,
             object.proto_name,
             object.editor_name,

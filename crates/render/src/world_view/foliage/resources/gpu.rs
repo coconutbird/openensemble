@@ -370,15 +370,15 @@ pub(super) fn initial_foliage_params(
             0.0,
         ],
         position_mid: [
-            terrain_data.mid[2],
-            terrain_data.mid[1],
             terrain_data.mid[0],
+            terrain_data.mid[1],
+            terrain_data.mid[2],
             0.0,
         ],
         position_range: [
-            terrain_data.range[2],
-            terrain_data.range[1],
             terrain_data.range[0],
+            terrain_data.range[1],
+            terrain_data.range[2],
             0.0,
         ],
         foliage_info: [

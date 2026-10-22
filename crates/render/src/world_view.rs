@@ -17,7 +17,6 @@
 mod dynamic_alpha;
 mod foliage;
 mod frame;
-mod packed;
 mod passes;
 mod roads;
 mod shadow;

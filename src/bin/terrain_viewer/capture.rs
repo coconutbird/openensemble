@@ -274,7 +274,9 @@ fn top_down_camera_for_bounds(
     let position = Vec3::new(center.x, mesh.world_max[1] + clearance, center.y);
     let target = Vec3::new(center.x, mesh.center().y, center.y);
     // -Z points toward the top of the image, making +X screen-right and +Z
-    // screen-down. This matches the terrain texture coordinate convention.
+    // screen-down. This matches the terrain texture coordinate convention. The
+    // retail minimap shows +X right and +Z up, so it is the vertical mirror of
+    // this capture while the renderer uses right-handed camera matrices.
     let view = Mat4::look_at_rh(position, target, Vec3::NEG_Z);
     let far = (position.y - mesh.world_min[1] + clearance).max(1.0);
     let projection =
@@ -301,6 +303,9 @@ fn foliage_random(blade_index: u32) -> f32 {
     (seed * seed).fract()
 }
 
+/// Returns the grid position of foliage blade `blade_index` in chunk `(grid_x, grid_z)`.
+///
+/// Foliage VS #0/#2 uses local X `blade_index >> 6` and local Z `blade_index & 63`.
 fn foliage_grid_position(grid_x: i32, grid_z: i32, blade_index: u32) -> Option<Vec2> {
     let world_chunk_x = u32::try_from(grid_x).ok()?;
     let world_chunk_z = u32::try_from(grid_z).ok()?;
@@ -310,18 +315,18 @@ fn foliage_grid_position(grid_x: i32, grid_z: i32, blade_index: u32) -> Option<V
         .checked_mul(64)
         .and_then(|value| value.to_f32())
         .expect("foliage world X chunk offset must fit f32")
-        + (blade_index % 64)
+        + (blade_index / 64)
             .to_f32()
-            .expect("foliage source local Z must fit f32")
+            .expect("foliage local X must fit f32")
+        + 0.5
         + jitter;
     let world_z = world_chunk_z
         .checked_mul(64)
         .and_then(|value| value.to_f32())
         .expect("foliage world Z chunk offset must fit f32")
-        + (blade_index / 64)
+        + (blade_index % 64)
             .to_f32()
-            .expect("foliage source local X must fit f32")
-        + 0.5
+            .expect("foliage local Z must fit f32")
         + jitter;
 
     Some(Vec2::new(world_x, world_z))
@@ -392,19 +397,16 @@ fn terrain_position_at(raw: &RawXtdData, grid_position: Vec2) -> Option<Vec3> {
     }
     let max_grid = dimension - 1;
     let max_grid = max_grid.to_f32()?;
-    let world_grid_x = grid_position.x.round().clamp(0.0, max_grid).to_u32()?;
-    let world_grid_z = grid_position.y.round().clamp(0.0, max_grid).to_u32()?;
-    let source_grid_x = world_grid_z;
-    let source_grid_z = world_grid_x;
-    let index = source_grid_x
-        .checked_mul(dimension)?
-        .checked_add(source_grid_z)?;
+    let grid_x = grid_position.x.round().clamp(0.0, max_grid).to_u32()?;
+    let grid_z = grid_position.y.round().clamp(0.0, max_grid).to_u32()?;
+    // The packed atlas is X-major: grid point (x, z) is at x * dimension + z.
+    let index = grid_x.checked_mul(dimension)?.checked_add(grid_z)?;
     let packed = *raw.packed_positions.get(usize::try_from(index).ok()?)?;
     let displacement = decode_position_displacement(raw, packed);
     Some(Vec3::new(
-        grid_position.x * raw.tile_scale + displacement.z,
+        grid_position.x * raw.tile_scale + displacement.x,
         displacement.y,
-        grid_position.y * raw.tile_scale + displacement.x,
+        grid_position.y * raw.tile_scale + displacement.z,
     ))
 }
 
@@ -477,10 +479,10 @@ fn capture_grid_bounds(config: &CaptureConfig, raw: &RawXtdData) -> (Vec2, Vec2)
 
 fn packed_height(raw: &RawXtdData, x: u32, z: u32) -> Option<f32> {
     let dimension = raw.num_verts_per_axis;
-    let world_x = x.min(dimension.checked_sub(1)?);
-    let world_z = z.min(dimension.checked_sub(1)?);
-    // Viewer world (x, z) corresponds to XTD source (z, x).
-    let index = world_z.checked_mul(dimension)?.checked_add(world_x)?;
+    let x = x.min(dimension.checked_sub(1)?);
+    let z = z.min(dimension.checked_sub(1)?);
+    // The packed atlas is X-major: grid point (x, z) is at x * dimension + z.
+    let index = x.checked_mul(dimension)?.checked_add(z)?;
     let packed = *raw.packed_positions.get(usize::try_from(index).ok()?)?;
     let normalized = ((packed >> 10) & 0x3ff).to_f32()? / 1023.0;
     Some((normalized - NORMALIZED_TERRAIN_Y_OFFSET) * raw.range[1] - raw.mid[1])
@@ -889,18 +891,18 @@ mod tests {
     }
 
     #[test]
-    fn foliage_grid_axes_preserve_parent_chunk_and_transpose_local_index() {
+    fn foliage_grid_axes_follow_the_blade_index_bits() {
         let random = foliage_random(64);
         let jitter = (random * 2.0 - 1.0) * 0.9;
         let position = foliage_grid_position(2, 3, 64).expect("valid XTT chunk");
-        let expected_x = 2.0 * 64.0 + jitter;
-        let expected_z = 3.0 * 64.0 + 1.5 + jitter;
+        let expected_x = 2.0 * 64.0 + 1.5 + jitter;
+        let expected_z = 3.0 * 64.0 + jitter;
         assert!((position.x - expected_x).abs() < 0.000_01);
         assert!((position.y - expected_z).abs() < 0.000_01);
     }
 
     #[test]
-    fn packed_height_applies_the_xtd_world_diagonal_mirror() {
+    fn packed_height_reads_the_x_major_atlas() {
         let raw = RawXtdData {
             packed_positions: [10_u32, 11, 20, 21]
                 .into_iter()
@@ -922,7 +924,7 @@ mod tests {
         let x_neighbor = packed_height(&raw, 1, 0).expect("valid native XTD coordinate");
         let z_neighbor = packed_height(&raw, 0, 1).expect("valid native XTD coordinate");
 
-        assert!((x_neighbor - (11.0 - terrain_bias)).abs() < 0.000_01);
-        assert!((z_neighbor - (20.0 - terrain_bias)).abs() < 0.000_01);
+        assert!((x_neighbor - (20.0 - terrain_bias)).abs() < 0.000_01);
+        assert!((z_neighbor - (11.0 - terrain_bias)).abs() < 0.000_01);
     }
 }

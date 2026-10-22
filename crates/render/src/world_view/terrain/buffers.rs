@@ -25,7 +25,6 @@ impl TerrainBuild<'_> {
         let mut layer_data = vec![0u32; layer_slots];
 
         for chunk in chunk_splat_data {
-            // XTT axes are transposed into the unique atlas by the PC shaders.
             let Some(chunk_idx) = chunk_grid.chunk_index(chunk.grid_x, chunk.grid_z) else {
                 continue;
             };

@@ -193,8 +193,8 @@ pub(super) fn create_dynamic_alpha_texture(
         device,
         queue,
         raw.num_verts_per_axis,
-        Vec2::new(raw.world_min[2], raw.world_min[0]),
-        Vec2::new(raw.world_max[2], raw.world_max[0]),
+        Vec2::new(raw.world_min[0], raw.world_min[2]),
+        Vec2::new(raw.world_max[0], raw.world_max[2]),
     )
 }
 

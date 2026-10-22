@@ -233,7 +233,7 @@ impl TerrainScene {
         // Extract splat, decal, foliage, road data
         let chunk_splat_data = loading::extract_chunk_splat_data(xtt);
         let (decal_instances, chunk_decal_data) = loading::extract_decal_data(xtt);
-        let foliage_qn_chunks = loading::extract_foliage_chunks(xtt, &xtd.visual_chunks);
+        let foliage_qn_chunks = loading::extract_foliage_chunks(xtt, xtd);
         let road_chunks = loading::extract_road_data(xtt);
 
         // Load textures from ERA (requires asset source)

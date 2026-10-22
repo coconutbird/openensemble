@@ -119,8 +119,8 @@ fn vs_main(input: VertexInput) -> VertexOutput {
         output.hemisphere = 1.0;
     }
     output.alpha_uv = vec2<f32>(grid) / num_verts;
-    // Static XTD alpha remains in authored SCN axes, transposed from world X/Z.
-    output.static_alpha = textureSampleLevel(t_alpha, s_alpha, output.alpha_uv.yx, 0.0).r;
+    // The static XTD alpha uses U along world X and V along world Z.
+    output.static_alpha = textureSampleLevel(t_alpha, s_alpha, output.alpha_uv, 0.0).r;
     return output;
 }
 

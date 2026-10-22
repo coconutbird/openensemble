@@ -36,7 +36,7 @@ fn terrain_heightfield<'a>(
         view: &terrain.position_texture_view,
         dimension: raw_data.num_verts_per_axis,
         tile_scale: raw_data.tile_scale,
-        world_min_xz: [raw_data.world_min[2], raw_data.world_min[0]],
+        world_min_xz: [raw_data.world_min[0], raw_data.world_min[2]],
         y_range: raw_data.range[1],
         y_mid: raw_data.mid[1],
         normalized_y_bias: NORMALIZED_TERRAIN_Y_OFFSET,

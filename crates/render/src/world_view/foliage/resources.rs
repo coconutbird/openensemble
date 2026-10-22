@@ -7,7 +7,6 @@ use super::FoliageConfig;
 use crate::terrain::{FoliageSet, LightingParams, parse_foliage_index_buffer};
 use crate::wgpu;
 use crate::wgpu::util::DeviceExt;
-use crate::world_view::packed::xtd_packed_to_world;
 
 mod gpu;
 mod types;
@@ -868,7 +867,6 @@ impl FoliageResources {
             view_formats: &[],
         });
 
-        let world_positions = xtd_packed_to_world(&terrain_data.packed_positions, num_verts);
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &texture,
@@ -876,7 +874,7 @@ impl FoliageResources {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            world_positions.as_bytes(),
+            terrain_data.packed_positions.as_bytes(),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(num_verts * 4),

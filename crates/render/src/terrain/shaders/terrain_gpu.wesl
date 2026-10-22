@@ -294,26 +294,24 @@ fn vs_main(in: VertexInput) -> VertexOutput {
         planar_fog_density = compute_planar_fog_density(world_pos, lighting.world_camera_pos.xyz, lighting.planar_fog_params.y, lighting.planar_fog_params.z);
     }
 
-    // The PC domain shader uses this unswizzled coordinate for its authored
-    // AO, alpha, and RGB baked-light textures. Scenario/world X/Z are the
-    // transpose of those texture axes.
-    let authored_xtd_uv = vec2<f32>(global_v, global_u);
+    // The PC domain shader samples its AO, alpha and RGB baked-light textures
+    // with the unswizzled coordinate: U along world X and V along world Z. The
+    // position and basis textures above use the `.yx` swizzle instead.
+    let auxiliary_uv = vec2<f32>(global_u, global_v);
     // Retail binds separate linear/clamp samplers for these vertex-stage
     // auxiliary maps; they must not inherit the repeating anisotropic material
     // sampler used by the composited terrain textures.
-    let light_rgb = textureSampleLevel(t_light, s_lighting, authored_xtd_uv, 0.0).rgb;
-    let ambient_occlusion = textureSampleLevel(t_ao, s_lighting, authored_xtd_uv, 0.0).r;
+    let light_rgb = textureSampleLevel(t_light, s_lighting, auxiliary_uv, 0.0).rgb;
+    let ambient_occlusion = textureSampleLevel(t_ao, s_lighting, auxiliary_uv, 0.0).r;
 
     // The PC domain shader samples the static XTD alpha once per generated
-    // terrain vertex. The static alpha texture retains the authored SCN axes,
-    // transposed relative to canonical terrain world X/Z. Its interpolated
-    // varying is thresholded by the pixel shader,
-    // avoiding false holes from sampling and thresholding it again per
+    // terrain vertex. Its interpolated varying is thresholded by the pixel
+    // shader, avoiding false holes from sampling and thresholding it again per
     // fragment.
     let static_alpha = textureSampleLevel(
         t_alpha,
         s_lighting,
-        authored_xtd_uv,
+        auxiliary_uv,
         0.0,
     ).r;
 
@@ -329,10 +327,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.clip_position = camera.view_proj * vec4<f32>(world_pos, 1.0);
     out.normal = normal;
     out.world_pos = world_pos;
-    // Z→U, X→V: match the game's UV convention (e.g. roads shader uses gPos.zx).
-    // global_u is X-direction (from patch_x), global_v is Z-direction (from patch_z).
-    // Swap so that UV.x = Z, UV.y = X.
-    out.uv = vec2<f32>(global_v, global_u);
+    // The composited terrain textures use U along world X and V along world Z.
+    out.uv = vec2<f32>(global_u, global_v);
     out.tangent = tbn[0];
     out.binormal = tbn[1];
     out.fog_densities = vec2<f32>(z_fog_density, planar_fog_density);
@@ -352,11 +348,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // also use grid-based UVs. Using world_pos would include the position displacement
     // from unpack_position(), shifting the texture sampling and causing textures to
     // "climb" onto neighboring areas.
-    //
-    // Vertex shader outputs: out.uv = vec2(global_v, global_u) where
-    //   global_u = X direction, global_v = Z direction
-    // So in.uv.y = X, in.uv.x = Z. We need sample_uv = (X, Z):
-    let sample_uv = vec2<f32>(in.uv.y, in.uv.x);
+    // The vertex shader outputs in.uv = (world X, world Z) / vertex count.
+    let sample_uv = in.uv;
 
     if params.debug_mode > 13.5 && params.debug_mode < 14.5 {
         // Debug mode 14: raw GPU geometry height. This intentionally runs

@@ -18,7 +18,6 @@ use crate::terrain::{
 use crate::wgpu;
 use crate::world_view::create_depth_texture;
 use crate::world_view::dynamic_alpha::DynamicTerrainAlphaTexture;
-use crate::world_view::packed::xtd_packed_to_world;
 
 mod gpu;
 
@@ -32,7 +31,7 @@ use gpu::{
 #[cfg(test)]
 mod tests {
     use super::gpu::downsample_rgb10a2;
-    use super::{create_patch_instances, tessellation_factor, world_patch_level};
+    use super::{create_patch_instances, patch_level, tessellation_factor};
     use crate::terrain::RawXtdData;
     use crate::terrain::TerrainTessellationData;
 
@@ -65,13 +64,13 @@ mod tests {
     }
 
     #[test]
-    fn tessellation_levels_follow_the_xtd_world_axis_conversion() {
+    fn tessellation_levels_use_the_z_major_xtd_patch_order() {
         let levels = [0, 1, 2, 3];
 
-        assert_eq!(world_patch_level(&levels, 2, 0, 0), 0);
-        assert_eq!(world_patch_level(&levels, 2, 1, 0), 2);
-        assert_eq!(world_patch_level(&levels, 2, 0, 1), 1);
-        assert_eq!(world_patch_level(&levels, 2, 1, 1), 3);
+        assert_eq!(patch_level(&levels, 2, 0, 0), 0);
+        assert_eq!(patch_level(&levels, 2, 1, 0), 1);
+        assert_eq!(patch_level(&levels, 2, 0, 1), 2);
+        assert_eq!(patch_level(&levels, 2, 1, 1), 3);
     }
 
     #[test]
@@ -201,6 +200,8 @@ fn tessellation_factor(level: u8) -> u32 {
     (1_u32 << exponent).min(MAX_BASE_FACTOR) * 2
 }
 
+/// Returns the level of patch `(x, z)`. The XTD patch levels and bounding boxes are Z-major:
+/// patch `(x, z)` is at index `z * patches_x + x`.
 fn patch_level(levels: &[u8], patches_x: u32, x: u32, z: u32) -> u8 {
     let index = z
         .checked_mul(patches_x)
@@ -209,12 +210,6 @@ fn patch_level(levels: &[u8], patches_x: u32, x: u32, z: u32) -> u8 {
     index
         .and_then(|index| levels.get(index).copied())
         .unwrap_or(0)
-}
-
-fn world_patch_level(levels: &[u8], patches_x: u32, world_x: u32, world_z: u32) -> u8 {
-    // Match the position/basis resource conversion: terrain-world (x, z) addresses
-    // XTD source (z, x).
-    patch_level(levels, patches_x, world_z, world_x)
 }
 
 fn create_patch_instances(raw_data: &RawXtdData, patches_x: u32, patches_z: u32) -> Vec<[u32; 8]> {
@@ -240,23 +235,23 @@ fn create_patch_instances(raw_data: &RawXtdData, patches_x: u32, patches_z: u32)
     let mut factor_counts = [0_u32; 4];
     for x in 0..patches_x {
         for z in 0..patches_z {
-            let center_level = world_patch_level(levels, patches_x, x, z);
+            let center_level = patch_level(levels, patches_x, x, z);
             let center = tessellation_factor(center_level);
             let left_x = x.checked_sub(1).unwrap_or(last_x);
             let top_z = z.checked_sub(1).unwrap_or(last_z);
-            let left = center.max(tessellation_factor(world_patch_level(
+            let left = center.max(tessellation_factor(patch_level(
                 levels, patches_x, left_x, z,
             )));
-            let top = center.max(tessellation_factor(world_patch_level(
+            let top = center.max(tessellation_factor(patch_level(
                 levels, patches_x, x, top_z,
             )));
-            let right = center.max(tessellation_factor(world_patch_level(
+            let right = center.max(tessellation_factor(patch_level(
                 levels,
                 patches_x,
                 (x + 1).min(last_x),
                 z,
             )));
-            let bottom = center.max(tessellation_factor(world_patch_level(
+            let bottom = center.max(tessellation_factor(patch_level(
                 levels,
                 patches_x,
                 x,
@@ -306,14 +301,13 @@ impl TerrainBuild<'_> {
         chunk_grid: TerrainChunkGrid,
     ) -> TessellationTextures {
         let num_verts = raw_data.num_verts_per_axis;
-        let world_positions = xtd_packed_to_world(&raw_data.packed_positions, num_verts);
-        let world_normals = xtd_packed_to_world(&raw_data.packed_normals, num_verts);
+        // The atlas keeps the native X-major order. The shaders sample it at (z, x).
         let position_texture = create_rgb10a2_texture(
             device,
             queue,
             "Position Texture",
             num_verts,
-            &world_positions,
+            &raw_data.packed_positions,
             true,
         );
         let position = position_texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -324,7 +318,7 @@ impl TerrainBuild<'_> {
             queue,
             "Normal Texture",
             num_verts,
-            &world_normals,
+            &raw_data.packed_normals,
             false,
         );
         let normal = normal_texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -444,12 +438,12 @@ impl TerrainBuild<'_> {
             .expect("tessellation patch count must fit f32");
         let tess_params = GpuTessParams {
             mid: [
-                raw_data.mid[2],
-                raw_data.mid[1],
                 raw_data.mid[0],
+                raw_data.mid[1],
+                raw_data.mid[2],
                 NORMALIZED_TERRAIN_Y_OFFSET,
             ],
-            range: [raw_data.range[2], raw_data.range[1], raw_data.range[0], 0.0],
+            range: [raw_data.range[0], raw_data.range[1], raw_data.range[2], 0.0],
             terrain_info: [
                 raw_data
                     .num_verts_per_axis
@@ -460,15 +454,15 @@ impl TerrainBuild<'_> {
                 patch_count,
             ],
             world_min: [
-                raw_data.world_min[2],
-                raw_data.world_min[1],
                 raw_data.world_min[0],
+                raw_data.world_min[1],
+                raw_data.world_min[2],
                 0.0,
             ],
             world_max: [
-                raw_data.world_max[2],
-                raw_data.world_max[1],
                 raw_data.world_max[0],
+                raw_data.world_max[1],
+                raw_data.world_max[2],
                 0.0,
             ],
         };

@@ -6,8 +6,6 @@ use crate::{RenderPhase, WorldRenderer, wgpu};
 use num_traits::ToPrimitive;
 use zerocopy::IntoBytes;
 
-use crate::world_view::packed::xtd_packed_to_world;
-
 /// Per-material road geometry and textures.
 pub struct RoadBatch {
     vertex_buffer: wgpu::Buffer,
@@ -87,8 +85,8 @@ impl RoadParamsUniform {
                 0.0,
                 0.0,
             ],
-            position_mid: [raw.mid[2], raw.mid[1], raw.mid[0], 0.0],
-            position_range: [raw.range[2], raw.range[1], raw.range[0], 0.0],
+            position_mid: [raw.mid[0], raw.mid[1], raw.mid[2], 0.0],
+            position_range: [raw.range[0], raw.range[1], raw.range[2], 0.0],
             camera_position: [0.0; 4],
             dir_light_vector: [0.0; 4],
             dir_light_color: [0.0; 4],
@@ -485,26 +483,18 @@ fn create_world_bind_group(
     input: &RoadResourceInput<'_>,
     params_buffer: &wgpu::Buffer,
 ) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
-    let world_positions = xtd_packed_to_world(
-        &input.raw_terrain.packed_positions,
-        input.raw_terrain.num_verts_per_axis,
-    );
-    let world_normals = xtd_packed_to_world(
-        &input.raw_terrain.packed_normals,
-        input.raw_terrain.num_verts_per_axis,
-    );
     let terrain_position = create_packed_terrain_texture(
         device,
         queue,
         "Road Terrain Position",
-        &world_positions,
+        &input.raw_terrain.packed_positions,
         input.raw_terrain.num_verts_per_axis,
     );
     let terrain_basis = create_packed_terrain_texture(
         device,
         queue,
         "Road Terrain Basis",
-        &world_normals,
+        &input.raw_terrain.packed_normals,
         input.raw_terrain.num_verts_per_axis,
     );
     let terrain_sampler = device.create_sampler(&wgpu::SamplerDescriptor {

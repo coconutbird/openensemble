@@ -212,31 +212,28 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     // it for both jitter axes, rotation, and blade-height variation.
     let rnd = foliage_random(f32(blade_index));
 
-    // Fresh PC VS #0/#2: local source X is bladeIndex >> 6 and local source Z
-    // is bladeIndex & 63. QN parent metadata has already selected the world
-    // chunk, so its origin must not receive the packed-atlas transpose.
-    var source_local_x = f32(blade_index / num_blades_per_node) + 0.5;
-    var source_local_z = f32(blade_index % num_blades_per_node);
+    // Fresh PC VS #0/#2: local X is bladeIndex >> 6 and local Z is
+    // bladeIndex & 63. The QN parent quad node supplies the chunk origin.
+    var local_x = f32(blade_index / num_blades_per_node) + 0.5;
+    var local_z = f32(blade_index % num_blades_per_node);
 
     // Jitter
-    source_local_x += (rnd * 2.0 - 1.0) * 0.9;
-    source_local_z += (rnd * 2.0 - 1.0) * 0.9;
+    local_x += (rnd * 2.0 - 1.0) * 0.9;
+    local_z += (rnd * 2.0 - 1.0) * 0.9;
 
-    // The packed local grid uses the opposite X/Z order from the viewer. Keep
-    // the parent origin fixed and transpose only the local placement.
-    let trns_x = chunk_offset_x + source_local_z;
-    let trns_z = chunk_offset_z + source_local_x;
+    let trns_x = chunk_offset_x + local_x;
+    let trns_z = chunk_offset_z + local_z;
 
     // Rotate blade around Y axis
     let rot_angle = rnd * 360.0;
     let pos_rot = rotate_2d(pos.xz, rot_angle);
     let norm_rot = rotate_2d(normal.xz, rot_angle);
-    normal.x = norm_rot.y;
-    normal.z = norm_rot.x;
+    normal.x = norm_rot.x;
+    normal.z = norm_rot.y;
     normal = normalize(normal);
 
-    pos.x = pos_rot.y;
-    pos.z = pos_rot.x;
+    pos.x = pos_rot.x;
+    pos.z = pos_rot.y;
     let tile_scale = params.terrain_info.y;
     pos.x += trns_x * tile_scale;
     pos.z += trns_z * tile_scale;
