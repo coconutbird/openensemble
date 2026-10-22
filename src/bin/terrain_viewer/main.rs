@@ -141,8 +141,12 @@ fn print_usage() {
 }
 
 fn main() -> Result<()> {
-    // Load .env file if present (ignore errors if not found)
-    dotenvy::dotenv_override()?;
+    // Load the `.env` file if it exists. A missing file is not an error.
+    if let Err(error) = dotenvy::dotenv_override()
+        && !error.not_found()
+    {
+        return Err(error.into());
+    }
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     log::info!("Terrain Viewer starting...");
