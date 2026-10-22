@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use glam::Mat4;
-use render::light_effect::{LightEffect, LightEffectRuntime};
+use render::light_effect::{self, LightEffectRuntime};
 
 #[test]
 #[ignore = "requires OPENENSEMBLE_GAME_DIR pointing at Halo Wars DE"]
@@ -34,7 +34,7 @@ fn all_shipped_light_effects_decode_and_sample_finitely() {
     let mut shadow_paths = BTreeSet::new();
     for path in &paths {
         let effect =
-            LightEffect::load(&mut source, path).unwrap_or_else(|error| panic!("{path}: {error}"));
+            light_effect::load(&mut source, path).unwrap_or_else(|error| panic!("{path}: {error}"));
         assert!(!effect.frames.is_empty(), "{path}: scene has no frames");
         *versions.entry(effect.version).or_default() += 1;
         frames += effect.frames.len();

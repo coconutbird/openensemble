@@ -22,8 +22,7 @@ fn impact_route_asset_paths_are_enumerated() {
         let canonical = format!("art\\{}.lgt", path.trim_start_matches(['\\', '/']));
         println!(
             "impact_light_load {canonical}: {:?}",
-            render::light_effect::LightEffect::load(&mut source, &canonical)
-                .map(|effect| effect.frames.len())
+            render::light_effect::load(&mut source, &canonical).map(|effect| effect.frames.len())
         );
     }
     assert_ne!(assets.particle_paths(), Vec::<String>::new());

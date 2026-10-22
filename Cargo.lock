@@ -1647,6 +1647,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "lgt"
+version = "0.1.0"
+dependencies = [
+ "nostdio",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.184"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2678,6 +2686,7 @@ dependencies = [
  "gilrs",
  "glam",
  "half",
+ "lgt",
  "log",
  "motion",
  "num-traits",

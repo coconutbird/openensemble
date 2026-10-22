@@ -1,120 +1,23 @@
 //! Phoenix `.lgt` animated local-light scenes.
 //!
-//! The format is the little-endian `LightData::BScene` stream written by the
-//! original light exporter. A scene is framed by matching version words and
-//! contains timed frames of lights, objects, and cameras. Rendering only uses
-//! the light tracks, but the other records still have to be consumed exactly
-//! so malformed files cannot be mistaken for valid scenes.
+//! The [`lgt`] crate decodes the scene records. This module resolves `.lgt`
+//! assets and plays the light tracks of a decoded [`Scene`]: it interpolates
+//! the keys, keeps the retail retained colors, converts 3ds Max coordinates,
+//! and produces renderer [`LocalLight`] values.
 
 use std::sync::Arc;
 
 use glam::{Mat4, Quat, Vec3, Vec4};
 use half::f16;
+use lgt::{Frame, Light, LightFlags, LightKind, Scene};
 use pipeline::source::{AssetSource, StdFileProvider};
 
 use crate::lighting::{LocalLight, LocalLightShape};
 
-const VERSION_FAMILY: u32 = 0x00CC_DD01;
-const MAX_RECORDS: usize = 1 << 20;
 const MAX_TO_PHOENIX_SCALE: f32 = 1.0 / 64.0;
 const MIN_ENABLED_VALUE: f32 = 0.0125;
 const MAX_RADIUS: f32 = 96.0;
 const RETAIL_SPECULAR_SCALE: f32 = f32::from_bits(0x4048_f5c3);
-
-/// One authored light kind from a Phoenix light scene.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum LightEffectKind {
-    /// Uninitialized exporter value.
-    Invalid,
-    /// Cone-shaped local light.
-    Spot,
-    /// Omnidirectional local light.
-    Omni,
-    /// Directional light. The retail light-effect runtime intentionally skips it.
-    Directional,
-    /// Value from a newer or malformed file.
-    Unknown(u8),
-}
-
-impl From<u8> for LightEffectKind {
-    fn from(value: u8) -> Self {
-        match value {
-            0 => Self::Invalid,
-            1 => Self::Spot,
-            2 => Self::Omni,
-            3 => Self::Directional,
-            value => Self::Unknown(value),
-        }
-    }
-}
-
-/// Authored contribution switches for one light key.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct LightEffectFlags(u8);
-
-impl LightEffectFlags {
-    const SHADOWS: u8 = 1 << 0;
-    const DIFFUSE: u8 = 1 << 1;
-    const SPECULAR: u8 = 1 << 2;
-    const FOG: u8 = 1 << 3;
-    const FOG_SHADOWS: u8 = 1 << 4;
-    const LIGHT_BUFFERED: u8 = 1 << 5;
-
-    fn from_switches(switches: [bool; 6]) -> Self {
-        let masks = [
-            Self::SHADOWS,
-            Self::DIFFUSE,
-            Self::SPECULAR,
-            Self::FOG,
-            Self::FOG_SHADOWS,
-            Self::LIGHT_BUFFERED,
-        ];
-        Self(
-            switches
-                .into_iter()
-                .zip(masks)
-                .fold(0, |bits, (enabled, mask)| {
-                    bits | if enabled { mask } else { 0 }
-                }),
-        )
-    }
-
-    /// Returns whether the source requested a local shadow.
-    #[must_use]
-    pub const fn shadows(self) -> bool {
-        self.0 & Self::SHADOWS != 0
-    }
-
-    /// Returns whether the light contributes diffuse color.
-    #[must_use]
-    pub const fn diffuse(self) -> bool {
-        self.0 & Self::DIFFUSE != 0
-    }
-
-    /// Returns whether the source requests the retail specular multiplier.
-    #[must_use]
-    pub const fn specular(self) -> bool {
-        self.0 & Self::SPECULAR != 0
-    }
-
-    /// Returns whether the source contributes to fog lighting.
-    #[must_use]
-    pub const fn fog(self) -> bool {
-        self.0 & Self::FOG != 0
-    }
-
-    /// Returns whether fog receives the source's shadow.
-    #[must_use]
-    pub const fn fog_shadows(self) -> bool {
-        self.0 & Self::FOG_SHADOWS != 0
-    }
-
-    /// Returns whether retail routes this source into the 3D light buffer.
-    #[must_use]
-    pub const fn light_buffered(self) -> bool {
-        self.0 & Self::LIGHT_BUFFERED != 0
-    }
-}
 
 /// One evaluated light together with its authored routing switches.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -124,120 +27,29 @@ pub struct LightEffectSample {
     /// Authored light-local right axis used to orient spot shadow projections.
     pub spot_right: [f32; 3],
     /// Authored shadow, diffuse, specular, fog, and buffering switches.
-    pub flags: LightEffectFlags,
+    pub flags: LightFlags,
 }
 
-/// One keyframed local light.
-#[derive(Clone, Debug, PartialEq)]
-pub struct LightEffectLight {
-    /// Exporter node name.
-    pub name: String,
-    /// Optional exporter mask name.
-    pub mask: String,
-    /// Light kind.
-    pub kind: LightEffectKind,
-    /// Position in 3ds Max units.
-    pub position: [f32; 3],
-    /// Orientation quaternion in 3ds Max axes.
-    pub orientation: [f32; 4],
-    /// Radius in 3ds Max units.
-    pub radius: f32,
-    /// Fraction of the radius at which radial falloff starts.
-    pub far_attenuation_start: f32,
-    /// Inverse-distance decay distance in 3ds Max units.
-    pub decay_distance: f32,
-    /// Exporter decay mode. The shipped renderer stores but does not branch on it.
-    pub decay_kind: u8,
-    /// Scalar light intensity.
-    pub intensity: f32,
-    /// Linear authored color.
-    pub color: [f32; 3],
-    /// Spot inner full angle in radians.
-    pub spot_inner: f32,
-    /// Spot outer full angle in radians.
-    pub spot_outer: f32,
-    /// Authored diffuse, specular, fog, shadow, and light-buffer switches.
-    pub flags: LightEffectFlags,
-    /// Authored fog density.
-    pub fog_density: f32,
-}
-
-/// One timed frame in an animated light scene.
-#[derive(Clone, Debug, PartialEq)]
-pub struct LightEffectFrame {
-    /// Exporter time in seconds.
-    pub time: f32,
-    /// Light keys in stable exporter order.
-    pub lights: Vec<LightEffectLight>,
-}
-
-/// Decoded `.lgt` scene.
-#[derive(Clone, Debug, PartialEq)]
-pub struct LightEffect {
-    /// Serialization version, including the `0xCCDD01` family prefix.
-    pub version: u32,
-    /// Timed scene frames.
-    pub frames: Vec<LightEffectFrame>,
-}
-
-impl LightEffect {
-    /// Decodes one complete little-endian `LightData::BScene` stream.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for an unsupported version, truncated record, invalid
-    /// vector count, or mismatched closing version marker.
-    pub fn read(bytes: &[u8]) -> Result<Self, LightEffectError> {
-        let mut reader = Reader::new(bytes);
-        let version = reader.u32()?;
-        if version >> 8 != VERSION_FAMILY {
-            return Err(LightEffectError::UnsupportedVersion(version));
-        }
-        let frame_count = reader.count("frames")?;
-        let mut frames = Vec::with_capacity(frame_count);
-        for _ in 0..frame_count {
-            frames.push(read_frame(&mut reader, version)?);
-        }
-        let closing_version = reader.u32()?;
-        if closing_version != version {
-            return Err(LightEffectError::VersionFooter {
-                opening: version,
-                closing: closing_version,
-            });
-        }
-        Ok(Self { version, frames })
-    }
-
-    /// Resolves and decodes an authored light effect, adding `.lgt` when absent.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LightEffectError::Missing`] when the asset cannot be resolved,
-    /// or a decode error when its stream is invalid.
-    pub fn load(
-        source: &mut AssetSource<StdFileProvider>,
-        path: &str,
-    ) -> Result<Self, LightEffectError> {
-        let bytes = source
-            .resolve_with_fallback(path, &[".lgt"])
-            .ok_or_else(|| LightEffectError::Missing(path.to_owned()))?;
-        Self::read(&bytes)
-    }
-
-    /// Returns the looping duration used by the retail runtime.
-    #[must_use]
-    pub fn duration(&self) -> f32 {
-        let Some((first, last)) = self.frames.first().zip(self.frames.last()) else {
-            return 0.0;
-        };
-        (last.time - first.time).max(0.0)
-    }
+/// Resolves and decodes an authored light scene, adding `.lgt` when absent.
+///
+/// # Errors
+///
+/// Returns [`LightEffectError::Missing`] when the asset cannot be resolved,
+/// or [`LightEffectError::Decode`] when its stream is invalid.
+pub fn load(
+    source: &mut AssetSource<StdFileProvider>,
+    path: &str,
+) -> Result<Scene, LightEffectError> {
+    let bytes = source
+        .resolve_with_fallback(path, &[".lgt"])
+        .ok_or_else(|| LightEffectError::Missing(path.to_owned()))?;
+    Ok(Scene::from_bytes(&bytes)?)
 }
 
 /// Stateful retail-style player for one decoded light scene.
 #[derive(Clone, Debug)]
 pub struct LightEffectRuntime {
-    effect: Arc<LightEffect>,
+    effect: Arc<Scene>,
     time: f32,
     retained_colors: Vec<[f32; 3]>,
 }
@@ -245,7 +57,7 @@ pub struct LightEffectRuntime {
 impl LightEffectRuntime {
     /// Creates a player at scene time zero.
     #[must_use]
-    pub fn new(effect: Arc<LightEffect>) -> Self {
+    pub fn new(effect: Arc<Scene>) -> Self {
         Self {
             effect,
             time: 0.0,
@@ -332,137 +144,12 @@ pub enum LightEffectError {
     /// Asset resolution failed.
     #[error("light effect not found: {0}")]
     Missing(String),
-    /// Version prefix is not a supported Phoenix light-scene family.
-    #[error("unsupported light-effect version 0x{0:08X}")]
-    UnsupportedVersion(u32),
-    /// A serialized vector count was negative or implausibly large.
-    #[error("invalid light-effect {field} count {value}")]
-    InvalidCount {
-        /// Record group being decoded.
-        field: &'static str,
-        /// Serialized signed count.
-        value: i32,
-    },
-    /// The stream ended before the requested field was complete.
-    #[error("truncated light effect at byte {offset} while reading {field}")]
-    Truncated {
-        /// Byte offset at which decoding failed.
-        offset: usize,
-        /// Field type being read.
-        field: &'static str,
-    },
-    /// Opening and closing version markers differ.
-    #[error(
-        "light-effect version footer mismatch: opening 0x{opening:08X}, closing 0x{closing:08X}"
-    )]
-    VersionFooter {
-        /// Opening marker.
-        opening: u32,
-        /// Closing marker.
-        closing: u32,
-    },
+    /// The `.lgt` stream is invalid.
+    #[error(transparent)]
+    Decode(#[from] lgt::Error),
 }
 
-fn read_frame(reader: &mut Reader<'_>, version: u32) -> Result<LightEffectFrame, LightEffectError> {
-    let time = reader.f32()?;
-    let count = reader.count("lights")?;
-    let mut lights = Vec::with_capacity(count);
-    for _ in 0..count {
-        lights.push(read_light(reader, version)?);
-    }
-    let object_count = reader.count("objects")?;
-    for _ in 0..object_count {
-        skip_object(reader)?;
-    }
-    let camera_count = reader.count("cameras")?;
-    for _ in 0..camera_count {
-        skip_camera(reader, version)?;
-    }
-    Ok(LightEffectFrame { time, lights })
-}
-
-fn read_light(reader: &mut Reader<'_>, version: u32) -> Result<LightEffectLight, LightEffectError> {
-    let (name, position, orientation) = read_base(reader)?;
-    let mask = reader.string()?;
-    let kind = reader.u8()?.into();
-    let radius = reader.f32()?;
-    let far_attenuation_start = reader.f32()?;
-    let decay_distance = reader.f32()?;
-    let decay_kind = reader.u8()?;
-    let intensity = reader.f32()?;
-    let color = reader.vec3()?;
-    let spot_inner = reader.f32()?;
-    let spot_outer = reader.f32()?;
-    let shadows = reader.bool()?;
-    let diffuse = reader.bool()?;
-    let specular = reader.bool()?;
-    let fog = reader.bool()?;
-    let fog_shadows = reader.bool()?;
-    let fog_density = reader.f32()?;
-    let light_buffered = if version >= 0xCCDD_0109 {
-        reader.bool()?
-    } else {
-        true
-    };
-    Ok(LightEffectLight {
-        name,
-        mask,
-        kind,
-        position,
-        orientation,
-        radius,
-        far_attenuation_start,
-        decay_distance,
-        decay_kind,
-        intensity,
-        color,
-        spot_inner,
-        spot_outer,
-        flags: LightEffectFlags::from_switches([
-            shadows,
-            diffuse,
-            specular,
-            fog,
-            fog_shadows,
-            light_buffered,
-        ]),
-        fog_density,
-    })
-}
-
-fn read_base(reader: &mut Reader<'_>) -> Result<(String, [f32; 3], [f32; 4]), LightEffectError> {
-    Ok((reader.string()?, reader.vec3()?, reader.vec4()?))
-}
-
-fn skip_object(reader: &mut Reader<'_>) -> Result<(), LightEffectError> {
-    let _ = read_base(reader)?;
-    let _kind = reader.u8()?;
-    let _visibility = reader.f32()?;
-    let _sphere_radius = reader.f32()?;
-    let byte_count = reader.count("object UDP bytes")?;
-    let _udp = reader.bytes(byte_count, "object UDP bytes")?;
-    Ok(())
-}
-
-fn skip_camera(reader: &mut Reader<'_>, version: u32) -> Result<(), LightEffectError> {
-    let _ = read_base(reader)?;
-    let _fov = reader.f32()?;
-    if version & 0xFF >= 8 {
-        let _focal_depth = reader.f32()?;
-        let _near_range = reader.f32()?;
-        let _far_range = reader.f32()?;
-    }
-    if version & 0xFF >= 10 {
-        let _near_clip = reader.f32()?;
-        let _far_clip = reader.f32()?;
-    }
-    Ok(())
-}
-
-fn interpolation_frames(
-    effect: &LightEffect,
-    time: f32,
-) -> Option<(&LightEffectFrame, &LightEffectFrame, f32)> {
+fn interpolation_frames(effect: &Scene, time: f32) -> Option<(&Frame, &Frame, f32)> {
     let first_time = effect.frames.first()?.time;
     let duration = effect.duration();
     if time >= duration {
@@ -488,14 +175,14 @@ fn interpolation_frames(
 }
 
 fn sample_light(
-    key0: &LightEffectLight,
-    key1: &LightEffectLight,
+    key0: &Light,
+    key1: &Light,
     fraction: f32,
     max_to_world: Mat4,
     intensity_scale: f32,
     retained_color: &mut [f32; 3],
 ) -> Option<SampledLight> {
-    if !matches!(key0.kind, LightEffectKind::Spot | LightEffectKind::Omni) {
+    if !matches!(key0.kind, LightKind::Spot | LightKind::Omni) {
         return None;
     }
     let intensity = lerp(key0.intensity, key1.intensity, fraction) * intensity_scale;
@@ -539,8 +226,8 @@ fn sample_light(
         round_half(lerp(key0.decay_distance, key1.decay_distance, fraction) * MAX_TO_PHOENIX_SCALE)
             .max(0.01);
     let shape = match key0.kind {
-        LightEffectKind::Omni => LocalLightShape::Omni,
-        LightEffectKind::Spot => {
+        LightKind::Omni => LocalLightShape::Omni,
+        LightKind::Spot => {
             let (inner, outer) = enforced_spot_angles(
                 lerp(key0.spot_inner, key1.spot_inner, fraction),
                 lerp(key0.spot_outer, key1.spot_outer, fraction),
@@ -634,142 +321,47 @@ fn round_half(value: f32) -> f32 {
     f16::from_f32(value).to_f32()
 }
 
-struct Reader<'a> {
-    bytes: &'a [u8],
-    offset: usize,
-}
-
-impl<'a> Reader<'a> {
-    const fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, offset: 0 }
-    }
-
-    fn bytes(&mut self, count: usize, field: &'static str) -> Result<&'a [u8], LightEffectError> {
-        let end = self
-            .offset
-            .checked_add(count)
-            .ok_or(LightEffectError::Truncated {
-                offset: self.offset,
-                field,
-            })?;
-        let value = self
-            .bytes
-            .get(self.offset..end)
-            .ok_or(LightEffectError::Truncated {
-                offset: self.offset,
-                field,
-            })?;
-        self.offset = end;
-        Ok(value)
-    }
-
-    fn u8(&mut self) -> Result<u8, LightEffectError> {
-        Ok(self.bytes(1, "u8")?[0])
-    }
-
-    fn bool(&mut self) -> Result<bool, LightEffectError> {
-        Ok(self.u8()? != 0)
-    }
-
-    fn u32(&mut self) -> Result<u32, LightEffectError> {
-        let bytes: [u8; 4] = self
-            .bytes(4, "u32")?
-            .try_into()
-            .expect("a four-byte slice always converts to an array");
-        Ok(u32::from_le_bytes(bytes))
-    }
-
-    fn i32(&mut self) -> Result<i32, LightEffectError> {
-        let bytes: [u8; 4] = self
-            .bytes(4, "i32")?
-            .try_into()
-            .expect("a four-byte slice always converts to an array");
-        Ok(i32::from_le_bytes(bytes))
-    }
-
-    fn f32(&mut self) -> Result<f32, LightEffectError> {
-        Ok(f32::from_bits(self.u32()?))
-    }
-
-    fn vec3(&mut self) -> Result<[f32; 3], LightEffectError> {
-        Ok([self.f32()?, self.f32()?, self.f32()?])
-    }
-
-    fn vec4(&mut self) -> Result<[f32; 4], LightEffectError> {
-        Ok([self.f32()?, self.f32()?, self.f32()?, self.f32()?])
-    }
-
-    fn count(&mut self, field: &'static str) -> Result<usize, LightEffectError> {
-        let value = self.i32()?;
-        let Ok(count) = usize::try_from(value) else {
-            return Err(LightEffectError::InvalidCount { field, value });
-        };
-        if count > MAX_RECORDS || count > self.bytes.len() {
-            return Err(LightEffectError::InvalidCount { field, value });
-        }
-        Ok(count)
-    }
-
-    fn string(&mut self) -> Result<String, LightEffectError> {
-        let raw_length = self.u32()?;
-        let Ok(length) = usize::try_from(raw_length) else {
-            return Err(LightEffectError::InvalidCount {
-                field: "string bytes",
-                value: i32::MAX,
-            });
-        };
-        if length > self.bytes.len() {
-            return Err(LightEffectError::InvalidCount {
-                field: "string bytes",
-                value: i32::try_from(raw_length).unwrap_or(i32::MAX),
-            });
-        }
-        Ok(String::from_utf8_lossy(self.bytes(length, "string bytes")?).into_owned())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
     use glam::{Mat4, Vec3};
+    use lgt::{Frame, Light, LightFlags, LightKind, Scene};
 
-    use super::{LightEffect, LightEffectError, LightEffectRuntime, RETAIL_SPECULAR_SCALE};
-
-    #[test]
-    fn decodes_version_109_light_and_footer() {
-        let bytes = scene_bytes(0xCCDD_0109, true);
-        let scene = LightEffect::read(&bytes).unwrap();
-        assert_eq!(scene.frames.len(), 1);
-        let light = &scene.frames[0].lights[0];
-        assert_eq!(light.name, "test");
-        assert!(light.flags.light_buffered());
-        assert_eq!(
-            light.position.map(f32::to_bits),
-            [64.0, 128.0, 192.0].map(f32::to_bits)
-        );
-    }
-
-    #[test]
-    fn version_107_defaults_light_buffering_on() {
-        let scene = LightEffect::read(&scene_bytes(0xCCDD_0107, false)).unwrap();
-        assert!(scene.frames[0].lights[0].flags.light_buffered());
-    }
-
-    #[test]
-    fn rejects_mismatched_footer() {
-        let mut bytes = scene_bytes(0xCCDD_0109, true);
-        let last = bytes.len() - 1;
-        bytes[last] ^= 1;
-        assert!(matches!(
-            LightEffect::read(&bytes),
-            Err(LightEffectError::VersionFooter { .. })
-        ));
-    }
+    use super::{LightEffectRuntime, RETAIL_SPECULAR_SCALE};
 
     #[test]
     fn runtime_applies_max_axes_scale_and_retail_intensity() {
-        let scene = Arc::new(LightEffect::read(&scene_bytes(0xCCDD_0109, true)).unwrap());
+        let scene = Arc::new(Scene {
+            version: 0xCCDD_0109,
+            frames: vec![Frame {
+                time: 0.0,
+                lights: vec![Light {
+                    name: "test".to_owned(),
+                    mask: String::new(),
+                    kind: LightKind::Omni,
+                    position: [64.0, 128.0, 192.0],
+                    orientation: [0.0, 0.0, 0.0, 1.0],
+                    radius: 256.0,
+                    far_attenuation_start: 0.25,
+                    decay_distance: 64.0,
+                    decay_kind: 0,
+                    intensity: 2.0,
+                    color: [0.5, 0.25, 0.125],
+                    spot_inner: 0.1,
+                    spot_outer: 0.2,
+                    flags: LightFlags::from_bits(
+                        LightFlags::SHADOWS
+                            | LightFlags::DIFFUSE
+                            | LightFlags::SPECULAR
+                            | LightFlags::LIGHT_BUFFERED,
+                    ),
+                    fog_density: 1.0,
+                }],
+                objects: Vec::new(),
+                cameras: Vec::new(),
+            }],
+        });
         let mut runtime = LightEffectRuntime::new(scene);
         let lights = runtime.advance_and_sample(0.0, Mat4::IDENTITY, 1.3);
         assert_eq!(lights.len(), 1);
@@ -781,53 +373,5 @@ mod tests {
             lights[0].specular_intensity.to_bits(),
             RETAIL_SPECULAR_SCALE.to_bits()
         );
-    }
-
-    fn scene_bytes(version: u32, include_light_buffered: bool) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        push_u32(&mut bytes, version);
-        push_i32(&mut bytes, 1);
-        push_f32(&mut bytes, 0.0);
-        push_i32(&mut bytes, 1);
-        push_string(&mut bytes, "test");
-        for value in [64.0, 128.0, 192.0, 0.0, 0.0, 0.0, 1.0] {
-            push_f32(&mut bytes, value);
-        }
-        push_string(&mut bytes, "");
-        bytes.push(2);
-        for value in [256.0, 0.25, 64.0] {
-            push_f32(&mut bytes, value);
-        }
-        bytes.push(0);
-        push_f32(&mut bytes, 2.0);
-        for value in [0.5, 0.25, 0.125, 0.1, 0.2] {
-            push_f32(&mut bytes, value);
-        }
-        bytes.extend([1, 1, 1, 0, 0]);
-        push_f32(&mut bytes, 1.0);
-        if include_light_buffered {
-            bytes.push(1);
-        }
-        push_i32(&mut bytes, 0);
-        push_i32(&mut bytes, 0);
-        push_u32(&mut bytes, version);
-        bytes
-    }
-
-    fn push_string(bytes: &mut Vec<u8>, value: &str) {
-        push_u32(bytes, u32::try_from(value.len()).unwrap());
-        bytes.extend(value.as_bytes());
-    }
-
-    fn push_u32(bytes: &mut Vec<u8>, value: u32) {
-        bytes.extend(value.to_le_bytes());
-    }
-
-    fn push_i32(bytes: &mut Vec<u8>, value: i32) {
-        bytes.extend(value.to_le_bytes());
-    }
-
-    fn push_f32(bytes: &mut Vec<u8>, value: f32) {
-        push_u32(bytes, value.to_bits());
     }
 }

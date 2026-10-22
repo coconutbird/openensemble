@@ -2,10 +2,11 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use glam::{Mat4, Vec3};
+use lgt::Scene;
 use pipeline::source::{AssetSource, StdFileProvider};
 
 use super::super::{UnitAttachment, UnitAttachmentKind, UnitAttachmentTrigger, UnitRenderer};
-use crate::light_effect::{LightEffect, LightEffectRuntime, LightEffectSample};
+use crate::light_effect::{self, LightEffectRuntime, LightEffectSample};
 use crate::light_volume::MAX_BUFFERED_LIGHTS;
 use crate::lighting::{LocalLight, LocalLightSet, LocalLightView, MAX_LOCAL_LIGHTS};
 use crate::local_shadow::LocalShadowRequest;
@@ -15,7 +16,7 @@ const LIGHT_FADE_END_PIXELS: f32 = 30.0;
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct LightAssets {
-    assets: HashMap<String, Option<Arc<LightEffect>>>,
+    assets: HashMap<String, Option<Arc<Scene>>>,
     issues: Vec<String>,
 }
 
@@ -31,7 +32,7 @@ impl LightAssets {
             if self.assets.contains_key(&key) {
                 continue;
             }
-            match LightEffect::load(source, &canonical) {
+            match light_effect::load(source, &canonical) {
                 Ok(effect) => {
                     self.assets.insert(key, Some(Arc::new(effect)));
                 }
@@ -43,7 +44,7 @@ impl LightAssets {
         }
     }
 
-    fn get(&self, path: &str) -> Option<&Arc<LightEffect>> {
+    fn get(&self, path: &str) -> Option<&Arc<Scene>> {
         self.assets
             .get(&canonical_light_path(path).to_ascii_lowercase())?
             .as_ref()
