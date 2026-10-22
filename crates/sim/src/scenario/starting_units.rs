@@ -301,3 +301,7 @@ fn create_empty_bases(
         );
     }
 }
+
+#[cfg(test)]
+#[path = "starting_units/tests.rs"]
+mod tests;

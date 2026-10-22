@@ -477,3 +477,7 @@ fn pick_random_leader_for_civ(
         .and_then(|(index, _)| i32::try_from(index).ok())
         .unwrap_or(-1)
 }
+
+#[cfg(test)]
+#[path = "player_setup/tests.rs"]
+mod tests;
