@@ -3,10 +3,7 @@
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn reports_installed_object_ik_profiles() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
-    let loaded =
-        sim::load_scenario_from_game_dir(&game_dir, "blood_gulch").expect("load Blood Gulch");
+    let loaded = test_support::installed_scenario("blood_gulch");
 
     let mut count = 0;
     for proto in &loaded.content.database.objects {

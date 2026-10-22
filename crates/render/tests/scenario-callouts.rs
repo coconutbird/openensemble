@@ -4,16 +4,14 @@
 
 use glam::{Mat4, Vec3};
 use render::terrain::project_hint_callouts;
-use sim::{HintCalloutAnchor, load_scenario_from_game_dir};
+use sim::HintCalloutAnchor;
 
 /// Run with:
 /// `OPENENSEMBLE_GAME_DIR=<HaloWarsDE> cargo test -p render --test scenario-callouts -- --ignored`
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn campaign_callout_projects_from_authoritative_sim_and_localized_content() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "PHXscn03").expect("load PHXscn03");
+    let mut loaded = test_support::installed_scenario("PHXscn03");
     let update = loaded
         .simulation
         .world

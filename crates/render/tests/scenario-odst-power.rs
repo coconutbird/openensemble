@@ -3,12 +3,9 @@
 //! The test needs a local Halo Wars DE installation.
 
 use glam::Vec3;
-use pipeline::source::{AssetSource, StdFileProvider};
 use render::ugx::UnitScene;
-use sim::{
-    EntityId, NativePowerInput, OdstPowerInvocation, PowerUserId, load_scenario_from_game_dir,
-    power_prototype_id,
-};
+use render_test_support::{assert_visual_loaded, load_active_visuals, placement, sync_scene};
+use sim::{EntityId, NativePowerInput, OdstPowerInvocation, PowerUserId, power_prototype_id};
 
 const ODST_POWER: &str = "UnscOdstDrop";
 const ODST_TECH: &str = "unsc_odst_upgrade1";
@@ -23,7 +20,7 @@ fn renderer_projects_only_the_live_odst_pod_and_revealed_sim_members() {
         mut simulation,
         mut content,
         mut source,
-    } = load_installed_scenario();
+    } = test_support::installed_scenario("blood_gulch");
     remove_scenario_squads(&mut simulation.world);
     let power_id = power_prototype_id(&content.database, ODST_POWER).expect("shipped ODST power");
     assert!(
@@ -63,7 +60,7 @@ fn renderer_projects_only_the_live_odst_pod_and_revealed_sim_members() {
         &content.visuals,
         &content.database.objects,
     );
-    assert!(member_ids.iter().all(|id| !has_placement(&scene, *id)));
+    assert!(member_ids.iter().all(|id| placement(&scene, *id).is_none()));
     assert!(scene.roster_matches(&simulation.world));
 
     advance(&mut simulation, &content.database, 0.05);
@@ -78,11 +75,11 @@ fn renderer_projects_only_the_live_odst_pod_and_revealed_sim_members() {
     );
     sync_scene(&mut scene, &mut content, &mut source, &simulation.world);
     assert_visual_loaded(&scene, projectile_id, ODST_POD);
-    assert!(member_ids.iter().all(|id| !has_placement(&scene, *id)));
+    assert!(member_ids.iter().all(|id| placement(&scene, *id).is_none()));
 
     advance(&mut simulation, &content.database, 0.701);
     sync_scene(&mut scene, &mut content, &mut source, &simulation.world);
-    assert!(member_ids.iter().all(|id| has_placement(&scene, *id)));
+    assert!(member_ids.iter().all(|id| placement(&scene, *id).is_some()));
     assert!(member_ids.iter().all(|id| {
         placement(&scene, *id).is_some_and(|placement| {
             simulation
@@ -92,49 +89,6 @@ fn renderer_projects_only_the_live_odst_pod_and_revealed_sim_members() {
         })
     }));
     assert!(scene.roster_matches(&simulation.world));
-}
-
-fn sync_scene(
-    scene: &mut UnitScene,
-    content: &mut pipeline::hw1::World,
-    source: &mut AssetSource<StdFileProvider>,
-    world: &sim::World,
-) {
-    load_active_visuals(content, source, world);
-    assert!(scene.sync_world(source, world, &content.visuals, &content.database.objects));
-    assert!(scene.roster_matches(world));
-}
-
-fn load_active_visuals(
-    content: &mut pipeline::hw1::World,
-    source: &mut AssetSource<StdFileProvider>,
-    world: &sim::World,
-) {
-    let active = render::ugx::simulation_proto_names(world).collect::<Vec<_>>();
-    content.load_visuals_for(source, active.iter().copied());
-}
-
-fn assert_visual_loaded(scene: &UnitScene, entity_id: EntityId, proto_name: &str) {
-    assert!(
-        placement(scene, entity_id).is_some_and(|placement| placement.proto_name() == proto_name),
-        "{proto_name} was not projected; issues: {:?}",
-        scene
-            .issues()
-            .iter()
-            .map(|issue| (issue.proto_name(), issue.reason()))
-            .collect::<Vec<_>>()
-    );
-}
-
-fn placement(scene: &UnitScene, entity_id: EntityId) -> Option<&render::ugx::UnitPlacement> {
-    scene
-        .placements()
-        .iter()
-        .find(|placement| placement.entity_id() == entity_id)
-}
-
-fn has_placement(scene: &UnitScene, entity_id: EntityId) -> bool {
-    placement(scene, entity_id).is_some()
 }
 
 fn advance(
@@ -164,11 +118,4 @@ fn remove_scenario_squads(world: &mut sim::World) {
     for id in ids {
         world.remove_squad(id).unwrap();
     }
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }

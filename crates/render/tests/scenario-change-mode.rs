@@ -3,10 +3,10 @@
 //! The test needs a local Halo Wars DE installation.
 
 use glam::Vec3;
-use render::ugx::{UnitPlacement, UnitScene, simulation_proto_names};
+use render::ugx::{UnitPlacement, UnitScene};
+use render_test_support::load_active_visuals;
 use sim::{
-    CommandEntry, CommandExecutor, CommandPayload, WorkCommand, load_scenario_from_game_dir,
-    spawn_squad_at, squad_prototype_id,
+    CommandEntry, CommandExecutor, CommandPayload, WorkCommand, spawn_squad_at, squad_prototype_id,
 };
 
 const COBRA: &str = "unsc_veh_cobra_01";
@@ -16,10 +16,7 @@ const COBRA: &str = "unsc_veh_cobra_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn renderer_projects_the_exact_sim_selected_change_mode_clip() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let origin = scenario_center(&loaded.simulation.world);
     let cobra_squad = spawn_squad_at(
         &mut loaded.simulation.world,
@@ -37,7 +34,11 @@ fn renderer_projects_the_exact_sim_selected_change_mode_clip() {
         .unwrap()
         .unit_ids[0];
 
-    load_active_visuals(&mut loaded);
+    load_active_visuals(
+        &mut loaded.content,
+        &mut loaded.source,
+        &loaded.simulation.world,
+    );
     let mut scene = UnitScene::load_world_with_gameplay(
         &mut loaded.source,
         &loaded.simulation.world,
@@ -79,13 +80,6 @@ fn renderer_projects_the_exact_sim_selected_change_mode_clip() {
     assert_eq!(placement.animation_asset(), Some(animation_asset.as_str()));
     assert!(placement.animation_uses_simulation_clock());
     assert!(placement.unit().has_scripted_animation());
-}
-
-fn load_active_visuals(loaded: &mut sim::LoadedGameScenario) {
-    let names = simulation_proto_names(&loaded.simulation.world).collect::<Vec<_>>();
-    loaded
-        .content
-        .load_visuals_for(&mut loaded.source, names.iter().copied());
 }
 
 fn issue_change_mode(loaded: &mut sim::LoadedGameScenario, squad_id: sim::EntityId) {

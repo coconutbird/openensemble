@@ -10,8 +10,7 @@ use render::light_effect::{LightEffect, LightEffectRuntime};
 #[test]
 #[ignore = "requires OPENENSEMBLE_GAME_DIR pointing at Halo Wars DE"]
 fn all_shipped_light_effects_decode_and_sample_finitely() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point at Halo Wars DE");
+    let game_dir = test_support::game_dir();
     let mut source = pipeline::hw1::loader::load_game_dir(&game_dir);
     let paths = source
         .files_per_archive()

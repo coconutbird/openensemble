@@ -8,8 +8,7 @@ use render::terrain_effect::{TerrainEffect, TerrainEffectAction};
 #[test]
 #[ignore = "requires OPENENSEMBLE_GAME_DIR pointing at Halo Wars DE"]
 fn all_shipped_visual_animation_tags_decode() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point at Halo Wars DE");
+    let game_dir = test_support::game_dir();
     let mut source = pipeline::hw1::loader::load_game_dir(&game_dir);
     let paths = installed_visual_paths(&source);
     let stats = scan_visuals(&mut source, &paths);

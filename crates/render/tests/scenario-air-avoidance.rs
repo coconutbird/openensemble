@@ -3,10 +3,9 @@
 //! The test needs a local Halo Wars DE installation.
 
 use glam::Vec3;
-use render::ugx::{UnitScene, simulation_proto_names};
-use sim::{
-    AircraftCrashPhase, World, load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id,
-};
+use render::ugx::UnitScene;
+use render_test_support::load_active_visuals;
+use sim::{AircraftCrashPhase, World, spawn_squad_at, squad_prototype_id};
 
 const BANSHEE: &str = "cov_air_banshee_01";
 const MARINES: &str = "unsc_inf_marine_01";
@@ -21,10 +20,7 @@ const BANSHEE_UPGRADES: [&str; 3] = [
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn renderer_projects_kamikaze_clip_and_dive_pitch_from_sim_state() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed scenario and layered database should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     configure_enemies(&mut loaded.simulation.world);
     let ground = scenario_center(&loaded.simulation.world);
     let banshee_squad = spawn(
@@ -58,7 +54,11 @@ fn renderer_projects_kamikaze_clip_and_dive_pitch_from_sim_state() {
         .clone();
     activate_banshee_upgrades(&mut loaded);
 
-    load_active_visuals(&mut loaded);
+    load_active_visuals(
+        &mut loaded.content,
+        &mut loaded.source,
+        &loaded.simulation.world,
+    );
     let mut scene = UnitScene::load_world_with_gameplay(
         &mut loaded.source,
         &loaded.simulation.world,
@@ -158,13 +158,6 @@ fn spawn(
         forward,
     )
     .expect("shipped squad should spawn")
-}
-
-fn load_active_visuals(loaded: &mut sim::LoadedGameScenario) {
-    let names = simulation_proto_names(&loaded.simulation.world).collect::<Vec<_>>();
-    loaded
-        .content
-        .load_visuals_for(&mut loaded.source, names.iter().copied());
 }
 
 fn tick(loaded: &mut sim::LoadedGameScenario) {

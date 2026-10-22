@@ -28,5 +28,9 @@ gilrs = "0.11.1"
 rayon = "1.10"
 wesl = "0.3.2"
 
+[dev-dependencies]
+render-test-support = { workspace = true }
+test-support = { workspace = true }
+
 [build-dependencies]
 wesl = "0.3.2"

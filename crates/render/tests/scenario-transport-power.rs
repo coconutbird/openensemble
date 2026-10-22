@@ -4,12 +4,11 @@
 
 use glam::Vec3;
 use pipeline::database::hw1::Database;
-use pipeline::source::{AssetSource, StdFileProvider};
 use render::ugx::{UnitScene, simulation_entity_transform};
+use render_test_support::{assert_visual_loaded, load_active_visuals, placement};
 use sim::{
     EntityId, NativePowerInput, PowerTransportPhase, PowerUserId, TransportPowerInvocation,
-    configure_player_leader, load_scenario_from_game_dir, power_prototype_id, spawn_squad_at,
-    squad_prototype_id,
+    configure_player_leader, power_prototype_id, spawn_squad_at, squad_prototype_id,
 };
 
 const TRANSPORT_POWER: &str = "UnscCivTransport";
@@ -25,7 +24,7 @@ fn renderer_projects_transport_visibility_and_motion_from_live_sim_state() {
         mut simulation,
         mut content,
         mut source,
-    } = load_installed_scenario();
+    } = test_support::installed_scenario("blood_gulch");
     remove_scenario_squads(&mut simulation.world);
     configure_cutter(&mut simulation.world, &content.database);
     let marine_id = spawn_named_squad(
@@ -77,7 +76,7 @@ fn renderer_projects_transport_visibility_and_motion_from_live_sim_state() {
     assert!(
         marine_units
             .iter()
-            .all(|unit_id| has_placement(&scene, *unit_id))
+            .all(|unit_id| placement(&scene, *unit_id).is_some())
     );
     assert_rendered(&simulation.world, carrier_unit_id, true);
     assert_members_rendered(&simulation.world, &marine_units, true);
@@ -113,7 +112,7 @@ fn renderer_projects_transport_visibility_and_motion_from_live_sim_state() {
         &content.visuals,
         &content.database.objects,
     ));
-    assert!(!has_placement(&scene, carrier_unit_id));
+    assert!(placement(&scene, carrier_unit_id).is_none());
     assert!(scene.roster_matches(&simulation.world));
 }
 
@@ -137,38 +136,6 @@ fn advance_until(
         complete(&simulation.world),
         "transport state did not converge"
     );
-}
-
-fn load_active_visuals(
-    content: &mut pipeline::hw1::World,
-    source: &mut AssetSource<StdFileProvider>,
-    world: &sim::World,
-) {
-    let active = render::ugx::simulation_proto_names(world).collect::<Vec<_>>();
-    content.load_visuals_for(source, active.iter().copied());
-}
-
-fn assert_visual_loaded(scene: &UnitScene, entity_id: EntityId, prototype: &str) {
-    assert!(
-        placement(scene, entity_id).is_some_and(|placement| placement.proto_name() == prototype),
-        "{prototype} was not projected; issues: {:?}",
-        scene
-            .issues()
-            .iter()
-            .map(|issue| (issue.proto_name(), issue.reason()))
-            .collect::<Vec<_>>()
-    );
-}
-
-fn placement(scene: &UnitScene, entity_id: EntityId) -> Option<&render::ugx::UnitPlacement> {
-    scene
-        .placements()
-        .iter()
-        .find(|placement| placement.entity_id() == entity_id)
-}
-
-fn has_placement(scene: &UnitScene, entity_id: EntityId) -> bool {
-    placement(scene, entity_id).is_some()
 }
 
 fn assert_rendered(world: &sim::World, entity_id: EntityId, expected: bool) {
@@ -228,11 +195,4 @@ fn remove_scenario_squads(world: &mut sim::World) {
     for id in ids {
         world.remove_squad(id).unwrap();
     }
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }

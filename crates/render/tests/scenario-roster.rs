@@ -6,8 +6,7 @@ use render::ugx::UnitScene;
 use sim::entities::squads::marine::MARINE_SQUAD_NAME;
 use sim::{
     BuildingCommand, LoadedGameScenario, MS_PER_TICK, Simulation, configure_player_leader,
-    load_scenario_from_game_dir, object_prototype_id, spawn_object_at, spawn_squad_at,
-    squad_prototype_id, squad_runtime_id,
+    object_prototype_id, spawn_object_at, spawn_squad_at, squad_prototype_id, squad_runtime_id,
 };
 
 /// Run with:
@@ -15,15 +14,13 @@ use sim::{
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn spawned_marines_and_projectiles_join_the_authoritative_render_roster() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
     let scenario =
         std::env::var("OPENENSEMBLE_TEST_SCENARIO").unwrap_or_else(|_| "blood_gulch".to_owned());
     let LoadedGameScenario {
         mut simulation,
         mut content,
         mut source,
-    } = load_scenario_from_game_dir(&game_dir, &scenario).expect("real scenario should load");
+    } = test_support::installed_scenario(&scenario);
 
     load_active_visuals(&simulation.world, &mut content, &mut source);
     let mut scene = UnitScene::load_world(

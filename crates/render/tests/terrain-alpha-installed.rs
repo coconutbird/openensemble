@@ -7,10 +7,7 @@ use std::collections::VecDeque;
 #[test]
 #[ignore = "requires an installed Halo Wars DE data directory"]
 fn reports_blood_gulch_static_alpha_components() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let mut loaded =
-        sim::load_scenario_from_game_dir(&game_dir, "blood_gulch").expect("load Blood Gulch");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     for (&player_id, &base_id) in &loaded.simulation.initial_base_ids {
         let base = loaded
             .simulation

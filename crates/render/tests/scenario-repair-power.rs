@@ -4,11 +4,11 @@
 
 use glam::Vec3;
 use pipeline::database::hw1::Database;
-use pipeline::source::{AssetSource, StdFileProvider};
 use render::ugx::UnitScene;
+use render_test_support::{load_active_visuals, placement};
 use sim::{
-    EntityId, MS_PER_TICK, RepairPowerInvocation, load_scenario_from_game_dir, power_prototype_id,
-    spawn_squad_at, squad_prototype_id,
+    EntityId, MS_PER_TICK, RepairPowerInvocation, power_prototype_id, spawn_squad_at,
+    squad_prototype_id,
 };
 
 /// Run with:
@@ -16,7 +16,7 @@ use sim::{
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn repair_field_attachment_and_reinforced_member_project_from_sim_state() {
-    let loaded = load_installed_scenario();
+    let loaded = test_support::installed_scenario("blood_gulch");
     let sim::LoadedGameScenario {
         mut simulation,
         mut content,
@@ -62,7 +62,7 @@ fn repair_field_attachment_and_reinforced_member_project_from_sim_state() {
         &content.visuals,
         &content.database.objects,
     );
-    assert!(has_placement(&scene, field_id));
+    assert!(placement(&scene, field_id).is_some());
 
     advance_to(&mut simulation, &content.database, first_tick);
     let attachment_id = simulation
@@ -87,18 +87,9 @@ fn repair_field_attachment_and_reinforced_member_project_from_sim_state() {
         &content.visuals,
         &content.database.objects,
     ));
-    assert!(has_placement(&scene, field_id));
-    assert!(has_placement(&scene, attachment_id));
+    assert!(placement(&scene, field_id).is_some());
+    assert!(placement(&scene, attachment_id).is_some());
     assert!(scene.roster_matches(&simulation.world));
-}
-
-fn load_active_visuals(
-    content: &mut pipeline::hw1::World,
-    source: &mut AssetSource<StdFileProvider>,
-    world: &sim::World,
-) {
-    let active = render::ugx::simulation_proto_names(world).collect::<Vec<_>>();
-    content.load_visuals_for(source, active.iter().copied());
 }
 
 fn advance_to(simulation: &mut sim::LoadedScenario, database: &Database, target_time: u32) {
@@ -110,18 +101,4 @@ fn advance_to(simulation: &mut sim::LoadedScenario, database: &Database, target_
             &simulation.gameplay,
         );
     }
-}
-
-fn has_placement(scene: &UnitScene, entity_id: EntityId) -> bool {
-    scene
-        .placements()
-        .iter()
-        .any(|placement| placement.entity_id() == entity_id)
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }

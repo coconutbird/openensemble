@@ -3,16 +3,13 @@
 //! The test needs a local Halo Wars DE installation.
 
 use render::ugx::{UnitScene, simulation_proto_names};
-use sim::load_scenario_from_game_dir;
 
 /// Run with:
 /// `OPENENSEMBLE_GAME_DIR=<HaloWarsDE> cargo test -p render --test scenario-animation -- --ignored`
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn phx03_renderer_loads_only_the_animation_selected_by_authoritative_sim_state() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "PHXscn03").expect("load PHXscn03");
+    let mut loaded = test_support::installed_scenario("PHXscn03");
     let proto_names = simulation_proto_names(&loaded.simulation.world).collect::<Vec<_>>();
     let _loaded_visuals = loaded
         .content

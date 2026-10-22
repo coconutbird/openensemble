@@ -4,11 +4,11 @@
 
 use glam::Vec3;
 use pipeline::database::hw1::Database;
-use pipeline::source::{AssetSource, StdFileProvider};
 use render::ugx::UnitScene;
+use render_test_support::{load_active_visuals, placement};
 use sim::{
-    EntityId, NativePowerInput, RagePowerInvocation, load_scenario_from_game_dir,
-    power_prototype_id, spawn_squad_at, squad_prototype_id,
+    EntityId, NativePowerInput, RagePowerInvocation, power_prototype_id, spawn_squad_at,
+    squad_prototype_id,
 };
 
 /// Run with:
@@ -20,7 +20,7 @@ fn rage_hand_and_teleport_attachments_project_only_from_sim_objects() {
         mut simulation,
         mut content,
         mut source,
-    } = load_installed_scenario();
+    } = test_support::installed_scenario("blood_gulch");
     remove_scenario_squads(&mut simulation.world);
     configure_hostile_players(&mut simulation.world);
     let rage_id =
@@ -64,7 +64,7 @@ fn rage_hand_and_teleport_attachments_project_only_from_sim_objects() {
         &content.visuals,
         &content.database.objects,
     );
-    assert!(hand_ids.iter().all(|id| has_placement(&scene, *id)));
+    assert!(hand_ids.iter().all(|id| placement(&scene, *id).is_some()));
     assert!(scene.roster_matches(&simulation.world));
 
     assert!(simulation.world.submit_rage_power_input(
@@ -99,18 +99,9 @@ fn rage_hand_and_teleport_attachments_project_only_from_sim_objects() {
         &content.visuals,
         &content.database.objects,
     ));
-    assert!(has_placement(&scene, teleport_id));
-    assert!(hand_ids.iter().all(|id| has_placement(&scene, *id)));
+    assert!(placement(&scene, teleport_id).is_some());
+    assert!(hand_ids.iter().all(|id| placement(&scene, *id).is_some()));
     assert!(scene.roster_matches(&simulation.world));
-}
-
-fn load_active_visuals(
-    content: &mut pipeline::hw1::World,
-    source: &mut AssetSource<StdFileProvider>,
-    world: &sim::World,
-) {
-    let active = render::ugx::simulation_proto_names(world).collect::<Vec<_>>();
-    content.load_visuals_for(source, active.iter().copied());
 }
 
 fn spawn_named_squad(
@@ -139,18 +130,4 @@ fn configure_hostile_players(world: &mut sim::World) {
     world.get_player_mut(1).unwrap().team_id = 1;
     world.get_player_mut(2).unwrap().team_id = 2;
     world.configure_standard_team_relations();
-}
-
-fn has_placement(scene: &UnitScene, entity_id: EntityId) -> bool {
-    scene
-        .placements()
-        .iter()
-        .any(|placement| placement.entity_id() == entity_id)
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }

@@ -4,7 +4,8 @@
 
 use glam::Vec3;
 use render::ugx::{UnitScene, simulation_entity_secondary_transform};
-use sim::{EntityId, load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id};
+use render_test_support::placement;
+use sim::{spawn_squad_at, squad_prototype_id};
 
 const HUNTER: &str = "cov_inf_hunter_01";
 const SPIRIT_BOND: &str = "SpiritBond";
@@ -19,7 +20,7 @@ fn renderer_projects_the_sim_owned_hunter_bond_and_both_endpoints() {
         mut simulation,
         mut content,
         mut source,
-    } = load_installed_scenario();
+    } = test_support::installed_scenario("blood_gulch");
     let prototype = squad_prototype_id(&content.database, HUNTER)
         .expect("Hunter squad prototype from the layered scenario database");
     let squad_id = spawn_squad_at(
@@ -82,18 +83,4 @@ fn advance(simulation: &mut sim::LoadedScenario, database: &pipeline::database::
         database,
         &simulation.gameplay,
     );
-}
-
-fn placement(scene: &UnitScene, entity_id: EntityId) -> Option<&render::ugx::UnitPlacement> {
-    scene
-        .placements()
-        .iter()
-        .find(|placement| placement.entity_id() == entity_id)
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }

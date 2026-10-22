@@ -5,8 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 #[test]
 #[ignore = "requires OPENENSEMBLE_GAME_DIR pointing at Halo Wars DE"]
 fn reports_shipped_animation_motion_extraction() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point at Halo Wars DE");
+    let game_dir = test_support::game_dir();
     let mut source = pipeline::hw1::loader::load_game_dir(&game_dir);
     let visual_paths = source
         .files_per_archive()

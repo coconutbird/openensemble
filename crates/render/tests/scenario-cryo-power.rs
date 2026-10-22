@@ -4,19 +4,15 @@
 
 use glam::Vec3;
 use render::ugx::UnitScene;
-use sim::{
-    CryoPowerInvocation, EntityId, MS_PER_TICK, load_scenario_from_game_dir, power_prototype_id,
-};
+use render_test_support::placement;
+use sim::{CryoPowerInvocation, EntityId, MS_PER_TICK, power_prototype_id};
 
 /// Run with:
 /// `OPENENSEMBLE_GAME_DIR=<HaloWarsDE> cargo test -p render --test scenario-cryo-power -- --ignored`
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn cryo_bomber_and_effect_are_projected_from_authoritative_sim_objects() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    let loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and database");
+    let loaded = test_support::installed_scenario("blood_gulch");
     let sim::LoadedGameScenario {
         mut simulation,
         mut content,
@@ -50,7 +46,7 @@ fn cryo_bomber_and_effect_are_projected_from_authoritative_sim_objects() {
         &content.visuals,
         &content.database.objects,
     );
-    assert!(has_placement(&scene, bomber_id));
+    assert!(placement(&scene, bomber_id).is_some());
 
     while !simulation
         .world
@@ -85,13 +81,6 @@ fn cryo_bomber_and_effect_are_projected_from_authoritative_sim_objects() {
         &content.visuals,
         &content.database.objects,
     ));
-    assert!(has_placement(&scene, effect_id));
+    assert!(placement(&scene, effect_id).is_some());
     assert!(scene.roster_matches(&simulation.world));
-}
-
-fn has_placement(scene: &UnitScene, entity_id: EntityId) -> bool {
-    scene
-        .placements()
-        .iter()
-        .any(|placement| placement.entity_id() == entity_id)
 }

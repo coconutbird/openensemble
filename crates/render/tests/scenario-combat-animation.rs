@@ -3,10 +3,10 @@
 //! The tests need a local Halo Wars DE installation.
 
 use glam::Vec3;
-use render::ugx::{UnitScene, simulation_proto_names};
+use render::ugx::UnitScene;
+use render_test_support::load_active_visuals;
 use sim::{
-    CommandEntry, CommandExecutor, CommandPayload, WorkCommand, load_scenario_from_game_dir,
-    spawn_squad_at, squad_prototype_id,
+    CommandEntry, CommandExecutor, CommandPayload, WorkCommand, spawn_squad_at, squad_prototype_id,
 };
 
 const BRUTE_CHIEF: &str = "cov_inf_bruteChief_01";
@@ -17,10 +17,7 @@ const WARTHOG: &str = "unsc_veh_warthog_01";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn renderer_projects_the_exact_sim_selected_combat_clip() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed scenario should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let database = &loaded.content.database;
     loaded.simulation.world.get_player_mut(1).unwrap().team_id = 1;
     loaded.simulation.world.get_player_mut(2).unwrap().team_id = 2;
@@ -51,7 +48,11 @@ fn renderer_projects_the_exact_sim_selected_combat_clip() {
         .get_squad(attacker_squad)
         .unwrap()
         .unit_ids[0];
-    load_active_visuals(&mut loaded);
+    load_active_visuals(
+        &mut loaded.content,
+        &mut loaded.source,
+        &loaded.simulation.world,
+    );
     let mut scene = UnitScene::load_world_with_gameplay(
         &mut loaded.source,
         &loaded.simulation.world,
@@ -82,10 +83,7 @@ fn renderer_projects_the_exact_sim_selected_combat_clip() {
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn renderer_projects_secondary_turret_clips_on_the_retail_yaw_subtree() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point to a Halo Wars DE installation");
-    let mut loaded = load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed scenario should load");
+    let mut loaded = test_support::installed_scenario("blood_gulch");
     let database = &loaded.content.database;
     loaded.simulation.world.get_player_mut(1).unwrap().team_id = 1;
     loaded.simulation.world.get_player_mut(2).unwrap().team_id = 2;
@@ -125,7 +123,11 @@ fn renderer_projects_secondary_turret_clips_on_the_retail_yaw_subtree() {
         .actions
         .set_enabled("GrenadeLauncherAttackAction", true);
 
-    load_active_visuals(&mut loaded);
+    load_active_visuals(
+        &mut loaded.content,
+        &mut loaded.source,
+        &loaded.simulation.world,
+    );
     let mut scene = UnitScene::load_world_with_gameplay(
         &mut loaded.source,
         &loaded.simulation.world,
@@ -151,13 +153,6 @@ fn renderer_projects_secondary_turret_clips_on_the_retail_yaw_subtree() {
     let placement = find_placement(&scene, attacker_id);
     assert_ne!(placement.animation_revision(), initial_revision);
     assert!(placement.unit().has_scripted_animation());
-}
-
-fn load_active_visuals(loaded: &mut sim::LoadedGameScenario) {
-    let names = simulation_proto_names(&loaded.simulation.world).collect::<Vec<_>>();
-    loaded
-        .content
-        .load_visuals_for(&mut loaded.source, names.iter().copied());
 }
 
 fn issue_attack(

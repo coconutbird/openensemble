@@ -11,8 +11,7 @@ use render::terrain_effect::{
 #[test]
 #[ignore = "requires OPENENSEMBLE_GAME_DIR pointing at Halo Wars DE"]
 fn impact_route_asset_paths_are_enumerated() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point at Halo Wars DE");
+    let game_dir = test_support::game_dir();
     let mut source = pipeline::hw1::loader::load_game_dir(&game_dir);
     let assets = TerrainImpactAssets::load(&mut source).expect("terrain impact assets");
     println!("impact_particle_paths {:?}", assets.particle_paths());
@@ -34,8 +33,7 @@ fn impact_route_asset_paths_are_enumerated() {
 #[test]
 #[ignore = "requires OPENENSEMBLE_GAME_DIR pointing at Halo Wars DE"]
 fn all_shipped_terrain_effects_decode_with_finite_parameters() {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .expect("OPENENSEMBLE_GAME_DIR must point at Halo Wars DE");
+    let game_dir = test_support::game_dir();
     let mut source = pipeline::hw1::loader::load_game_dir(&game_dir);
     let catalog = TerrainSurfaceCatalog::load(&mut source).expect("terrain surface catalog");
     assert_eq!(catalog.len(), 21);

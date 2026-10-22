@@ -1,0 +1,14 @@
+[package]
+name = "render-test-support"
+version.workspace = true
+edition.workspace = true
+description = "Scene helpers for the renderer integration tests"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+pipeline = { workspace = true }
+render = { workspace = true }
+sim = { workspace = true }

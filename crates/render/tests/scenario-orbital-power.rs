@@ -4,12 +4,9 @@
 
 use glam::Vec3;
 use pipeline::database::hw1::Database;
-use pipeline::source::{AssetSource, StdFileProvider};
 use render::ugx::{UnitScene, simulation_entity_transform};
-use sim::{
-    EntityId, NativePowerInput, OrbitalPowerInvocation, PowerUserId, load_scenario_from_game_dir,
-    power_prototype_id,
-};
+use render_test_support::{assert_visual_loaded, load_active_visuals, placement, sync_scene};
+use sim::{EntityId, NativePowerInput, OrbitalPowerInvocation, PowerUserId, power_prototype_id};
 
 const ORBITAL_POWER: &str = "UnscLeaderOrbitalBombard";
 const TARGET_BEAM: &str = "fx_proj_maccannontargetbeam_01";
@@ -29,7 +26,7 @@ fn renderer_projects_orbital_beams_effect_and_moving_debris_from_live_sim_state(
         mut simulation,
         mut content,
         mut source,
-    } = load_installed_scenario();
+    } = test_support::installed_scenario("blood_gulch");
     remove_scenario_squads(&mut simulation.world);
     let power_id =
         power_prototype_id(&content.database, ORBITAL_POWER).expect("shipped Orbital power");
@@ -60,7 +57,7 @@ fn renderer_projects_orbital_beams_effect_and_moving_debris_from_live_sim_state(
         simulation.world.active_orbital_powers()[0].pending_shots()[0].laser_object_id();
     sync_scene(&mut scene, &mut content, &mut source, &simulation.world);
     assert_visual_loaded(&scene, shot_laser_id, TARGET_BEAM);
-    assert!(!has_placement(&scene, beam_id));
+    assert!(placement(&scene, beam_id).is_none());
 
     advance_until(&mut simulation, &content.database, 20, |world| {
         world
@@ -71,7 +68,7 @@ fn renderer_projects_orbital_beams_effect_and_moving_debris_from_live_sim_state(
     let effect_id = object_ids(&simulation.world, &[EFFECT])[0];
     sync_scene(&mut scene, &mut content, &mut source, &simulation.world);
     assert_visual_loaded(&scene, effect_id, EFFECT);
-    assert!(!has_placement(&scene, shot_laser_id));
+    assert!(placement(&scene, shot_laser_id).is_none());
 
     advance_until(&mut simulation, &content.database, 20, |world| {
         !object_ids(world, &ROCKS).is_empty()
@@ -79,7 +76,7 @@ fn renderer_projects_orbital_beams_effect_and_moving_debris_from_live_sim_state(
     let debris_ids = object_ids(&simulation.world, &ROCKS);
     assert!((13..=23).contains(&debris_ids.len()));
     sync_scene(&mut scene, &mut content, &mut source, &simulation.world);
-    assert!(debris_ids.iter().all(|id| has_placement(&scene, *id)));
+    assert!(debris_ids.iter().all(|id| placement(&scene, *id).is_some()));
     assert!(scene.roster_matches(&simulation.world));
 
     let moving_id = debris_ids[0];
@@ -101,7 +98,7 @@ fn renderer_projects_orbital_beams_effect_and_moving_debris_from_live_sim_state(
         object_ids(world, &ROCKS).is_empty()
     });
     sync_scene(&mut scene, &mut content, &mut source, &simulation.world);
-    assert!(debris_ids.iter().all(|id| !has_placement(&scene, *id)));
+    assert!(debris_ids.iter().all(|id| placement(&scene, *id).is_none()));
     assert!(scene.roster_matches(&simulation.world));
 }
 
@@ -134,26 +131,6 @@ fn advance_until(
     );
 }
 
-fn sync_scene(
-    scene: &mut UnitScene,
-    content: &mut pipeline::hw1::World,
-    source: &mut AssetSource<StdFileProvider>,
-    world: &sim::World,
-) {
-    load_active_visuals(content, source, world);
-    assert!(scene.sync_world(source, world, &content.visuals, &content.database.objects,));
-    assert!(scene.roster_matches(world));
-}
-
-fn load_active_visuals(
-    content: &mut pipeline::hw1::World,
-    source: &mut AssetSource<StdFileProvider>,
-    world: &sim::World,
-) {
-    let active = render::ugx::simulation_proto_names(world).collect::<Vec<_>>();
-    content.load_visuals_for(source, active.iter().copied());
-}
-
 fn object_ids(world: &sim::World, names: &[&str]) -> Vec<EntityId> {
     world
         .objects
@@ -165,29 +142,6 @@ fn object_ids(world: &sim::World, names: &[&str]) -> Vec<EntityId> {
         })
         .map(|(id, _)| id)
         .collect()
-}
-
-fn assert_visual_loaded(scene: &UnitScene, entity_id: EntityId, prototype: &str) {
-    assert!(
-        placement(scene, entity_id).is_some_and(|placement| placement.proto_name() == prototype),
-        "{prototype} was not projected; issues: {:?}",
-        scene
-            .issues()
-            .iter()
-            .map(|issue| (issue.proto_name(), issue.reason()))
-            .collect::<Vec<_>>()
-    );
-}
-
-fn placement(scene: &UnitScene, entity_id: EntityId) -> Option<&render::ugx::UnitPlacement> {
-    scene
-        .placements()
-        .iter()
-        .find(|placement| placement.entity_id() == entity_id)
-}
-
-fn has_placement(scene: &UnitScene, entity_id: EntityId) -> bool {
-    placement(scene, entity_id).is_some()
 }
 
 fn invocation(proto_power_id: i32) -> OrbitalPowerInvocation {
@@ -207,11 +161,4 @@ fn remove_scenario_squads(world: &mut sim::World) {
     for id in ids {
         world.remove_squad(id).unwrap();
     }
-}
-
-fn load_installed_scenario() -> sim::LoadedGameScenario {
-    let game_dir = std::env::var("OPENENSEMBLE_GAME_DIR")
-        .unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\HaloWarsDE".to_owned());
-    load_scenario_from_game_dir(&game_dir, "blood_gulch")
-        .expect("installed Blood Gulch scenario and layered database should load")
 }
