@@ -119,16 +119,18 @@ fn train_real_marine_squad(
         clock.game_time_ms.saturating_add(MS_PER_TICK),
         u64::from(player_id),
     );
+    // `BUnitActionBuilding_completeTrain` keeps the new squad inside the Barracks.
+    // `BUnitActionBuilding_updateTrainedSquadBirth` releases it on a later update, so wait
+    // for the birth before the squad takes orders.
     (0..200)
         .find_map(|_| {
             clock.tick_with_scenario(simulation, database);
-            simulation
-                .world
-                .squads
-                .iter()
-                .find_map(|(id, squad)| (squad.trained_by == Some(barracks_id)).then_some(id))
+            simulation.world.squads.iter().find_map(|(id, squad)| {
+                (squad.trained_by == Some(barracks_id) && !squad.garrison.is_garrisoned())
+                    .then_some(id)
+            })
         })
-        .expect("authoritative Barracks production should complete a Marine squad")
+        .expect("authoritative Barracks production should release a Marine squad")
 }
 
 fn assert_member_placements(scene: &UnitScene, member_ids: &[sim::EntityId]) {
