@@ -80,7 +80,7 @@ gaps are in the execution.
 | `BUnitActionCollisionAttack` | Implemented | `world/collision_attacks.rs` | |
 | `BUnitActionPointBlankAttack` | Missing | — | Used by the shipped Hawk and Hornet tactics. |
 | `BUnitActionAreaAttack`, `BUnitActionUnderAttack` | Missing | — | |
-| `BUnitActionDOT` | Missing | — | The weapon `DOTrate`, `DOTDuration` and `DOTEffect` fields are not read. |
+| `BUnitActionDOT` | Missing | — | The weapon `DOTrate`, `DOTduration` and `DOTEffect` fields are not read. |
 | `BUnitActionStasis`, `BSquadActionDaze` | Missing | — | The weapon `Stasis`, `StasisDrain`, `StasisBomb` and `Daze` fields are not read. |
 | `BUnitActionThrown` | Partial | `entities/units/thrown.rs` | Wave debris only. Weapon `ThrowUnits`, `PhysicsLaunch*` and `ApplyKnockback` are not read. |
 | `BUnitActionBuilding` | Implemented | `world/production/`, `world/research.rs`, `world/construction.rs` | See `production.md` and `research.md`. |
@@ -128,9 +128,9 @@ gaps are in the execution.
 | `BSquadActionGarrison`, `BSquadActionUngarrison` | Implemented | `entities/squads/garrison.rs` | |
 | `BSquadActionHitch`, `BSquadActionUnhitch` | Implemented | `world/hitch.rs` | |
 | `BSquadActionTransport` | Partial | `world/transports.rs`, `world/powers/transport.rs` | Trigger and power transports. The Work `Transport` order is not executed. |
-| `BSquadActionRepair`, `BSquadActionRepairUnit` | Partial | `world/repair.rs` | Powers and triggers use the repair code. The Repair command is not executed. |
 | `BSquadActionRepairOther` | Implemented | `world/repair/other.rs` | |
 | `BSquadActionReinforce` | Missing | — | |
+| `BSquadActionRepair`, `BSquadActionRepairUnit` | Partial | `world/repair.rs` | `Heal`, `RepairOther` and the Repair and Rage powers use the repair code. The Repair command is not executed. |
 | `BSquadActionChangeMode` | Implemented | `world/change_mode.rs` | |
 | `BSquadActionCloak` | Implemented | `world/cloak.rs` | |
 | `BSquadActionCloakDetect` | Partial | `world/cloak.rs` | Detection event only. No detector action. |

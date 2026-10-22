@@ -97,16 +97,28 @@ cargo test -p sim --test scenario-asset-loading -- --ignored
 cargo test -p sim --test scenario-starting-technologies -- --ignored
 ```
 
-## Deliberate next boundaries
+## Unique technologies
 
-This slice implements normal player-global research, the direct
-civilization/leader bootstrap, and technology-dependent Shadow activation.
-Remaining retail work includes per-unit `UniqueProtoUnitInstance` technology
-state, rechecking type-count-only Shadow dependencies whenever unit counts
-change, cooperative per-player
-research slots, quick-build and AI work-rate modifiers, repeated `Perpetual`
-effects, research sound/events, research savegame compatibility, and the
-remaining non-research `BBuildingCommand` subtypes such as construction. Unit
-and squad training now share this worker; see `production.md`. Unique and
-manual Shadow research are explicitly rejected until their correct ownership
-semantics exist.
+`UniqueProtoUnitInstance` technologies keep their state on each building, not on
+the player. `entities/units/unique_technologies.rs` holds the per-instance
+state, and `World::building_technology_status` reports it. A building can
+research only one unique technology in its shared worker at a time
+(`ResearchError::UniqueResearchInProgress`). The opt-in
+`scenario-unique-research` test checks that the shipped Blood Gulch base upgrade
+transforms only its own building.
+
+## Known gaps
+
+- Manual research of a `Shadow` technology is rejected
+  (`ResearchError::ShadowTechnologyUnsupported`). Only the tech tree activates
+  shadow technologies.
+- Shadow technologies that depend only on unit type counts are not rechecked
+  when unit counts change.
+- A `Perpetual` technology can be researched again, but
+  `World::activate_technology` returns early for an active technology. The
+  effects therefore do not apply a second time.
+- Co-op per-player research slots are missing. Only type-count prerequisites
+  for buildings add the co-op partner's count.
+- QuickBuild and AI work-rate modifiers, research sounds and events, and
+  research savegame compatibility are missing.
+- Unit and squad training share the same worker; see `production.md`.

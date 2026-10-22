@@ -55,13 +55,19 @@ or timing decision is made in the renderer.
   executes the authored 87→5 trigger link, spawns a database-backed Marine
   squad, and verifies complete source-pad-to-destination traversal.
 
-## Remaining parity work
+## Known gaps
 
-- Replace the deterministic first retail-style exit candidate with the complete
-  terrain/obstruction-aware `findInstantiatePositions` search and growth loop.
-- Reproduce per-unit entry/exit animations, containment reservation timing,
-  notification events, and the retail ungarrison cooldown.
-- Implement ordinary transports, partial per-unit containment, attachments,
-  reverse hot-drop flows, and non-teleporter HotDrop presentation objects.
-- Route teleporter beam, sound, alert, and selection changes to read-only
-  presentation adapters.
+- The exit position is the first retail-style candidate. The complete
+  terrain- and obstruction-aware `findInstantiatePositions` search is missing.
+- Per-unit entry and exit animations, containment reservation timing,
+  notification events, and the retail ungarrison cooldown are missing.
+- The Work `Transport` order and the Building `UnloadUnits` command are not
+  executed. Trigger transports (`world/transports.rs`) and the Transport power
+  (`world/powers/transport.rs`) do work.
+- Reverse hot drop (`BuildingCommandType::ReverseHotDrop` and
+  `GameCommandType::ReverseHotDrop`) is not executed. `BUnitActionHotDrop`
+  runs only as teleporter traversal.
+- Partial per-unit containment and non-teleporter HotDrop presentation objects
+  are missing.
+- Teleporter beams, sounds, alerts, and selection changes have no presentation
+  adapter.

@@ -8,10 +8,9 @@ progress from the live world; it does not calculate capture work or ownership.
 
 ## Recovered retail contract
 
-The implementation was recovered from the named 2008
-`unitactioncapture.cpp`, `squadactioncapture.cpp`, `unit.cpp`, `squad.cpp`,
-`tactic.cpp`, and database sources. No additional IDA functions were inspected
-for this slice, so there are no new inspected functions requiring names.
+The implementation follows the named 2008 `unitactioncapture.cpp`,
+`squadactioncapture.cpp`, `unit.cpp`, `squad.cpp`, `tactic.cpp`, and database
+sources.
 
 - Unit actions progress through moving, working, done, and failed states.
 - Range uses horizontal obstruction-surface distance. An explicit order range
@@ -82,9 +81,10 @@ cargo test -p sim --test scenario-capture -- --ignored
 ## Deliberate parity boundaries
 
 - Retail multiplies capture work by 30 while the session QuickBuild flag is
-  active. The simulation does not yet model that session flag, so it cannot
-  apply this branch without inventing duplicate state.
+  active. The sim does not execute the `QuickBuild` game command, so it does
+  not apply this branch.
+- The `ChangeOwner` tactic action (`BUnitActionChangeOwner`) is missing.
+  The Covenant supply depots and `rsrc_power_capturepoint_01` use it.
 - Capture animation-controller ownership, sounds, localized notifications, AI
-  target selection, and retail path-obstruction-manager details remain
-  presentation or future systems. They do not have parallel renderer-side game
-  logic.
+  target selection, and the retail pather and obstruction manager are not
+  implemented. See `simulation-coverage.md`.

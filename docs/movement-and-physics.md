@@ -30,8 +30,8 @@ in the scenario participates in the pipeline's last-loaded-wins resolution.
 The sim then resolves supported vehicle physics through that same layered
 source. A scenario-local `.physics`, `.blueprint`, or `.shp` therefore changes
 the authoritative spawn configuration rather than only presentation data. The
-renderer no longer expands SCN objects or owns a second movement transform; it
-only presents entity state owned by `sim::World`.
+renderer does not expand SCN objects or own a movement transform. It only
+presents entity state owned by `sim::World`.
 
 Player starts are assigned deterministically in SCN order. When leader data is
 available, the sim materializes the leader starting unit's completed
@@ -127,7 +127,7 @@ profiles are copied into the world's checksummed prototype catalog before any
 scenario objects spawn, so later training, trigger creation, and protection
 systems receive the same body as initial placements.
 
-Ghosts now instantiate that body through `entities/units/vehicle.rs`. Their
+Ghosts instantiate that body through `entities/units/vehicle.rs`. Their
 zero-speed response uses the `cFwdK = 2.5` proportional term in the named
 recovered `BPhysicsGhostAction::calcMovement` source; contacts remain owned by
 the deterministic sim physics loop. The stock Warthog continues through its
@@ -164,13 +164,12 @@ ID, flock velocity, position, and offset.
 
 Marine formation offsets are stored squad-local and rotated by the squad's live
 facing. The stock database declares `Flock` but does not provide stable authored
-random offsets, so the MVP uses a deterministic centered 2-by-2 seed for its
+random offsets, so the sim uses a deterministic centered 2-by-2 seed for its
 four Marines. That seed is an implementation choice, not a recovered vanilla
 constant.
 
-Non-physics members no longer inherit a teleported copy of the squad transform.
-Each member owns checksummed `BUnitActionMove`-style phase, interim target,
-action velocity, and retry state. For a Move4 squad order, the sim follows
+Each non-physics member owns checksummed `BUnitActionMove`-style phase, interim
+target, action velocity, and retry state. For a Move4 squad order, the sim follows
 `BSquad::getChildInterimTarget_4`: it transforms the member's formation offset
 at the current squad waypoint and orients that offset along the path. Members
 inherit the squad action's accelerated velocity while it is working, then use
@@ -185,12 +184,22 @@ scenario terrain for the moving squad center and each independently moving
 member. This prevents elevation differences from leaving ground squads circling
 a target they can never reach.
 
-The remaining generic-movement boundary is the retail multi-level pather and
-obstruction-manager response: reduced paths, dynamic repathing, wait ownership,
-unit-to-unit avoidance, formation reassignment, and movement-animation
-controller transitions are not yet complete. Renderer movement remains a
-read-only projection of each unit's sim-owned action and transform.
-
 The complete inspected function set, including Warthog physics and air-move
 comparison functions, is renamed and repeatably commented in the saved IDA
 database beside `xgameFinal.exe`.
+
+## Known gaps
+
+- The sim has no pather. `Squad::update_movement_with_speed_limit` in
+  `entities/squads.rs` steers each squad in a straight line to its current
+  waypoint. Retail requests and refreshes multi-level paths in
+  `BUnitActionMove_requestPath` and `BUnitActionMove_refreshPath`.
+- The sim has no obstruction manager. Obstructions are circles and boxes in
+  `physics.rs`. Dynamic repathing, wait ownership, and unit-to-unit avoidance
+  are not implemented.
+- Formation reassignment, formation priorities, and movement-animation
+  controller transitions are not implemented.
+- Renderer movement is a read-only projection of each unit's sim-owned action
+  and transform.
+
+See `simulation-coverage.md` for the full list of engine systems.

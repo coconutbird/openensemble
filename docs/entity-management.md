@@ -5,7 +5,7 @@ Definitive Edition `xgameFinal.exe` IDA database. The names below are
 analyst-assigned names backed by decompilation, call sites, pool geometry, and
 save/load ordering; they are not original debug symbols.
 
-## Vanilla contract used by the MVP
+## Vanilla contract
 
 - `BEntityID` is packed as `class:4 | generation:12 | pool index:16`.
 - Destroying an entity increments the slot generation before reuse. Lookups
@@ -25,7 +25,7 @@ save/load ordering; they are not original debug symbols.
   serialized entity order is Units, Squads, Projectiles, Armies, Platoons,
   Dopples, Objects, then AirSpots.
 - Observed allocation sizes include 1,120 bytes per `BUnit` and 752 bytes per
-  `BSquad`. The Rust MVP models behavior rather than reproducing those in-memory
+  `BSquad`. The Rust code models behavior and does not copy those in-memory
   layouts.
 
 ## Renamed functions
@@ -81,7 +81,7 @@ save/load ordering; they are not original debug symbols.
 | `0x1405D47E0` | `BWorld_writeSavegame` | Serializes typed entity pools in deterministic class order. |
 | `0x1405D8530` | `BWorld_readSavegame` | Restores pool high-water marks, explicit IDs, and entity records. |
 
-## Rust MVP correspondence
+## Rust correspondence
 
 | Vanilla behavior | Rust implementation |
 | --- | --- |
@@ -107,10 +107,10 @@ save/load ordering; they are not original debug symbols.
 | Ground/vehicle integration, layered prototype bodies, and obstruction contacts | `physics.rs`, `gameplay/vehicle_physics.rs`, and `entities/units/vehicle.rs` |
 | Deterministic state comparison | `world/checksum.rs`: unit/squad/projectile/base state |
 
-Class-0 visual, icon, and control objects now use their own generational pool.
-Dopples, platoons, armies, AirSpots, and full binary savegame compatibility
-remain separate parity slices that can be added without changing the packed-ID
-contract.
+Class-0 visual, icon, and control objects use their own generational pool.
+`EntityClass` reserves the Dopple, Platoon, and Army classes, but the sim has no
+dopples, platoons, armies, or AirSpot pool. Binary savegame compatibility is
+also missing. See `simulation-coverage.md`.
 
 Unit-specific state remains under `entities/units/`, squad-specific state under
 `entities/squads/`, and orchestration under focused `world/` modules. A spawned
@@ -187,7 +187,7 @@ delayed activation and increasing pulse cadence, and the field's 2.5-second
 death state. Active fields reject disruptable powers with retail's strict
 planar-radius test even for `NO_COST` commands; `<NotDisruptable>` powers bypass
 the test. `InvokePower2` dispatches from the scenario-layered `PowerType`, so
-Cryo and Disruption no longer require command-specific routing in the renderer
+Cryo and Disruption do not need command-specific routing in the renderer
 or executor.
 
 Native Repair uses the same scenario-layered dispatch. The power owns a
@@ -203,7 +203,7 @@ shared attachment state without any renderer-owned gameplay path. Offset
 attachments retain their sim-owned parent-local transform as leaders move and
 turn.
 
-That live flag now selects `ShatterDeathReplacement` for the two shipped Flood
+That live flag selects `ShatterDeathReplacement` for the two shipped Flood
 prototypes. The source changes to its shatter target under the same entity ID,
 but—unlike a static death replacement—continues through normal death actions,
 desquadding, and cleanup. A frozen flag is captured across deferred cleanup so

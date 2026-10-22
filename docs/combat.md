@@ -45,73 +45,19 @@ commented in the saved `xgameFinal.exe.i64` database.
 | `0x1405C6CA0` | `BWorld_createProjectile` | Allocates and initializes a class-4 projectile. |
 | `0x1405C7CC0` | `BWorld_getEntity` | Resolves a generational entity ID across typed pools. |
 
-Recovered source corroboration comes from `unitactionrangedattack.cpp`,
-`damagehelper.cpp`, `projectile.cpp`, `movementhelper.cpp`, `world.cpp`,
-`TerrainSimRep.cpp`, `tactic.cpp`, `protovisual.cpp`, and `visualitem.cpp`, plus
-`unit.cpp`, `unitactionshieldregen.cpp`, `squadactionshieldregen.cpp`,
-`techeffect.cpp`, `actionmanager.cpp`, `unitactionbubbleshield.cpp`, and
-`unitactionplasmashieldgen.cpp`, `unitactionjoin.cpp`, `tactic.cpp`,
-`unitactiondodge.cpp`, `unitactiondeflect.cpp`, `protosquad.cpp`, and
-`squad.cpp` in the recovered Halo Wars source tree. The
-Join work used those recovered named sources; it did not inspect additional IDA
-functions beyond the renamed functions listed above. Veterancy and XP recovery
-likewise used the named `squad.cpp`, `unit.cpp`, `protosquad.cpp`,
-`squadactionattack.cpp`, and `triggereffect.cpp` sources, so this work introduced
-no additional inspected IDA functions requiring a rename. Ammunition recovery
-used the already-named `unit.cpp`, `squad.cpp`, `techeffect.cpp`,
-`triggercondition.cpp`, and `triggereffect.cpp` sources together with
-`unitactionammoregen.cpp` and `unitactionrangedattack.cpp`; it likewise did not
-inspect additional IDA functions. Mines reconstruction used the already-named
-`unitactionmines.cpp`, `unit.cpp`, `squad.cpp`, `tactic.cpp`, and `ability.cpp`
-sources and likewise introduced no additional IDA functions requiring rename.
-Hand-attack reconstruction used the named `database.cpp`, `tactic.cpp`,
-`action.cpp`, `squad.cpp`, `opportunity.cpp`, and
-`unitactionrangedattack.cpp` sources and likewise introduced no additional IDA
-functions requiring rename.
-Charge reconstruction used the named `unitactionchargedrangedattack.cpp`,
-`unitactionrangedattack.cpp`, `unitactionjump.cpp`, `squadactionjump.cpp`,
-`damagehelper.cpp`, `squad.cpp`, and `tactic.cpp` sources. It introduced no
-additional inspected IDA functions requiring a rename.
-Tactic-state reconstruction used the named `unit.cpp`, `tactic.cpp`,
-`unitactionrangedattack.cpp`, and `UnitActionCollisionAttack.cpp` sources and
-likewise introduced no additional IDA functions requiring rename.
-Minimum-range reconstruction used the named `tactic.cpp`, `squad.cpp`,
-`squadactionattack.cpp`, `squadactionmove.cpp`, `opportunity.cpp`, and
-`user.cpp` sources and likewise introduced no additional IDA functions
-requiring rename.
-Ammunition-depletion control reconstruction used the named `tactic.cpp`,
-`unit.cpp`, `unitactionrangedattack.cpp`, and `squadactionattack.cpp` sources
-and likewise introduced no additional inspected IDA functions requiring a
-rename.
-Detonate reconstruction used the named `squadactiondetonate.cpp`,
-`unitactiondetonate.cpp`, `unit.cpp`, `squad.cpp`, `tactic.cpp`, and
-`damagehelper.cpp` sources and likewise introduced no additional IDA functions
-requiring rename.
-Persistent Dodge/Deflect reconstruction used the already-named
-`unitactiondodge.cpp`, `unitactiondeflect.cpp`, `projectile.cpp`, `unit.cpp`,
-and `tactic.cpp` sources and likewise introduced no additional IDA functions
-requiring rename.
-Hunter SpiritBond reconstruction used the named
-`squadactionspiritbond.cpp`/`.h`, `squad.cpp`, `unit.cpp`, and `tactic.cpp`
-sources and likewise introduced no additional IDA functions requiring rename.
-Arbiter ReflectDamage reconstruction used the named
-`squadactionreflectdamage.cpp`/`.h`, `damagehelper.cpp`, `unit.cpp`,
-`techeffect.cpp`, and `tactic.cpp` sources and likewise introduced no additional
-IDA functions requiring rename.
-Cloak reconstruction used the named `squadactioncloak.cpp`/`.h`,
-`squadactioncloakdetect.cpp`/`.h`, `squad.cpp`, `unit.cpp`, `tactic.cpp`, and
-modifier sources and likewise introduced no additional IDA functions requiring
-rename.
-Flood Wander reconstruction used the named `squadactionwander.cpp`/`.h`,
-`simhelper.cpp`, `squad.cpp`, `unitquery.cpp`, and `tactic.cpp` sources and
-likewise introduced no additional IDA functions requiring rename.
-Ambient-life reconstruction used the named `squadactionambientlife.cpp`/`.h`,
-`unitactionambientlifespawner.cpp`/`.h`, `database.cpp`, `squad.cpp`,
-`simhelper.cpp`, `tactic.cpp`, and `unitquery.cpp` sources and likewise
-introduced no additional IDA functions requiring rename.
-Capture reconstruction used the named `unitactioncapture.cpp`,
-`squadactioncapture.cpp`, `unit.cpp`, `squad.cpp`, `tactic.cpp`, and database
-sources and likewise introduced no additional IDA functions requiring rename.
+The recovered 2008 Halo Wars source tree corroborates these functions. The
+mechanics below also follow the named source files for each action, for
+example `unitactionrangedattack.cpp`, `damagehelper.cpp`, `projectile.cpp`,
+`unitactionshieldregen.cpp`, `squadactionshieldregen.cpp`, `unitactionjoin.cpp`,
+`unitactionammoregen.cpp`, `unitactionmines.cpp`,
+`unitactionchargedrangedattack.cpp`, `UnitActionCollisionAttack.cpp`,
+`squadactiondetonate.cpp`, `unitactiondetonate.cpp`, `unitactiondodge.cpp`,
+`unitactiondeflect.cpp`, `squadactionspiritbond.cpp`,
+`squadactionreflectdamage.cpp`, `squadactioncloak.cpp`,
+`squadactioncloakdetect.cpp`, `squadactionwander.cpp`,
+`squadactionambientlife.cpp`, `unitactionambientlifespawner.cpp`,
+`unitactionbubbleshield.cpp`, `unitactionplasmashieldgen.cpp`, `squad.cpp`,
+`unit.cpp`, `tactic.cpp`, and `techeffect.cpp`.
 
 ## Implemented retail contracts
 
@@ -239,7 +185,7 @@ sources and likewise introduced no additional IDA functions requiring rename.
   fails if any unit failed, and starts Attack recovery only after successful
   ability participants. Position and independent turret timelines consume the
   same terminal result without inventing a second ammunition state machine.
-- Work command order 16 now drives retail's latent Mines action. Generic
+- Work command order 16 drives retail's latent Mines action. Generic
   `Command` resolves through the source object's `AbilityCommand`; the concrete
   ability supplies its first mine object and per-placement `AmmoCost`, while
   authored tactic-rule selection supplies `ActionType=Mines` and `WorkRange`.
@@ -255,10 +201,10 @@ sources and likewise introduced no additional IDA functions requiring rename.
   scenario-layered prototype, acting player, terrain height, and ordinary
   class-1 unit pool. They therefore participate in ownership, lifecycle,
   checksums, and renderer roster projection without any UI-side game logic.
-  The fixed-step scenario update now receives both the layered database and
+  The fixed-step scenario update receives both the layered database and
   gameplay catalog so actions that create prototype-backed entities cannot
   accidentally consult a different data source.
-- Work command order 12 now drives retail's targeted squad Detonate action.
+- Work command order 12 drives retail's targeted squad Detonate action.
   Because the shipped Suicide Grunt tactic has no target-rule block, the
   selector scans authored `Detonate` actions in order while still applying
   tactic-state membership, `StartDisabled`, player `ActionEnable` technology,
@@ -290,7 +236,7 @@ sources and likewise introduced no additional IDA functions requiring rename.
   immediately, retain attacker-team attribution, run the authored Detonate
   timer, apply `DetonateThrow`, and remain renderer-visible until their
   authoritative physics cleanup completes.
-- Scenario-layered `CollisionAttack` actions now drive vehicle Ram entirely in
+- Scenario-layered `CollisionAttack` actions drive vehicle Ram entirely in
   the simulation. An authored ability mode enters `HitAndRun`, initializes each
   rammer's juice from its live ammunition maximum, and pursues to physical
   contact instead of firing the tactic's companion ranged action. Contact
@@ -313,7 +259,7 @@ sources and likewise introduced no additional IDA functions requiring rename.
   `.shp` records. Material, box half extents, and center offset are retained in
   the checksummed world prototype catalog before initial placements and future
   spawns. Ghosts use the loaded body and the named recovered controller's 2.5
-  forward response, so their RamState now leads to real sim-owned contacts.
+  forward response, so their RamState leads to real sim-owned contacts.
 - Squad and standalone attack orders retain generational entity targets,
   canonicalize clicked squad members to their parent squad, chase to authored
   range, and deterministically select a live concrete member when firing. Both
@@ -345,7 +291,7 @@ sources and likewise introduced no additional IDA functions requiring rename.
   five units. After movement and before collision, low projectiles are raised to
   that clearance while they remain outside retail's speed/turn-rate approach
   distance. Flying targets and the final approach skip the correction.
-- `ExplodeOnTimer` and `ExpireOnTimer` projectiles now keep their authored
+- `ExplodeOnTimer` and `ExpireOnTimer` projectiles keep their authored
   lifespan after collision instead of being treated as ordinary impacts.
   Sticky unit hits retain a sim-local position/direction and follow the unit;
   terrain hits enter a fixed rest state. Plasma-grenade-style timer explosions
@@ -353,7 +299,7 @@ sources and likewise introduced no additional IDA functions requiring rename.
   initial unit hit once and disappear later without another damage event. The
   motion state, attachment target, and local transform are checksummed, and the
   renderer continues to consume only the resulting projectile transform.
-- Ordinary ranged attacks now launch from and aim at retail's synchronized
+- Ordinary ranged attacks launch from and aim at retail's synchronized
   simulation-bounding-box centers. Ground objects add their scenario-layered
   Y obstruction radius to the entity origin; flying objects retain their
   origin. Tracking retains that center offset as the target moves, projectile
@@ -387,7 +333,7 @@ sources and likewise introduced no additional IDA functions requiring rename.
   may escape, while `_WallShield` and `_BaseShield` retain the retail exception
   that catches such shots. External-shield impacts preserve the projectile's
   post-step position rather than applying ordinary 0.01-unit penetration.
-- XSD height queries now reproduce retail's bilinear `getHeightRaycast`
+- XSD height queries reproduce retail's bilinear `getHeightRaycast`
   interpolation. Projectile terrain checks preserve the short-segment
   8-unit/0.25-height early-outs, intersect the two authored triangles in each
   crossed height tile, and place ground zero 0.25 units above the surface.
@@ -529,7 +475,7 @@ sources and likewise introduced no additional IDA functions requiring rename.
   authored `ShieldType` subshield squads; those proxies relay through the main
   shield and mirror its shield percentage. All generated squads and lifecycle
   timers are ordinary checksummed sim state.
-- Work command order 9 now drives persistent Follow joins. The scenario-layered
+- Work command order 9 drives persistent Follow joins. The scenario-layered
   monitor tactic supplies its work range and `BubbleShield` action, while raw
   layered `ShieldBubbleTypes` data selects the default or target-specific
   shield squad. Once in range, the sim makes the monitor unselectable and
@@ -568,7 +514,7 @@ sources and likewise introduced no additional IDA functions requiring rename.
   `ProtoObject` is created as an attached class-zero sim entity and removed by
   normal target/Join cleanup. Omitted `ObjectClass` uses retail's class-zero
   `Object` default, which is required by the shipped `fx_hijacked` prototype.
-- Scenario-layered object veterancy entries now build each proto squad's retail
+- Scenario-layered object veterancy entries build each proto squad's retail
   level thresholds by summing member XP times authored count. Squads retain
   checksummed committed XP, attack-action XP bank, and earned level. Thresholds
   use retail's strict `XP > required` comparison, and each earned level applies
@@ -639,33 +585,48 @@ sources and likewise introduced no additional IDA functions requiring rename.
   refreshes that transform by entity ID. The renderer contains no duplicate
   movement, targeting, firing, damage, Join, or attachment lifecycle logic.
 
-## Deliberate next boundaries
+## Known gaps
 
-This is the deterministic baseline, not a claim of complete combat parity.
-Remaining retail systems include unsupported technology effect families,
-collision-attack evade opportunities and the full
-thrown-unit/leash action, non-attack recovery start events, tactic-state transitions for
-  action families other than CollisionAttack and Detonate, remaining garrison
-  and melee-
-attacker predicates, visual bone/animation hardpoint overrides, targeted hit-
-zone offsets and oriented hit-zone/visual-mesh projectile intersection, hit-
-zone shields, broader runtime `Unhittable` and invulnerability controls,
-destructible non-unit AOE recipients, sticky visual-mesh/bone intersections,
-exact evade/block animation opportunities, leash-biased Dodge selection, and
-Deflect visual prototype swaps,
-timer damage reapplication, non-SpiritBond beam/needler behaviors, hero death/
-  revival presentation, death effects, Detonate's forearm projectile/scream and
-  detonated animation presentation, and its BaseShield target remap,
-  HandAttack-specific infection, pickup,
-throw, knockback, and fatality side effects, and ranged-action savegame
-compatibility.
-Join boundaries still include manual Board disconnect and fatality animation/
-controller presentation. Veterancy presentation effects remain to be
-reconstructed. The Mines object activation/detonation behavior and retail's
-full pather/LOS placement suggestion remain separate slices; the implemented
-placement action currently uses authoritative playable bounds, terrain height,
-and obstruction boxes. Non-shipped projectile-backed `PullUnits` impacts remain
-a separate reconstruction boundary; the shipped Brute Chief pull is instant.
+This is a deterministic baseline, not complete combat parity. These retail
+features are missing:
+
+- Actions: `PointBlankAttack` (shipped Hawk and Hornet), `AreaAttack`,
+  `UnderAttack`, and the full thrown-unit and leash action. `BUnitActionThrown`
+  runs only for Wave debris (`entities/units/thrown.rs`).
+- Weapon effect families: damage over time (`DOTrate`, `DOTduration`,
+  `DOTEffect`, `BUnitActionDOT`), `Stasis`, `StasisDrain`, `StasisBomb`,
+  `Daze` (`BSquadActionDaze`), `ThrowUnits`, `PhysicsLaunch*`,
+  `ApplyKnockback`, `CausePhysicsExplosion`, `Bounces`, and `AirBurst`. The
+  `database` crate parses these fields, but `sim` does not read them.
+- Unsupported technology effect families and non-attack recovery start events.
+- Tactic-state transitions for action families other than CollisionAttack and
+  Detonate.
+- Collision-attack evade opportunities, exact evade and block animation
+  opportunities, leash-biased Dodge selection, and Deflect visual prototype
+  swaps.
+- Remaining garrison and melee-attacker predicates.
+- Visual bone and animation hardpoint overrides, targeted hit-zone offsets,
+  oriented hit-zone and visual-mesh projectile intersection, hit-zone shields,
+  and sticky visual-mesh and bone intersections.
+- Broader runtime `Unhittable` and invulnerability controls, and destructible
+  non-unit AOE recipients.
+- Timer damage reapplication and beam or needler behaviors other than
+  SpiritBond.
+- Hero death and revival presentation, death effects, and fatalities
+  (`fatalityData.xml`).
+- Detonate's forearm projectile, scream, detonated animation, and BaseShield
+  target remap.
+- HandAttack infection, pickup, throw, and knockback side effects.
+- Manual Board disconnect and Join fatality presentation.
+- Veterancy presentation effects.
+- Mines object activation and detonation. The placement action uses playable
+  bounds, terrain height, and obstruction boxes instead of the retail pather
+  and LOS placement suggestion.
+- Projectile-backed `PullUnits` impacts. No shipped data uses them; the
+  shipped Brute Chief pull is instant.
+- Ranged-action savegame compatibility.
+
+See `simulation-coverage.md` for the gaps in other systems.
 
 ## Installed-data validation
 
@@ -708,7 +669,7 @@ The opt-in `scenario-ambient-life` regression uses the same normal scenario
 loader and verifies the compiled bird tactic's persistent `AmbientLife` action
 plus all eight layered `AL*` behavior values. It spawns the shipped bird squad
 and proves that the persistent controller connects to authoritative sim state.
-The broader `scenario-persistent-actions` inventory now checks this family as
+The broader `scenario-persistent-actions` inventory also checks this family as
 well. The separate `scenario-ambient-life-spawner` regression resolves the
 installed compiled tree-spawner tactic and layered global settings, runtime-
 spawns its class-zero owner beside a real Marine squad, and proves it creates
@@ -886,7 +847,7 @@ mine-named ability object. Mines is therefore retained as a recovered latent
 engine contract with synthetic execution coverage rather than being presented
 as behavior exercised by shipped scenario data.
 
-The same installed-data test now also spawns a shipped Barracks, issues the
+The `scenario-asset-loading` test also spawns a shipped Barracks, issues the
 retail building command for the first Marine upgrade, verifies its authored
 resource cost and research duration, and observes activation through the
 authoritative simulation. See `docs/research.md` for the recovered production

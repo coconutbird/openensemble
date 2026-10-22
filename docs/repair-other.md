@@ -36,4 +36,6 @@ general-purpose systems; they do not require renderer-side game logic.
 
 ## Source basis
 
-Behavior was recovered from the named 2008 source files `squadactionrepairother.cpp`, `opportunity.cpp`, `squad.cpp`, and the tactic/action definitions. No additional IDA functions were inspected for this slice.
+Behavior was recovered from the named 2008 source files `squadactionrepairother.cpp`, `opportunity.cpp`, `squad.cpp`, and the tactic/action definitions.
+
+The self-repair `Repair` work order and the `Repair` game command are not executed. `world/repair.rs` holds the shared repair code that `Heal`, `RepairOther`, and the Repair and Rage powers use. See `simulation-coverage.md`.

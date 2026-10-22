@@ -27,3 +27,9 @@ Monitor profiles, spawns a Medic from that same layered database, and executes i
 The implementation follows the named 2008 source in `unitactionheal.cpp`, `squadactionattack.cpp`,
 and `squad.cpp`. The animation opportunity is represented by the authoritative `Working` phase;
 generic retail opportunity arbitration and exact animation selection remain future infrastructure.
+
+## Known gaps
+
+- The `AoeHeal` action (`BUnitActionAoeHeal`) is missing. The shipped `hook_buff_healing_01`
+  tactic uses it.
+- See `simulation-coverage.md` for the other engine actions.

@@ -213,7 +213,7 @@ A separate installed Blood Gulch regression verifies the real Air Pad and
 Heavy Factory persistent profiles plus both civilization-specific landing-pad
 layouts from the scenario-layered database and tactics.
 
-## Deliberate parity boundaries
+## Known gaps
 
 - Birth obstruction currently uses the sim's circle/AABB representation and a
   deterministic perimeter search, not retail's complete obstruction manager,
@@ -223,12 +223,12 @@ layouts from the scenario-layered database and tactics.
   Construction uses authored socket types, child offsets/rotations, and target
   build offsets/rotations, but visual attach-bone transforms remain an
   asset-integration boundary.
-- Air-traffic-control state now owns pad allocation and trained-aircraft birth
-  placement, but the remaining `MoveAir` return-to-base, ammunition reload,
-  launch, and full flight-controller state machine is still future work. A
-  ninth simultaneous request is rejected by the controller; the current birth
-  path retains its already-computed generic placement as a safe fallback for
-  malformed content that exceeds the shipped eight-aircraft contract.
+- Air-traffic-control state owns pad allocation and trained-aircraft birth
+  placement. `MoveAir` holds the pad, refills ammunition while parked, and
+  launches on request (see `aircraft-avoidance.md`). A ninth simultaneous
+  request is rejected by the controller; the birth path then keeps its generic
+  placement as a safe fallback for content that exceeds the shipped
+  eight-aircraft contract.
 - Linked gather-resource reservations, co-op player production lanes, the
   synchronized QuickBuild command, and retail AI selection of work-rate scalars
   are deferred. The authoritative worker already consumes each building's
@@ -244,8 +244,9 @@ layouts from the scenario-layered database and tactics.
   color propagation remain explicit follow-up work. Bone-handle attachment
   projection and retail's shared settlement/base child-reference fan-out also
   remain outside the current child-object slice.
-- Scenario and lobby initialization activate civilization and leader
-  technologies in retail order before normal starting-force placement.
-  Eligible root and technology-dependent Shadow techs cascade in database
-  order. Rechecking shadows solely in response to later unit-count changes
-  remains future work.
+- Shadow technologies that depend only on unit counts are not rechecked when
+  unit counts change. See `research.md`.
+- `CommandExecutor::execute_building` ignores the `UnloadUnits`, `Reinforce`,
+  `Ability`, `Kill`, `CancelKill`, `Tribute`, `Power`, `TrainLock`,
+  `TrainUnlock`, `RallyPoint`, `DestroyBase`, `CancelDestroyBase`, and
+  `ReverseHotDrop` building commands. See `simulation-coverage.md`.

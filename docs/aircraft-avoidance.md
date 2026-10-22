@@ -133,8 +133,13 @@ commented out, and its
 Extend/Dip/Climb/KamikazeDive and roll/Immelman branches have no live caller or state assignment;
 they are documented dormant code, not retail behavior to invent in the sim.
 
+The `PointBlankAttack` action (`BUnitActionPointBlankAttack`) of the shipped Hawk and Hornet
+tactics is missing. The `AirStrike` squad action is also missing, but no shipped tactic uses it.
+See `simulation-coverage.md`.
+
 Behavior was recovered from the named 2008 source in `unit.cpp`, `unitactionmoveair.cpp`,
 `unitactionavoidcollisionair.cpp`, `physicshoverflightaction.cpp`, `object.cpp`, `protoobject.cpp`,
 `unitactionairtrafficcontrol.cpp`, `unitactionbuilding.cpp`, `powerwave.cpp`,
 `unitactionrepairother.cpp`, `powercleansing.cpp`, and `powermanager.cpp`, plus the scenario-layered
-shipped data. No additional IDA functions were inspected for this slice.
+shipped data. The retail `MoveAir` functions are named in IDA as `BUnitActionMoveAir_*`
+(`0x140542e80` to `0x140544c60`).
