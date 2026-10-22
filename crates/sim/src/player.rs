@@ -274,6 +274,12 @@ pub struct Player {
     pub civ_id: CivId,
     /// Leader ID.
     pub leader_id: LeaderId,
+    /// Index into the `playercolors.xml` colour set (retail `mColorIndex`, `BPlayer + 0x2A8`).
+    ///
+    /// The scenario player setup sets it. The value is the low byte of the retail index, so
+    /// the retail index `-1` is `255`. `BPlayer_ctor` @ `0x1402ED960` sets `-1`, so Gaia and
+    /// the game-mode NPC player keep `255`.
+    pub color: u8,
     /// Player state.
     pub state: PlayerState,
     /// Player type (human, AI, NPC).
@@ -324,6 +330,7 @@ impl Player {
             coop_player_id: None,
             civ_id: -1,
             leader_id: -1,
+            color: u8::MAX,
             state: PlayerState::Playing,
             player_type: PlayerType::Human,
             difficulty: DEFAULT_PLAYER_DIFFICULTY,

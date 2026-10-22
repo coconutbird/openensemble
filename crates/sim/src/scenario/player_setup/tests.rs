@@ -1,6 +1,7 @@
 use pipeline::database::hw1::gamedata::{ResourceDef, ResourcesWrapper};
 use pipeline::database::hw1::leaders::ResourceEntry;
-use pipeline::database::hw1::{Civ, GameData, Leader};
+use pipeline::database::hw1::playercolors::{PlayerColorCiv, PlayerColorSlot};
+use pipeline::database::hw1::{Civ, GameData, Leader, PlayerColors};
 
 use super::*;
 use crate::scenario::PlayerSettings;
@@ -21,11 +22,23 @@ fn leader(name: &str, civ: &str) -> Leader {
 }
 
 /// Civs `None`, `UNSC` and `Covenant`. The UNSC leaders are `Random` (random flag), `Cutter`,
-/// `Forge`, `TestLeader` (test flag) and `Anders`; `Cutter` starts with 800 supplies.
+/// `Forge`, `TestLeader` (test flag) and `Anders`; `Cutter` starts with 800 supplies. The
+/// colour rows are the retail rows: UNSC `0, 1, 2, 3, 4, 5, 6, 13, 14` and Covenant
+/// `0, 7, 8, 9, 10, 11, 12, 13, 14`.
 fn database() -> Database {
     let resource = |name: &str| ResourceDef {
         name: name.to_owned(),
         ..ResourceDef::default()
+    };
+    let civ_colors = |name: &str, colors: [u32; 9]| PlayerColorCiv {
+        name: name.to_owned(),
+        players: (0..)
+            .zip(colors)
+            .map(|(num, color)| PlayerColorSlot {
+                num: Some(num),
+                color: Some(color),
+            })
+            .collect(),
     };
     Database {
         civs: vec![civ("None"), civ("UNSC"), civ("Covenant")],
@@ -54,6 +67,13 @@ fn database() -> Database {
                 entries: vec![resource("Supplies"), resource("Power")],
             }),
             ..GameData::default()
+        }),
+        player_colors: Some(PlayerColors {
+            civs: vec![
+                civ_colors("UNSC", [0, 1, 2, 3, 4, 5, 6, 13, 14]),
+                civ_colors("Covenant", [0, 7, 8, 9, 10, 11, 12, 13, 14]),
+            ],
+            ..PlayerColors::default()
         }),
         ..Database::default()
     }
@@ -190,4 +210,89 @@ fn default_resources_keep_the_leader_resources_and_otherwise_the_scn_values_win(
     };
     assert_eq!(resources(1), [800.0, 0.0]);
     assert_eq!(resources(2), [150.0, 0.0]);
+}
+
+fn colors(world: &World) -> Vec<(String, u8)> {
+    world
+        .players()
+        .map(|player| (player.name.clone(), player.color))
+        .collect()
+}
+
+#[test]
+fn each_player_takes_the_next_colour_of_its_civ_row() {
+    // Loop at 0x140382FC0: the colour is `civRow[civ][ordinal]` with
+    // `ordinal = 1 + world players 1..id with the same civ`. Gaia keeps the `BPlayer_ctor`
+    // colour -1 (255).
+    let settings = GameSettings::skirmish(vec![PlayerSettings::default(); 4], 0);
+    let (world, _) = setup(
+        r#"<Scenario><Players>
+            <Player Name="P1" UsePlayerSettings="true" Civ="UNSC" Leader1="Cutter" Team="1"
+                Color="9" />
+            <Player Name="P2" Civ="Covenant" Leader1="Arbiter" Team="2" />
+            <Player Name="P3" Civ="UNSC" Leader1="Forge" Team="1" />
+            <Player Name="P4" Civ="Covenant" Leader1="Arbiter" Team="2" />
+        </Players></Scenario>"#,
+        &settings,
+        &[],
+    );
+
+    // P1 uses the player settings, so it ignores its `Color`.
+    assert_eq!(
+        colors(&world),
+        [
+            ("Gaia".to_owned(), u8::MAX),
+            ("Player 1".to_owned(), 1),
+            ("Player 2".to_owned(), 7),
+            ("Player 3".to_owned(), 2),
+            ("Player 4".to_owned(), 8),
+        ]
+    );
+}
+
+#[test]
+fn a_scenario_colour_wins_only_without_player_settings() {
+    // Check at 0x140383034: `UsePlayerSettings="false"` and `Color != -1` stores `Color`.
+    // Without a `Color` the civ row applies, and the player still counts for later players.
+    let settings = GameSettings::skirmish(vec![PlayerSettings::default(); 1], 0);
+    let (world, _) = setup(
+        r#"<Scenario><Players>
+            <Player Name="Creeps" Controllable="false" UsePlayerSettings="false" Civ="UNSC"
+                Leader1="Cutter" Team="3" Color="13" />
+            <Player Name="Rebels" Controllable="false" UsePlayerSettings="false" Civ="UNSC"
+                Leader1="Cutter" Team="3" />
+            <Player Name="P1" Civ="UNSC" Leader1="Cutter" Team="1" />
+        </Players></Scenario>"#,
+        &settings,
+        &[],
+    );
+
+    assert_eq!(
+        colors(&world),
+        [
+            ("Gaia".to_owned(), u8::MAX),
+            ("Creeps".to_owned(), 13),
+            ("Rebels".to_owned(), 2),
+            ("Player 1".to_owned(), 3),
+        ]
+    );
+}
+
+#[test]
+fn a_civ_outside_the_colour_rows_gives_colour_minus_one() {
+    // 0x140383139: a civ outside 0..=4 stores -1; the player keeps its low byte.
+    let mut database = database();
+    database.civs.extend(["A", "B", "C"].map(civ));
+    let scenario = ScenarioData::from_xml_str(
+        r#"<Scenario><Players>
+            <Player Name="P1" Civ="C" Team="1" />
+        </Players></Scenario>"#,
+    )
+    .unwrap();
+    let mut world = World::new();
+    let settings = GameSettings::skirmish(vec![PlayerSettings::default()], 0);
+    setup_players(&mut world, &scenario, &database, &settings).unwrap();
+
+    assert_eq!(world.get_player(1).unwrap().civ_id, 5);
+    assert_eq!(world.get_player(1).unwrap().color, u8::MAX);
 }

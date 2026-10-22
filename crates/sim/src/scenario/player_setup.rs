@@ -2,8 +2,8 @@
 //!
 //! The setup reads the `.scn` players and the game settings. It creates Gaia and one world
 //! player for each active scenario player, balances team-0 players, fills the team
-//! relations, assigns the start positions and builds the scenario-player to world-player
-//! map that object loading uses.
+//! relations, assigns the start positions, gives each player its colour index and builds the
+//! scenario-player to world-player map that object loading uses.
 
 use pipeline::database::hw1::Database;
 use pipeline::hw1::scenario::{ScenarioPlayer, ScenarioRelation};
@@ -159,6 +159,7 @@ pub(super) fn setup_players(
     configure_team_relations(world, maximum_team, scenario);
     assign_starts(world, scenario, settings, &mut setup, &teams);
     create_players(world, database, settings, players, &setup, &teams, &slots);
+    assign_colors(world, database, players, &setup);
     technology::activate_all_starting_technologies(world, database);
     Ok(setup)
 }
@@ -364,6 +365,91 @@ fn create_players(
             resources::apply_scenario_resources(player, database, scenario_player);
         }
     }
+}
+
+/// Number of player entries of a civ row in the colour table (`<player num>` `0..=8`).
+const CIV_COLOR_SLOTS: usize = 9;
+
+/// Number of civ rows in the colour table (civ IDs `0..=4`).
+const CIV_COLOR_ROWS: usize = 5;
+
+/// Give each active player its colour index like the loop at `0x140382FC0`.
+///
+/// A player with `UsePlayerSettings="false"` and a `Color` other than `-1` takes that
+/// `Color`. Each other player takes entry `ordinal` of the colour row of its civ. `ordinal` is
+/// 1 plus the number of world players `1..id` with the same civ. A civ outside `0..=4` gives
+/// `-1`.
+fn assign_colors(
+    world: &mut World,
+    database: &Database,
+    players: &[ScenarioPlayer],
+    setup: &PlayerSetup,
+) {
+    let table = civ_color_table(database);
+    for (position, active) in setup.players.iter().enumerate() {
+        let scenario_player = &players[active.scenario_index];
+        let Some(civ) = world
+            .get_player(active.player_id)
+            .map(|player| player.civ_id)
+        else {
+            continue;
+        };
+        let color = if !scenario_player.use_player_settings && scenario_player.color != -1 {
+            scenario_player.color
+        } else {
+            let earlier = setup.players[..position]
+                .iter()
+                .filter_map(|earlier| world.get_player(earlier.player_id))
+                .filter(|earlier| earlier.civ_id == civ)
+                .count();
+            usize::try_from(civ)
+                .ok()
+                .filter(|civ| *civ < CIV_COLOR_ROWS)
+                .map_or(-1, |civ| {
+                    table
+                        .get(civ * CIV_COLOR_SLOTS + earlier + 1)
+                        .copied()
+                        .unwrap_or_default()
+                })
+        };
+        if let Some(player) = world.get_player_mut(active.player_id) {
+            // The engine also keeps the low byte of the index (`gWorld + 0x220`).
+            player.color = color.to_le_bytes()[0];
+        }
+    }
+}
+
+/// Build the civ colour table like `BDatabase_setupPlayerColors` @ `0x1401F9560`.
+///
+/// The engine finds the civ of each `<civ>` by its text. It ignores a civ outside `0..=4`, a
+/// `<player>` with a `num` above 8 or without a `color`, and a `color` above 15. An absent
+/// entry stays `0`.
+fn civ_color_table(database: &Database) -> [i32; CIV_COLOR_ROWS * CIV_COLOR_SLOTS] {
+    let mut table = [0; CIV_COLOR_ROWS * CIV_COLOR_SLOTS];
+    let Some(colors) = &database.player_colors else {
+        return table;
+    };
+    for civ_colors in &colors.civs {
+        let Some(civ) = usize::try_from(find_name_index(&database.civs, &civ_colors.name, |civ| {
+            &civ.name
+        }))
+        .ok()
+        .filter(|civ| *civ < CIV_COLOR_ROWS) else {
+            continue;
+        };
+        for slot in &civ_colors.players {
+            let (Some(num), Some(color)) = (slot.num, slot.color) else {
+                continue;
+            };
+            let (Ok(num), Ok(color)) = (usize::try_from(num), i32::try_from(color)) else {
+                continue;
+            };
+            if num < CIV_COLOR_SLOTS && color <= 15 {
+                table[civ * CIV_COLOR_SLOTS + num] = color;
+            }
+        }
+    }
+    table
 }
 
 /// Give every player the default difficulty and the database population and rate slots.

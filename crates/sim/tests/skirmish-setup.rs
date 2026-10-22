@@ -45,6 +45,15 @@ fn blood_gulch_1v1_matches_the_retail_tick_zero_setup() {
         assert!((player.get_resource(0) - 800.0).abs() < f32::EPSILON);
     }
 
+    // Colour loop at 0x140382FC0: the lobby players take the first entry of their civ row
+    // (UNSC 1, Covenant 7). Creeps have `UsePlayerSettings="false"` and keep `Color="13"`.
+    // Gaia keeps the `BPlayer_ctor` colour -1 (255).
+    let colors = players
+        .iter()
+        .map(|player| player.color)
+        .collect::<Vec<_>>();
+    assert_eq!(colors, [u8::MAX, 1, 7, 13]);
+
     // `BScenario_createStartingUnits`: Gaia sockets with unbuilt HQs and the leader squads.
     for (player, hq) in [(1, "unsc_bldg_command_03"), (2, "cov_bldg_builder_02")] {
         let hq_id = world
