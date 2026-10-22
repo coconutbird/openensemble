@@ -1,6 +1,5 @@
 use super::*;
 use crate::command::Command;
-use crate::command_queue::CommandEntry;
 use crate::commands::CommandPayload;
 use crate::commands::{
     PowerCommand, PowerCommandType, PowerInputCommand, PowerInputCommandType, power_command_flags,
@@ -8,8 +7,9 @@ use crate::commands::{
 use crate::executor::CommandExecutor;
 use crate::physics::{BoxCollider, PhysicsBody, PhysicsMaterial};
 use crate::player::PowerGrant;
+use crate::world::powers::test_support::{data, execute_test_command, float_data, int_data};
 use pipeline::database::hw1::gamedata::{PopsWrapper, ResourceDef, ResourcesWrapper};
-use pipeline::database::hw1::powers::{DataEntry, DataLevel, PowerAttributes, PowerCost};
+use pipeline::database::hw1::powers::{DataLevel, PowerAttributes, PowerCost};
 use pipeline::database::hw1::tactics::{Action, TacticData, Weapon};
 use pipeline::database::hw1::{Database, GameData, Power, ProtoObject};
 
@@ -108,14 +108,14 @@ fn invoke_power_two_routes_confirm_position_and_shutdown_by_retail_user_id() {
     let mut world = test_world(&database);
     let executor = CommandExecutor::with_database(&database);
     let user_id = PowerUserId::new(1, POWER_TYPE, 91);
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::Power(invoke_command(user_id)),
     );
     let beam_id = world.active_orbital_powers()[0].real_targeting_laser_id();
 
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::PowerInput(input_command(
@@ -125,7 +125,7 @@ fn invoke_power_two_routes_confirm_position_and_shutdown_by_retail_user_id() {
         )),
     );
     assert_eq!(world.active_orbital_powers()[0].shots_remaining(), 2);
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::PowerInput(input_command(
@@ -134,7 +134,7 @@ fn invoke_power_two_routes_confirm_position_and_shutdown_by_retail_user_id() {
             Vec3::X * 4.0,
         )),
     );
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::PowerInput(input_command(
@@ -146,7 +146,7 @@ fn invoke_power_two_routes_confirm_position_and_shutdown_by_retail_user_id() {
     let execution = &world.active_orbital_powers()[0];
     assert_eq!(execution.desired_targeting_position(), Vec3::ZERO);
     assert_eq!(execution.pending_shots().len(), 1);
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::PowerInput(input_command(
@@ -310,18 +310,6 @@ fn invocation(ignore_requirements: bool, power_user_id: PowerUserId) -> OrbitalP
         ignore_requirements,
         power_user_id,
     }
-}
-
-fn execute_command(executor: &CommandExecutor<'_>, world: &mut World, command: CommandPayload) {
-    executor.execute(
-        world,
-        &CommandEntry {
-            command,
-            exec_time: 0,
-            sequence: 0,
-            source_client: 1,
-        },
-    );
 }
 
 fn invoke_command(user_id: PowerUserId) -> PowerCommand {
@@ -510,22 +498,6 @@ fn set_base_value(database: &mut Database, name: &str, value: &str) {
         .find(|entry| entry.name == name)
         .unwrap();
     entry.value = value.to_owned();
-}
-
-fn int_data(name: &str, value: i32) -> DataEntry {
-    data("int", name, &value.to_string())
-}
-
-fn float_data(name: &str, value: f32) -> DataEntry {
-    data("float", name, &value.to_string())
-}
-
-fn data(data_type: &str, name: &str, value: &str) -> DataEntry {
-    DataEntry {
-        data_type: data_type.to_owned(),
-        name: name.to_owned(),
-        value: value.to_owned(),
-    }
 }
 
 fn assert_close(actual: f32, expected: f32) {

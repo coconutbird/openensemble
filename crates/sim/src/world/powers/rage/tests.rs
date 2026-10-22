@@ -1,6 +1,5 @@
 use super::*;
 use crate::command::Command;
-use crate::command_queue::CommandEntry;
 use crate::commands::CommandPayload;
 use crate::commands::{
     PowerCommand, PowerCommandType, PowerInputCommand, PowerInputCommandType, PowerUserId,
@@ -13,6 +12,7 @@ use crate::gameplay::GameplayCatalog;
 use crate::physics::{BoxCollider, PhysicsBody, PhysicsMaterial};
 use crate::player::{PowerGrant, TeamRelation};
 use crate::spawn::{spawn_squad_at, squad_prototype_id};
+use crate::world::powers::test_support::{data, execute_test_command, float_data};
 use crate::world::{DisruptionPowerInvocation, NativePowerError, RagePowerInvocation};
 use glam::{Vec3, Vec4};
 use pipeline::database::hw1::gamedata::{PopsWrapper, ResourceDef, ResourcesWrapper};
@@ -77,14 +77,14 @@ fn wire_input_targets_in_radius_charges_jump_lands_and_honors_no_cost() {
     let user_id = PowerUserId::new(1, RAGE_POWER_TYPE, 17);
     let executor = CommandExecutor::with_database(&database);
 
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::Power(invoke_command(owner_id, user_id)),
     );
     assert_eq!(world.active_rage_powers()[0].power_user_id(), user_id);
     assert!(!world.active_rage_powers()[0].uses_pather());
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::PowerInput(input_command(user_id, Vec3::ZERO, false)),
@@ -114,7 +114,7 @@ fn wire_input_targets_in_radius_charges_jump_lands_and_honors_no_cost() {
     assert!(velocity.x > 0.0 && velocity.y > 0.0);
 
     let before = world.get_player(1).unwrap().get_resource(0);
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::PowerInput(input_command(user_id, Vec3::X, false)),
@@ -122,13 +122,13 @@ fn wire_input_targets_in_radius_charges_jump_lands_and_honors_no_cost() {
     assert_close(world.get_player(1).unwrap().get_resource(0), before);
     world.power_manager.rage_executions[0].retarget_remaining = 0.0;
     world.get_player_mut(1).unwrap().set_resource(0, 0.0);
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::PowerInput(input_command(user_id, Vec3::X, true)),
     );
     assert_eq!(world.active_rage_powers().len(), 1);
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::PowerInput(input_command(user_id, Vec3::X, false)),
@@ -299,18 +299,6 @@ fn assert_owner_inactive(world: &World, squad_id: EntityId) {
         assert_close(unit.data_scalar(UnitDataScalar::DamageTaken), 1.0);
         assert_close(unit.data_scalar(UnitDataScalar::Velocity), 1.0);
     }
-}
-
-fn execute_command(executor: &CommandExecutor<'_>, world: &mut World, command: CommandPayload) {
-    executor.execute(
-        world,
-        &CommandEntry {
-            command,
-            exec_time: 0,
-            sequence: 0,
-            source_client: 1,
-        },
-    );
 }
 
 fn invoke_command(squad_id: EntityId, user_id: PowerUserId) -> PowerCommand {
@@ -638,18 +626,6 @@ fn squad(name: &str, dbid: i32, member: &str, count: i32) -> ProtoSquad {
             }],
         }),
         ..ProtoSquad::default()
-    }
-}
-
-fn float_data(name: &str, value: f32) -> DataEntry {
-    data("float", name, &value.to_string())
-}
-
-fn data(data_type: &str, name: &str, value: &str) -> DataEntry {
-    DataEntry {
-        data_type: data_type.to_owned(),
-        name: name.to_owned(),
-        value: value.to_owned(),
     }
 }
 

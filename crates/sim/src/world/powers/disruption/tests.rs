@@ -1,8 +1,9 @@
 use super::*;
 use crate::player::PowerGrant;
+use crate::world::powers::test_support::{data, float_data};
 use crate::world::{CryoPowerInvocation, NativePowerError, NativePowerInvocation};
 use pipeline::database::hw1::gamedata::{PopsWrapper, ResourceDef, ResourcesWrapper};
-use pipeline::database::hw1::powers::{DataEntry, DataLevel, PowerAttributes, PowerCost};
+use pipeline::database::hw1::powers::{DataLevel, PowerAttributes, PowerCost};
 use pipeline::database::hw1::{GameData, Power, ProtoObject};
 
 #[test]
@@ -382,17 +383,5 @@ fn visual(name: &str, lifespan: Option<f32>, object_types: &[&str]) -> ProtoObje
             .map(|value| (*value).to_owned())
             .collect(),
         ..ProtoObject::default()
-    }
-}
-
-fn float_data(name: &str, value: f32) -> DataEntry {
-    data("float", name, &value.to_string())
-}
-
-fn data(data_type: &str, name: &str, value: &str) -> DataEntry {
-    DataEntry {
-        data_type: data_type.to_owned(),
-        name: name.to_owned(),
-        value: value.to_owned(),
     }
 }

@@ -1,6 +1,5 @@
 use super::*;
 use crate::command::Command;
-use crate::command_queue::CommandEntry;
 use crate::commands::CommandPayload;
 use crate::commands::{
     PowerCommand, PowerCommandType, PowerInputCommand, PowerInputCommandType, PowerUserId,
@@ -8,12 +7,11 @@ use crate::commands::{
 };
 use crate::executor::CommandExecutor;
 use crate::player::PowerGrant;
+use crate::world::powers::test_support::{data, execute_test_command};
 use crate::world::{DisruptionPowerInvocation, GeneralEventType, NativePowerError};
 use pipeline::database::hw1::gamedata::{PopsWrapper, ResourceDef, ResourcesWrapper};
 use pipeline::database::hw1::objects::PopulationAmount;
-use pipeline::database::hw1::powers::{
-    DataEntry, DataLevel, PowerAttributes, PowerCost, PowerPopulation,
-};
+use pipeline::database::hw1::powers::{DataLevel, PowerAttributes, PowerCost, PowerPopulation};
 use pipeline::database::hw1::squads::{UnitEntry, UnitsWrapper};
 use pipeline::database::hw1::{Database, GameData, Power, ProtoObject, Squad as ProtoSquad, Tech};
 
@@ -134,7 +132,7 @@ fn invoke_power_two_and_confirm_wire_vector_route_by_packed_user_id() {
     let mut world = test_world(&database, 10.0);
     let executor = CommandExecutor::with_database(&database);
     let user_id = PowerUserId::new(1, 9, 19);
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::Power(invoke_command(user_id, true)),
@@ -142,14 +140,14 @@ fn invoke_power_two_and_confirm_wire_vector_route_by_packed_user_id() {
     assert_eq!(world.active_odst_powers().len(), 1);
     assert_eq!(world.active_odst_powers()[0].power_user_id(), user_id);
 
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::PowerInput(confirm_command(PowerUserId::new(1, 9, 20), Vec3::X)),
     );
     assert!(world.active_odst_powers()[0].active_drops().is_empty());
     let target = Vec3::new(17.0, 4.0, 29.0);
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::PowerInput(confirm_command(user_id, target)),
@@ -336,18 +334,6 @@ fn invocation(ignore_requirements: bool, power_user_id: PowerUserId) -> OdstPowe
     }
 }
 
-fn execute_command(executor: &CommandExecutor<'_>, world: &mut World, command: CommandPayload) {
-    executor.execute(
-        world,
-        &CommandEntry {
-            command,
-            exec_time: 0,
-            sequence: 0,
-            source_client: 1,
-        },
-    );
-}
-
 fn invoke_command(user_id: PowerUserId, no_cost: bool) -> PowerCommand {
     let mut base = Command {
         player_id: 1,
@@ -520,13 +506,5 @@ fn resource(name: &str) -> ResourceDef {
     ResourceDef {
         name: name.to_owned(),
         ..ResourceDef::default()
-    }
-}
-
-fn data(data_type: &str, name: &str, value: &str) -> DataEntry {
-    DataEntry {
-        data_type: data_type.to_owned(),
-        name: name.to_owned(),
-        value: value.to_owned(),
     }
 }

@@ -21,6 +21,8 @@ mod orbital;
 mod projectile;
 mod rage;
 mod repair;
+#[cfg(test)]
+mod test_support;
 mod transport;
 mod wave;
 

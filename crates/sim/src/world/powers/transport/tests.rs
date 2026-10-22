@@ -1,6 +1,5 @@
 use super::*;
 use crate::command::Command;
-use crate::command_queue::CommandEntry;
 use crate::commands::CommandPayload;
 use crate::commands::{
     PowerCommand, PowerCommandType, PowerInputCommand, PowerInputCommandType, PowerUserId,
@@ -9,10 +8,11 @@ use crate::commands::{
 use crate::executor::CommandExecutor;
 use crate::player::PowerGrant;
 use crate::spawn::{spawn_squad_at, squad_prototype_id};
+use crate::world::powers::test_support::{data, execute_test_command};
 use crate::{PowerTransportPhase, Unit};
 use pipeline::database::hw1::gamedata::{PopsWrapper, ResourceDef, ResourcesWrapper};
 use pipeline::database::hw1::objects::PopulationAmount;
-use pipeline::database::hw1::powers::{DataEntry, DataLevel, PowerAttributes, PowerCost};
+use pipeline::database::hw1::powers::{DataLevel, PowerAttributes, PowerCost};
 use pipeline::database::hw1::squads::{UnitEntry, UnitsWrapper};
 use pipeline::database::hw1::{Civ, Database, GameData, Power, ProtoObject, Squad as ProtoSquad};
 
@@ -215,7 +215,7 @@ fn invoke_power_two_and_confirm_vectors_route_by_transport_user_id() {
     let _passenger = spawn(&mut world, &database, "infantry_squad", Vec3::ZERO);
     let executor = CommandExecutor::with_database(&database);
     let user_id = PowerUserId::new(1, TRANSPORT_TYPE, 19);
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::Power(invoke_command(user_id)),
@@ -223,7 +223,7 @@ fn invoke_power_two_and_confirm_vectors_route_by_transport_user_id() {
     assert_eq!(world.active_transport_powers().len(), 1);
     assert_eq!(world.active_transport_powers()[0].power_user_id(), user_id);
 
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::PowerInput(input_command(
@@ -233,7 +233,7 @@ fn invoke_power_two_and_confirm_vectors_route_by_transport_user_id() {
         )),
     );
     assert_eq!(world.active_transport_powers()[0].pickup_location(), None);
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::PowerInput(input_command(
@@ -246,7 +246,7 @@ fn invoke_power_two_and_confirm_vectors_route_by_transport_user_id() {
         world.active_transport_powers()[0].pickup_location(),
         Some(Vec3::ZERO)
     );
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::PowerInput(input_command(
@@ -455,18 +455,6 @@ fn assert_close(actual: f32, expected: f32) {
     );
 }
 
-fn execute_command(executor: &CommandExecutor<'_>, world: &mut World, command: CommandPayload) {
-    executor.execute(
-        world,
-        &CommandEntry {
-            command,
-            exec_time: 0,
-            sequence: 0,
-            source_client: 1,
-        },
-    );
-}
-
 fn invoke_command(user_id: PowerUserId) -> PowerCommand {
     let mut base = Command {
         player_id: 1,
@@ -621,13 +609,5 @@ fn resource(name: &str) -> ResourceDef {
     ResourceDef {
         name: name.to_owned(),
         ..ResourceDef::default()
-    }
-}
-
-fn data(data_type: &str, name: &str, value: &str) -> DataEntry {
-    DataEntry {
-        data_type: data_type.to_owned(),
-        name: name.to_owned(),
-        value: value.to_owned(),
     }
 }

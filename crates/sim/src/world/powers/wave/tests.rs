@@ -1,6 +1,5 @@
 use super::*;
 use crate::command::Command;
-use crate::command_queue::CommandEntry;
 use crate::commands::CommandPayload;
 use crate::commands::{
     PowerCommand, PowerCommandType, PowerInputCommand, PowerInputCommandType, power_command_flags,
@@ -10,8 +9,9 @@ use crate::gameplay::{DamagePartProfile, PhysicsReplacementProfile, ThrownDamage
 use crate::physics::{BoxCollider, PhysicsBody, PhysicsMaterial};
 use crate::player::PowerGrant;
 use crate::spawn::{spawn_squad_at, squad_prototype_id};
+use crate::world::powers::test_support::{data, execute_test_command, float_data, int_data};
 use pipeline::database::hw1::gamedata::{PopsWrapper, ResourceDef, ResourcesWrapper};
-use pipeline::database::hw1::powers::{DataEntry, DataLevel, PowerAttributes, PowerCost};
+use pipeline::database::hw1::powers::{DataLevel, PowerAttributes, PowerCost};
 use pipeline::database::hw1::squads::{UnitEntry, UnitsWrapper};
 use pipeline::database::hw1::tactics::{Action, TacticData, Weapon};
 use pipeline::database::hw1::{Database, GameData, Power, ProtoObject, Squad as ProtoSquad};
@@ -371,13 +371,13 @@ fn packed_wave_input_routes_and_owner_profile_validation_match_native_contract()
 
     let user_id = PowerUserId::new(1, WAVE_POWER_TYPE, 91);
     let executor = CommandExecutor::with_database(&base_database);
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::Power(invoke_command(owner_id, user_id)),
     );
     let execution_id = world.active_wave_powers()[0].id();
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::PowerInput(input_command(
@@ -390,7 +390,7 @@ fn packed_wave_input_routes_and_owner_profile_validation_match_native_contract()
         world.active_wave_powers()[0].desired_ball_position(),
         Vec3::ZERO
     );
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::PowerInput(input_command(
@@ -403,7 +403,7 @@ fn packed_wave_input_routes_and_owner_profile_validation_match_native_contract()
         world.active_wave_powers()[0].desired_ball_position(),
         Vec3::X * 4.0
     );
-    execute_command(
+    execute_test_command(
         &executor,
         &mut world,
         CommandPayload::PowerInput(input_command(
@@ -525,18 +525,6 @@ fn power_grant(squad_id: EntityId) -> PowerGrant {
         ignore_tech_prerequisites: false,
         ignore_population: false,
     }
-}
-
-fn execute_command(executor: &CommandExecutor<'_>, world: &mut World, command: CommandPayload) {
-    executor.execute(
-        world,
-        &CommandEntry {
-            command,
-            exec_time: 0,
-            sequence: 0,
-            source_client: 1,
-        },
-    );
 }
 
 fn invoke_command(squad_id: EntityId, user_id: PowerUserId) -> PowerCommand {
@@ -787,22 +775,6 @@ fn set_base_value(database: &mut Database, name: &str, value: &str) {
         .find(|entry| entry.name == name)
         .unwrap();
     entry.value = value.to_owned();
-}
-
-fn float_data(name: &str, value: f32) -> DataEntry {
-    data("float", name, &value.to_string())
-}
-
-fn int_data(name: &str, value: i32) -> DataEntry {
-    data("int", name, &value.to_string())
-}
-
-fn data(data_type: &str, name: &str, value: &str) -> DataEntry {
-    DataEntry {
-        data_type: data_type.to_owned(),
-        name: name.to_owned(),
-        value: value.to_owned(),
-    }
 }
 
 fn assert_close(actual: f32, expected: f32) {

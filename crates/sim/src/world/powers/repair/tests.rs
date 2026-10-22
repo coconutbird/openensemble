@@ -2,8 +2,9 @@ use super::*;
 use crate::player::{PowerGrant, TeamRelation};
 use crate::spawn::{spawn_squad_at, squad_prototype_id};
 use crate::world::NativePowerInvocation;
+use crate::world::powers::test_support::{data, float_data};
 use pipeline::database::hw1::gamedata::{PopsWrapper, ResourceDef, ResourcesWrapper};
-use pipeline::database::hw1::powers::{DataEntry, DataLevel, PowerAttributes, PowerCost};
+use pipeline::database::hw1::powers::{DataLevel, PowerAttributes, PowerCost};
 use pipeline::database::hw1::squads::{UnitEntry, UnitsWrapper};
 use pipeline::database::hw1::{GameData, Power, ProtoObject, Squad as ProtoSquad};
 
@@ -437,17 +438,5 @@ fn object(
             .map(|value| (*value).to_owned())
             .collect(),
         ..ProtoObject::default()
-    }
-}
-
-fn float_data(name: &str, value: f32) -> DataEntry {
-    data("float", name, &value.to_string())
-}
-
-fn data(data_type: &str, name: &str, value: &str) -> DataEntry {
-    DataEntry {
-        data_type: data_type.to_owned(),
-        name: name.to_owned(),
-        value: value.to_owned(),
     }
 }

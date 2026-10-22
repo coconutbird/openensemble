@@ -2,8 +2,9 @@ use super::*;
 use crate::entities::SquadCryoState;
 use crate::entity::Entity;
 use crate::player::PowerGrant;
+use crate::world::powers::test_support::{data, float_data};
 use pipeline::database::hw1::gamedata::{PopsWrapper, ResourceDef, ResourcesWrapper};
-use pipeline::database::hw1::powers::{DataEntry, DataLevel, PowerAttributes, PowerCost};
+use pipeline::database::hw1::powers::{DataLevel, PowerAttributes, PowerCost};
 use pipeline::database::hw1::{GameData, Power, ProtoObject, Squad as ProtoSquad};
 
 #[test]
@@ -288,17 +289,5 @@ fn base_data(ticks: i32) -> DataLevel {
             float_data("BomberFlyOutTime", 0.5),
         ],
         ..DataLevel::default()
-    }
-}
-
-fn float_data(name: &str, value: f32) -> DataEntry {
-    data("float", name, &value.to_string())
-}
-
-fn data(data_type: &str, name: &str, value: &str) -> DataEntry {
-    DataEntry {
-        data_type: data_type.to_owned(),
-        name: name.to_owned(),
-        value: value.to_owned(),
     }
 }
