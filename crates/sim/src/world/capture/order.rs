@@ -1,11 +1,11 @@
 //! Capture-order validation, target-rule selection, and payment connection.
 
-use super::costs::target_prototype;
 use super::{CaptureTarget, World, stop_capture_unit};
 use crate::entities::Unit;
 use crate::entity_id::EntityId;
 use crate::gameplay::{AttackQuery, AttackQueryFlags, GameplayCatalog};
 use crate::player::{PlayerId, Resources};
+use crate::prototypes::object_by_name_untrimmed;
 use pipeline::database::hw1::Database;
 
 #[derive(Debug, Clone)]
@@ -43,7 +43,7 @@ impl World {
         if selections.is_empty() {
             return false;
         }
-        let Some(prototype) = target_prototype(database, &target.proto_object_name) else {
+        let Some(prototype) = object_by_name_untrimmed(database, &target.proto_object_name) else {
             return false;
         };
         let Some(cost) = self.capture_cost(database, player_id, prototype) else {

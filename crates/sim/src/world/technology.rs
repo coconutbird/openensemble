@@ -5,11 +5,12 @@ use crate::entity_id::EntityId;
 use crate::player::{
     AppliedPrototypeTransform, AppliedSquadTransform, AppliedUnitTransform, PlayerId,
 };
+use crate::prototypes::{database_id, object_entry_by_name_trim_query, squad_by_name_trim_query};
 use crate::scenario::{
     add_squad_member_from_prototype, configure_unit_from_player_proto,
     refresh_squad_member_settings,
 };
-use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad, Tech};
+use pipeline::database::hw1::{Database, Squad as ProtoSquad, Tech};
 
 /// Failure to change one player's technology state.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -148,7 +149,9 @@ impl World {
         database: &Database,
         logical_target: &str,
     ) {
-        let Some((logical_index, logical_proto)) = find_object(database, logical_target) else {
+        let Some((logical_index, logical_proto)) =
+            object_entry_by_name_trim_query(database, logical_target)
+        else {
             return;
         };
         let Some(effective_target) = self.get_player(player_id).map(|player| {
@@ -159,7 +162,9 @@ impl World {
         }) else {
             return;
         };
-        let Some((_, effective_proto)) = find_object(database, &effective_target) else {
+        let Some((_, effective_proto)) =
+            object_entry_by_name_trim_query(database, &effective_target)
+        else {
             return;
         };
         let Some(snapshot) = UnitTransformSnapshot::capture(self, unit_id) else {
@@ -173,7 +178,7 @@ impl World {
             self,
             unit_id,
             logical_target,
-            database_id(logical_proto, logical_index),
+            database_id(logical_proto.dbid, logical_index),
             &effective_target,
             effective_proto,
         );
@@ -436,10 +441,10 @@ impl World {
         {
             return;
         }
-        let Some(new_proto) = find_squad(database, &transform.new_definition) else {
+        let Some(new_proto) = squad_by_name_trim_query(database, &transform.new_definition) else {
             return;
         };
-        let old_proto = find_squad(database, &transform.previous_definition);
+        let old_proto = squad_by_name_trim_query(database, &transform.previous_definition);
         let squad_ids = self
             .squads
             .iter()
@@ -468,13 +473,17 @@ impl World {
         {
             return;
         }
-        let Some((logical_index, logical_proto)) = find_object(database, &transform.from) else {
+        let Some((logical_index, logical_proto)) =
+            object_entry_by_name_trim_query(database, &transform.from)
+        else {
             return;
         };
-        let Some((_, new_proto)) = find_object(database, &transform.new_definition) else {
+        let Some((_, new_proto)) =
+            object_entry_by_name_trim_query(database, &transform.new_definition)
+        else {
             return;
         };
-        let logical_id = database_id(logical_proto, logical_index);
+        let logical_id = database_id(logical_proto.dbid, logical_index);
         let unit_ids = transformed_unit_ids(self, player_id, transform);
         let mut squads = Vec::new();
         for unit_id in unit_ids {
@@ -637,33 +646,6 @@ fn technology_alpha_is_enabled(world: &World, technology: &Tech) -> bool {
         Some(1) => world.is_config_defined("Alpha"),
         _ => true,
     }
-}
-
-fn find_squad<'database>(
-    database: &'database Database,
-    name: &str,
-) -> Option<&'database ProtoSquad> {
-    database
-        .squads
-        .iter()
-        .find(|squad| squad.name.eq_ignore_ascii_case(name.trim()))
-}
-
-fn find_object<'database>(
-    database: &'database Database,
-    name: &str,
-) -> Option<(usize, &'database ProtoObject)> {
-    database
-        .objects
-        .iter()
-        .enumerate()
-        .find(|(_, object)| object.name.eq_ignore_ascii_case(name.trim()))
-}
-
-fn database_id(prototype: &ProtoObject, index: usize) -> i32 {
-    prototype
-        .dbid
-        .unwrap_or_else(|| i32::try_from(index).unwrap_or(-1))
 }
 
 fn nonempty(value: Option<&str>) -> Option<&str> {

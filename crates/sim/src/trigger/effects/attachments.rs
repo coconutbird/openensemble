@@ -1,7 +1,7 @@
 //! Retail prototype attachment effects.
 
 use super::{EffectOutcome, value_at};
-use crate::spawn::find_object_by_id;
+use crate::prototypes::object_by_id;
 use crate::trigger::{Effect, EffectType, TriggerScript, TriggerValue};
 use crate::{EntityId, World};
 use pipeline::database::hw1::Database;
@@ -31,7 +31,7 @@ fn add_type(
     let Some(prototype_id) = prototype_at(effect, script, 2) else {
         return EffectOutcome::Skipped;
     };
-    if find_object_by_id(database, prototype_id).is_none() {
+    if object_by_id(database, prototype_id).is_none() {
         return EffectOutcome::Applied;
     }
     let receiving_units = if effect.version == 3 {

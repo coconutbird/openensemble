@@ -17,6 +17,7 @@ pub mod order;
 pub mod packet;
 pub mod physics;
 pub mod player;
+pub(crate) mod prototypes;
 pub mod random;
 pub mod scenario;
 pub mod serialize;

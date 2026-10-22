@@ -5,6 +5,7 @@ use crate::entities::units::TriggerCommandStateRef;
 use crate::entities::{TrainingKind, TrainingProgress, TrainingRecharge, TrainingTask};
 use crate::entity_id::EntityId;
 use crate::player::{MAX_RESOURCES, PlayerId, PlayerTechState, PopulationCost, Resources};
+use crate::prototypes::object_by_name_trim_query;
 use crate::scenario::population::{
     object_population_costs, object_population_type_id, squad_population_costs,
 };
@@ -677,11 +678,7 @@ fn squad_training_definition(
         .as_ref()
         .map_or(&[][..], |units| units.entries.as_slice())
     {
-        if let Some(object) = database
-            .objects
-            .iter()
-            .find(|object| object.name.eq_ignore_ascii_case(member.proto_object.trim()))
-        {
+        if let Some(object) = object_by_name_trim_query(database, &member.proto_object) {
             validate_object_population(database, object)?;
         }
     }

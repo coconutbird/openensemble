@@ -1,8 +1,8 @@
 //! Deterministic whole-squad planning shared by retail transport entry points.
 
 use crate::entity::Entity;
+use crate::prototypes::database_id;
 use crate::scenario::population::squad_population_amounts;
-use crate::spawn::database_id;
 use crate::{EntityId, World};
 use glam::Vec3;
 use num_traits::ToPrimitive;

@@ -5,6 +5,7 @@ use super::{EffectOutcome, value_at, write_value};
 use crate::entities::SquadMode;
 use crate::gameplay::GameplayCatalog;
 use crate::player::Player;
+use crate::prototypes::{object_by_name_trim_query, squad_by_id};
 use crate::trigger::ai_analysis::{AI_DAMAGE_CLASS_COUNT, AIDamageClass};
 use crate::trigger::{AISquadAnalysis, Effect, TriggerScript, TriggerValue};
 use crate::world::World;
@@ -213,7 +214,7 @@ fn prototype_metrics(
         if member.count <= 0 {
             continue;
         }
-        let Some(object) = object_by_name(database, &member.proto_object) else {
+        let Some(object) = object_by_name_trim_query(database, &member.proto_object) else {
             continue;
         };
         if !found_first_object {
@@ -258,29 +259,6 @@ fn add_member_metrics(
             *total += rating * count;
         }
     }
-}
-
-fn squad_by_id(database: &Database, id: i32) -> Option<&ProtoSquad> {
-    database
-        .squads
-        .iter()
-        .enumerate()
-        .find(|(index, proto)| database_id(proto.dbid, *index) == id)
-        .map(|(_, proto)| proto)
-}
-
-fn object_by_name<'database>(
-    database: &'database Database,
-    name: &str,
-) -> Option<&'database ProtoObject> {
-    database
-        .objects
-        .iter()
-        .find(|object| object.name.eq_ignore_ascii_case(name.trim()))
-}
-
-fn database_id(explicit: Option<i32>, index: usize) -> i32 {
-    explicit.unwrap_or_else(|| i32::try_from(index).unwrap_or(-1))
 }
 
 fn finite_value(value: Option<f32>) -> f32 {

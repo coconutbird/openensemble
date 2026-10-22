@@ -6,7 +6,7 @@ use crate::entities::{IconObject, Object};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::player::PlayerId;
-use crate::spawn::find_object_by_id;
+use crate::prototypes::object_by_id;
 use glam::Vec3;
 use pipeline::database::hw1::{Database, ProtoObject};
 
@@ -36,7 +36,7 @@ impl World {
         if self.get_player(player_id).is_none() || !position.is_finite() {
             return None;
         }
-        let prototype = find_object_by_id(database, prototype_id)?;
+        let prototype = object_by_id(database, prototype_id)?;
         if !is_icon_prototype(prototype) {
             return None;
         }

@@ -5,8 +5,9 @@ use crate::entities::Object;
 use crate::entity_id::EntityId;
 use crate::gameplay::RepairOtherActionProfile;
 use crate::player::PlayerId;
+use crate::prototypes::{database_id, object_entry_by_name_trim_both};
 use glam::Vec3;
-use pipeline::database::hw1::{Database, ProtoObject};
+use pipeline::database::hw1::Database;
 
 pub(super) struct RepairEffectContext<'profile> {
     pub source_leader_id: EntityId,
@@ -193,28 +194,15 @@ impl World {
                 player.technologies.resolved_unit_prototype(logical_name)
             })
             .to_owned();
-        let (index, prototype) = find_object(database, &effective_name)
-            .or_else(|| find_object(database, logical_name))?;
+        let (index, prototype) = object_entry_by_name_trim_both(database, &effective_name)
+            .or_else(|| object_entry_by_name_trim_both(database, logical_name))?;
         Some((
-            prototype
-                .dbid
-                .unwrap_or_else(|| i32::try_from(index).unwrap_or(-1)),
+            database_id(prototype.dbid, index),
             prototype.name.clone(),
             clean_name(prototype.beam_head.as_deref()),
             clean_name(prototype.beam_tail.as_deref()),
         ))
     }
-}
-
-fn find_object<'database>(
-    database: &'database Database,
-    name: &str,
-) -> Option<(usize, &'database ProtoObject)> {
-    database
-        .objects
-        .iter()
-        .enumerate()
-        .find(|(_, object)| object.name.trim().eq_ignore_ascii_case(name.trim()))
 }
 
 fn clean_name(name: Option<&str>) -> Option<String> {

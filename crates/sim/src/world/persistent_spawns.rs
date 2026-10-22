@@ -5,10 +5,11 @@ use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::{GameplayCatalog, PersistentSpawnSquadProfile};
 use crate::player::{GAIA_PLAYER, PlayerId};
+use crate::prototypes::{object_by_name_trim_query, squad_by_name_trim_query};
 use crate::spawn::{spawn_squad_at, squad_prototype_id};
 use glam::Vec3;
+use pipeline::database::hw1::Database;
 use pipeline::database::hw1::objects::{ProtoObject, TrainLimitType};
-use pipeline::database::hw1::{Database, Squad as ProtoSquad};
 use std::f32::consts::{FRAC_PI_2, TAU};
 
 #[derive(Debug, Clone)]
@@ -224,8 +225,8 @@ impl World {
         let effective_name = self.get_player(player_id).map_or(logical_name, |player| {
             player.technologies.resolved_squad_prototype(logical_name)
         });
-        let squad =
-            find_squad(database, effective_name).or_else(|| find_squad(database, logical_name))?;
+        let squad = squad_by_name_trim_query(database, effective_name)
+            .or_else(|| squad_by_name_trim_query(database, logical_name))?;
         let leader = squad
             .units
             .as_ref()
@@ -251,7 +252,8 @@ impl World {
         let effective_name = self.get_player(player_id).map_or(logical_name, |player| {
             player.technologies.resolved_unit_prototype(logical_name)
         });
-        find_object(database, effective_name).or_else(|| find_object(database, logical_name))
+        object_by_name_trim_query(database, effective_name)
+            .or_else(|| object_by_name_trim_query(database, logical_name))
     }
 
     fn persistent_spawn_train_limit(
@@ -259,7 +261,7 @@ impl World {
         squad_type: &str,
         database: &Database,
     ) -> Option<SpawnTrainLimit> {
-        let owner_proto = find_object(database, &owner.proto_object_name)?;
+        let owner_proto = object_by_name_trim_query(database, &owner.proto_object_name)?;
         owner_proto
             .train_limits
             .iter()
@@ -366,7 +368,7 @@ impl World {
         let Some(child_type) = spec.rally_point_type.as_deref() else {
             return;
         };
-        let owner_type = find_object(database, &owner.proto_object_name)
+        let owner_type = object_by_name_trim_query(database, &owner.proto_object_name)
             .and_then(|object| object.rally_point.as_deref());
         let rally = self
             .unit_rally_point(owner.id, owner.player_id)
@@ -387,26 +389,6 @@ impl World {
         }
         let _issued = self.issue_move_order(owner.player_id, spawned_squad_id, destination);
     }
-}
-
-fn find_squad<'database>(
-    database: &'database Database,
-    name: &str,
-) -> Option<&'database ProtoSquad> {
-    database
-        .squads
-        .iter()
-        .find(|squad| squad.name.eq_ignore_ascii_case(name.trim()))
-}
-
-fn find_object<'database>(
-    database: &'database Database,
-    name: &str,
-) -> Option<&'database ProtoObject> {
-    database
-        .objects
-        .iter()
-        .find(|object| object.name.eq_ignore_ascii_case(name.trim()))
 }
 
 fn finite_nonnegative(value: Option<f32>) -> f32 {

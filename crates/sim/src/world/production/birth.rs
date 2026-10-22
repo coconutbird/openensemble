@@ -7,6 +7,7 @@ use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::GameplayCatalog;
 use crate::player::PlayerId;
+use crate::prototypes::object_by_name_untrimmed;
 use glam::Vec3;
 use num_traits::ToPrimitive;
 use pipeline::database::hw1::squads::Birth;
@@ -284,7 +285,7 @@ impl World {
     ) -> BirthProfile {
         let trainer = self
             .get_building(building_id)
-            .and_then(|building| find_object(database, &building.proto_object_name));
+            .and_then(|building| object_by_name_untrimmed(database, &building.proto_object_name));
         let birth = effective_squad_prototype(self, squad_id, database)
             .and_then(|squad| squad.birth.as_ref());
         let trainer_type = trainer
@@ -511,13 +512,6 @@ fn birth_animation(birth: &Birth, trainer_type: i32) -> Option<String> {
         _ => None,
     }
     .filter(|animation| !animation.trim().is_empty())
-}
-
-fn find_object<'a>(database: &'a Database, name: &str) -> Option<&'a ProtoObject> {
-    database
-        .objects
-        .iter()
-        .find(|prototype| prototype.name.eq_ignore_ascii_case(name))
 }
 
 fn has_type(prototype: &ProtoObject, expected: &str) -> bool {

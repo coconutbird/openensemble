@@ -3,6 +3,7 @@
 use super::World;
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
+use crate::prototypes::object_by_name_untrimmed;
 use glam::{Quat, Vec3};
 use num_traits::ToPrimitive;
 use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad};
@@ -28,13 +29,13 @@ pub(super) fn trained_squad_placement(
     database: &Database,
 ) -> Option<SquadBirthPlacement> {
     let building = world.get_building(building_id)?;
-    let building_proto = find_object(database, &building.proto_object_name);
+    let building_proto = object_by_name_untrimmed(database, &building.proto_object_name);
     let squad = world.get_squad(squad_id)?;
     let leader = squad
         .unit_ids
         .iter()
         .find_map(|unit_id| world.get_unit(*unit_id))?;
-    let leader_proto = find_object(database, &leader.proto_object_name);
+    let leader_proto = object_by_name_untrimmed(database, &leader.proto_object_name);
     let proto_squad = effective_squad_prototype(world, squad_id, database);
     let obstruction_radius = squad_birth_radius(proto_squad, leader_proto, database);
     let mut forward = planar_forward(building.base.forward);
@@ -131,7 +132,7 @@ fn squad_birth_radius(
     } else if size > 2 {
         let flood = squad.units.as_ref().is_some_and(|units| {
             units.entries.iter().any(|entry| {
-                find_object(database, entry.proto_object.trim())
+                object_by_name_untrimmed(database, entry.proto_object.trim())
                     .is_some_and(|prototype| has_type(prototype, "Flood"))
             })
         });
@@ -285,13 +286,6 @@ fn circle_overlaps_unit(center: Vec3, radius: f32, unit: Vec3, half_extents: Vec
     let dx = center.x - closest_x;
     let dz = center.z - closest_z;
     dx * dx + dz * dz <= radius.max(0.0).powi(2)
-}
-
-fn find_object<'a>(database: &'a Database, name: &str) -> Option<&'a ProtoObject> {
-    database
-        .objects
-        .iter()
-        .find(|prototype| prototype.name.eq_ignore_ascii_case(name))
 }
 
 fn object_radius(prototype: &ProtoObject) -> f32 {

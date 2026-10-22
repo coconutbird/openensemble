@@ -3,6 +3,7 @@
 use super::World;
 use crate::EntityId;
 use crate::entity::Entity;
+use crate::prototypes::object_by_name_trim_both;
 use crate::scenario::add_squad_member_from_prototype;
 use num_traits::ToPrimitive;
 use pipeline::database::hw1::{Database, ProtoObject};
@@ -289,7 +290,7 @@ impl World {
         let mut profile = SquadRepairProfile::default();
         for entry in &prototype.units.as_ref()?.entries {
             let count = u32::try_from(entry.count.max(0)).unwrap_or_default();
-            let Some(object) = find_object(database, &entry.proto_object) else {
+            let Some(object) = object_by_name_trim_both(database, &entry.proto_object) else {
                 continue;
             };
             let maximum_hitpoints = effective_hitpoints(technologies, object);
@@ -405,16 +406,6 @@ fn finite_nonnegative(value: Option<f32>) -> f32 {
     value
         .filter(|value| value.is_finite() && *value > 0.0)
         .unwrap_or_default()
-}
-
-fn find_object<'database>(
-    database: &'database Database,
-    name: &str,
-) -> Option<&'database ProtoObject> {
-    database
-        .objects
-        .iter()
-        .find(|object| object.name.trim().eq_ignore_ascii_case(name.trim()))
 }
 
 #[cfg(test)]

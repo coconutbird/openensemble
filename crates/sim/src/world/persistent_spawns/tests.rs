@@ -1,6 +1,7 @@
 use super::*;
 use crate::entities::JoinKind;
 use crate::spawn::{spawn_squad_at, squad_prototype_id};
+use pipeline::database::hw1::Squad as ProtoSquad;
 use pipeline::database::hw1::objects::{ProtoObject, TrainLimit, TrainLimitType};
 use pipeline::database::hw1::squads::{UnitEntry, UnitsWrapper};
 use pipeline::database::hw1::tactics::{Action, TacticData, TacticRules};

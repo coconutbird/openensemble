@@ -4,7 +4,8 @@ use super::World;
 use crate::entities::UnitAmmunition;
 use crate::entity_id::EntityId;
 use crate::player::PlayerId;
-use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad};
+use crate::prototypes::{object_by_name_trim_query, squad_by_name_trim_query};
+use pipeline::database::hw1::{Database, Squad as ProtoSquad};
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct AmmunitionSnapshot {
@@ -90,7 +91,7 @@ impl World {
             .map_or(logical_name.as_str(), |player| {
                 player.technologies.resolved_squad_prototype(&logical_name)
             });
-        let maximum = find_squad(database, effective_name).map_or(0.0, |prototype| {
+        let maximum = squad_by_name_trim_query(database, effective_name).map_or(0.0, |prototype| {
             self.proto_squad_ammunition(player_id, prototype, database)
         });
         if let Some(squad) = self.squads.get_mut(squad_id) {
@@ -107,7 +108,7 @@ impl World {
             .iter()
             .filter(|(_, unit)| unit.base.player_id == player_id)
             .filter_map(|(unit_id, unit)| {
-                let prototype = find_object(database, &unit.proto_object_name)?;
+                let prototype = object_by_name_trim_query(database, &unit.proto_object_name)?;
                 Some(AmmunitionSnapshot {
                     unit_id,
                     base_maximum: finite_or_zero(prototype.ammo_max),
@@ -174,7 +175,7 @@ impl World {
         entries
             .iter()
             .filter_map(|entry| {
-                let object = find_object(database, entry.proto_object.trim())?;
+                let object = object_by_name_trim_query(database, &entry.proto_object)?;
                 let base = finite_or_zero(object.ammo_max);
                 let maximum = self.get_player(player_id).map_or(base, |player| {
                     player.technologies.ammunition_maximum(&object.name, base)
@@ -184,26 +185,6 @@ impl World {
             })
             .sum()
     }
-}
-
-fn find_object<'database>(
-    database: &'database Database,
-    name: &str,
-) -> Option<&'database ProtoObject> {
-    database
-        .objects
-        .iter()
-        .find(|prototype| prototype.name.eq_ignore_ascii_case(name.trim()))
-}
-
-fn find_squad<'database>(
-    database: &'database Database,
-    name: &str,
-) -> Option<&'database ProtoSquad> {
-    database
-        .squads
-        .iter()
-        .find(|prototype| prototype.name.eq_ignore_ascii_case(name.trim()))
 }
 
 fn finite_or_zero(value: Option<f32>) -> f32 {

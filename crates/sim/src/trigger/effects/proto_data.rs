@@ -5,6 +5,7 @@ use super::support::{
 };
 use super::{EffectOutcome, value_at};
 use crate::player::{PlayerId, ProtoDataModification, ProtoDataRelativity, ProtoDataType};
+use crate::prototypes::object_by_id;
 use crate::trigger::{Effect, TriggerScript, TriggerValue};
 use crate::world::World;
 use pipeline::database::hw1::{Database, ProtoObject};
@@ -193,7 +194,7 @@ fn command_data_at(
                 || kind.eq_ignore_ascii_case("Build")
                 || kind.eq_ignore_ascii_case("BuildOther") =>
         {
-            runtime_proto_object_name(database, id)
+            object_by_id(database, id).map(|prototype| prototype.name.clone())
         }
         _ => Some(id.to_string()),
     }
@@ -204,19 +205,6 @@ fn runtime_name<T>(entries: &[T], id: i32, name: impl Fn(&T) -> &str) -> Option<
         .ok()
         .and_then(|index| entries.get(index))
         .map(|entry| name(entry).to_owned())
-}
-
-fn runtime_proto_object_name(database: &Database, id: i32) -> Option<String> {
-    database
-        .objects
-        .iter()
-        .enumerate()
-        .find(|(index, prototype)| database_id(prototype.dbid, *index) == id)
-        .map(|(_, prototype)| prototype.name.clone())
-}
-
-fn database_id(explicit: Option<i32>, index: usize) -> i32 {
-    explicit.unwrap_or_else(|| i32::try_from(index).unwrap_or(-1))
 }
 
 fn prototype_matches_type(prototype: &ProtoObject, object_type: &str) -> bool {

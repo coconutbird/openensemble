@@ -5,11 +5,15 @@
 //! identical to entities authored in an SCN file.
 
 use glam::Vec3;
-use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad};
+use pipeline::database::hw1::Database;
 
 use crate::entities::BaseId;
 use crate::entity_id::EntityId;
 use crate::player::PlayerId;
+use crate::prototypes::{
+    database_id, object_by_id, object_entry_by_name_trim_query, squad_by_id,
+    squad_entry_by_name_trim_query,
+};
 use crate::scenario::{create_object_from_prototype, create_squad_from_prototype};
 use crate::world::World;
 
@@ -61,22 +65,14 @@ pub enum SpawnError {
 /// Resolve the wire/database ID for a named squad prototype.
 #[must_use]
 pub fn squad_prototype_id(database: &Database, name: &str) -> Option<i32> {
-    database
-        .squads
-        .iter()
-        .enumerate()
-        .find(|(_, proto)| proto.name.eq_ignore_ascii_case(name.trim()))
+    squad_entry_by_name_trim_query(database, name)
         .map(|(index, proto)| database_id(proto.dbid, index))
 }
 
 /// Resolve the wire/database ID for a named object prototype.
 #[must_use]
 pub fn object_prototype_id(database: &Database, name: &str) -> Option<i32> {
-    database
-        .objects
-        .iter()
-        .enumerate()
-        .find(|(_, proto)| proto.name.eq_ignore_ascii_case(name.trim()))
+    object_entry_by_name_trim_query(database, name)
         .map(|(index, proto)| database_id(proto.dbid, index))
 }
 
@@ -94,7 +90,7 @@ pub fn spawn_squad_at(
     forward: Vec3,
 ) -> Result<EntityId, SpawnError> {
     validate_spawn(world, player_id, position, forward)?;
-    let proto = find_squad_by_id(database, proto_squad_id)
+    let proto = squad_by_id(database, proto_squad_id)
         .ok_or(SpawnError::SquadPrototypeNotFound(proto_squad_id))?;
     Ok(create_squad_from_prototype(
         world,
@@ -122,7 +118,7 @@ pub fn spawn_squads_at(
 ) -> Result<Vec<EntityId>, SpawnError> {
     validate_batch(count)?;
     validate_spawn(world, player_id, position, forward)?;
-    let proto = find_squad_by_id(database, proto_squad_id)
+    let proto = squad_by_id(database, proto_squad_id)
         .ok_or(SpawnError::SquadPrototypeNotFound(proto_squad_id))?;
     let mut spawned = Vec::with_capacity(usize::try_from(count).unwrap_or_default());
     for _ in 0..count {
@@ -153,7 +149,7 @@ pub fn spawn_object_at(
     forward: Vec3,
 ) -> Result<EntityId, SpawnError> {
     validate_spawn(world, player_id, position, forward)?;
-    let proto = find_object_by_id(database, proto_object_id)
+    let proto = object_by_id(database, proto_object_id)
         .ok_or(SpawnError::ObjectPrototypeNotFound(proto_object_id))?;
     create_object_from_prototype(
         world,
@@ -252,26 +248,4 @@ fn base_spawn_transform(
         .max(anchor.obstruction_half_extents.z.abs());
     let position = base.position + forward * (anchor_radius + BASE_SPAWN_CLEARANCE);
     Ok((base.player_id, position, forward))
-}
-
-fn find_squad_by_id(database: &Database, id: i32) -> Option<&ProtoSquad> {
-    database
-        .squads
-        .iter()
-        .enumerate()
-        .find(|(index, proto)| database_id(proto.dbid, *index) == id)
-        .map(|(_, proto)| proto)
-}
-
-pub(crate) fn find_object_by_id(database: &Database, id: i32) -> Option<&ProtoObject> {
-    database
-        .objects
-        .iter()
-        .enumerate()
-        .find(|(index, proto)| database_id(proto.dbid, *index) == id)
-        .map(|(_, proto)| proto)
-}
-
-pub(crate) fn database_id(explicit: Option<i32>, index: usize) -> i32 {
-    explicit.unwrap_or_else(|| i32::try_from(index).unwrap_or(-1))
 }

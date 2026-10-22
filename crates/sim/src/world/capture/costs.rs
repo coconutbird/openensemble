@@ -50,16 +50,6 @@ impl World {
     }
 }
 
-pub(super) fn target_prototype<'database>(
-    database: &'database Database,
-    name: &str,
-) -> Option<&'database ProtoObject> {
-    database
-        .objects
-        .iter()
-        .find(|object| object.name.eq_ignore_ascii_case(name))
-}
-
 fn capture_cost_applies(authored: Option<&str>, civilization: Option<&str>) -> bool {
     authored.map(str::trim).is_none_or(|authored| {
         authored.is_empty()

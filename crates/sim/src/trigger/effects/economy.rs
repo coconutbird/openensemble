@@ -3,6 +3,7 @@
 use super::support::{float_at, integer_at, player_at, used_variable_id, variable_is_used};
 use super::{EffectOutcome, value_at, write_value};
 use crate::player::{MAX_RESOURCES, Player};
+use crate::prototypes::{object_by_id, squad_by_id};
 use crate::trigger::value::Cost;
 use crate::trigger::{Effect, TriggerScript, TriggerValue};
 use crate::world::World;
@@ -282,24 +283,6 @@ fn resource_count(database: &Database) -> usize {
         .map_or(0, |resources| resources.entries.len().min(MAX_RESOURCES))
 }
 
-fn squad_by_id(database: &Database, id: i32) -> Option<&ProtoSquad> {
-    database
-        .squads
-        .iter()
-        .enumerate()
-        .find(|(index, prototype)| database_id(prototype.dbid, *index) == id)
-        .map(|(_, prototype)| prototype)
-}
-
-fn object_by_id(database: &Database, id: i32) -> Option<&ProtoObject> {
-    database
-        .objects
-        .iter()
-        .enumerate()
-        .find(|(index, prototype)| database_id(prototype.dbid, *index) == id)
-        .map(|(_, prototype)| prototype)
-}
-
 fn tech_by_id(database: &Database, id: i32) -> Option<&Tech> {
     usize::try_from(id)
         .ok()
@@ -363,10 +346,6 @@ fn unit_population_amount(
                 .find(|population| population.population_type == unit_population)
         })
         .map_or(0.0, |population| population.amount)
-}
-
-fn database_id(explicit: Option<i32>, index: usize) -> i32 {
-    explicit.unwrap_or_else(|| i32::try_from(index).unwrap_or(-1))
 }
 
 fn write_optional_float(effect: &Effect, script: &mut TriggerScript, slot: u16, value: f32) {

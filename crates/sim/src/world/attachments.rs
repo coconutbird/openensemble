@@ -6,7 +6,7 @@ use crate::entities::Object;
 use crate::entities::objects::is_icon_prototype;
 use crate::entities::squads::{formation_offset_to_local, formation_offset_to_world};
 use crate::entity_id::{EntityClass, EntityId};
-use crate::spawn::find_object_by_id;
+use crate::prototypes::object_by_id;
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 
@@ -45,7 +45,7 @@ impl World {
             .units
             .get(unit_id)
             .map(|unit| (unit.base.player_id, unit.base.position, unit.base.forward))?;
-        let prototype = find_object_by_id(database, prototype_id)?;
+        let prototype = object_by_id(database, prototype_id)?;
         if !prototype
             .object_class
             .as_deref()
