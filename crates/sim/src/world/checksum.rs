@@ -94,8 +94,7 @@ fn hash_objects(checksum: &mut SyncChecksum, objects: &EntityManager<Object>) {
         hash_base_entity(checksum, &object.base);
         object.object_state.hash_state(checksum);
         checksum.hash_i32(object.proto_object_id);
-        checksum.hash_u32(u32::try_from(object.proto_object_name.len()).unwrap_or(u32::MAX));
-        checksum.hash_bytes(object.proto_object_name.as_bytes());
+        checksum.hash_string(&object.proto_object_name);
         hash_optional_entity_id(checksum, object.built_by);
         hash_optional_vec3(checksum, object.visual_secondary_position());
         object.ambient_life_spawner.hash_state(checksum);
@@ -175,8 +174,7 @@ fn hash_config_symbols<'a>(checksum: &mut SyncChecksum, symbols: impl Iterator<I
     let symbols = symbols.collect::<Vec<_>>();
     checksum.hash_u32(u32::try_from(symbols.len()).unwrap_or(u32::MAX));
     for symbol in symbols {
-        checksum.hash_u32(u32::try_from(symbol.len()).unwrap_or(u32::MAX));
-        checksum.hash_bytes(symbol.as_bytes());
+        checksum.hash_string(symbol);
     }
 }
 
@@ -314,15 +312,12 @@ fn hash_unit_persistent_child_state(checksum: &mut SyncChecksum, unit: &Unit) {
 
 fn hash_unit_prototype(checksum: &mut SyncChecksum, unit: &Unit) {
     checksum.hash_i32(unit.proto_object_id);
-    checksum.hash_u32(u32::try_from(unit.proto_object_name.len()).unwrap_or(u32::MAX));
-    checksum.hash_bytes(unit.proto_object_name.as_bytes());
+    checksum.hash_string(&unit.proto_object_name);
     let logical_name = unit.logical_proto_object_name();
-    checksum.hash_u32(u32::try_from(logical_name.len()).unwrap_or(u32::MAX));
-    checksum.hash_bytes(logical_name.as_bytes());
+    checksum.hash_string(logical_name);
     checksum.hash_u32(u32::try_from(unit.object_types.len()).unwrap_or(u32::MAX));
     for object_type in &unit.object_types {
-        checksum.hash_u32(u32::try_from(object_type.len()).unwrap_or(u32::MAX));
-        checksum.hash_bytes(object_type.as_bytes());
+        checksum.hash_string(object_type);
     }
 }
 
@@ -347,8 +342,7 @@ fn hash_squads(checksum: &mut SyncChecksum, squads: &EntityManager<Squad>) {
         checksum.hash_f32(squad.acceleration);
         checksum.hash_f32(squad.turn_rate_degrees);
         checksum.hash_i32(squad.proto_squad_id);
-        checksum.hash_u32(u32::try_from(squad.proto_squad_name.len()).unwrap_or(u32::MAX));
-        checksum.hash_bytes(squad.proto_squad_name.as_bytes());
+        checksum.hash_string(&squad.proto_squad_name);
         checksum.hash_f32(squad.ammunition_maximum());
         checksum.hash_f32(squad.experience());
         checksum.hash_f32(squad.banked_experience());

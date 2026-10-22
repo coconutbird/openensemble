@@ -926,8 +926,7 @@ impl ChatRequest {
     fn hash_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_u32(0);
         checksum.hash_u32(self.id);
-        checksum.hash_u32(u32::try_from(self.sound_cue.len()).unwrap_or(u32::MAX));
-        checksum.hash_bytes(self.sound_cue.as_bytes());
+        checksum.hash_string(&self.sound_cue);
         checksum.hash_u32(u32::from(self.queue_sound));
         checksum.hash_i32(self.string_id);
         checksum.hash_u32(self.duration_ms);

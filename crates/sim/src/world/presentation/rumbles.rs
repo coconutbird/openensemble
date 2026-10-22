@@ -217,8 +217,7 @@ impl RumbleMotor {
 fn hash_optional_string(checksum: &mut SyncChecksum, value: Option<&str>) {
     if let Some(value) = value {
         checksum.hash_u32(1);
-        checksum.hash_u32(u32::try_from(value.len()).unwrap_or(u32::MAX));
-        checksum.hash_bytes(value.as_bytes());
+        checksum.hash_string(value);
     } else {
         checksum.hash_u32(0);
     }

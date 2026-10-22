@@ -193,36 +193,31 @@ impl World {
             checksum.hash_i32(*prototype_id);
             checksum.hash_u32(u32::try_from(object_types.len()).unwrap_or(u32::MAX));
             for object_type in object_types {
-                checksum.hash_u32(u32::try_from(object_type.len()).unwrap_or(u32::MAX));
-                checksum.hash_bytes(object_type.as_bytes());
+                checksum.hash_string(object_type);
             }
         }
         checksum.hash_u32(u32::try_from(self.prototype_squads.len()).unwrap_or(u32::MAX));
         for (prototype_id, (prototype_name, maximum_size)) in &self.prototype_squads {
             checksum.hash_i32(*prototype_id);
-            checksum.hash_u32(u32::try_from(prototype_name.len()).unwrap_or(u32::MAX));
-            checksum.hash_bytes(prototype_name.as_bytes());
+            checksum.hash_string(prototype_name);
             checksum.hash_u32(*maximum_size);
         }
         checksum.hash_u32(u32::try_from(self.prototype_shield_coverages.len()).unwrap_or(u32::MAX));
         for (prototype_name, coverage) in &self.prototype_shield_coverages {
-            checksum.hash_u32(u32::try_from(prototype_name.len()).unwrap_or(u32::MAX));
-            checksum.hash_bytes(prototype_name.as_bytes());
+            checksum.hash_string(prototype_name);
             checksum.hash_u32(*coverage as u32);
         }
         checksum.hash_u32(
             u32::try_from(self.prototype_ground_vehicle_physics.len()).unwrap_or(u32::MAX),
         );
         for (prototype_name, profile) in &self.prototype_ground_vehicle_physics {
-            checksum.hash_u32(u32::try_from(prototype_name.len()).unwrap_or(u32::MAX));
-            checksum.hash_bytes(prototype_name.as_bytes());
+            checksum.hash_string(prototype_name);
             profile.hash_state(checksum);
         }
         checksum
             .hash_u32(u32::try_from(self.prototype_flight_controllers.len()).unwrap_or(u32::MAX));
         for (prototype_name, profile) in &self.prototype_flight_controllers {
-            checksum.hash_u32(u32::try_from(prototype_name.len()).unwrap_or(u32::MAX));
-            checksum.hash_bytes(prototype_name.as_bytes());
+            checksum.hash_string(prototype_name);
             profile.hash_state(checksum);
         }
     }
