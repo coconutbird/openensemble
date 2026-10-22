@@ -267,18 +267,27 @@ fn assert_forbid_state(scenario: &str, loaded: &LoadedGameScenario) {
     }
     let database = &loaded.content.database;
     let world = &loaded.simulation.world;
+    // `BTriggerVar_loadValueFromText` resolves proto values by name to load-order
+    // indices, so look up the IDs by name. The `dbid` values are not proto IDs.
+    let object = |name| sim::object_prototype_id(database, name).expect("PHXscn13 object");
+    let squad = |name| sim::squad_prototype_id(database, name).expect("PHXscn13 squad");
     let player_three = world.get_player(3).expect("PHXscn13 player 3");
-    assert!(player_three.is_object_forbidden(database, 176));
-    for prototype_id in [902, 2454, 915, 2488] {
-        assert!(player_three.is_squad_forbidden(database, prototype_id));
+    assert!(player_three.is_object_forbidden(database, object("cov_bldg_turret_01")));
+    for name in [
+        "cov_inf_arbiter_01",
+        "cov_inf_eliteCommando_01",
+        "cov_veh_scarab_01",
+        "cov_inf_prophet_01",
+    ] {
+        assert!(player_three.is_squad_forbidden(database, squad(name)));
     }
     let player_four = world.get_player(4).expect("PHXscn13 player 4");
-    for prototype_id in [902, 2488] {
-        assert!(player_four.is_squad_forbidden(database, prototype_id));
+    for name in ["cov_inf_arbiter_01", "cov_inf_prophet_01"] {
+        assert!(player_four.is_squad_forbidden(database, squad(name)));
     }
     let player_five = world.get_player(5).expect("PHXscn13 player 5");
-    for prototype_id in [928, 1155] {
-        assert!(player_five.is_squad_forbidden(database, prototype_id));
+    for name in ["fld_inf_infectedCarrier_01", "fld_inf_rhinodillo_01"] {
+        assert!(player_five.is_squad_forbidden(database, squad(name)));
     }
 }
 
