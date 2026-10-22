@@ -5,7 +5,7 @@
 use glam::Vec3;
 use render::ugx::{UnitPlacement, UnitScene, simulation_proto_names};
 use sim::{
-    CommandEntry, CommandExecutor, QueuedCommand, WorkCommand, load_scenario_from_game_dir,
+    CommandEntry, CommandExecutor, CommandPayload, WorkCommand, load_scenario_from_game_dir,
     spawn_squad_at, squad_prototype_id,
 };
 
@@ -102,7 +102,7 @@ fn issue_change_mode(loaded: &mut sim::LoadedGameScenario, squad_id: sim::Entity
     .execute(
         &mut loaded.simulation.world,
         &CommandEntry {
-            command: QueuedCommand::Work(command),
+            command: CommandPayload::Work(command),
             exec_time: 0,
             sequence: 0,
             source_client: 1,

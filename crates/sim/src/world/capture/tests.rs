@@ -1,5 +1,6 @@
 use super::*;
-use crate::command_queue::{CommandEntry, QueuedCommand};
+use crate::command_queue::CommandEntry;
+use crate::commands::CommandPayload;
 use crate::commands::WorkCommand;
 use crate::executor::CommandExecutor;
 use crate::gameplay::GameplayCatalog;
@@ -93,7 +94,7 @@ fn opposing_progress_is_removed_before_new_progress_and_idle_work_decays() {
 fn capture_work_command_dispatches_to_the_authoritative_order() {
     let (mut world, database, gameplay, squad_id, target_id) = fixture(20.0, Vec3::ZERO);
     let entry = CommandEntry {
-        command: QueuedCommand::Work(WorkCommand::capture_squads(1, vec![squad_id], target_id)),
+        command: CommandPayload::Work(WorkCommand::capture_squads(1, vec![squad_id], target_id)),
         exec_time: 0,
         sequence: 0,
         source_client: 1,

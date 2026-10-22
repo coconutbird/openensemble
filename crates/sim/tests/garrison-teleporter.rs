@@ -3,7 +3,7 @@
 
 use glam::Vec3;
 use sim::{
-    CommandEntry, CommandExecutor, GarrisonError, PopulationCost, QueuedCommand,
+    CommandEntry, CommandExecutor, CommandPayload, GarrisonError, PopulationCost,
     SquadContainmentState, UnitGarrison, WorkCommand, World,
 };
 
@@ -270,7 +270,7 @@ fn advance_until(world: &mut World, condition: impl Fn(&World) -> bool) {
 
 fn command_entry(command: WorkCommand) -> CommandEntry {
     CommandEntry {
-        command: QueuedCommand::Work(command),
+        command: CommandPayload::Work(command),
         exec_time: 0,
         sequence: 0,
         source_client: 1,

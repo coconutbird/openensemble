@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use glam::Vec3;
 use sim::{
-    CommandEntry, CommandExecutor, LoadedGameScenario, QueuedCommand, SquadMode, WorkCommand,
+    CommandEntry, CommandExecutor, CommandPayload, LoadedGameScenario, SquadMode, WorkCommand,
     load_scenario_from_game_dir, object_prototype_id, spawn_object_at, spawn_squad_at,
     squad_prototype_id,
 };
@@ -418,7 +418,7 @@ fn issue_suicide_detonate(
     CommandExecutor::with_database(database).execute(
         world,
         &CommandEntry {
-            command: QueuedCommand::Work(WorkCommand::detonate_squads(
+            command: CommandPayload::Work(WorkCommand::detonate_squads(
                 1,
                 vec![source],
                 target,
@@ -633,7 +633,7 @@ fn issue_ghost_ram(
     CommandExecutor::with_database(database).execute(
         world,
         &CommandEntry {
-            command: QueuedCommand::Work(command),
+            command: CommandPayload::Work(command),
             exec_time: 0,
             sequence: 0,
             source_client: 1,

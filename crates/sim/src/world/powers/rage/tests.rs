@@ -1,6 +1,7 @@
 use super::*;
 use crate::command::Command;
-use crate::command_queue::{CommandEntry, QueuedCommand};
+use crate::command_queue::CommandEntry;
+use crate::commands::CommandPayload;
 use crate::commands::{
     PowerCommand, PowerCommandType, PowerInputCommand, PowerInputCommandType, PowerUserId,
     power_input_command_flags,
@@ -79,14 +80,14 @@ fn wire_input_targets_in_radius_charges_jump_lands_and_honors_no_cost() {
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::Power(invoke_command(owner_id, user_id)),
+        CommandPayload::Power(invoke_command(owner_id, user_id)),
     );
     assert_eq!(world.active_rage_powers()[0].power_user_id(), user_id);
     assert!(!world.active_rage_powers()[0].uses_pather());
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::PowerInput(input_command(user_id, Vec3::ZERO, false)),
+        CommandPayload::PowerInput(input_command(user_id, Vec3::ZERO, false)),
     );
     let execution = &world.active_rage_powers()[0];
     assert_eq!(execution.target_squad_id(), Some(target_id));
@@ -116,7 +117,7 @@ fn wire_input_targets_in_radius_charges_jump_lands_and_honors_no_cost() {
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::PowerInput(input_command(user_id, Vec3::X, false)),
+        CommandPayload::PowerInput(input_command(user_id, Vec3::X, false)),
     );
     assert_close(world.get_player(1).unwrap().get_resource(0), before);
     world.power_manager.rage_executions[0].retarget_remaining = 0.0;
@@ -124,13 +125,13 @@ fn wire_input_targets_in_radius_charges_jump_lands_and_honors_no_cost() {
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::PowerInput(input_command(user_id, Vec3::X, true)),
+        CommandPayload::PowerInput(input_command(user_id, Vec3::X, true)),
     );
     assert_eq!(world.active_rage_powers().len(), 1);
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::PowerInput(input_command(user_id, Vec3::X, false)),
+        CommandPayload::PowerInput(input_command(user_id, Vec3::X, false)),
     );
     assert!(world.active_rage_powers().is_empty());
     assert_owner_inactive(&world, owner_id);
@@ -300,7 +301,7 @@ fn assert_owner_inactive(world: &World, squad_id: EntityId) {
     }
 }
 
-fn execute_command(executor: &CommandExecutor<'_>, world: &mut World, command: QueuedCommand) {
+fn execute_command(executor: &CommandExecutor<'_>, world: &mut World, command: CommandPayload) {
     executor.execute(
         world,
         &CommandEntry {

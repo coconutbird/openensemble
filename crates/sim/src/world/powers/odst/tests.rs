@@ -1,6 +1,7 @@
 use super::*;
 use crate::command::Command;
-use crate::command_queue::{CommandEntry, QueuedCommand};
+use crate::command_queue::CommandEntry;
+use crate::commands::CommandPayload;
 use crate::commands::{
     PowerCommand, PowerCommandType, PowerInputCommand, PowerInputCommandType, PowerUserId,
     power_command_flags,
@@ -136,7 +137,7 @@ fn invoke_power_two_and_confirm_wire_vector_route_by_packed_user_id() {
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::Power(invoke_command(user_id, true)),
+        CommandPayload::Power(invoke_command(user_id, true)),
     );
     assert_eq!(world.active_odst_powers().len(), 1);
     assert_eq!(world.active_odst_powers()[0].power_user_id(), user_id);
@@ -144,14 +145,14 @@ fn invoke_power_two_and_confirm_wire_vector_route_by_packed_user_id() {
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::PowerInput(confirm_command(PowerUserId::new(1, 9, 20), Vec3::X)),
+        CommandPayload::PowerInput(confirm_command(PowerUserId::new(1, 9, 20), Vec3::X)),
     );
     assert!(world.active_odst_powers()[0].active_drops().is_empty());
     let target = Vec3::new(17.0, 4.0, 29.0);
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::PowerInput(confirm_command(user_id, target)),
+        CommandPayload::PowerInput(confirm_command(user_id, target)),
     );
 
     let drop = &world.active_odst_powers()[0].active_drops()[0];
@@ -335,7 +336,7 @@ fn invocation(ignore_requirements: bool, power_user_id: PowerUserId) -> OdstPowe
     }
 }
 
-fn execute_command(executor: &CommandExecutor<'_>, world: &mut World, command: QueuedCommand) {
+fn execute_command(executor: &CommandExecutor<'_>, world: &mut World, command: CommandPayload) {
     executor.execute(
         world,
         &CommandEntry {

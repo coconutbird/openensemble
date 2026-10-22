@@ -550,7 +550,7 @@ fn start_layered_cryo_power(loaded: &mut sim::LoadedGameScenario) -> (sim::Entit
     sim::CommandExecutor::with_database(&loaded.content.database).execute(
         &mut loaded.simulation.world,
         &sim::CommandEntry {
-            command: sim::QueuedCommand::Power(command),
+            command: sim::CommandPayload::Power(command),
             exec_time: 0,
             sequence: 0,
             source_client: 1,
@@ -709,7 +709,7 @@ fn assert_layered_mines_execution(loaded: &mut sim::LoadedGameScenario) {
     sim::CommandExecutor::with_database(&loaded.content.database).execute(
         &mut loaded.simulation.world,
         &sim::CommandEntry {
-            command: sim::QueuedCommand::Work(mines_command),
+            command: sim::CommandPayload::Work(mines_command),
             exec_time: 0,
             sequence: 0,
             source_client: 1,

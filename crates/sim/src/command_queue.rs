@@ -3,43 +3,16 @@
 //! Commands are received from the network with a target execution time.
 //! The queue holds them until the simulation reaches that time.
 
-use crate::commands::{BuildingCommand, GameCommand, PowerCommand, PowerInputCommand, WorkCommand};
+use crate::commands::{
+    BuildingCommand, CommandPayload, GameCommand, PowerCommand, PowerInputCommand, WorkCommand,
+};
 use std::collections::BTreeMap;
-
-/// A command with its execution time.
-#[derive(Debug, Clone)]
-pub enum QueuedCommand {
-    /// Unit work command.
-    Work(WorkCommand),
-    /// Leader power activation command.
-    Power(PowerCommand),
-    /// Leader power input command.
-    PowerInput(PowerInputCommand),
-    /// Building command.
-    Building(BuildingCommand),
-    /// Game-level command.
-    Game(GameCommand),
-}
-
-impl QueuedCommand {
-    /// Get the player ID from the base command.
-    #[must_use]
-    pub fn player_id(&self) -> i32 {
-        match self {
-            QueuedCommand::Work(cmd) => cmd.base.player_id,
-            QueuedCommand::Power(cmd) => cmd.base.player_id,
-            QueuedCommand::PowerInput(cmd) => cmd.base.player_id,
-            QueuedCommand::Building(cmd) => cmd.base.player_id,
-            QueuedCommand::Game(cmd) => cmd.base.player_id,
-        }
-    }
-}
 
 /// Entry in the command queue.
 #[derive(Debug, Clone)]
 pub struct CommandEntry {
     /// The command to execute.
-    pub command: QueuedCommand,
+    pub command: CommandPayload,
     /// Execution time in game milliseconds.
     pub exec_time: u32,
     /// Sequence number for ordering commands at the same time.
@@ -69,7 +42,7 @@ impl CommandQueue {
     }
 
     /// Enqueue a command for execution at the specified time.
-    pub fn enqueue(&mut self, command: QueuedCommand, exec_time: u32, source_client: u64) {
+    pub fn enqueue(&mut self, command: CommandPayload, exec_time: u32, source_client: u64) {
         let sequence = self.next_sequence;
         self.next_sequence += 1;
 
@@ -85,12 +58,12 @@ impl CommandQueue {
 
     /// Enqueue a work command.
     pub fn enqueue_work(&mut self, cmd: WorkCommand, exec_time: u32, source_client: u64) {
-        self.enqueue(QueuedCommand::Work(cmd), exec_time, source_client);
+        self.enqueue(CommandPayload::Work(cmd), exec_time, source_client);
     }
 
     /// Enqueue a power command.
     pub fn enqueue_power(&mut self, cmd: PowerCommand, exec_time: u32, source_client: u64) {
-        self.enqueue(QueuedCommand::Power(cmd), exec_time, source_client);
+        self.enqueue(CommandPayload::Power(cmd), exec_time, source_client);
     }
 
     /// Enqueue live input for an already-running power.
@@ -100,37 +73,29 @@ impl CommandQueue {
         exec_time: u32,
         source_client: u64,
     ) {
-        self.enqueue(QueuedCommand::PowerInput(cmd), exec_time, source_client);
+        self.enqueue(CommandPayload::PowerInput(cmd), exec_time, source_client);
     }
 
     /// Enqueue a building command.
     pub fn enqueue_building(&mut self, cmd: BuildingCommand, exec_time: u32, source_client: u64) {
-        self.enqueue(QueuedCommand::Building(cmd), exec_time, source_client);
+        self.enqueue(CommandPayload::Building(cmd), exec_time, source_client);
     }
 
     /// Enqueue a game command.
     pub fn enqueue_game(&mut self, cmd: GameCommand, exec_time: u32, source_client: u64) {
-        self.enqueue(QueuedCommand::Game(cmd), exec_time, source_client);
+        self.enqueue(CommandPayload::Game(cmd), exec_time, source_client);
     }
 
     /// Get all commands ready to execute at or before the given time.
     pub fn drain_ready(&mut self, up_to_time: u32) -> Vec<CommandEntry> {
+        let end = (up_to_time + 1, u64::MAX);
         let mut ready = Vec::new();
-
-        // Collect keys to remove
-        let keys_to_remove: Vec<_> = self
-            .queue
-            .range(..(up_to_time + 1, u64::MAX))
-            .map(|(k, _)| *k)
-            .collect();
-
-        // Remove and collect entries
-        for key in keys_to_remove {
-            if let Some(entry) = self.queue.remove(&key) {
-                ready.push(entry);
+        while let Some(entry) = self.queue.first_entry() {
+            if *entry.key() >= end {
+                break;
             }
+            ready.push(entry.remove());
         }
-
         ready
     }
 
@@ -194,5 +159,24 @@ mod tests {
         assert_eq!(ready[0].exec_time, 100);
         assert_eq!(ready[1].exec_time, 200);
         assert_eq!(ready[2].exec_time, 300);
+    }
+
+    #[test]
+    fn drain_ready_keeps_sequence_order_and_time_bound() {
+        let mut queue = CommandQueue::new();
+        queue.enqueue_game(GameCommand::default(), 200, 1);
+        queue.enqueue_game(GameCommand::default(), 201, 1);
+        queue.enqueue_game(GameCommand::default(), 100, 2);
+        queue.enqueue_game(GameCommand::default(), 200, 3);
+
+        let ready = queue.drain_ready(200);
+        let keys: Vec<_> = ready
+            .iter()
+            .map(|entry| (entry.exec_time, entry.sequence, entry.source_client))
+            .collect();
+        assert_eq!(keys, [(100, 2, 2), (200, 0, 1), (200, 3, 3)]);
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue.next_exec_time(), Some(201));
+        assert!(queue.drain_ready(200).is_empty());
     }
 }

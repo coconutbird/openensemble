@@ -1,5 +1,6 @@
 use super::*;
-use crate::command_queue::{CommandEntry, QueuedCommand};
+use crate::command_queue::CommandEntry;
+use crate::commands::CommandPayload;
 use crate::commands::WorkCommand;
 use crate::entities::RecoveryType;
 use crate::executor::CommandExecutor;
@@ -177,7 +178,7 @@ fn issue_ram(
     CommandExecutor::with_database(database).execute(
         world,
         &CommandEntry {
-            command: QueuedCommand::Work(command),
+            command: CommandPayload::Work(command),
             exec_time: 0,
             sequence: 0,
             source_client: 1,

@@ -87,7 +87,8 @@ impl World {
 mod tests {
     use super::*;
     use crate::command::{Command, CommandType, EntityType};
-    use crate::command_queue::{CommandEntry, QueuedCommand};
+    use crate::command_queue::CommandEntry;
+    use crate::commands::CommandPayload;
     use crate::commands::WorkCommand;
     use crate::entities::RecoveryType;
     use crate::executor::CommandExecutor;
@@ -233,7 +234,7 @@ mod tests {
 
     fn ability_command(squad_id: EntityId, target_id: EntityId, ability_id: i32) -> CommandEntry {
         CommandEntry {
-            command: QueuedCommand::Work(WorkCommand {
+            command: CommandPayload::Work(WorkCommand {
                 base: Command {
                     id: OrderType::Attack as i32,
                     player_id: 1,

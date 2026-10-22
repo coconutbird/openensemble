@@ -10,7 +10,7 @@ use sim::entities::units::warthog::{
     WARTHOG_HITPOINTS, WARTHOG_PROTO_OBJECT_ID, WARTHOG_UNIT_NAME, WarthogUnitSpec,
 };
 use sim::{
-    Command, CommandEntry, CommandExecutor, MotionType, OrderType, QueuedCommand, ScenarioData,
+    Command, CommandEntry, CommandExecutor, CommandPayload, MotionType, OrderType, ScenarioData,
     SquadArchetype, SquadState, UnitArchetype, WorkCommand, World, load_scenario_into_world,
 };
 
@@ -99,7 +99,7 @@ fn issue_move(world: &mut World, squad_id: sim::EntityId, target: Vec3) {
         ..WorkCommand::default()
     };
     let entry = CommandEntry {
-        command: QueuedCommand::Work(work_command),
+        command: CommandPayload::Work(work_command),
         exec_time: 0,
         sequence: 0,
         source_client: 1,

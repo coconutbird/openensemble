@@ -1,5 +1,6 @@
 use super::*;
-use crate::command_queue::{CommandEntry, QueuedCommand};
+use crate::command_queue::CommandEntry;
+use crate::commands::CommandPayload;
 use crate::commands::{BuildingCommand, WorkCommand};
 use crate::entities::units::ResearchTask;
 use crate::entities::{SquadChangeModePhase, UnitChangeModePhase};
@@ -90,7 +91,7 @@ fn direct_building_command_targets_the_parent_squad() {
         &mut world,
         &database,
         &gameplay,
-        QueuedCommand::Building(command),
+        CommandPayload::Building(command),
     );
 
     assert_eq!(
@@ -117,7 +118,7 @@ fn change_mode_propagates_to_associated_wall_towers() {
         &mut world,
         &database,
         &gameplay,
-        QueuedCommand::Work(command),
+        CommandPayload::Work(command),
     );
 
     assert_eq!(
@@ -165,7 +166,7 @@ fn leaving_lockdown_menu_clears_and_refunds_production() {
         &mut world,
         &database,
         &gameplay,
-        QueuedCommand::Building(command),
+        CommandPayload::Building(command),
     );
     assert!(
         !world
@@ -243,7 +244,7 @@ fn lockdown_ability_attack_unlocks_to_chase_then_relocks_before_firing() {
         &mut world,
         &database,
         &gameplay,
-        QueuedCommand::Work(command),
+        CommandPayload::Work(command),
     );
     assert_eq!(
         world.get_squad(squad_id).unwrap().changing_to_mode(),
@@ -343,7 +344,7 @@ fn execute_work_change_mode(
     squad_id: EntityId,
 ) {
     let command = WorkCommand::change_mode_squads(1, vec![squad_id], None, Some(0));
-    execute_command(world, database, gameplay, QueuedCommand::Work(command));
+    execute_command(world, database, gameplay, CommandPayload::Work(command));
 }
 
 fn execute_ability_move(
@@ -355,14 +356,14 @@ fn execute_ability_move(
 ) {
     let mut command = WorkCommand::move_squads(1, vec![squad_id], target);
     command.ability_id = 0;
-    execute_command(world, database, gameplay, QueuedCommand::Work(command));
+    execute_command(world, database, gameplay, CommandPayload::Work(command));
 }
 
 fn execute_command(
     world: &mut World,
     database: &Database,
     gameplay: &GameplayCatalog,
-    command: QueuedCommand,
+    command: CommandPayload,
 ) {
     CommandExecutor::with_database_and_gameplay(database, gameplay).execute(
         world,

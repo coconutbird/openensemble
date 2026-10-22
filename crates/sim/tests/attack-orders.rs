@@ -5,7 +5,7 @@ use glam::Vec3;
 use pipeline::database::hw1::tactics::{Action, TacticData, Weapon};
 use pipeline::database::hw1::{Database, ProtoObject};
 use sim::{
-    CommandEntry, CommandExecutor, GameplayCatalog, QueuedCommand, SquadState, WorkCommand, World,
+    CommandEntry, CommandExecutor, CommandPayload, GameplayCatalog, SquadState, WorkCommand, World,
 };
 
 fn combat_database() -> Database {
@@ -63,7 +63,7 @@ fn combat_world() -> (World, sim::EntityId, sim::EntityId, sim::EntityId) {
 
 fn execute_attack(world: &mut World, attacker_squad: sim::EntityId, target_unit: sim::EntityId) {
     let entry = CommandEntry {
-        command: QueuedCommand::Work(WorkCommand::attack_squads(
+        command: CommandPayload::Work(WorkCommand::attack_squads(
             1,
             vec![attacker_squad],
             target_unit,

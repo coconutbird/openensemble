@@ -2,7 +2,7 @@
 
 use glam::Vec3;
 use sim::{
-    AttackQuery, AttackQueryFlags, CommandEntry, CommandExecutor, QueuedCommand, SquadMode,
+    AttackQuery, AttackQueryFlags, CommandEntry, CommandExecutor, CommandPayload, SquadMode,
     WorkCommand, load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id,
 };
 
@@ -60,7 +60,7 @@ fn shipped_brute_chief_hand_attack_executes_without_a_projectile() {
     CommandExecutor::with_database(database).execute(
         &mut loaded.simulation.world,
         &CommandEntry {
-            command: QueuedCommand::Work(WorkCommand::attack_squads(
+            command: CommandPayload::Work(WorkCommand::attack_squads(
                 1,
                 vec![attacker_squad],
                 target_squad,

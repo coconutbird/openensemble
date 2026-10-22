@@ -17,11 +17,12 @@ use protection_assertions::{
 };
 use sim::entities::squads::marine::MARINE_SQUAD_NAME;
 use sim::{
-    AttackQuery, BuildingCommand, CommandEntry, CommandExecutor, LoadedGameScenario, MS_PER_TICK,
-    PlayerId, QueuedCommand, RecoveryType, ScenarioAssetLoadError, ShieldCoverage, Simulation,
-    SquadMode, TechStatus, TrainingKind, WorkCommand, configure_player_leader,
-    load_scenario_from_game_dir, object_prototype_id, spawn_object_at, spawn_squad_at,
-    spawn_squad_from_base_by_name, squad_prototype_id, squad_runtime_id, technology_prototype_id,
+    AttackQuery, BuildingCommand, CommandEntry, CommandExecutor, CommandPayload,
+    LoadedGameScenario, MS_PER_TICK, PlayerId, RecoveryType, ScenarioAssetLoadError,
+    ShieldCoverage, Simulation, SquadMode, TechStatus, TrainingKind, WorkCommand,
+    configure_player_leader, load_scenario_from_game_dir, object_prototype_id, spawn_object_at,
+    spawn_squad_at, spawn_squad_from_base_by_name, squad_prototype_id, squad_runtime_id,
+    technology_prototype_id,
 };
 
 const DATABASE_PATHS: [&str; 10] = [
@@ -971,7 +972,7 @@ fn assert_real_marine_rocket_recovery(
     CommandExecutor::with_database(&loaded.content.database).execute(
         &mut loaded.simulation.world,
         &CommandEntry {
-            command: QueuedCommand::Work(blocked),
+            command: CommandPayload::Work(blocked),
             exec_time: clock.game_time_ms,
             sequence: 0,
             source_client: u64::from(attacker_player_id),

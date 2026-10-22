@@ -11,9 +11,9 @@ use pipeline::database::hw1::techs::{
 use pipeline::database::hw1::{Database, GameData, ProtoObject, Tech};
 use sim::packet::channel_packet_type;
 use sim::{
-    BuildingCommand, BuildingCommandType, ChannelPacketHeader, CommandDispatcher,
-    DispatchedCommand, EntityId, MS_PER_TICK, ResearchError, ResearchQueueResult, Simulation,
-    TechStatus, object_prototype_id, serialize_command, spawn_object_at, technology_prototype_id,
+    BuildingCommand, BuildingCommandType, ChannelPacketHeader, CommandDispatcher, CommandPayload,
+    EntityId, MS_PER_TICK, ResearchError, ResearchQueueResult, Simulation, TechStatus,
+    object_prototype_id, serialize_command, spawn_object_at, technology_prototype_id,
 };
 
 const BARRACKS: &str = "test_barracks";
@@ -55,7 +55,7 @@ fn building_packet_dispatches_the_fixed_retail_payload() {
         decoded_header.packet_type,
         channel_packet_type::COMMAND_BUILDING
     );
-    let DispatchedCommand::Building(decoded) = decoded else {
+    let CommandPayload::Building(decoded) = decoded else {
         panic!("building packet should dispatch as BuildingCommand");
     };
     assert_eq!(decoded.base.player_id, 1);

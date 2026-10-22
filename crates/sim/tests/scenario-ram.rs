@@ -2,7 +2,7 @@
 
 use glam::Vec3;
 use sim::{
-    CommandEntry, CommandExecutor, QueuedCommand, RecoveryType, SquadMode, WorkCommand,
+    CommandEntry, CommandExecutor, CommandPayload, RecoveryType, SquadMode, WorkCommand,
     load_scenario_from_game_dir, spawn_squad_at, squad_prototype_id,
 };
 
@@ -86,7 +86,7 @@ fn shipped_scenario_database_drives_authoritative_warthog_ram() {
     CommandExecutor::with_database(database).execute(
         &mut loaded.simulation.world,
         &CommandEntry {
-            command: QueuedCommand::Work(command),
+            command: CommandPayload::Work(command),
             exec_time: 0,
             sequence: 0,
             source_client: 1,

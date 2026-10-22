@@ -1,7 +1,9 @@
 //! Command dispatcher for routing incoming packets to the right command type.
 
 use crate::command::CommandType;
-use crate::commands::{BuildingCommand, GameCommand, PowerCommand, PowerInputCommand, WorkCommand};
+use crate::commands::{
+    BuildingCommand, CommandPayload, GameCommand, PowerCommand, PowerInputCommand, WorkCommand,
+};
 use crate::packet::{ChannelPacketHeader, PacketError, channel_packet_type};
 use crate::serialize::{SerializeError, deserialize_command};
 use std::io::{Cursor, Read};
@@ -32,24 +34,6 @@ pub enum DispatchError {
     },
 }
 
-/// Dispatched command after parsing.
-#[derive(Debug)]
-pub enum DispatchedCommand {
-    /// Unit work command.
-    Work(WorkCommand),
-    /// Leader power activation command.
-    Power(PowerCommand),
-    /// Leader power input command.
-    PowerInput(PowerInputCommand),
-    /// Building command.
-    Building(BuildingCommand),
-    /// Game-level command.
-    Game(GameCommand),
-    // TODO: Add other command types as needed
-    // Trigger(TriggerCommand),
-    // GeneralEvent(GeneralEventCommand),
-}
-
 /// Command dispatcher for parsing incoming network packets.
 pub struct CommandDispatcher;
 
@@ -61,9 +45,7 @@ impl CommandDispatcher {
     /// # Errors
     ///
     /// Returns an error if the header or command payload is invalid or incomplete.
-    pub fn dispatch(
-        data: &[u8],
-    ) -> Result<(ChannelPacketHeader, DispatchedCommand), DispatchError> {
+    pub fn dispatch(data: &[u8]) -> Result<(ChannelPacketHeader, CommandPayload), DispatchError> {
         let mut cursor = Cursor::new(data);
 
         // Read the channel packet header
@@ -83,7 +65,7 @@ impl CommandDispatcher {
     pub fn dispatch_by_type<R: Read>(
         packet_type: u8,
         reader: &mut R,
-    ) -> Result<DispatchedCommand, DispatchError> {
+    ) -> Result<CommandPayload, DispatchError> {
         match packet_type {
             channel_packet_type::COMMAND_WORK => {
                 let base = deserialize_command(reader)?;
@@ -92,7 +74,7 @@ impl CommandDispatcher {
                     ..Default::default()
                 };
                 cmd.deserialize_fields(reader)?;
-                Ok(DispatchedCommand::Work(cmd))
+                Ok(CommandPayload::Work(cmd))
             }
             channel_packet_type::COMMAND_POWER => {
                 let base = deserialize_command(reader)?;
@@ -101,7 +83,7 @@ impl CommandDispatcher {
                     ..Default::default()
                 };
                 cmd.deserialize_fields(reader)?;
-                Ok(DispatchedCommand::Power(cmd))
+                Ok(CommandPayload::Power(cmd))
             }
             channel_packet_type::COMMAND_POWER_INPUT => {
                 let base = deserialize_command(reader)?;
@@ -110,7 +92,7 @@ impl CommandDispatcher {
                     ..Default::default()
                 };
                 cmd.deserialize_fields(reader)?;
-                Ok(DispatchedCommand::PowerInput(cmd))
+                Ok(CommandPayload::PowerInput(cmd))
             }
             channel_packet_type::COMMAND_BUILDING => {
                 let base = deserialize_command(reader)?;
@@ -119,7 +101,7 @@ impl CommandDispatcher {
                     ..Default::default()
                 };
                 cmd.deserialize_fields(reader)?;
-                Ok(DispatchedCommand::Building(cmd))
+                Ok(CommandPayload::Building(cmd))
             }
             channel_packet_type::COMMAND_GAME => {
                 let base = deserialize_command(reader)?;
@@ -128,7 +110,7 @@ impl CommandDispatcher {
                     ..Default::default()
                 };
                 cmd.deserialize_fields(reader)?;
-                Ok(DispatchedCommand::Game(cmd))
+                Ok(CommandPayload::Game(cmd))
             }
             // TODO: Add other command types
             _ => Err(DispatchError::UnknownPacketType(packet_type)),

@@ -2,8 +2,8 @@
 
 use glam::{Vec3, Vec4};
 use sim::{
-    Command, CommandEntry, CommandExecutor, EntityId, PowerCommand, PowerCommandType,
-    QueuedCommand, load_scenario_from_game_dir, power_prototype_id,
+    Command, CommandEntry, CommandExecutor, CommandPayload, EntityId, PowerCommand,
+    PowerCommandType, load_scenario_from_game_dir, power_prototype_id,
 };
 
 const DISRUPTION_POWER: &str = "UnscLeaderDisruption";
@@ -103,7 +103,7 @@ fn execute_power(loaded: &mut sim::LoadedGameScenario, proto_power_id: i32, targ
     CommandExecutor::with_database(&loaded.content.database).execute(
         &mut loaded.simulation.world,
         &CommandEntry {
-            command: QueuedCommand::Power(command),
+            command: CommandPayload::Power(command),
             exec_time: 0,
             sequence: 0,
             source_client: 1,

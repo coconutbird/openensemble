@@ -1,6 +1,7 @@
 use super::*;
 use crate::command::Command;
-use crate::command_queue::{CommandEntry, QueuedCommand};
+use crate::command_queue::CommandEntry;
+use crate::commands::CommandPayload;
 use crate::commands::{
     PowerCommand, PowerCommandType, PowerInputCommand, PowerInputCommandType, power_command_flags,
 };
@@ -110,14 +111,14 @@ fn invoke_power_two_routes_confirm_position_and_shutdown_by_retail_user_id() {
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::Power(invoke_command(user_id)),
+        CommandPayload::Power(invoke_command(user_id)),
     );
     let beam_id = world.active_orbital_powers()[0].real_targeting_laser_id();
 
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::PowerInput(input_command(
+        CommandPayload::PowerInput(input_command(
             PowerUserId::new(1, POWER_TYPE, 92),
             PowerInputCommandType::Confirm,
             Vec3::ZERO,
@@ -127,7 +128,7 @@ fn invoke_power_two_routes_confirm_position_and_shutdown_by_retail_user_id() {
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::PowerInput(input_command(
+        CommandPayload::PowerInput(input_command(
             user_id,
             PowerInputCommandType::Position,
             Vec3::X * 4.0,
@@ -136,7 +137,7 @@ fn invoke_power_two_routes_confirm_position_and_shutdown_by_retail_user_id() {
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::PowerInput(input_command(
+        CommandPayload::PowerInput(input_command(
             user_id,
             PowerInputCommandType::Confirm,
             Vec3::ZERO,
@@ -148,7 +149,7 @@ fn invoke_power_two_routes_confirm_position_and_shutdown_by_retail_user_id() {
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::PowerInput(input_command(
+        CommandPayload::PowerInput(input_command(
             user_id,
             PowerInputCommandType::Shutdown,
             Vec3::ZERO,
@@ -311,7 +312,7 @@ fn invocation(ignore_requirements: bool, power_user_id: PowerUserId) -> OrbitalP
     }
 }
 
-fn execute_command(executor: &CommandExecutor<'_>, world: &mut World, command: QueuedCommand) {
+fn execute_command(executor: &CommandExecutor<'_>, world: &mut World, command: CommandPayload) {
     executor.execute(
         world,
         &CommandEntry {

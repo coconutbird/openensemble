@@ -1,5 +1,6 @@
 use super::*;
-use crate::command_queue::{CommandEntry, QueuedCommand};
+use crate::command_queue::CommandEntry;
+use crate::commands::CommandPayload;
 use crate::commands::WorkCommand;
 use crate::entities::units::UnitJumpPhase;
 use crate::entities::{GatherPhase, RecoveryType, SquadContainmentState, UnitGarrison};
@@ -188,7 +189,7 @@ fn execute_work(
     CommandExecutor::with_database_and_gameplay(database, gameplay).execute(
         world,
         &CommandEntry {
-            command: QueuedCommand::Work(command),
+            command: CommandPayload::Work(command),
             exec_time: 0,
             sequence: 0,
             source_client: 1,

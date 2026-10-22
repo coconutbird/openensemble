@@ -1,6 +1,7 @@
 use super::*;
 use crate::command::Command;
-use crate::command_queue::{CommandEntry, QueuedCommand};
+use crate::command_queue::CommandEntry;
+use crate::commands::CommandPayload;
 use crate::commands::{
     PowerCommand, PowerCommandType, PowerInputCommand, PowerInputCommandType, power_command_flags,
 };
@@ -373,13 +374,13 @@ fn packed_wave_input_routes_and_owner_profile_validation_match_native_contract()
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::Power(invoke_command(owner_id, user_id)),
+        CommandPayload::Power(invoke_command(owner_id, user_id)),
     );
     let execution_id = world.active_wave_powers()[0].id();
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::PowerInput(input_command(
+        CommandPayload::PowerInput(input_command(
             PowerUserId::new(1, WAVE_POWER_TYPE, 92),
             PowerInputCommandType::Position,
             Vec3::X * 4.0,
@@ -392,7 +393,7 @@ fn packed_wave_input_routes_and_owner_profile_validation_match_native_contract()
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::PowerInput(input_command(
+        CommandPayload::PowerInput(input_command(
             user_id,
             PowerInputCommandType::Position,
             Vec3::X * 4.0,
@@ -405,7 +406,7 @@ fn packed_wave_input_routes_and_owner_profile_validation_match_native_contract()
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::PowerInput(input_command(
+        CommandPayload::PowerInput(input_command(
             user_id,
             PowerInputCommandType::Confirm,
             Vec3::ZERO,
@@ -526,7 +527,7 @@ fn power_grant(squad_id: EntityId) -> PowerGrant {
     }
 }
 
-fn execute_command(executor: &CommandExecutor<'_>, world: &mut World, command: QueuedCommand) {
+fn execute_command(executor: &CommandExecutor<'_>, world: &mut World, command: CommandPayload) {
     executor.execute(
         world,
         &CommandEntry {

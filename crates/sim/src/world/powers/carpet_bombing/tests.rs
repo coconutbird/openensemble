@@ -1,6 +1,7 @@
 use super::*;
 use crate::command::Command;
-use crate::command_queue::{CommandEntry, QueuedCommand};
+use crate::command_queue::CommandEntry;
+use crate::commands::CommandPayload;
 use crate::commands::{
     PowerCommand, PowerCommandType, PowerInputCommand, PowerInputCommandType, power_command_flags,
 };
@@ -109,7 +110,7 @@ fn invoke_power_two_routes_position_and_direction_by_retail_user_id() {
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::Power(invoke_command(user_id)),
+        CommandPayload::Power(invoke_command(user_id)),
     );
     assert_eq!(world.active_carpet_bombing_powers().len(), 1);
     assert_eq!(
@@ -120,7 +121,7 @@ fn invoke_power_two_routes_position_and_direction_by_retail_user_id() {
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::PowerInput(input_command(
+        CommandPayload::PowerInput(input_command(
             user_id,
             PowerInputCommandType::Position,
             Vec3::ZERO,
@@ -129,7 +130,7 @@ fn invoke_power_two_routes_position_and_direction_by_retail_user_id() {
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::PowerInput(input_command(
+        CommandPayload::PowerInput(input_command(
             PowerUserId::new(1, POWER_TYPE, 92),
             PowerInputCommandType::Direction,
             Vec3::X,
@@ -142,7 +143,7 @@ fn invoke_power_two_routes_position_and_direction_by_retail_user_id() {
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::PowerInput(input_command(
+        CommandPayload::PowerInput(input_command(
             user_id,
             PowerInputCommandType::Direction,
             Vec3::X,
@@ -292,7 +293,7 @@ fn invocation(
     }
 }
 
-fn execute_command(executor: &CommandExecutor<'_>, world: &mut World, command: QueuedCommand) {
+fn execute_command(executor: &CommandExecutor<'_>, world: &mut World, command: CommandPayload) {
     executor.execute(
         world,
         &CommandEntry {

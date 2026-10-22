@@ -2,7 +2,7 @@
 
 use glam::Vec3;
 use sim::{
-    CommandEntry, CommandExecutor, EntityId, GameplayCatalog, QueuedCommand, SquadChangeModePhase,
+    CommandEntry, CommandExecutor, CommandPayload, EntityId, GameplayCatalog, SquadChangeModePhase,
     SquadMode, WorkCommand, World, load_scenario_from_game_dir, object_prototype_id,
     spawn_object_at, spawn_squad_at, squad_prototype_id,
 };
@@ -356,7 +356,7 @@ fn execute_ability_attack(
     CommandExecutor::with_database_and_gameplay(database, gameplay).execute(
         world,
         &CommandEntry {
-            command: QueuedCommand::Work(command),
+            command: CommandPayload::Work(command),
             exec_time: 0,
             sequence: 0,
             source_client: 1,
@@ -375,7 +375,7 @@ fn execute_toggle(
     CommandExecutor::with_database_and_gameplay(database, gameplay).execute(
         world,
         &CommandEntry {
-            command: QueuedCommand::Work(command),
+            command: CommandPayload::Work(command),
             exec_time: 0,
             sequence: 0,
             source_client: 1,
@@ -395,7 +395,7 @@ fn execute_ability_move(
     CommandExecutor::with_database_and_gameplay(database, gameplay).execute(
         world,
         &CommandEntry {
-            command: QueuedCommand::Work(command),
+            command: CommandPayload::Work(command),
             exec_time: 0,
             sequence: 0,
             source_client: 1,

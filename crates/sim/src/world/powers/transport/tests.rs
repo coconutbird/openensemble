@@ -1,6 +1,7 @@
 use super::*;
 use crate::command::Command;
-use crate::command_queue::{CommandEntry, QueuedCommand};
+use crate::command_queue::CommandEntry;
+use crate::commands::CommandPayload;
 use crate::commands::{
     PowerCommand, PowerCommandType, PowerInputCommand, PowerInputCommandType, PowerUserId,
     power_command_flags,
@@ -217,7 +218,7 @@ fn invoke_power_two_and_confirm_vectors_route_by_transport_user_id() {
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::Power(invoke_command(user_id)),
+        CommandPayload::Power(invoke_command(user_id)),
     );
     assert_eq!(world.active_transport_powers().len(), 1);
     assert_eq!(world.active_transport_powers()[0].power_user_id(), user_id);
@@ -225,7 +226,7 @@ fn invoke_power_two_and_confirm_vectors_route_by_transport_user_id() {
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::PowerInput(input_command(
+        CommandPayload::PowerInput(input_command(
             PowerUserId::new(1, TRANSPORT_TYPE, 20),
             PowerInputCommandType::Confirm,
             Vec3::ZERO,
@@ -235,7 +236,7 @@ fn invoke_power_two_and_confirm_vectors_route_by_transport_user_id() {
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::PowerInput(input_command(
+        CommandPayload::PowerInput(input_command(
             user_id,
             PowerInputCommandType::Confirm,
             Vec3::ZERO,
@@ -248,7 +249,7 @@ fn invoke_power_two_and_confirm_vectors_route_by_transport_user_id() {
     execute_command(
         &executor,
         &mut world,
-        QueuedCommand::PowerInput(input_command(
+        CommandPayload::PowerInput(input_command(
             user_id,
             PowerInputCommandType::Confirm,
             Vec3::new(60.0, 0.0, 0.0),
@@ -454,7 +455,7 @@ fn assert_close(actual: f32, expected: f32) {
     );
 }
 
-fn execute_command(executor: &CommandExecutor<'_>, world: &mut World, command: QueuedCommand) {
+fn execute_command(executor: &CommandExecutor<'_>, world: &mut World, command: CommandPayload) {
     executor.execute(
         world,
         &CommandEntry {

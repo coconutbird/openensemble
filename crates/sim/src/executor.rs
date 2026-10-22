@@ -2,7 +2,8 @@
 //!
 //! This is where commands from the network get wired up to actual game logic.
 
-use crate::command_queue::{CommandEntry, QueuedCommand};
+use crate::command_queue::CommandEntry;
+use crate::commands::CommandPayload;
 use crate::commands::{
     BuildingCommand, BuildingCommandType, GameCommand, GameCommandType, PowerCommand,
     PowerCommandType, PowerInputCommand, PowerInputCommandType, PowerUserId, WorkCommand,
@@ -75,11 +76,11 @@ impl<'database> CommandExecutor<'database> {
     /// Execute a single command against the world.
     pub fn execute(&self, world: &mut World, entry: &CommandEntry) {
         match &entry.command {
-            QueuedCommand::Work(cmd) => self.execute_work(world, cmd),
-            QueuedCommand::Power(cmd) => self.execute_power(world, cmd),
-            QueuedCommand::PowerInput(cmd) => self.execute_power_input(world, cmd),
-            QueuedCommand::Building(cmd) => self.execute_building(world, cmd),
-            QueuedCommand::Game(cmd) => self.execute_game(world, cmd),
+            CommandPayload::Work(cmd) => self.execute_work(world, cmd),
+            CommandPayload::Power(cmd) => self.execute_power(world, cmd),
+            CommandPayload::PowerInput(cmd) => self.execute_power_input(world, cmd),
+            CommandPayload::Building(cmd) => self.execute_building(world, cmd),
+            CommandPayload::Game(cmd) => self.execute_game(world, cmd),
         }
     }
 
@@ -567,7 +568,7 @@ fn optional_entity_id(raw: i32) -> Option<crate::EntityId> {
 mod tests {
     use super::*;
     use crate::command::Command;
-    use crate::command_queue::QueuedCommand;
+    use crate::commands::CommandPayload;
     use crate::entities::SquadState;
     use crate::order::OrderType;
     use pipeline::database::hw1::Power;
@@ -593,7 +594,7 @@ mod tests {
         };
 
         let entry = CommandEntry {
-            command: QueuedCommand::Work(work_cmd),
+            command: CommandPayload::Work(work_cmd),
             exec_time: 50,
             sequence: 0,
             source_client: 1,
@@ -626,7 +627,7 @@ mod tests {
         base.set_flag(crate::Command::ALTERNATE_FLAG, true);
         base.set_flag(work_command_flags::ATTACK_MOVE, true);
         let entry = CommandEntry {
-            command: QueuedCommand::Work(WorkCommand {
+            command: CommandPayload::Work(WorkCommand {
                 base,
                 terrain_point: Some(second_target),
                 ..Default::default()
@@ -661,7 +662,7 @@ mod tests {
         let target_unit_id = world.create_unit(1);
         assert!(world.attach_unit_to_squad(target_unit_id, target_id));
         let entry = CommandEntry {
-            command: QueuedCommand::Work(WorkCommand::join_squads(1, vec![source_id], target_id)),
+            command: CommandPayload::Work(WorkCommand::join_squads(1, vec![source_id], target_id)),
             exec_time: 0,
             sequence: 0,
             source_client: 1,
@@ -683,7 +684,7 @@ mod tests {
         let unit_id = world.create_unit(1);
         assert!(world.attach_unit_to_squad(unit_id, squad_id));
         let entry = CommandEntry {
-            command: QueuedCommand::Work(WorkCommand::cloak_squads(1, vec![squad_id], None)),
+            command: CommandPayload::Work(WorkCommand::cloak_squads(1, vec![squad_id], None)),
             exec_time: 0,
             sequence: 0,
             source_client: 1,
@@ -734,7 +735,7 @@ mod tests {
             ..Default::default()
         };
         let entry = CommandEntry {
-            command: QueuedCommand::Work(work_cmd),
+            command: CommandPayload::Work(work_cmd),
             exec_time: 0,
             sequence: 0,
             source_client: 1,
@@ -767,7 +768,7 @@ mod tests {
             ..Default::default()
         };
         let entry = CommandEntry {
-            command: QueuedCommand::Work(work_cmd),
+            command: CommandPayload::Work(work_cmd),
             exec_time: 0,
             sequence: 0,
             source_client: 1,
@@ -803,7 +804,7 @@ mod tests {
             ..PowerCommand::default()
         };
         let entry = CommandEntry {
-            command: QueuedCommand::Power(command),
+            command: CommandPayload::Power(command),
             exec_time: 0,
             sequence: 0,
             source_client: 1,
@@ -896,7 +897,7 @@ mod tests {
             ..BuildingCommand::default()
         };
         let entry = CommandEntry {
-            command: QueuedCommand::Building(command),
+            command: CommandPayload::Building(command),
             exec_time: 0,
             sequence: 0,
             source_client: 1,
@@ -915,7 +916,7 @@ mod tests {
         executor.execute(
             world,
             &CommandEntry {
-                command: QueuedCommand::Game(command),
+                command: CommandPayload::Game(command),
                 exec_time: 0,
                 sequence: 0,
                 source_client: 1,

@@ -1,5 +1,6 @@
 use super::*;
-use crate::command_queue::{CommandEntry, QueuedCommand};
+use crate::command_queue::CommandEntry;
+use crate::commands::CommandPayload;
 use crate::commands::WorkCommand;
 use crate::entities::RepairOtherPhase;
 use crate::executor::CommandExecutor;
@@ -165,7 +166,7 @@ fn work_command_dispatches_to_the_authoritative_repair_order() {
     let target_unit_id = world.get_squad(target_id).unwrap().unit_ids[0];
     world.get_unit_mut(target_unit_id).unwrap().hitpoints = 50.0;
     let entry = CommandEntry {
-        command: QueuedCommand::Work(WorkCommand::repair_squads(
+        command: CommandPayload::Work(WorkCommand::repair_squads(
             1,
             vec![source_id],
             target_unit_id,

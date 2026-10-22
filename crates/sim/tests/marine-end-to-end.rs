@@ -9,7 +9,7 @@ use sim::entities::units::marine::{
     MarineUnitSpec,
 };
 use sim::{
-    Command, CommandEntry, CommandExecutor, GroundMovePhase, OrderType, QueuedCommand,
+    Command, CommandEntry, CommandExecutor, CommandPayload, GroundMovePhase, OrderType,
     ScenarioData, SquadArchetype, SquadFormation, SquadState, UnitArchetype, WorkCommand, World,
     load_scenario_into_world,
 };
@@ -70,7 +70,7 @@ fn marine_database() -> Database {
 
 fn issue_move(world: &mut World, squad_id: sim::EntityId, target: Vec3) {
     let entry = CommandEntry {
-        command: QueuedCommand::Work(WorkCommand {
+        command: CommandPayload::Work(WorkCommand {
             base: Command {
                 id: OrderType::Move as i32,
                 player_id: 1,

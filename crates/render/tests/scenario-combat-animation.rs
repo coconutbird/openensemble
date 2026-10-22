@@ -5,7 +5,7 @@
 use glam::Vec3;
 use render::ugx::{UnitScene, simulation_proto_names};
 use sim::{
-    CommandEntry, CommandExecutor, QueuedCommand, WorkCommand, load_scenario_from_game_dir,
+    CommandEntry, CommandExecutor, CommandPayload, WorkCommand, load_scenario_from_game_dir,
     spawn_squad_at, squad_prototype_id,
 };
 
@@ -168,7 +168,7 @@ fn issue_attack(
     CommandExecutor::with_database(&loaded.content.database).execute(
         &mut loaded.simulation.world,
         &CommandEntry {
-            command: QueuedCommand::Work(WorkCommand::attack_squads(
+            command: CommandPayload::Work(WorkCommand::attack_squads(
                 1,
                 vec![attacker_squad],
                 target_squad,

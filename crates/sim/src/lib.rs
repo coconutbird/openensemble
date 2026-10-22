@@ -29,12 +29,13 @@ pub mod trigger;
 pub mod world;
 
 pub use command::{Command, CommandType, EntityType};
-pub use command_queue::{CommandEntry, CommandQueue, QueuedCommand};
+pub use command_queue::{CommandEntry, CommandQueue};
 pub use commands::{
-    BuildingCommand, BuildingCommandType, GameCommand, GameCommandType, PowerCommand,
-    PowerCommandType, PowerInputCommand, PowerInputCommandType, PowerUserId, WorkCommand,
+    BuildingCommand, BuildingCommandType, CommandPayload, GameCommand, GameCommandType,
+    PowerCommand, PowerCommandType, PowerInputCommand, PowerInputCommandType, PowerUserId,
+    WorkCommand,
 };
-pub use dispatcher::{CommandDispatcher, DispatchError, DispatchedCommand};
+pub use dispatcher::{CommandDispatcher, DispatchError};
 pub use entities::{
     AIR_TRAFFIC_LANDING_SPOT_COUNT, AirTrafficControl, AirTrafficLandingSpot, AircraftCrashPhase,
     AmbientLifeBehavior, Base, BaseEntity, BaseId, BombPhase, BuildingProduction, CapturePhase,
