@@ -23,8 +23,8 @@ use crate::terrain::{
 };
 use crate::wgpu;
 
-/// Height of the decal above the terrain, in world units. The impact decals use the same
-/// height, which keeps the patch above the tessellated terrain.
+/// Height of the decal above the terrain, in world units, before the retail `YOffset`. The
+/// impact decals use the same height, which keeps the patch above the tessellated terrain.
 const SELECTION_DECAL_Y_OFFSET: f32 = 0.25;
 
 /// Width and height of the generated ring texture, in texels.
@@ -49,6 +49,9 @@ pub struct SelectionDecal {
     pub radius_x: f32,
     /// Half length of the decal along the squad forward direction (`<Selection>` `RadiusZ`).
     pub radius_z: f32,
+    /// Height that the decal adds after the terrain conform (`<Selection>` `YOffset`, decal
+    /// field `+0x36`), in world units.
+    pub y_offset: f32,
     /// Display color (0 to 1) and opacity of the decal. Retail uses the player selection
     /// color with opacity 1, or `SubSelectDecalAlpha` (0.4) outside the sub-selection.
     pub color: [f32; 4],
@@ -133,6 +136,7 @@ fn decal_instance(decal: &SelectionDecal) -> Option<TerrainPatchInstance> {
     let valid = decal.center.is_finite()
         && decal.radius_x.is_finite()
         && decal.radius_z.is_finite()
+        && decal.y_offset.is_finite()
         && decal.radius_x > 0.0
         && decal.radius_z > 0.0
         && decal.intensity.is_finite()
@@ -148,7 +152,7 @@ fn decal_instance(decal: &SelectionDecal) -> Option<TerrainPatchInstance> {
         center: decal.center.to_array(),
         axis_u: (right * decal.radius_x).to_array(),
         axis_v: (forward * decal.radius_z).to_array(),
-        y_offset: SELECTION_DECAL_Y_OFFSET,
+        y_offset: SELECTION_DECAL_Y_OFFSET + decal.y_offset,
         intensity: decal.intensity.max(0.0),
         color: decal.color,
         uv_rect: [0.0, 0.0, 1.0, 1.0],
@@ -212,6 +216,7 @@ mod tests {
             forward: Vec3::new(1.0, 0.5, 0.0),
             radius_x: 2.0,
             radius_z: 3.0,
+            y_offset: 0.5,
             color: [0.2, 0.4, 1.0, 0.4],
             intensity: 6.0,
         };
@@ -220,6 +225,7 @@ mod tests {
         assert_eq!(instance.axis_v, [3.0, 0.0, 0.0]);
         assert_eq!(instance.axis_u, [0.0, 0.0, -2.0]);
         assert!((instance.intensity - 6.0).abs() < f32::EPSILON);
+        assert!((instance.y_offset - (SELECTION_DECAL_Y_OFFSET + 0.5)).abs() < f32::EPSILON);
         assert_eq!(instance.color, decal.color);
 
         let flat = SelectionDecal {

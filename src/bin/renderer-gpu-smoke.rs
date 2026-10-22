@@ -493,6 +493,7 @@ fn run_overlay_smoke(device: &wgpu::Device, queue: &wgpu::Queue) -> anyhow::Resu
             forward: Vec3::Z,
             radius_x: 1.5,
             radius_z: 1.0,
+            y_offset: 0.0,
             color: [0.27, 0.43, 0.09, 1.0],
             intensity: 6.0,
         }],
