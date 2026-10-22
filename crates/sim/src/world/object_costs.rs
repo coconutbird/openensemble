@@ -1,9 +1,10 @@
 //! Authoritative retail object-cost calculation, including dynamic escalation.
 
 use super::World;
+use super::resources::{ResourceCostError, resolve_resource_cost};
 use crate::entities::TrainingKind;
 use crate::entity::Entity;
-use crate::player::{MAX_RESOURCES, PlayerId, Resources};
+use crate::player::{PlayerId, Resources};
 use num_traits::ToPrimitive;
 use pipeline::database::hw1::Database;
 use pipeline::database::hw1::objects::ProtoObject;
@@ -82,38 +83,26 @@ fn base_object_cost(
     database: &Database,
     prototype: &ProtoObject,
 ) -> Result<Resources, ObjectCostError> {
-    if prototype.costs.is_empty() {
-        return Ok(Resources::new());
-    }
-    let resources = database
-        .game_data
-        .as_ref()
-        .and_then(|game_data| game_data.resources.as_ref())
-        .ok_or_else(|| ObjectCostError::MissingResourceTable(prototype.name.clone()))?;
-    let mut cost = Resources::new();
-    for entry in &prototype.costs {
-        if !entry.amount.is_finite() || entry.amount < 0.0 {
-            return Err(ObjectCostError::InvalidCost {
-                prototype: prototype.name.clone(),
-                resource: entry.resource_type.clone(),
-            });
-        }
-        let resource_id = resources
-            .entries
+    resolve_resource_cost(
+        database,
+        prototype
+            .costs
             .iter()
-            .position(|resource| {
-                resource
-                    .name
-                    .eq_ignore_ascii_case(entry.resource_type.trim())
-            })
-            .filter(|index| *index < MAX_RESOURCES)
-            .ok_or_else(|| ObjectCostError::UnknownResource {
-                prototype: prototype.name.clone(),
-                resource: entry.resource_type.clone(),
-            })?;
-        cost.add(resource_id, entry.amount);
-    }
-    Ok(cost)
+            .map(|entry| (entry.resource_type.as_str(), entry.amount)),
+    )
+    .map_err(|error| match error {
+        ResourceCostError::MissingResourceTable => {
+            ObjectCostError::MissingResourceTable(prototype.name.clone())
+        }
+        ResourceCostError::InvalidCost(resource) => ObjectCostError::InvalidCost {
+            prototype: prototype.name.clone(),
+            resource: resource.to_owned(),
+        },
+        ResourceCostError::UnknownResource(resource) => ObjectCostError::UnknownResource {
+            prototype: prototype.name.clone(),
+            resource: resource.to_owned(),
+        },
+    })
 }
 
 fn escalate_cost(

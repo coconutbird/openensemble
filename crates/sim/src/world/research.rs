@@ -1,12 +1,13 @@
 //! Retail-style technology eligibility, payment, and building research queues.
 
+use super::resources::{ResourceCostError, resolve_resource_cost};
 use super::{TechnologyError, World};
 use crate::entities::units::TriggerCommandStateRef;
 use crate::entities::{ResearchProgress, ResearchTask};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
-use crate::player::{MAX_RESOURCES, Player, PlayerId, Resources, TechStatus};
-use pipeline::database::hw1::techs::{PrereqsWrapper, TechCost, TypeCountEntry};
+use crate::player::{Player, PlayerId, Resources, TechStatus};
+use pipeline::database::hw1::techs::{PrereqsWrapper, TypeCountEntry};
 use pipeline::database::hw1::{Database, Tech};
 
 /// Result of accepting a positive retail research command.
@@ -663,48 +664,26 @@ pub(super) fn research_points(technology: &Tech) -> Result<f32, ResearchError> {
 }
 
 fn technology_cost(database: &Database, technology: &Tech) -> Result<Resources, ResearchError> {
-    if technology.costs.is_empty() {
-        return Ok(Resources::new());
-    }
-    let resources = database
-        .game_data
-        .as_ref()
-        .and_then(|game_data| game_data.resources.as_ref())
-        .ok_or_else(|| ResearchError::MissingResourceTable(technology.name.clone()))?;
-    let mut cost = Resources::new();
-    for entry in &technology.costs {
-        add_cost_entry(&mut cost, resources, technology, entry)?;
-    }
-    Ok(cost)
-}
-
-fn add_cost_entry(
-    cost: &mut Resources,
-    resources: &pipeline::database::hw1::gamedata::ResourcesWrapper,
-    technology: &Tech,
-    entry: &TechCost,
-) -> Result<(), ResearchError> {
-    if !entry.amount.is_finite() || entry.amount < 0.0 {
-        return Err(ResearchError::InvalidCost {
+    resolve_resource_cost(
+        database,
+        technology
+            .costs
+            .iter()
+            .map(|entry| (entry.resource_type.as_str(), entry.amount)),
+    )
+    .map_err(|error| match error {
+        ResourceCostError::MissingResourceTable => {
+            ResearchError::MissingResourceTable(technology.name.clone())
+        }
+        ResourceCostError::InvalidCost(resource) => ResearchError::InvalidCost {
             technology: technology.name.clone(),
-            resource: entry.resource_type.clone(),
-        });
-    }
-    let resource_id = resources
-        .entries
-        .iter()
-        .position(|resource| {
-            resource
-                .name
-                .eq_ignore_ascii_case(entry.resource_type.trim())
-        })
-        .filter(|index| *index < MAX_RESOURCES)
-        .ok_or_else(|| ResearchError::UnknownResource {
+            resource: resource.to_owned(),
+        },
+        ResourceCostError::UnknownResource(resource) => ResearchError::UnknownResource {
             technology: technology.name.clone(),
-            resource: entry.resource_type.clone(),
-        })?;
-    cost.add(resource_id, entry.amount);
-    Ok(())
+            resource: resource.to_owned(),
+        },
+    })
 }
 
 pub(super) fn authored_unobtainable(technology: &Tech) -> bool {

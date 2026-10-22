@@ -1,10 +1,11 @@
 //! Retail-style unit/squad training validation, payment, and cancellation.
 
+use super::resources::{ResourceCostError, resolve_resource_cost};
 use super::{ObjectCostError, World};
 use crate::entities::units::TriggerCommandStateRef;
 use crate::entities::{TrainingKind, TrainingProgress, TrainingRecharge, TrainingTask};
 use crate::entity_id::EntityId;
-use crate::player::{MAX_RESOURCES, PlayerId, PlayerTechState, PopulationCost, Resources};
+use crate::player::{PlayerId, PlayerTechState, PopulationCost, Resources};
 use crate::prototypes::object_by_name_trim_query;
 use crate::scenario::population::{
     object_population_costs, object_population_type_id, squad_population_costs,
@@ -687,14 +688,7 @@ fn squad_training_definition(
         forbid_id: prototype.dbid.unwrap_or(prototype_id),
         prototype_name: prototype.name.clone(),
         total_points: valid_build_points(&prototype.name, prototype.build_points)?,
-        cost: training_cost(
-            database,
-            &prototype.name,
-            prototype
-                .costs
-                .iter()
-                .map(|cost| (cost.resource_type.as_str(), cost.amount)),
-        )?,
+        cost: training_cost(database, prototype)?,
         population_costs: squad_population_costs(database, prototype),
         instant_recharge: has_flag(&prototype.flags, "InstantTrainWithRecharge"),
     })
@@ -734,40 +728,27 @@ fn valid_unit_build_points(
     valid_build_points(&prototype.name, Some(points))
 }
 
-fn training_cost<'a>(
-    database: &Database,
-    prototype: &str,
-    entries: impl Iterator<Item = (&'a str, f32)>,
-) -> Result<Resources, TrainingError> {
-    let entries = entries.collect::<Vec<_>>();
-    if entries.is_empty() {
-        return Ok(Resources::new());
-    }
-    let resources = database
-        .game_data
-        .as_ref()
-        .and_then(|game_data| game_data.resources.as_ref())
-        .ok_or_else(|| TrainingError::MissingResourceTable(prototype.to_owned()))?;
-    let mut cost = Resources::new();
-    for (resource, amount) in entries {
-        if !amount.is_finite() || amount < 0.0 {
-            return Err(TrainingError::InvalidCost {
-                prototype: prototype.to_owned(),
-                resource: resource.to_owned(),
-            });
-        }
-        let resource_id = resources
-            .entries
+fn training_cost(database: &Database, prototype: &ProtoSquad) -> Result<Resources, TrainingError> {
+    resolve_resource_cost(
+        database,
+        prototype
+            .costs
             .iter()
-            .position(|entry| entry.name.eq_ignore_ascii_case(resource.trim()))
-            .filter(|index| *index < MAX_RESOURCES)
-            .ok_or_else(|| TrainingError::UnknownResource {
-                prototype: prototype.to_owned(),
-                resource: resource.to_owned(),
-            })?;
-        cost.add(resource_id, amount);
-    }
-    Ok(cost)
+            .map(|cost| (cost.resource_type.as_str(), cost.amount)),
+    )
+    .map_err(|error| match error {
+        ResourceCostError::MissingResourceTable => {
+            TrainingError::MissingResourceTable(prototype.name.clone())
+        }
+        ResourceCostError::InvalidCost(resource) => TrainingError::InvalidCost {
+            prototype: prototype.name.clone(),
+            resource: resource.to_owned(),
+        },
+        ResourceCostError::UnknownResource(resource) => TrainingError::UnknownResource {
+            prototype: prototype.name.clone(),
+            resource: resource.to_owned(),
+        },
+    })
 }
 
 fn validate_object_population(
