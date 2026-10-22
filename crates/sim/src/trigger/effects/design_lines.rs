@@ -40,7 +40,7 @@ fn get_points(effect: &Effect, script: &mut TriggerScript, world: &World) -> Eff
 }
 
 fn list_add(effect: &Effect, script: &mut TriggerScript) -> EffectOutcome {
-    let Some((destination_id, mut destination)) = destination_list(effect, script, 4) else {
+    let Some(destination_id) = destination_list_id(effect, script, 4) else {
         return EffectOutcome::Skipped;
     };
     let Ok(single) = optional_design_line(effect, script, 1) else {
@@ -52,31 +52,30 @@ fn list_add(effect: &Effect, script: &mut TriggerScript) -> EffectOutcome {
     let Ok(clear) = optional_bool(effect, script, 3) else {
         return EffectOutcome::Skipped;
     };
+    let Some(destination) = design_line_list_mut(script, destination_id) else {
+        return EffectOutcome::Skipped;
+    };
     if clear.unwrap_or(false) {
         destination.clear();
     }
     destination.extend(single);
     destination.extend(additions.unwrap_or_default());
-    write_value(
-        script,
-        destination_id,
-        TriggerValue::DesignLineList(destination),
-    )
+    EffectOutcome::Applied
 }
 
 fn list_remove(effect: &Effect, script: &mut TriggerScript) -> EffectOutcome {
-    let Some((destination_id, mut destination)) = destination_list(effect, script, 5) else {
+    let Some(destination_id) = destination_list_id(effect, script, 5) else {
         return EffectOutcome::Skipped;
     };
     let Ok(remove_all) = optional_bool(effect, script, 3) else {
         return EffectOutcome::Skipped;
     };
     if remove_all.unwrap_or(false) {
-        return write_value(
-            script,
-            destination_id,
-            TriggerValue::DesignLineList(Vec::new()),
-        );
+        let Some(destination) = design_line_list_mut(script, destination_id) else {
+            return EffectOutcome::Skipped;
+        };
+        destination.clear();
+        return EffectOutcome::Applied;
     }
     let Ok(remove_duplicates) = optional_bool(effect, script, 4) else {
         return EffectOutcome::Skipped;
@@ -87,18 +86,17 @@ fn list_remove(effect: &Effect, script: &mut TriggerScript) -> EffectOutcome {
     let Ok(removals) = optional_design_line_list(effect, script, 2) else {
         return EffectOutcome::Skipped;
     };
+    let Some(destination) = design_line_list_mut(script, destination_id) else {
+        return EffectOutcome::Skipped;
+    };
     for line_id in single.into_iter().chain(removals.unwrap_or_default()) {
         if remove_duplicates.unwrap_or(false) {
             destination.retain(|candidate| *candidate != line_id);
         } else {
-            remove_first(&mut destination, line_id);
+            remove_first(destination, line_id);
         }
     }
-    write_value(
-        script,
-        destination_id,
-        TriggerValue::DesignLineList(destination),
-    )
+    EffectOutcome::Applied
 }
 
 fn list_size(effect: &Effect, script: &mut TriggerScript) -> EffectOutcome {
@@ -149,6 +147,9 @@ fn optional_design_line(
     }
 }
 
+/// Read an optional design-line list input as a copy.
+///
+/// The input can be the destination list, so the caller must read it before the change.
 fn optional_design_line_list(
     effect: &Effect,
     script: &TriggerScript,
@@ -185,14 +186,18 @@ fn optional_bool(
     }
 }
 
-fn destination_list(
-    effect: &Effect,
-    script: &TriggerScript,
-    slot: u16,
-) -> Option<(VarId, Vec<i32>)> {
+fn destination_list_id(effect: &Effect, script: &TriggerScript, slot: u16) -> Option<VarId> {
     let variable_id = used_variable_id(effect, script, slot)?;
-    match &script.get_variable(variable_id)?.value {
-        TriggerValue::DesignLineList(values) => Some((variable_id, values.clone())),
+    matches!(
+        script.get_variable(variable_id)?.value,
+        TriggerValue::DesignLineList(_)
+    )
+    .then_some(variable_id)
+}
+
+fn design_line_list_mut(script: &mut TriggerScript, variable_id: VarId) -> Option<&mut Vec<i32>> {
+    match &mut script.get_variable_mut(variable_id)?.value {
+        TriggerValue::DesignLineList(values) => Some(values),
         _ => None,
     }
 }
