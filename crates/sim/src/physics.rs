@@ -640,25 +640,14 @@ pub(crate) fn sync_squad_members(
     anchors: &BTreeMap<EntityId, EntityId>,
 ) {
     sync_physical_squad_origins(squads, units, anchors);
-    let snapshots: Vec<_> = squads
-        .iter()
-        .map(|(id, squad)| {
-            (
-                id,
-                squad.base.position,
-                squad.base.forward,
-                squad.base.velocity,
-                squad.is_being_pulled(),
-                squad.is_jumping(),
-                squad.unit_ids.clone(),
-            )
-        })
-        .collect();
-    for (squad_id, position, forward, velocity, pulled, jumping, unit_ids) in snapshots {
-        if pulled || jumping {
+    for (squad_id, squad) in squads.iter() {
+        if squad.is_being_pulled() || squad.is_jumping() {
             continue;
         }
-        for unit_id in unit_ids {
+        let position = squad.base.position;
+        let forward = squad.base.forward;
+        let velocity = squad.base.velocity;
+        for &unit_id in &squad.unit_ids {
             if anchors.get(&squad_id) == Some(&unit_id) {
                 continue;
             }
