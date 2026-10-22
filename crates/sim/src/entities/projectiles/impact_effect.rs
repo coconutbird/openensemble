@@ -17,8 +17,7 @@ impl Projectile {
             return;
         };
         checksum.hash_u32(1);
-        checksum.hash_u32(u32::try_from(effect.name.len()).unwrap_or(u32::MAX));
-        checksum.hash_bytes(effect.name.as_bytes());
+        checksum.hash_string(&effect.name);
         checksum.hash_u32(effect.size.checksum_value());
         checksum.hash_u32(u32::from(effect.do_shockwave_action));
     }

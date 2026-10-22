@@ -4,7 +4,7 @@ mod physics;
 mod profile;
 
 use super::common::{
-    consume_power, create_power_visual, hash_string, validate_power_type, validate_requirements,
+    consume_power, create_power_visual, validate_power_type, validate_requirements,
 };
 use super::projectile::{PowerProjectileLaunch, first_power_attack, launch_power_projectile};
 use super::{
@@ -253,8 +253,8 @@ impl CleansingPowerExecution {
         hash_vec3(checksum, self.desired_beam_position);
         checksum.hash_u32(self.beam_object_id.as_u32());
         checksum.hash_u32(self.air_impact_object_id.as_u32());
-        hash_string(checksum, &self.beam_prototype);
-        hash_string(checksum, &self.projectile_prototype);
+        checksum.hash_string(&self.beam_prototype);
+        checksum.hash_string(&self.projectile_prototype);
         hash_optional_string(checksum, self.air_impact_prototype.as_deref());
         checksum.hash_f32(self.tick_length);
         checksum.hash_f32(self.supplies_per_tick);
@@ -794,7 +794,7 @@ fn clamp_position(world: &World, mut position: Vec3) -> Vec3 {
 fn hash_optional_string(checksum: &mut SyncChecksum, value: Option<&str>) {
     if let Some(value) = value {
         checksum.hash_u32(1);
-        hash_string(checksum, value);
+        checksum.hash_string(value);
     } else {
         checksum.hash_u32(0);
     }

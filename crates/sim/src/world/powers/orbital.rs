@@ -1,8 +1,7 @@
 //! Retail `BPowerOrbital` targeting, shot queue, projectile, and impact lifecycle.
 
 use super::common::{
-    PowerPayment, consume_power, create_power_visual, hash_string, validate_power_type,
-    validate_requirements,
+    PowerPayment, consume_power, create_power_visual, validate_power_type, validate_requirements,
 };
 use super::projectile::{PowerProjectileLaunch, launch_power_projectile};
 use super::{
@@ -266,7 +265,7 @@ impl OrbitalPowerExecution {
             &self.rock_medium_prototype,
             &self.rock_large_prototype,
         ] {
-            hash_string(checksum, value);
+            checksum.hash_string(value);
         }
         checksum.hash_f32(self.target_beam_speed);
         checksum.hash_u32(self.shots_remaining);

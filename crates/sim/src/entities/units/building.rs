@@ -85,7 +85,7 @@ impl ResearchTask {
     pub(crate) fn hash_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_u32(u32::from(self.player_id));
         checksum.hash_i32(self.technology_id);
-        hash_string(checksum, &self.technology_name);
+        checksum.hash_string(&self.technology_name);
         checksum.hash_f32(self.current_points);
         checksum.hash_f32(self.total_points);
         hash_resources(checksum, &self.cost);
@@ -237,7 +237,7 @@ impl TrainingTask {
         checksum.hash_u32(u32::from(self.player_id));
         checksum.hash_u32(self.kind as u32);
         checksum.hash_i32(self.prototype_id);
-        hash_string(checksum, &self.prototype_name);
+        checksum.hash_string(&self.prototype_name);
         checksum.hash_f32(self.current_points);
         checksum.hash_f32(self.total_points);
         hash_resources(checksum, &self.cost);
@@ -331,7 +331,7 @@ impl ConstructionTask {
         checksum.hash_u32(u32::from(self.purchasing_player_id));
         checksum.hash_u32(self.kind as u32);
         checksum.hash_i32(self.prototype_id);
-        hash_string(checksum, &self.prototype_name);
+        checksum.hash_string(&self.prototype_name);
         checksum.hash_f32(self.current_points);
         checksum.hash_f32(self.total_points);
         hash_resources(checksum, &self.cost);
@@ -875,9 +875,4 @@ fn hash_trigger_state(checksum: &mut SyncChecksum, trigger_state: Option<Trigger
     } else {
         checksum.hash_u32(0);
     }
-}
-
-fn hash_string(checksum: &mut SyncChecksum, value: &str) {
-    checksum.hash_u32(u32::try_from(value.len()).unwrap_or(u32::MAX));
-    checksum.hash_bytes(value.as_bytes());
 }

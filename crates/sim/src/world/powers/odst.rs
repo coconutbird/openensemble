@@ -1,7 +1,7 @@
 //! Retail `BPowerODST` delayed drop lifecycle and synchronized live input.
 
 use super::common::{
-    PowerPayment, consume_power, hash_string, required_float, required_prototype, validate_level,
+    PowerPayment, consume_power, required_float, required_prototype, validate_level,
     validate_power_type, validate_requirements,
 };
 use super::{
@@ -224,8 +224,8 @@ impl OdstPowerExecution {
             self.target_location.z,
         );
         checksum.hash_f32(self.squad_spawn_delay);
-        hash_string(checksum, &self.projectile_prototype);
-        hash_string(checksum, &self.odst_squad_prototype);
+        checksum.hash_string(&self.projectile_prototype);
+        checksum.hash_string(&self.odst_squad_prototype);
         checksum.hash_i32(self.odst_squad_prototype_id);
         checksum.hash_f32(self.elapsed_seconds);
         checksum.hash_u32(u32::from(self.ready_for_shutdown));

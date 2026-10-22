@@ -963,13 +963,8 @@ fn normalize(value: &str) -> String {
 fn hash_strings(checksum: &mut SyncChecksum, values: &[String]) {
     checksum.hash_u32(u32::try_from(values.len()).unwrap_or(u32::MAX));
     for value in values {
-        hash_string(checksum, value);
+        checksum.hash_string(value);
     }
-}
-
-fn hash_string(checksum: &mut SyncChecksum, value: &str) {
-    checksum.hash_u32(u32::try_from(value.len()).unwrap_or(u32::MAX));
-    checksum.hash_bytes(value.as_bytes());
 }
 
 #[cfg(test)]

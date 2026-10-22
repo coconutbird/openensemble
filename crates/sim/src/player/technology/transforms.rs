@@ -87,14 +87,9 @@ impl PrototypeTransforms {
 fn hash_mappings(checksum: &mut SyncChecksum, mappings: &BTreeMap<String, String>) {
     checksum.hash_u32(u32::try_from(mappings.len()).unwrap_or(u32::MAX));
     for (from, to) in mappings {
-        hash_string(checksum, from);
-        hash_string(checksum, to);
+        checksum.hash_string(from);
+        checksum.hash_string(to);
     }
-}
-
-fn hash_string(checksum: &mut SyncChecksum, value: &str) {
-    checksum.hash_u32(u32::try_from(value.len()).unwrap_or(u32::MAX));
-    checksum.hash_bytes(value.as_bytes());
 }
 
 fn nonempty(value: Option<&str>) -> Option<&str> {

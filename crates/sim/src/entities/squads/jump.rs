@@ -124,7 +124,7 @@ impl SquadJump {
     pub(crate) fn hash_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_u32(self.phase as u32);
         checksum.hash_u32(self.kind as u32);
-        hash_string(checksum, &self.action_name);
+        checksum.hash_string(&self.action_name);
         checksum.hash_u32(self.target_id.as_u32());
         checksum.hash_vec3(
             self.target_anchor.x,
@@ -171,9 +171,4 @@ impl Squad {
     pub(crate) fn hash_jump_state(&self, checksum: &mut SyncChecksum) {
         self.jump.hash_state(checksum);
     }
-}
-
-fn hash_string(checksum: &mut SyncChecksum, value: &str) {
-    checksum.hash_u32(u32::try_from(value.len()).unwrap_or(u32::MAX));
-    checksum.hash_bytes(value.as_bytes());
 }

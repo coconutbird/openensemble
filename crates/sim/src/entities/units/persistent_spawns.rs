@@ -36,8 +36,7 @@ impl UnitPersistentSpawns {
     fn hash_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_u32(u32::try_from(self.actions.len()).unwrap_or(u32::MAX));
         for (name, state) in &self.actions {
-            checksum.hash_u32(u32::try_from(name.len()).unwrap_or(u32::MAX));
-            checksum.hash_bytes(name.as_bytes());
+            checksum.hash_string(name);
             state.hash_state(checksum);
         }
     }

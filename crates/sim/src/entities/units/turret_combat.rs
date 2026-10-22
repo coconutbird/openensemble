@@ -121,8 +121,7 @@ impl TurretAttackState {
     }
 
     fn hash_state(&self, checksum: &mut SyncChecksum) {
-        checksum.hash_u32(u32::try_from(self.action_name.len()).unwrap_or(u32::MAX));
-        checksum.hash_bytes(self.action_name.as_bytes());
+        checksum.hash_string(&self.action_name);
         checksum.hash_u32(match self.kind {
             TurretAttackKind::Secondary => 0,
             TurretAttackKind::Slave => 1,
@@ -211,8 +210,7 @@ impl UnitTurretCombat {
         }
         checksum.hash_u32(u32::try_from(self.secondary_scan_tokens.len()).unwrap_or(u32::MAX));
         for hardpoint in &self.secondary_scan_tokens {
-            checksum.hash_u32(u32::try_from(hardpoint.len()).unwrap_or(u32::MAX));
-            checksum.hash_bytes(hardpoint.as_bytes());
+            checksum.hash_string(hardpoint);
         }
     }
 }

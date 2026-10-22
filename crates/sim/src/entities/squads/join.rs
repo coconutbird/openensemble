@@ -348,7 +348,7 @@ impl SquadBoardState {
         checksum.hash_i32(self.attachment_proto_object_id.unwrap_or(-1));
         if let Some(name) = &self.attachment_proto_object_name {
             checksum.hash_u32(1);
-            hash_string(checksum, name);
+            checksum.hash_string(name);
         } else {
             checksum.hash_u32(0);
         }
@@ -454,9 +454,9 @@ impl SquadMergeState {
         checksum.hash_u32(self.joining_unit_id.as_u32());
         checksum.hash_u32(join_merge_type_wire_value(self.merge_type));
         checksum.hash_i32(self.joining_proto_squad_id);
-        hash_string(checksum, &self.joining_proto_squad_name);
+        checksum.hash_string(&self.joining_proto_squad_name);
         checksum.hash_i32(self.target_proto_squad_id);
-        hash_string(checksum, &self.target_proto_squad_name);
+        checksum.hash_string(&self.target_proto_squad_name);
         checksum.hash_f32(self.damage_modifier);
         checksum.hash_f32(self.damage_taken_modifier);
         hash_population_costs(checksum, &self.joining_population_costs);
@@ -708,11 +708,6 @@ impl Squad {
             checksum.hash_u32(0);
         }
     }
-}
-
-fn hash_string(checksum: &mut SyncChecksum, value: &str) {
-    checksum.hash_u32(u32::try_from(value.len()).unwrap_or(u32::MAX));
-    checksum.hash_bytes(value.as_bytes());
 }
 
 fn hash_population_costs(checksum: &mut SyncChecksum, costs: &[PopulationCost]) {

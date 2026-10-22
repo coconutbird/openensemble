@@ -239,8 +239,8 @@ impl CryoPowerExecution {
             self.target_location.z,
         );
         checksum.hash_vec3(self.direction.x, self.direction.y, self.direction.z);
-        hash_string(checksum, &self.cryo_object_prototype);
-        hash_string(checksum, &self.filter_type);
+        checksum.hash_string(&self.cryo_object_prototype);
+        checksum.hash_string(&self.filter_type);
         checksum.hash_f32(self.radius);
         checksum.hash_f32(self.minimum_falloff);
         checksum.hash_u32(self.tick_duration_ms);
@@ -417,10 +417,10 @@ impl DisruptionPowerExecution {
         );
         checksum.hash_vec3(self.direction.x, self.direction.y, self.direction.z);
         checksum.hash_vec3(self.right.x, self.right.y, self.right.z);
-        hash_string(checksum, &self.disruption_object_prototype);
-        hash_string(checksum, &self.pulse_object_prototype);
-        hash_string(checksum, &self.strike_object_prototype);
-        hash_string(checksum, &self.pulse_sound);
+        checksum.hash_string(&self.disruption_object_prototype);
+        checksum.hash_string(&self.pulse_object_prototype);
+        checksum.hash_string(&self.strike_object_prototype);
+        checksum.hash_string(&self.pulse_sound);
         checksum.hash_f32(self.radius);
         checksum.hash_f32(self.time_remaining_seconds);
         checksum.hash_f32(self.start_time_seconds);
@@ -796,11 +796,6 @@ pub(super) fn rules(power: &Power) -> PowerRules {
             .and_then(|value| value.sequential_recharge)
             .unwrap_or(false),
     }
-}
-
-fn hash_string(checksum: &mut SyncChecksum, value: &str) {
-    checksum.hash_u32(u32::try_from(value.len()).unwrap_or(u32::MAX));
-    checksum.hash_bytes(value.as_bytes());
 }
 
 #[cfg(test)]

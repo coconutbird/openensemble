@@ -381,13 +381,13 @@ impl UnitHardpointState {
     pub(super) fn hash_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_u32(u32::try_from(self.active_controllers.len()).unwrap_or(u32::MAX));
         for name in &self.active_controllers {
-            hash_name(checksum, name);
+            checksum.hash_string(name);
         }
         hash_transforms(checksum, &self.attachment_transforms);
         hash_transforms(checksum, &self.bone_transforms);
         checksum.hash_u32(u32::try_from(self.controllers.len()).unwrap_or(u32::MAX));
         for (name, controller) in &self.controllers {
-            hash_name(checksum, name);
+            checksum.hash_string(name);
             checksum.hash_f32(controller.auto_center_delay);
             checksum.hash_u32(u32::from(controller.centered));
         }
@@ -940,16 +940,11 @@ fn single_bone_base(
 fn hash_transforms(checksum: &mut SyncChecksum, transforms: &BTreeMap<String, Mat4>) {
     checksum.hash_u32(u32::try_from(transforms.len()).unwrap_or(u32::MAX));
     for (name, transform) in transforms {
-        hash_name(checksum, name);
+        checksum.hash_string(name);
         for value in transform.to_cols_array() {
             checksum.hash_f32(value);
         }
     }
-}
-
-fn hash_name(checksum: &mut SyncChecksum, name: &str) {
-    checksum.hash_u32(u32::try_from(name.len()).unwrap_or(u32::MAX));
-    checksum.hash_bytes(name.as_bytes());
 }
 
 #[cfg(test)]

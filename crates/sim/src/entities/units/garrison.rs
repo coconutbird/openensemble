@@ -140,8 +140,7 @@ impl UnitGarrison {
         }
         checksum.hash_u32(u32::try_from(self.accepted_object_types.len()).unwrap_or(u32::MAX));
         for object_type in &self.accepted_object_types {
-            checksum.hash_u32(u32::try_from(object_type.len()).unwrap_or(u32::MAX));
-            checksum.hash_bytes(object_type.as_bytes());
+            checksum.hash_string(object_type);
         }
         checksum.hash_f32(self.maximum_population);
         checksum.hash_u32(u32::from(self.can_contain));

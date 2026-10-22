@@ -1,10 +1,9 @@
 //! Retail `BPowerRepair` profile resolution and authoritative execution.
 
 use super::common::{
-    PowerPayment, consume_power, create_power_visual, hash_string, optional_bool,
-    optional_prototype, required_bool, required_float, required_int, required_object_type,
-    required_prototype, seconds_to_milliseconds, validate_level, validate_power_type,
-    validate_requirements,
+    PowerPayment, consume_power, create_power_visual, optional_bool, optional_prototype,
+    required_bool, required_float, required_int, required_object_type, required_prototype,
+    seconds_to_milliseconds, validate_level, validate_power_type, validate_requirements,
 };
 use super::{PowerExecutionId, RepairPowerError, RepairPowerInvocation, power_by_id};
 use crate::EntityId;
@@ -214,10 +213,10 @@ impl RepairPowerExecution {
             self.target_location.y,
             self.target_location.z,
         );
-        hash_string(checksum, &self.repair_object_prototype);
+        checksum.hash_string(&self.repair_object_prototype);
         hash_optional_string(checksum, self.repair_attachment_prototype.as_deref());
         checksum.hash_i32(self.repair_attachment_prototype_id.unwrap_or(-1));
-        hash_string(checksum, &self.filter_type);
+        checksum.hash_string(&self.filter_type);
         checksum.hash_f32(self.radius);
         checksum.hash_u32(self.tick_duration_ms);
         checksum.hash_u32(self.next_tick_time_ms);
@@ -697,7 +696,7 @@ fn prototype_id(database: &Database, name: &str) -> Option<i32> {
 fn hash_optional_string(checksum: &mut SyncChecksum, value: Option<&str>) {
     if let Some(value) = value {
         checksum.hash_u32(1);
-        hash_string(checksum, value);
+        checksum.hash_string(value);
     } else {
         checksum.hash_u32(0);
     }

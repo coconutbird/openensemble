@@ -67,8 +67,7 @@ impl UnitChangeMode {
     fn hash_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_u32(self.phase as u32);
         checksum.hash_u32(self.target_mode as u32);
-        checksum.hash_u32(u32::try_from(self.animation_type.len()).unwrap_or(u32::MAX));
-        checksum.hash_bytes(self.animation_type.as_bytes());
+        checksum.hash_string(&self.animation_type);
         checksum.hash_f32(self.remaining_seconds);
     }
 }

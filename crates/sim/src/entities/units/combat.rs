@@ -606,8 +606,7 @@ impl UnitCombat {
     }
 
     pub(crate) fn hash_state(&self, checksum: &mut crate::sync::SyncChecksum) {
-        checksum.hash_u32(u32::try_from(self.action_name.len()).unwrap_or(u32::MAX));
-        checksum.hash_bytes(self.action_name.as_bytes());
+        checksum.hash_string(&self.action_name);
         checksum.hash_u32(
             self.engaged_target
                 .map_or(EntityId::INVALID.as_u32(), EntityId::as_u32),
@@ -639,8 +638,7 @@ impl UnitCombat {
         checksum.hash_u32(u32::from(self.hardpoint_force_body_facing));
         checksum.hash_u32(u32::from(self.primary_hardpoint.is_some()));
         if let Some(name) = &self.primary_hardpoint {
-            checksum.hash_u32(u32::try_from(name.len()).unwrap_or(u32::MAX));
-            checksum.hash_bytes(name.as_bytes());
+            checksum.hash_string(name);
         }
         self.hardpoints.hash_state(checksum);
     }

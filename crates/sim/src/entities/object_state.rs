@@ -398,12 +398,10 @@ impl ObjectState {
         checksum.hash_u32(self.scripted_animation_revision);
         if let Some(animation) = &self.scripted_animation {
             checksum.hash_u32(1);
-            checksum.hash_u32(u32::try_from(animation.animation_type.len()).unwrap_or(u32::MAX));
-            checksum.hash_bytes(animation.animation_type.as_bytes());
+            checksum.hash_string(&animation.animation_type);
             if let Some(asset_path) = &animation.asset_path {
                 checksum.hash_u32(1);
-                checksum.hash_u32(u32::try_from(asset_path.len()).unwrap_or(u32::MAX));
-                checksum.hash_bytes(asset_path.as_bytes());
+                checksum.hash_string(asset_path);
             } else {
                 checksum.hash_u32(0);
             }

@@ -93,7 +93,7 @@ impl UnitEnergyShieldAction {
     }
 
     pub(super) fn hash_state(&self, checksum: &mut SyncChecksum) {
-        hash_text(checksum, &self.action_name);
+        checksum.hash_string(&self.action_name);
         checksum.hash_u32(self.kind as u32);
         checksum.hash_u32(self.phase as u32);
         checksum.hash_u32(self.attachment_entity_id.map_or(u32::MAX, EntityId::as_u32));
@@ -154,11 +154,6 @@ impl UnitShields {
 fn hash_optional_text(checksum: &mut SyncChecksum, value: Option<&str>) {
     checksum.hash_u32(u32::from(value.is_some()));
     if let Some(value) = value {
-        hash_text(checksum, value);
+        checksum.hash_string(value);
     }
-}
-
-fn hash_text(checksum: &mut SyncChecksum, value: &str) {
-    checksum.hash_u32(u32::try_from(value.len()).unwrap_or(u32::MAX));
-    checksum.hash_bytes(value.as_bytes());
 }

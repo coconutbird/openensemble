@@ -87,6 +87,15 @@ impl SyncChecksum {
         self.count += 1;
     }
 
+    /// Hash a string with a length prefix.
+    ///
+    /// The method hashes the byte length as a `u32` first. A length that does not fit in a
+    /// `u32` hashes as `u32::MAX`. Then the method hashes the UTF-8 bytes.
+    pub fn hash_string(&mut self, value: &str) {
+        self.hash_u32(u32::try_from(value.len()).unwrap_or(u32::MAX));
+        self.hash_bytes(value.as_bytes());
+    }
+
     /// Hash a Vec3 (x, y, z).
     pub fn hash_vec3(&mut self, x: f32, y: f32, z: f32) {
         self.hash_f32(x);
@@ -170,5 +179,20 @@ mod tests {
         c2.hash_u32(2);
 
         assert_ne!(c1.value(), c2.value());
+    }
+
+    #[test]
+    fn hash_string_matches_length_prefix_and_bytes() {
+        for value in ["", "Ability_Spartan", "Spartan_\u{e9}\u{4e16}\u{1f600}"] {
+            let mut expected = SyncChecksum::new();
+            expected.hash_u32(u32::try_from(value.len()).unwrap_or(u32::MAX));
+            expected.hash_bytes(value.as_bytes());
+
+            let mut actual = SyncChecksum::new();
+            actual.hash_string(value);
+
+            assert_eq!(actual.value(), expected.value(), "{value:?}");
+            assert_eq!(actual.count(), expected.count(), "{value:?}");
+        }
     }
 }

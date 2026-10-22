@@ -1,8 +1,8 @@
 //! Retail `BPowerCarpetBombing` targeting, bomber, bomb-train, and impact lifecycle.
 
 use super::common::{
-    Bomber, BomberProfile, PowerPayment, consume_power, create_power_visual, hash_string,
-    validate_power_type, validate_requirements,
+    Bomber, BomberProfile, PowerPayment, consume_power, create_power_visual, validate_power_type,
+    validate_requirements,
 };
 use super::projectile::{PowerProjectileLaunch, launch_power_projectile};
 use super::{
@@ -264,7 +264,7 @@ impl CarpetBombingPowerExecution {
             &self.impact_prototype,
             &self.explosion_prototype,
         ] {
-            hash_string(checksum, value);
+            checksum.hash_string(value);
         }
         if let Some(profile) = &self.bomber_profile {
             checksum.hash_u32(1);

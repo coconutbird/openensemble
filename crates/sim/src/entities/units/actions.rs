@@ -39,8 +39,7 @@ impl UnitActions {
     pub(crate) fn hash_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_u32(u32::try_from(self.enabled_overrides.len()).unwrap_or(u32::MAX));
         for (name, &enabled) in &self.enabled_overrides {
-            checksum.hash_u32(u32::try_from(name.len()).unwrap_or(u32::MAX));
-            checksum.hash_bytes(name.as_bytes());
+            checksum.hash_string(name);
             checksum.hash_u32(u32::from(enabled));
         }
     }

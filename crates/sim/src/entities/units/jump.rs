@@ -136,7 +136,7 @@ impl UnitJump {
     fn hash_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_u32(self.phase as u32);
         checksum.hash_u32(self.kind as u32);
-        hash_string(checksum, &self.action_name);
+        checksum.hash_string(&self.action_name);
         hash_vec3(checksum, self.target);
         checksum.hash_f32(self.target_height);
         hash_vec3(checksum, self.coefficient_0);
@@ -212,11 +212,6 @@ impl Unit {
 
 fn hash_vec3(checksum: &mut SyncChecksum, value: Vec3) {
     checksum.hash_vec3(value.x, value.y, value.z);
-}
-
-fn hash_string(checksum: &mut SyncChecksum, value: &str) {
-    checksum.hash_u32(u32::try_from(value.len()).unwrap_or(u32::MAX));
-    checksum.hash_bytes(value.as_bytes());
 }
 
 #[cfg(test)]

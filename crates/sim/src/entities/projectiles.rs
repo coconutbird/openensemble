@@ -580,8 +580,7 @@ impl Projectile {
 
     pub(crate) fn hash_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_i32(self.proto_object_id);
-        checksum.hash_u32(u32::try_from(self.proto_object_name.len()).unwrap_or(u32::MAX));
-        checksum.hash_bytes(self.proto_object_name.as_bytes());
+        checksum.hash_string(&self.proto_object_name);
         hash_optional_string(checksum, self.visual_proto_object_name.as_deref());
         checksum.hash_vec3(
             self.visual_center_offset.x,
@@ -676,8 +675,7 @@ fn segment_reaches_target(start: Vec3, end: Vec3, target: Vec3, radius: f32) -> 
 
 fn hash_optional_string(checksum: &mut SyncChecksum, value: Option<&str>) {
     if let Some(value) = value {
-        checksum.hash_u32(u32::try_from(value.len()).unwrap_or(u32::MAX));
-        checksum.hash_bytes(value.as_bytes());
+        checksum.hash_string(value);
     } else {
         checksum.hash_u32(u32::MAX);
     }

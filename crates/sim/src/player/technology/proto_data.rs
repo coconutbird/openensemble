@@ -289,7 +289,7 @@ impl RuntimeProtoData {
     pub(super) fn hash_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_u32(u32::try_from(self.scalar_effects.len()).unwrap_or(u32::MAX));
         for effect in &self.scalar_effects {
-            hash_string(checksum, &effect.proto_object);
+            checksum.hash_string(&effect.proto_object);
             checksum.hash_u32(u32::from(effect.data_type as u8));
             hash_optional_string(checksum, effect.weapon.as_deref());
             checksum.hash_f32(effect.operation.amount);
@@ -298,10 +298,10 @@ impl RuntimeProtoData {
         }
         checksum.hash_u32(u32::try_from(self.command_effects.len()).unwrap_or(u32::MAX));
         for effect in &self.command_effects {
-            hash_string(checksum, &effect.proto_object);
+            checksum.hash_string(&effect.proto_object);
             checksum.hash_u32(u32::from(effect.data_type as u8));
-            hash_string(checksum, &effect.command_type);
-            hash_string(checksum, &effect.command_data);
+            checksum.hash_string(&effect.command_type);
+            checksum.hash_string(&effect.command_data);
             checksum.hash_u32(u32::from(effect.enabled));
         }
     }
@@ -334,13 +334,8 @@ fn normalize(value: &str) -> String {
 fn hash_optional_string(checksum: &mut SyncChecksum, value: Option<&str>) {
     checksum.hash_u32(u32::from(value.is_some()));
     if let Some(value) = value {
-        hash_string(checksum, value);
+        checksum.hash_string(value);
     }
-}
-
-fn hash_string(checksum: &mut SyncChecksum, value: &str) {
-    checksum.hash_u32(u32::try_from(value.len()).unwrap_or(u32::MAX));
-    checksum.hash_bytes(value.as_bytes());
 }
 
 #[cfg(test)]

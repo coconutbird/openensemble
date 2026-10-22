@@ -1,8 +1,8 @@
 //! Retail `BPowerTransport` two-point selection and carrier execution.
 
 use super::common::{
-    PowerPayment, consume_power, hash_string, optional_float, optional_int, validate_level,
-    validate_power_type, validate_requirements,
+    PowerPayment, consume_power, optional_float, optional_int, validate_level, validate_power_type,
+    validate_requirements,
 };
 use super::{
     NativePowerError, NativePowerInput, NativePowerInvocation, PowerExecutionId, power_by_id,
@@ -180,11 +180,11 @@ impl TransportPowerExecution {
         }
         hash_optional_u32(checksum, self.max_ground_vehicles);
         hash_optional_u32(checksum, self.max_infantry_units);
-        hash_string(checksum, &self.transport_prototype);
+        checksum.hash_string(&self.transport_prototype);
         checksum.hash_i32(self.transport_prototype_id);
         checksum.hash_u32(u32::try_from(self.transport_contains.len()).unwrap_or(u32::MAX));
         for object_type in &self.transport_contains {
-            hash_string(checksum, object_type);
+            checksum.hash_string(object_type);
         }
         checksum.hash_u32(self.maximum_transports);
         checksum.hash_u32(u32::from(self.ignore_requirements));

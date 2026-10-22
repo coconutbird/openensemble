@@ -1,6 +1,6 @@
 //! Synchronized state for one running retail Rage power.
 
-use super::super::{PowerExecutionId, common::hash_string};
+use super::super::PowerExecutionId;
 use crate::EntityId;
 use crate::commands::PowerUserId;
 use crate::player::{PlayerId, ProtoPowerId};
@@ -381,8 +381,8 @@ impl RagePowerExecution {
             checksum.hash_f32(value);
         }
         checksum.hash_u32(u32::try_from(self.supplies_resource_id).unwrap_or(u32::MAX));
-        hash_string(checksum, &self.projectile_prototype);
-        hash_string(checksum, &self.aura_filter_type);
+        checksum.hash_string(&self.projectile_prototype);
+        checksum.hash_string(&self.aura_filter_type);
     }
 
     fn hash_visuals(&self, checksum: &mut SyncChecksum) {
@@ -427,7 +427,7 @@ pub(in crate::world::powers) struct PendingRageKill {
 impl PendingRageKill {
     pub(in crate::world::powers) fn hash_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_u32(self.attacker_id.as_u32());
-        hash_string(checksum, &self.target_prototype);
+        checksum.hash_string(&self.target_prototype);
     }
 }
 
@@ -443,7 +443,7 @@ fn hash_entity_ids(checksum: &mut SyncChecksum, ids: &[EntityId]) {
 }
 
 fn hash_prototype(checksum: &mut SyncChecksum, name: &str, id: i32) {
-    hash_string(checksum, name);
+    checksum.hash_string(name);
     checksum.hash_i32(id);
 }
 

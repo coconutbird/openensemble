@@ -115,8 +115,8 @@ impl UnitInfection {
     }
 
     fn hash_state(&self, checksum: &mut SyncChecksum) {
-        hash_string(checksum, &self.source_proto_name);
-        hash_string(checksum, &self.action_name);
+        checksum.hash_string(&self.source_proto_name);
+        checksum.hash_string(&self.action_name);
         checksum.hash_u32(self.infected_count);
         checksum.hash_f32(self.time_until_next_scan);
         checksum.hash_u32(u32::try_from(self.exposures.len()).unwrap_or(u32::MAX));
@@ -183,9 +183,4 @@ impl Unit {
     pub(crate) fn hash_infection_state(&self, checksum: &mut SyncChecksum) {
         self.infection.hash_state(checksum);
     }
-}
-
-fn hash_string(checksum: &mut SyncChecksum, value: &str) {
-    checksum.hash_u32(u32::try_from(value.len()).unwrap_or(u32::MAX));
-    checksum.hash_bytes(value.as_bytes());
 }

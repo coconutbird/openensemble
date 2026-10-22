@@ -55,7 +55,7 @@ impl BomberProfile {
     }
 
     pub(super) fn hash_state(&self, checksum: &mut SyncChecksum) {
-        hash_string(checksum, &self.prototype);
+        checksum.hash_string(&self.prototype);
         checksum.hash_f32(self.bomb_time);
         checksum.hash_f32(self.flyin_distance);
         checksum.hash_f32(self.flyin_height);
@@ -186,7 +186,7 @@ impl Bomber {
 
     pub(super) fn hash_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_u32(self.object_id.as_u32());
-        hash_string(checksum, &self.prototype);
+        checksum.hash_string(&self.prototype);
         checksum.hash_vec3(self.position.x, self.position.y, self.position.z);
         checksum.hash_f32(self.bomb_time);
         checksum.hash_f32(self.flyin_distance);
@@ -577,11 +577,6 @@ pub(super) fn seconds_to_milliseconds(seconds: f32) -> u32 {
     } else {
         milliseconds.to_u32().unwrap_or(u32::MAX)
     }
-}
-
-pub(super) fn hash_string(checksum: &mut SyncChecksum, value: &str) {
-    checksum.hash_u32(u32::try_from(value.len()).unwrap_or(u32::MAX));
-    checksum.hash_bytes(value.as_bytes());
 }
 
 fn required_entry<'attributes>(

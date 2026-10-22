@@ -2,8 +2,8 @@
 
 use super::super::NativePowerError;
 use super::super::common::{
-    hash_string, optional_prototype, required_bool, required_float, required_int,
-    required_prototype, required_string, resource_id, seconds_to_milliseconds, validate_level,
+    optional_prototype, required_bool, required_float, required_int, required_prototype,
+    required_string, resource_id, seconds_to_milliseconds, validate_level,
 };
 use crate::sync::SyncChecksum;
 use pipeline::database::hw1::Database;
@@ -164,13 +164,13 @@ impl WaveProfile {
         checksum.hash_u32(u32::from(self.nudge_chance_pulling));
         checksum.hash_u32(u32::from(self.throw_part_chance_pulling));
         checksum.hash_u32(u32::from(self.lightning_chance_pulling));
-        hash_string(checksum, &self.ball_prototype);
-        hash_string(checksum, &self.lightning_projectile);
+        checksum.hash_string(&self.ball_prototype);
+        checksum.hash_string(&self.lightning_projectile);
         hash_optional_string(checksum, self.lightning_beam_visual.as_deref());
-        hash_string(checksum, &self.debris_projectile);
-        hash_string(checksum, &self.explode_projectile);
-        hash_string(checksum, &self.pickup_attachment);
-        hash_string(checksum, &self.explode_sound);
+        checksum.hash_string(&self.debris_projectile);
+        checksum.hash_string(&self.explode_projectile);
+        checksum.hash_string(&self.pickup_attachment);
+        checksum.hash_string(&self.explode_sound);
         checksum.hash_u32(u32::from(self.throw_units_on_explosion));
     }
 
@@ -306,7 +306,7 @@ fn percentage_byte(
 fn hash_optional_string(checksum: &mut SyncChecksum, value: Option<&str>) {
     if let Some(value) = value {
         checksum.hash_u32(1);
-        hash_string(checksum, value);
+        checksum.hash_string(value);
     } else {
         checksum.hash_u32(0);
     }

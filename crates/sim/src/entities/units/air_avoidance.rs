@@ -262,8 +262,7 @@ impl UnitAirAvoidance {
 
     pub(crate) fn hash_state(&self, checksum: &mut SyncChecksum) {
         if let Some(name) = &self.action_name {
-            checksum.hash_u32(u32::try_from(name.len()).unwrap_or(u32::MAX));
-            checksum.hash_bytes(name.as_bytes());
+            checksum.hash_string(name);
         } else {
             checksum.hash_u32(u32::MAX);
         }

@@ -62,8 +62,7 @@ impl UnitHeal {
     }
 
     pub(crate) fn hash_state(&self, checksum: &mut SyncChecksum) {
-        checksum.hash_u32(u32::try_from(self.action_name.len()).unwrap_or(u32::MAX));
-        checksum.hash_bytes(self.action_name.as_bytes());
+        checksum.hash_string(&self.action_name);
         checksum.hash_u32(self.target_squad_id.map_or(u32::MAX, EntityId::as_u32));
         checksum.hash_u32(self.phase as u32);
     }

@@ -300,7 +300,7 @@ impl GroundVehiclePhysicsProfile {
             GroundVehicleKind::Warthog => 0,
             GroundVehicleKind::Ghost => 1,
         });
-        hash_string(checksum, &self.physics_info);
+        checksum.hash_string(&self.physics_info);
         checksum.hash_f32(self.material.mass);
         checksum.hash_f32(self.material.friction);
         checksum.hash_f32(self.material.restitution);
@@ -779,11 +779,6 @@ fn positive_or(value: Option<f32>, default: f32) -> f32 {
     value
         .filter(|value| value.is_finite() && *value > 0.0)
         .unwrap_or(default)
-}
-
-fn hash_string(checksum: &mut SyncChecksum, value: &str) {
-    checksum.hash_u32(u32::try_from(value.len()).unwrap_or(u32::MAX));
-    checksum.hash_bytes(value.as_bytes());
 }
 
 #[cfg(test)]

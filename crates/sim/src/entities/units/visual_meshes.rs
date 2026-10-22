@@ -215,8 +215,7 @@ fn normalized<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<String> {
 fn hash_names(checksum: &mut SyncChecksum, names: &[String]) {
     checksum.hash_u32(u32::try_from(names.len()).unwrap_or(u32::MAX));
     for name in names {
-        checksum.hash_u32(u32::try_from(name.len()).unwrap_or(u32::MAX));
-        checksum.hash_bytes(name.as_bytes());
+        checksum.hash_string(name);
     }
 }
 

@@ -72,8 +72,7 @@ impl UnitCharge {
     }
 
     pub(crate) fn hash_state(&self, checksum: &mut SyncChecksum) {
-        checksum.hash_u32(u32::try_from(self.action_name.len()).unwrap_or(u32::MAX));
-        checksum.hash_bytes(self.action_name.as_bytes());
+        checksum.hash_string(&self.action_name);
         checksum.hash_f32(self.elapsed_seconds);
         checksum.hash_f32(self.damage_charge);
         checksum.hash_u32(u32::from(self.reset_pending));

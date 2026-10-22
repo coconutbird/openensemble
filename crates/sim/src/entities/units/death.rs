@@ -41,8 +41,7 @@ impl UnitDeathState {
         checksum.hash_u32(self.killer_player_id.map_or(u32::MAX, u32::from));
         checksum.hash_u32(self.killer_team_id.map_or(u32::MAX, u32::from));
         if let Some(weapon_type) = &self.weapon_type {
-            checksum.hash_u32(u32::try_from(weapon_type.len()).unwrap_or(u32::MAX));
-            checksum.hash_bytes(weapon_type.as_bytes());
+            checksum.hash_string(weapon_type);
         } else {
             checksum.hash_u32(u32::MAX);
         }

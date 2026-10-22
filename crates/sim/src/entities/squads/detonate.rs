@@ -95,8 +95,7 @@ impl SquadDetonate {
         }
         if let Some(action_name) = &self.action_name {
             checksum.hash_u32(1);
-            checksum.hash_u32(u32::try_from(action_name.len()).unwrap_or(u32::MAX));
-            checksum.hash_bytes(action_name.as_bytes());
+            checksum.hash_string(action_name);
         } else {
             checksum.hash_u32(0);
         }

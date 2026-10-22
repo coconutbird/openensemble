@@ -178,14 +178,12 @@ impl SquadPull {
     pub(crate) fn hash_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_u32(self.phase as u32);
         checksum.hash_u32(self.attacker_id.as_u32());
-        checksum.hash_u32(u32::try_from(self.action_name.len()).unwrap_or(u32::MAX));
-        checksum.hash_bytes(self.action_name.as_bytes());
+        checksum.hash_string(&self.action_name);
         hash_vec3(checksum, self.target_anchor);
         checksum.hash_f32(self.velocity_scalar);
         checksum.hash_u32(u32::from(self.end_animation_type.is_some()));
         if let Some(animation) = &self.end_animation_type {
-            checksum.hash_u32(u32::try_from(animation.len()).unwrap_or(u32::MAX));
-            checksum.hash_bytes(animation.as_bytes());
+            checksum.hash_string(animation);
         }
         checksum.hash_u32(u32::try_from(self.members.len()).unwrap_or(u32::MAX));
         for member in &self.members {

@@ -20,7 +20,7 @@ fn hash_script(checksum: &mut SyncChecksum, script: &TriggerScript) {
     checksum.hash_u32(u32::from(script.is_active));
     checksum.hash_u32(u32::from(script.is_paused));
     checksum.hash_u32(u32::from(script.marked_for_cleanup));
-    hash_string(checksum, &script.name);
+    checksum.hash_string(&script.name);
     checksum.hash_u32(u32::try_from(script.variables.len()).unwrap_or(u32::MAX));
     for (variable_id, variable) in &script.variables {
         checksum.hash_u32(*variable_id);
@@ -97,7 +97,7 @@ fn hash_value(checksum: &mut SyncChecksum, value: &TriggerValue) {
         TriggerValue::Float(value) => hash_f32(checksum, 2, *value),
         TriggerValue::String(value) => {
             checksum.hash_u32(3);
-            hash_string(checksum, value);
+            checksum.hash_string(value);
         }
         TriggerValue::Entity(value) => hash_entity(checksum, 4, *value),
         TriggerValue::EntityList(values) => hash_entities(checksum, 5, values),
@@ -218,14 +218,14 @@ fn hash_i32s(checksum: &mut SyncChecksum, tag: u32, values: &[i32]) {
 
 fn hash_tagged_string(checksum: &mut SyncChecksum, tag: u32, value: &str) {
     checksum.hash_u32(tag);
-    hash_string(checksum, value);
+    checksum.hash_string(value);
 }
 
 fn hash_strings(checksum: &mut SyncChecksum, tag: u32, values: &[String]) {
     checksum.hash_u32(tag);
     checksum.hash_u32(u32::try_from(values.len()).unwrap_or(u32::MAX));
     for value in values {
-        hash_string(checksum, value);
+        checksum.hash_string(value);
     }
 }
 
@@ -240,9 +240,4 @@ fn hash_vec3s(checksum: &mut SyncChecksum, tag: u32, values: &[super::value::Vec
     for value in values {
         checksum.hash_vec3(value.x, value.y, value.z);
     }
-}
-
-fn hash_string(checksum: &mut SyncChecksum, value: &str) {
-    checksum.hash_u32(u32::try_from(value.len()).unwrap_or(u32::MAX));
-    checksum.hash_bytes(value.as_bytes());
 }

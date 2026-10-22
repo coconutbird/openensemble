@@ -131,8 +131,7 @@ impl SquadRepairOther {
                 .map_or(EntityId::INVALID.as_u32(), EntityId::as_u32),
         );
         checksum.hash_u32(self.source_player_id.map_or(u32::MAX, u32::from));
-        checksum.hash_u32(u32::try_from(self.action_name.len()).unwrap_or(u32::MAX));
-        checksum.hash_bytes(self.action_name.as_bytes());
+        checksum.hash_string(&self.action_name);
         checksum.hash_u32(self.ability_id.map_or(u32::MAX, u32::from));
         checksum.hash_u32(self.phase as u32);
         checksum.hash_u32(self.effect_id.map_or(u32::MAX, EntityId::as_u32));

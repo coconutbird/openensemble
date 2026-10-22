@@ -89,8 +89,7 @@ impl UnitCaptureAction {
         );
         checksum.hash_u32(self.phase as u32);
         checksum.hash_u32(u32::from(self.used_second_approach));
-        checksum.hash_u32(u32::try_from(self.action_name.len()).unwrap_or(u32::MAX));
-        checksum.hash_bytes(self.action_name.as_bytes());
+        checksum.hash_string(&self.action_name);
     }
 }
 
