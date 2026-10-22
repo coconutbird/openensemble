@@ -8,8 +8,8 @@ use pipeline::database::hw1::objects::{
 };
 use pipeline::database::hw1::{Database, GameData, ProtoObject, Vector3};
 use sim::{
-    BuildingCommand, ConstructionError, ConstructionKind, EntityId, MS_PER_TICK, Simulation, World,
-    object_prototype_id, spawn_object_at,
+    BuildingCommand, ConstructionError, ConstructionKind, EntityId, GAIA_PLAYER, MS_PER_TICK,
+    Simulation, World, object_prototype_id, spawn_object_at,
 };
 use test_support::assert_close;
 
@@ -356,6 +356,44 @@ fn canceling_active_build_other_refunds_and_frees_its_socket() {
 }
 
 #[test]
+fn build_other_reaches_gaia_builders_but_not_other_players() {
+    let database = construction_database();
+    let mut world = construction_players(2);
+    let target_id = object_prototype_id(&database, SOCKET_BUILDING).unwrap();
+    let builder_proto_id = object_prototype_id(&database, BUILDER).unwrap();
+    let gaia_builder_id = spawn_object_at(
+        &mut world,
+        &database,
+        GAIA_PLAYER,
+        builder_proto_id,
+        Vec3::new(40.0, 0.0, 0.0),
+        Vec3::Z,
+    )
+    .unwrap();
+    let enemy_builder_id = spawn_object_at(
+        &mut world,
+        &database,
+        2,
+        builder_proto_id,
+        Vec3::new(-40.0, 0.0, 0.0),
+        Vec3::Z,
+    )
+    .unwrap();
+
+    assert!(matches!(
+        world.queue_build_other(1, enemy_builder_id, &database, target_id),
+        Err(ConstructionError::BuilderNotOwned { .. })
+    ));
+    world
+        .queue_build_other(1, gaia_builder_id, &database, target_id)
+        .expect("a Gaia socket should accept the player's BuildOther");
+    let _promoted = world.update_production(0.05, &database);
+    let building_id = constructed_by(&world, gaia_builder_id, SOCKET_BUILDING);
+    assert_eq!(world.get_building(building_id).unwrap().base.player_id, 1);
+    assert_close(world.get_player(1).unwrap().resources.get(0), 950.0);
+}
+
+#[test]
 fn manual_build_waits_for_external_build_points() {
     let database = construction_database();
     let (mut world, builder_id) = construction_world(&database);
@@ -500,13 +538,7 @@ fn constructed_by(world: &World, builder_id: EntityId, name: &str) -> EntityId {
 }
 
 fn construction_world(database: &Database) -> (World, EntityId) {
-    let mut world = World::new();
-    world.init_players(1);
-    let player = world.get_player_mut(1).unwrap();
-    player.configure_population_slots(1);
-    player.configure_rate_slots(1);
-    assert!(player.set_population_limits(0, 10.0, 20.0));
-    player.resources.set(0, 1_000.0);
+    let mut world = construction_players(1);
     let builder_id = spawn_object_at(
         &mut world,
         database,
@@ -517,6 +549,18 @@ fn construction_world(database: &Database) -> (World, EntityId) {
     )
     .unwrap();
     (world, builder_id)
+}
+
+/// Create the players and give player 1 resources and population room.
+fn construction_players(player_count: u8) -> World {
+    let mut world = World::new();
+    world.init_players(player_count);
+    let player = world.get_player_mut(1).unwrap();
+    player.configure_population_slots(1);
+    player.configure_rate_slots(1);
+    assert!(player.set_population_limits(0, 10.0, 20.0));
+    player.resources.set(0, 1_000.0);
+    world
 }
 
 fn construction_database() -> Database {

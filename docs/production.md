@@ -16,6 +16,10 @@ The implementation was cross-checked against the read-only 2008
   (`0x1404D1E60`); type 13 routes socket work through `BUnit_doBuildOther`
   (`0x1404D2070`). Command targets are runtime table indices, not authored
   DBIDs.
+- `BCommand_processUnits` (`0x140194560`) hands a command to a recipient unit of
+  the command player, of Gaia, or, in a co-op game, of a human teammate. A player
+  therefore queues `Build` and `BuildOther` on a Gaia socket (a new base);
+  construction validation follows this gate.
 - `BUnitActionBuilding_addTrain` (`0x1404F63E0`) accepts the affordable,
   population-valid prefix of a positive count. It pays full cost and reserves
   future population for every accepted item. A negative count removes matching

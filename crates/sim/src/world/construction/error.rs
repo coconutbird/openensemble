@@ -14,8 +14,9 @@ pub enum ConstructionError {
     /// The world has no unit with this builder ID.
     #[error("builder {0:?} is not present in the world")]
     BuilderNotFound(EntityId),
-    /// The builder belongs to a different player.
-    #[error("builder {builder_id:?} is not owned by player {player_id}")]
+    /// The builder belongs to a player that the command does not reach: neither
+    /// the command player, Gaia nor a human co-op teammate.
+    #[error("builder {builder_id:?} does not accept commands from player {player_id}")]
     BuilderNotOwned {
         /// The builder that the command names.
         builder_id: EntityId,

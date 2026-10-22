@@ -3,9 +3,12 @@
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use pipeline::database::hw1::objects::ChildObjectType;
-use sim::{ConstructionKind, EntityId, PlayerId, World, object_prototype_id, spawn_object_at};
+use sim::{
+    ConstructionKind, EntityId, GAIA_PLAYER, PlayerId, World, object_prototype_id, spawn_object_at,
+};
 
 const COMMAND_CENTER: &str = "unsc_bldg_command_01";
+const POWER_SOCKET: &str = "game_base_Socket_01";
 const REACTOR: &str = "unsc_bldg_reactor_01";
 const ADVANCED_REACTOR: &str = "unsc_bldg_reactor_02";
 const SUPPLY_PAD: &str = "unsc_bldg_supplypad_01";
@@ -21,28 +24,22 @@ const ARBITER_LEADER_TECH: &str = "covenant_LeaderArbiter";
 #[test]
 #[ignore = "requires a local Halo Wars DE installation"]
 fn builds_real_command_center_through_blood_gulch_power_socket() {
-    let mut loaded = test_support::installed_scenario("blood_gulch");
+    // The shipped `unsc_LeaderCutter` tech (the default player) transforms
+    // `unsc_bldg_command_01` and `unsc_LeaderForge` transforms
+    // `unsc_bldg_supplypad_01`; Anders keeps the authored buildings.
+    let mut settings = test_support::default_settings("blood_gulch");
+    settings.players[0].leader = Some("Anders".to_owned());
+    let mut loaded = test_support::installed_scenario_with("blood_gulch", &settings);
     assert_command_center_child_definitions(&loaded.content.database);
-    let (&player_id, &base_id) = loaded
+    let player_id = *loaded
         .simulation
         .initial_base_ids
         .first_key_value()
-        .expect("Blood Gulch should assign a player base");
-    let builder_id = loaded
-        .simulation
-        .world
-        .get_base(base_id)
-        .expect("initial base")
-        .anchor_building_id;
-    assert_eq!(
-        loaded
-            .simulation
-            .world
-            .get_building(builder_id)
-            .unwrap()
-            .proto_object_name,
-        "game_base_Socket_01",
-    );
+        .expect("Blood Gulch should assign a player base")
+        .0;
+    // `BScenario_createStartingUnits` builds the leader HQ on the start socket at
+    // load, so the command center goes through a free Gaia expansion socket.
+    let builder_id = free_power_socket(&loaded.simulation.world);
     loaded
         .simulation
         .world
@@ -52,7 +49,12 @@ fn builds_real_command_center_through_blood_gulch_power_socket() {
         .amounts = [100_000.0; 4];
     let target_id = object_prototype_id(&loaded.content.database, COMMAND_CENTER)
         .expect("real database should expose the command-center proto ID");
-    let bases_before = loaded.simulation.world.bases().count();
+    let bases_before = loaded
+        .simulation
+        .world
+        .bases()
+        .map(|(&base_id, _)| base_id)
+        .collect::<Vec<_>>();
 
     loaded
         .simulation
@@ -85,8 +87,17 @@ fn builds_real_command_center_through_blood_gulch_power_socket() {
             .unit_rally_point(building_id, player_id),
         None,
     );
-    assert_eq!(building.base_id, Some(base_id));
-    assert_eq!(loaded.simulation.world.bases().count(), bases_before);
+    let base_id = building
+        .base_id
+        .expect("the unfinished command center should found a base");
+    assert!(!bases_before.contains(&base_id));
+    let base = loaded.simulation.world.get_base(base_id).unwrap();
+    assert_eq!(base.player_id, player_id);
+    assert_eq!(base.anchor_building_id, building_id);
+    assert_eq!(
+        loaded.simulation.world.bases().count(),
+        bases_before.len() + 1
+    );
     let progress = loaded
         .simulation
         .world
@@ -105,7 +116,12 @@ fn builds_real_command_center_through_blood_gulch_power_socket() {
         .simulation
         .world
         .update_production(30.0, &loaded.content.database);
-    assert_eq!(completed.completed_construction, 1);
+    // The unbuilt HQs that `BScenario_createStartingUnits` started for each player
+    // finish in the same 30 seconds.
+    assert_eq!(
+        completed.completed_construction,
+        1 + loaded.simulation.initial_base_ids.len()
+    );
     assert_completed_command_center_children(&loaded.simulation.world, building_id, player_id);
     assert_command_center_post_completion(
         &mut loaded.simulation.world,
@@ -115,6 +131,23 @@ fn builds_real_command_center_through_blood_gulch_power_socket() {
         builder_id,
         building_id,
     );
+}
+
+/// Return a Gaia power socket that no building occupies.
+fn free_power_socket(world: &World) -> EntityId {
+    world
+        .units
+        .iter()
+        .find_map(|(socket_id, socket)| {
+            (socket.base.player_id == GAIA_PLAYER
+                && socket.proto_object_name.eq_ignore_ascii_case(POWER_SOCKET)
+                && !world
+                    .units
+                    .iter()
+                    .any(|(_, unit)| unit.build_socket_id == Some(socket_id)))
+            .then_some(socket_id)
+        })
+        .expect("Blood Gulch should keep a free expansion socket")
 }
 
 fn assert_command_center_post_completion(

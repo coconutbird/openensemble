@@ -623,7 +623,7 @@ impl World {
         let builder = self
             .get_unit(builder_id)
             .ok_or(ConstructionError::BuilderNotFound(builder_id))?;
-        if builder.base.player_id != player_id {
+        if !self.command_reaches_owner(player_id, builder.base.player_id) {
             return Err(ConstructionError::BuilderNotOwned {
                 builder_id,
                 player_id,

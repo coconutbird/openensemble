@@ -86,6 +86,25 @@ impl World {
         self.player_relation(first, second) == Some(TeamRelation::Enemy)
     }
 
+    /// Return whether a command from `player_id` reaches a unit of `owner_id`.
+    ///
+    /// Follows the recipient gate of `BCommand_processUnits` @ `0x140194560`: the
+    /// unit belongs to the command player or to Gaia (so a player builds on a Gaia
+    /// socket), or the game is co-op and both are human players on the same team.
+    #[must_use]
+    pub(crate) fn command_reaches_owner(&self, player_id: PlayerId, owner_id: PlayerId) -> bool {
+        if owner_id == player_id || owner_id == GAIA_PLAYER {
+            return true;
+        }
+        self.is_coop()
+            && self
+                .get_player(player_id)
+                .zip(self.get_player(owner_id))
+                .is_some_and(|(player, owner)| {
+                    player.is_human() && owner.is_human() && player.team_id == owner.team_id
+                })
+    }
+
     /// Append a player with the next player ID, like `BWorld_addPlayer` @ `0x1405C8260`.
     ///
     /// Returns `None` if the world already has Gaia and [`super::MAX_PLAYERS`] players.
