@@ -29,12 +29,19 @@ const PROJECTILE_LAUNCH_HEIGHT: f32 = 5.0;
 /// Inputs accepted by retail's direct `InvokePower2` Cleansing path.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CleansingPowerInvocation {
+    /// The player that uses the power.
     pub player_id: PlayerId,
+    /// The runtime table index of the power prototype.
     pub proto_power_id: ProtoPowerId,
+    /// The authored power level that selects the power data.
     pub power_level: u32,
+    /// The squad that owns the power charge, or an invalid ID for a player power.
     pub squad_id: EntityId,
+    /// The world location where the beam starts.
     pub target_location: Vec3,
+    /// If `true`, skip the requirement checks and the payment.
     pub ignore_requirements: bool,
+    /// The packed retail power user ID, or `PowerUserId::INVALID` if there is none.
     pub power_user_id: PowerUserId,
 }
 
@@ -88,121 +95,148 @@ pub struct CleansingPowerExecution {
 }
 
 impl CleansingPowerExecution {
+    /// Return the stable simulation ID of this execution.
     #[must_use]
     pub const fn id(&self) -> PowerExecutionId {
         self.id
     }
 
+    /// Return the player that uses the power.
     #[must_use]
     pub const fn player_id(&self) -> PlayerId {
         self.player_id
     }
 
+    /// Return the runtime table index of the power prototype.
     #[must_use]
     pub const fn proto_power_id(&self) -> ProtoPowerId {
         self.proto_power_id
     }
 
+    /// Return the authored power level.
     #[must_use]
     pub const fn power_level(&self) -> u32 {
         self.power_level
     }
 
+    /// Return the squad that owns the power charge, or an invalid ID.
     #[must_use]
     pub const fn owner_squad_id(&self) -> EntityId {
         self.owner_squad_id
     }
 
+    /// Return the packed retail power user ID.
     #[must_use]
     pub const fn power_user_id(&self) -> PowerUserId {
         self.power_user_id
     }
 
+    /// Return the world location where the beam started.
     #[must_use]
     pub const fn target_location(&self) -> Vec3 {
         self.target_location
     }
 
+    /// Return the position that the player wants the beam to move to.
     #[must_use]
     pub const fn desired_beam_position(&self) -> Vec3 {
         self.desired_beam_position
     }
 
+    /// Return the sim object of the beam, or an invalid ID after cleanup.
     #[must_use]
     pub const fn beam_object_id(&self) -> EntityId {
         self.beam_object_id
     }
 
+    /// Return the sim object of the air impact visual, or an invalid ID.
     #[must_use]
     pub const fn air_impact_object_id(&self) -> EntityId {
         self.air_impact_object_id
     }
 
+    /// Return the proto-object name from the `Beam` power data.
     #[must_use]
     pub fn beam_prototype(&self) -> &str {
         &self.beam_prototype
     }
 
+    /// Return the proto-object name from the `Projectile` power data.
     #[must_use]
     pub fn projectile_prototype(&self) -> &str {
         &self.projectile_prototype
     }
 
+    /// Return the proto-object name from the `AirImpactObject` power data, if any.
     #[must_use]
     pub fn air_impact_prototype(&self) -> Option<&str> {
         self.air_impact_prototype.as_deref()
     }
 
+    /// Return the `TickLength` power data value, in seconds.
     #[must_use]
     pub const fn tick_length(&self) -> f32 {
         self.tick_length
     }
 
+    /// Return the supplies that each tick costs, from the `SuppliesPerTick` power data.
     #[must_use]
     pub const fn supplies_per_tick(&self) -> f32 {
         self.supplies_per_tick
     }
 
+    /// Return the `MinBeamDistance` power data value.
     #[must_use]
     pub const fn minimum_beam_distance(&self) -> f32 {
         self.minimum_beam_distance
     }
 
+    /// Return the `MaxBeamDistance` power data value.
     #[must_use]
     pub const fn maximum_beam_distance(&self) -> f32 {
         self.maximum_beam_distance
     }
 
+    /// Return the `CommandInterval` power data value, in milliseconds.
     #[must_use]
     pub const fn command_interval_ms(&self) -> u32 {
         self.command_interval_ms
     }
 
+    /// Return the `MaxBeamSpeed` power data value.
     #[must_use]
     pub const fn maximum_beam_speed(&self) -> f32 {
         self.maximum_beam_speed
     }
 
+    /// Return whether the beam requires line of sight.
+    ///
+    /// The value comes from the `RequiresLOS` power data. It is `false` if the invocation ignores
+    /// the requirements.
     #[must_use]
     pub const fn requires_los(&self) -> bool {
         self.requires_los
     }
 
+    /// Return the time since the power started, in seconds.
     #[must_use]
     pub const fn elapsed_seconds(&self) -> f32 {
         self.elapsed_seconds
     }
 
+    /// Return the elapsed time of the next damage tick, in seconds.
     #[must_use]
     pub const fn next_damage_time(&self) -> f32 {
         self.next_damage_time
     }
 
+    /// Return the projectiles that the power has launched.
     #[must_use]
     pub fn active_projectile_ids(&self) -> &[EntityId] {
         &self.active_projectile_ids
     }
 
+    /// Return the teams that see the beam.
     #[must_use]
     pub fn revealed_team_ids(&self) -> &[TeamId] {
         &self.revealed_team_ids

@@ -7,13 +7,18 @@ use crate::player::{PlayerId, ProtoPowerId};
 use crate::sync::SyncChecksum;
 use glam::Vec3;
 
+/// The synchronized action phase of a running Rage power.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum RagePowerPhase {
+    /// The owner squad waits for input.
     #[default]
     Active = 0,
+    /// The owner squad moves.
     Moving = 1,
+    /// The owner squad jumps to a target.
     Jumping = 2,
+    /// The owner squad attacks the target squad.
     Attacking = 3,
 }
 
@@ -139,36 +144,43 @@ pub struct RagePowerExecution {
 }
 
 impl RagePowerExecution {
+    /// Return the stable simulation ID of this execution.
     #[must_use]
     pub const fn id(&self) -> PowerExecutionId {
         self.id
     }
 
+    /// Return the player that uses the power.
     #[must_use]
     pub const fn player_id(&self) -> PlayerId {
         self.player_id
     }
 
+    /// Return the runtime table index of the power prototype.
     #[must_use]
     pub const fn proto_power_id(&self) -> ProtoPowerId {
         self.proto_power_id
     }
 
+    /// Return the authored power level.
     #[must_use]
     pub const fn power_level(&self) -> u32 {
         self.power_level
     }
 
+    /// Return the squad that uses the Rage power.
     #[must_use]
     pub const fn owner_squad_id(&self) -> EntityId {
         self.owner_squad_id
     }
 
+    /// Return the packed retail power user ID.
     #[must_use]
     pub const fn power_user_id(&self) -> PowerUserId {
         self.power_user_id
     }
 
+    /// Return the squad that the owner squad attacks, if any.
     #[must_use]
     pub fn target_squad_id(&self) -> Option<EntityId> {
         if self.target_squad_id.is_invalid() {
@@ -178,111 +190,137 @@ impl RagePowerExecution {
         }
     }
 
+    /// Return the current action phase.
     #[must_use]
     pub const fn phase(&self) -> RagePowerPhase {
         self.phase
     }
 
+    /// Return the `TickLength` power data value, in seconds.
     #[must_use]
     pub const fn tick_length(&self) -> f32 {
         self.tick_length
     }
 
+    /// Return the supplies that each tick costs, from the `SuppliesPerTick` power data.
     #[must_use]
     pub const fn supplies_per_tick(&self) -> f32 {
         self.supplies_per_tick
     }
 
+    /// Return the supplies that each tick costs during an attack.
+    ///
+    /// The value comes from the `SuppliesPerTickAttacking` power data.
     #[must_use]
     pub const fn supplies_per_tick_attacking(&self) -> f32 {
         self.supplies_per_tick_attacking
     }
 
+    /// Return the supplies that each jump costs, from the `SuppliesPerJump` power data.
     #[must_use]
     pub const fn supplies_per_jump(&self) -> f32 {
         self.supplies_per_jump
     }
 
+    /// Return the `DamageMultiplier` power data value.
     #[must_use]
     pub const fn damage_multiplier(&self) -> f32 {
         self.damage_multiplier
     }
 
+    /// Return the `DamageTakenMultiplier` power data value.
     #[must_use]
     pub const fn damage_taken_multiplier(&self) -> f32 {
         self.damage_taken_multiplier
     }
 
+    /// Return the `SpeedMultiplier` power data value.
     #[must_use]
     pub const fn speed_multiplier(&self) -> f32 {
         self.speed_multiplier
     }
 
+    /// Return the `NudgeMultiplier` power data value.
     #[must_use]
     pub const fn nudge_multiplier(&self) -> f32 {
         self.nudge_multiplier
     }
 
+    /// Return the `ScanRadius` power data value, in world units.
     #[must_use]
     pub const fn scan_radius(&self) -> f32 {
         self.scan_radius
     }
 
+    /// Return the `TeleportTime` power data value, in seconds.
     #[must_use]
     pub const fn teleport_time(&self) -> f32 {
         self.teleport_time
     }
 
+    /// Return the `AuraRadius` power data value, in world units.
     #[must_use]
     pub const fn aura_radius(&self) -> f32 {
         self.aura_radius
     }
 
+    /// Return the `AuraDamageBonus` power data value.
     #[must_use]
     pub const fn aura_damage_bonus(&self) -> f32 {
         self.aura_damage_bonus
     }
 
+    /// Return the `HealPerKillCombatValue` power data value.
     #[must_use]
     pub const fn heal_per_kill_combat_value(&self) -> f32 {
         self.heal_per_kill_combat_value
     }
 
+    /// Return the proto-object name from the `Projectile` power data.
     #[must_use]
     pub fn projectile_prototype(&self) -> &str {
         &self.projectile_prototype
     }
 
+    /// Return the proto-object name from the `HandAttachObject` power data.
     #[must_use]
     pub fn hand_attachment_prototype(&self) -> &str {
         &self.hand_attachment_prototype
     }
 
+    /// Return the proto-object name from the `TeleportAttachObject` power data.
     #[must_use]
     pub fn teleport_attachment_prototype(&self) -> &str {
         &self.teleport_attachment_prototype
     }
 
+    /// Return the object type from the `AuraFilterType` power data.
     #[must_use]
     pub fn aura_filter_type(&self) -> &str {
         &self.aura_filter_type
     }
 
+    /// Return the squads that are in the aura.
     #[must_use]
     pub fn aura_squad_ids(&self) -> &[EntityId] {
         &self.aura_squad_ids
     }
 
+    /// Return the hand attachment objects on the owner squad.
     #[must_use]
     pub fn hand_attachment_ids(&self) -> &[EntityId] {
         &self.hand_attachment_ids
     }
 
+    /// Return whether the invocation skips the requirement checks and the payment.
     #[must_use]
     pub const fn ignores_requirements(&self) -> bool {
         self.flags.ignores_requirements()
     }
 
+    /// Return whether the owner squad moves to a target position.
+    ///
+    /// This is `true` when the invocation has no valid power user ID.
     #[must_use]
     pub const fn uses_pather(&self) -> bool {
         self.flags.uses_pather()

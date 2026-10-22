@@ -8,13 +8,13 @@ use crate::player::{PlayerId, PowerGrant, PowerRules, ProtoPowerId};
 use crate::sync::SyncChecksum;
 use glam::Vec3;
 use pipeline::database::hw1::{Database, Power};
-use thiserror::Error;
 
 mod carpet_bombing;
 mod cleansing;
 mod common;
 mod cryo;
 mod disruption;
+mod invocation;
 mod manager;
 mod odst;
 mod orbital;
@@ -29,6 +29,11 @@ pub use carpet_bombing::{
     CarpetBombingPowerInvocation,
 };
 pub use cleansing::{CleansingPowerError, CleansingPowerExecution, CleansingPowerInvocation};
+pub use invocation::{
+    CryoPowerError, CryoPowerInvocation, DisruptionPowerError, DisruptionPowerInvocation,
+    NativePowerError, NativePowerInput, NativePowerInvocation, RagePowerError, RagePowerInvocation,
+    RepairPowerError, RepairPowerInvocation,
+};
 pub use odst::{OdstDrop, OdstPowerError, OdstPowerExecution, OdstPowerInvocation};
 pub use orbital::{OrbitalPowerError, OrbitalPowerExecution, OrbitalPowerInvocation, OrbitalShot};
 pub use rage::{RagePowerExecution, RagePowerPhase};
@@ -50,220 +55,6 @@ impl PowerExecutionId {
         self.0
     }
 }
-
-/// Inputs accepted by retail's direct `InvokePower2` native-power path.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NativePowerInvocation {
-    pub player_id: PlayerId,
-    pub proto_power_id: ProtoPowerId,
-    pub power_level: u32,
-    pub squad_id: EntityId,
-    pub target_location: Vec3,
-    pub ignore_requirements: bool,
-    pub power_user_id: PowerUserId,
-}
-
-/// Live input accepted by an already-running native power.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum NativePowerInput {
-    Confirm(Vec3),
-    Position(Vec3),
-    Direction(Vec3),
-    Shutdown,
-}
-
-/// Inputs accepted by retail's direct `InvokePower2` Cryo path.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CryoPowerInvocation {
-    pub player_id: PlayerId,
-    pub proto_power_id: ProtoPowerId,
-    pub power_level: u32,
-    pub squad_id: EntityId,
-    pub target_location: Vec3,
-    pub ignore_requirements: bool,
-}
-
-impl From<CryoPowerInvocation> for NativePowerInvocation {
-    fn from(invocation: CryoPowerInvocation) -> Self {
-        Self {
-            player_id: invocation.player_id,
-            proto_power_id: invocation.proto_power_id,
-            power_level: invocation.power_level,
-            squad_id: invocation.squad_id,
-            target_location: invocation.target_location,
-            ignore_requirements: invocation.ignore_requirements,
-            power_user_id: PowerUserId::INVALID,
-        }
-    }
-}
-
-/// Inputs accepted by retail's direct `InvokePower2` Disruption path.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DisruptionPowerInvocation {
-    pub player_id: PlayerId,
-    pub proto_power_id: ProtoPowerId,
-    pub power_level: u32,
-    pub squad_id: EntityId,
-    pub target_location: Vec3,
-    pub ignore_requirements: bool,
-}
-
-/// Inputs accepted by retail's direct `InvokePower2` Repair path.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RepairPowerInvocation {
-    pub player_id: PlayerId,
-    pub proto_power_id: ProtoPowerId,
-    pub power_level: u32,
-    pub squad_id: EntityId,
-    pub target_location: Vec3,
-    pub ignore_requirements: bool,
-}
-
-/// Inputs accepted by retail's direct `InvokePower2` Rage path.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RagePowerInvocation {
-    pub player_id: PlayerId,
-    pub proto_power_id: ProtoPowerId,
-    pub power_level: u32,
-    pub squad_id: EntityId,
-    pub target_location: Vec3,
-    pub ignore_requirements: bool,
-}
-
-impl From<DisruptionPowerInvocation> for NativePowerInvocation {
-    fn from(invocation: DisruptionPowerInvocation) -> Self {
-        Self {
-            player_id: invocation.player_id,
-            proto_power_id: invocation.proto_power_id,
-            power_level: invocation.power_level,
-            squad_id: invocation.squad_id,
-            target_location: invocation.target_location,
-            ignore_requirements: invocation.ignore_requirements,
-            power_user_id: PowerUserId::INVALID,
-        }
-    }
-}
-
-impl From<RepairPowerInvocation> for NativePowerInvocation {
-    fn from(invocation: RepairPowerInvocation) -> Self {
-        Self {
-            player_id: invocation.player_id,
-            proto_power_id: invocation.proto_power_id,
-            power_level: invocation.power_level,
-            squad_id: invocation.squad_id,
-            target_location: invocation.target_location,
-            ignore_requirements: invocation.ignore_requirements,
-            power_user_id: PowerUserId::INVALID,
-        }
-    }
-}
-
-impl From<RagePowerInvocation> for NativePowerInvocation {
-    fn from(invocation: RagePowerInvocation) -> Self {
-        Self {
-            player_id: invocation.player_id,
-            proto_power_id: invocation.proto_power_id,
-            power_level: invocation.power_level,
-            squad_id: invocation.squad_id,
-            target_location: invocation.target_location,
-            ignore_requirements: invocation.ignore_requirements,
-            power_user_id: PowerUserId::INVALID,
-        }
-    }
-}
-
-impl From<NativePowerInvocation> for CryoPowerInvocation {
-    fn from(invocation: NativePowerInvocation) -> Self {
-        Self {
-            player_id: invocation.player_id,
-            proto_power_id: invocation.proto_power_id,
-            power_level: invocation.power_level,
-            squad_id: invocation.squad_id,
-            target_location: invocation.target_location,
-            ignore_requirements: invocation.ignore_requirements,
-        }
-    }
-}
-
-impl From<NativePowerInvocation> for DisruptionPowerInvocation {
-    fn from(invocation: NativePowerInvocation) -> Self {
-        Self {
-            player_id: invocation.player_id,
-            proto_power_id: invocation.proto_power_id,
-            power_level: invocation.power_level,
-            squad_id: invocation.squad_id,
-            target_location: invocation.target_location,
-            ignore_requirements: invocation.ignore_requirements,
-        }
-    }
-}
-
-impl From<NativePowerInvocation> for RepairPowerInvocation {
-    fn from(invocation: NativePowerInvocation) -> Self {
-        Self {
-            player_id: invocation.player_id,
-            proto_power_id: invocation.proto_power_id,
-            power_level: invocation.power_level,
-            squad_id: invocation.squad_id,
-            target_location: invocation.target_location,
-            ignore_requirements: invocation.ignore_requirements,
-        }
-    }
-}
-
-/// Why an authoritative native power could not be started.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum NativePowerError {
-    #[error("player {0} does not exist")]
-    PlayerNotFound(PlayerId),
-    #[error("power prototype {0} does not exist")]
-    PowerNotFound(ProtoPowerId),
-    #[error("power '{power}' is not a {expected} power")]
-    WrongPowerType {
-        power: String,
-        expected: &'static str,
-    },
-    #[error("power level {0} is not defined")]
-    InvalidPowerLevel(u32),
-    #[error("target location must contain only finite coordinates")]
-    InvalidTarget,
-    #[error("the target is not a valid power placement location")]
-    InvalidPlacement,
-    #[error("required power data '{0}' is missing")]
-    MissingData(&'static str),
-    #[error("power data '{0}' is invalid")]
-    InvalidData(&'static str),
-    #[error("power references unknown proto-object '{0}'")]
-    UnknownPrototype(String),
-    #[error("power references unknown proto-squad '{0}'")]
-    UnknownSquadPrototype(String),
-    #[error("power references unknown object type '{0}'")]
-    UnknownObjectType(String),
-    #[error("the player has no available charge for this power")]
-    PowerUnavailable,
-    #[error("the player cannot afford this power")]
-    InsufficientResources,
-    #[error("required technology '{0}' is not active")]
-    MissingTechnology(String),
-    #[error("the power's population requirement does not fit")]
-    PopulationLimit,
-    #[error("the target is inside active disruption power {0:?}")]
-    Disrupted(PowerExecutionId),
-    #[error("native power type '{0}' is not implemented")]
-    UnsupportedPowerType(String),
-}
-
-/// Backward-compatible error name for Cryo invocation.
-pub type CryoPowerError = NativePowerError;
-
-/// Error returned by Disruption invocation.
-pub type DisruptionPowerError = NativePowerError;
-
-/// Error returned by Repair invocation.
-pub type RepairPowerError = NativePowerError;
-
-/// Error returned by Rage invocation.
-pub type RagePowerError = NativePowerError;
 
 /// Authoritative state for one running retail `BPowerCryo` execution.
 #[derive(Debug, Clone)]
@@ -294,26 +85,31 @@ pub struct CryoPowerExecution {
 }
 
 impl CryoPowerExecution {
+    /// Return the stable simulation ID of this execution.
     #[must_use]
     pub const fn id(&self) -> PowerExecutionId {
         self.id
     }
 
+    /// Return the player that uses the power.
     #[must_use]
     pub const fn player_id(&self) -> PlayerId {
         self.player_id
     }
 
+    /// Return the runtime table index of the power prototype.
     #[must_use]
     pub const fn proto_power_id(&self) -> ProtoPowerId {
         self.proto_power_id
     }
 
+    /// Return the authored power level.
     #[must_use]
     pub const fn power_level(&self) -> u32 {
         self.power_level
     }
 
+    /// Return the squad that owns the power charge, or an invalid ID.
     #[must_use]
     pub const fn owner_squad_id(&self) -> EntityId {
         self.owner_squad_id
@@ -331,51 +127,61 @@ impl CryoPowerExecution {
         self.cryo_object_id
     }
 
+    /// Return the world location that the power targets.
     #[must_use]
     pub const fn target_location(&self) -> Vec3 {
         self.target_location
     }
 
+    /// Return the flight direction of the bomber.
     #[must_use]
     pub const fn direction(&self) -> Vec3 {
         self.direction
     }
 
+    /// Return the proto-object name from the `CryoObject` power data.
     #[must_use]
     pub fn cryo_object_prototype(&self) -> &str {
         &self.cryo_object_prototype
     }
 
+    /// Return the proto-object name of the bomber.
     #[must_use]
     pub fn bomber_prototype(&self) -> &str {
         self.bomber.prototype()
     }
 
+    /// Return the object type from the `FilterType` power data that selects target squads.
     #[must_use]
     pub fn filter_type(&self) -> &str {
         &self.filter_type
     }
 
+    /// Return the effect radius from the `CryoRadius` power data, in world units.
     #[must_use]
     pub const fn radius(&self) -> f32 {
         self.radius
     }
 
+    /// Return the `MinCryoFalloff` power data value.
     #[must_use]
     pub const fn minimum_falloff(&self) -> f32 {
         self.minimum_falloff
     }
 
+    /// Return the time between two cryo ticks, in milliseconds.
     #[must_use]
     pub const fn tick_duration_ms(&self) -> u32 {
         self.tick_duration_ms
     }
 
+    /// Return the number of cryo ticks that remain.
     #[must_use]
     pub const fn ticks_remaining(&self) -> u32 {
         self.ticks_remaining
     }
 
+    /// Return the game time of the next cryo tick, in milliseconds.
     #[must_use]
     pub const fn next_tick_time_ms(&self) -> u32 {
         self.next_tick_time_ms
@@ -387,11 +193,15 @@ impl CryoPowerExecution {
         self.cryo_amount_per_tick
     }
 
+    /// Return the hitpoints that the power can still kill on frozen squads.
+    ///
+    /// The start value comes from the `MaxKillHp` power data.
     #[must_use]
     pub const fn killable_hitpoints_left(&self) -> f32 {
         self.killable_hitpoints_left
     }
 
+    /// Return the time since the power started, in seconds.
     #[must_use]
     pub const fn elapsed_seconds(&self) -> f32 {
         self.elapsed_seconds
@@ -403,11 +213,13 @@ impl CryoPowerExecution {
         self.bomber.position()
     }
 
+    /// Return whether the bomber is visible.
     #[must_use]
     pub const fn bomber_visible(&self) -> bool {
         self.bomber.visible()
     }
 
+    /// Return whether the bomber has released the cryo bomb.
     #[must_use]
     pub const fn bomb_released(&self) -> bool {
         self.bomb_released
@@ -474,91 +286,111 @@ pub struct DisruptionPowerExecution {
 }
 
 impl DisruptionPowerExecution {
+    /// Return the stable simulation ID of this execution.
     #[must_use]
     pub const fn id(&self) -> PowerExecutionId {
         self.id
     }
 
+    /// Return the player that uses the power.
     #[must_use]
     pub const fn player_id(&self) -> PlayerId {
         self.player_id
     }
 
+    /// Return the runtime table index of the power prototype.
     #[must_use]
     pub const fn proto_power_id(&self) -> ProtoPowerId {
         self.proto_power_id
     }
 
+    /// Return the authored power level.
     #[must_use]
     pub const fn power_level(&self) -> u32 {
         self.power_level
     }
 
+    /// Return the squad that owns the power charge, or an invalid ID.
     #[must_use]
     pub const fn owner_squad_id(&self) -> EntityId {
         self.owner_squad_id
     }
 
+    /// Return the sim object of the bomber.
     #[must_use]
     pub const fn bomber_object_id(&self) -> EntityId {
         self.bomber.object_id()
     }
 
+    /// Return the sim object of the disruption field, or an invalid ID before it exists.
     #[must_use]
     pub const fn disruption_object_id(&self) -> EntityId {
         self.disruption_object_id
     }
 
+    /// Return the world location at the center of the disruption field.
     #[must_use]
     pub const fn target_location(&self) -> Vec3 {
         self.target_location
     }
 
+    /// Return the flight direction of the bomber.
     #[must_use]
     pub const fn direction(&self) -> Vec3 {
         self.direction
     }
 
+    /// Return the proto-object name of the bomber.
     #[must_use]
     pub fn bomber_prototype(&self) -> &str {
         self.bomber.prototype()
     }
 
+    /// Return the proto-object name from the `DisruptionObject` power data.
     #[must_use]
     pub fn disruption_object_prototype(&self) -> &str {
         &self.disruption_object_prototype
     }
 
+    /// Return the proto-object name from the `PulseObject` power data.
     #[must_use]
     pub fn pulse_object_prototype(&self) -> &str {
         &self.pulse_object_prototype
     }
 
+    /// Return the proto-object name of the strike visual.
     #[must_use]
     pub fn strike_object_prototype(&self) -> &str {
         &self.strike_object_prototype
     }
 
+    /// Return the field radius from the `DisruptionRadius` power data, in world units.
     #[must_use]
     pub const fn radius(&self) -> f32 {
         self.radius
     }
 
+    /// Return the time that remains before the field ends, in seconds.
     #[must_use]
     pub const fn time_remaining_seconds(&self) -> f32 {
         self.time_remaining_seconds
     }
 
+    /// Return the time after the start when the field becomes active, in seconds.
+    ///
+    /// The value comes from the `DisruptionStartTime` power data.
     #[must_use]
     pub const fn start_time_seconds(&self) -> f32 {
         self.start_time_seconds
     }
 
+    /// Return the time since the power started, in seconds.
     #[must_use]
     pub const fn elapsed_seconds(&self) -> f32 {
         self.elapsed_seconds
     }
 
+    /// Return the number of pulses that the field has made.
     #[must_use]
     pub const fn pulse_count(&self) -> u32 {
         self.pulse_count

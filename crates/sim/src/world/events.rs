@@ -15,93 +15,182 @@ use crate::sync::SyncChecksum;
 use crate::trigger::EntityFilterSet;
 
 /// A retail `BEventDefinitions` identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+///
+/// Each variant has the numeric value of the retail general event ID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, zerocopy::TryFromBytes)]
 #[repr(u16)]
 pub enum GeneralEventType {
+    /// The player tilts the camera.
     ControlTilt = 1,
+    /// The player zooms the camera.
     ControlZoom = 2,
+    /// The player rotates the camera.
     ControlRotate = 3,
+    /// The player pans the camera.
     ControlPan = 4,
+    /// The player uses the circle select.
     ControlCircleSelect = 5,
+    /// The player adds units with the circle select.
     ControlCircleMultiSelect = 6,
+    /// The player clears all selections.
     ControlClearAllSelections = 7,
+    /// The player uses the action modifier.
     ControlModifierAction = 8,
+    /// The player uses the speed modifier.
     ControlModifierSpeed = 9,
+    /// The player resets the camera settings.
     ControlResetCameraSettings = 10,
+    /// The player moves the camera to the rally point.
     ControlGotoRally = 11,
+    /// The player moves the camera to a base.
     ControlGotoBase = 12,
+    /// The player moves the camera to a scout.
     ControlGotoScout = 13,
+    /// The player moves the camera to a node.
     ControlGotoNode = 14,
+    /// The player moves the camera to a hero.
     ControlGotoHero = 15,
+    /// The player moves the camera to an alert.
     ControlGotoAlert = 16,
+    /// The player moves the camera to the selection.
     ControlGotoSelected = 17,
+    /// The player selects a control group.
     ControlGroupSelect = 18,
+    /// The player moves the camera to a control group.
     ControlGroupGoto = 19,
+    /// The player assigns a control group.
     ControlGroupAssign = 20,
+    /// The player adds units to a control group.
     ControlGroupAddTo = 21,
+    /// The player selects all military units on the screen.
     ControlScreenSelectMilitary = 22,
+    /// The player selects all military units.
     ControlGlobalSelect = 23,
+    /// The player selects with a double click.
     ControlDoubleClickSelect = 24,
+    /// The player finds a crowd of military units.
     ControlFindCrowdMilitary = 25,
+    /// The player finds a crowd of villager units.
     ControlFindCrowdVillager = 26,
+    /// The player sets a rally point.
     ControlSetRallyPoint = 27,
+    /// The player sends a flare.
     Flare = 28,
+    /// The player sends a help flare.
     FlareHelp = 29,
+    /// The player sends a meet flare.
     FlareMeet = 30,
+    /// The player sends an attack flare.
     FlareAttack = 31,
+    /// The command menu opens.
     MenuShowCommand = 32,
+    /// The command menu closes.
     MenuCloseCommand = 33,
+    /// The player navigates the command menu.
     MenuNavCommand = 34,
+    /// Command menu item 0 has the focus.
     MenuCommandHasFocus0 = 35,
+    /// Command menu item 1 has the focus.
     MenuCommandHasFocus1 = 36,
+    /// Command menu item 2 has the focus.
     MenuCommandHasFocus2 = 37,
+    /// Command menu item 3 has the focus.
     MenuCommandHasFocus3 = 38,
+    /// Command menu item 4 has the focus.
     MenuCommandHasFocus4 = 39,
+    /// Command menu item 5 has the focus.
     MenuCommandHasFocus5 = 40,
+    /// Command menu item 6 has the focus.
     MenuCommandHasFocus6 = 41,
+    /// Command menu item 7 has the focus.
     MenuCommandHasFocus7 = 42,
+    /// A command menu item has the focus.
     MenuCommandHasFocusN = 43,
+    /// The player clicks a command menu item.
     MenuCommandClickmenuN = 44,
+    /// The command menu is open.
     MenuCommandIsMenuOpen = 45,
+    /// The command menu is not open.
+    ///
+    /// The retail name has the spelling `MenuCommanndIsMenuNotOpen`.
     MenuCommanndIsMenuNotOpen = 46,
+    /// The power menu opens.
     MenuShowPower = 47,
+    /// The power menu closes.
     MenuClosePower = 48,
+    /// A power menu item has the focus.
     MenuPowerHasFocusN = 49,
+    /// The player clicks a power menu item.
     MenuPowerClickmenuN = 50,
+    /// The power menu is open.
     MenuPowerIsMenuOpen = 51,
+    /// The power menu is not open.
     MenuPowerIsMenuNotOpen = 52,
+    /// The power selection menu opens.
     MenuShowSelectPower = 53,
+    /// The ability menu opens.
     MenuShowAbility = 54,
+    /// The tribute menu opens.
     MenuShowTribute = 55,
+    /// The objectives menu opens.
     MenuShowObjectives = 56,
+    /// An entity completes construction.
     GameEntityBuilt = 57,
+    /// An entity dies.
     GameEntityKilled = 58,
+    /// A chat message appears.
     ChatShown = 59,
+    /// A chat message is removed.
     ChatRemoved = 60,
+    /// A chat message completes.
     ChatCompleted = 61,
+    /// The player gives a bowl command.
     CommandBowl = 62,
+    /// The player gives an ability command.
     CommandAbility = 63,
+    /// The player gives an unpack command.
     CommandUnpack = 64,
+    /// The player gives a work command.
     CommandDoWork = 65,
+    /// The player gives an attack command.
     CommandAttack = 66,
+    /// The player gives a move command.
     CommandMove = 67,
+    /// The player trains a squad.
     CommandTrainSquad = 68,
+    /// The player cancels a squad in training.
     CommandTrainSquadCancel = 69,
+    /// The player starts a research.
     CommandResearch = 70,
+    /// The player cancels a research.
     CommandResearchCancel = 71,
+    /// The player builds another building.
     CommandBuildOther = 72,
+    /// The player recycles a building.
     CommandRecycle = 73,
+    /// The player cancels a recycle.
     CommandRecycleCancel = 74,
+    /// The camera looks at a location.
     CameraLookingAt = 75,
+    /// The player selects units.
     SelectUnits = 76,
+    /// A cinematic completes.
     CinematicCompleted = 77,
+    /// A screen fade completes.
     FadeCompleted = 78,
+    /// The player uses a power.
     UsedPower = 79,
+    /// One second of game time passes.
     Timer1Sec = 80,
+    /// The circle select reaches its full size.
     ControlCircleSelectFullyGrown = 81,
+    /// An orbital power completes.
     PowerOrbitalComplete = 82,
+    /// An entity rams another entity.
     GameEntityRammed = 83,
+    /// An entity hijacks another entity.
     GameEntityJacked = 84,
+    /// An entity dies from damage that is not from a projectile.
     GameEntityKilledByNonProjectile = 85,
 }
 
@@ -110,8 +199,7 @@ impl GeneralEventType {
     #[must_use]
     pub fn from_u16(value: u16) -> Option<Self> {
         if (1..=85).contains(&value) {
-            // SAFETY: the retail event enumeration is contiguous from 1 to 85.
-            Some(unsafe { std::mem::transmute::<u16, Self>(value) })
+            <Self as zerocopy::TryFromBytes>::try_read_from_bytes(&value.to_ne_bytes()).ok()
         } else {
             None
         }
@@ -225,11 +313,17 @@ const GENERAL_EVENT_NAMES: [&str; 85] = [
 /// One synchronized occurrence offered to general-event subscribers.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GeneralEvent {
+    /// The type of the event.
     pub event_type: GeneralEventType,
+    /// The player that causes the event. Subscribers with a player filter compare this value.
     pub player_id: i32,
+    /// The single source entity, if the event has one.
     pub source: Option<EntityId>,
+    /// The single target entity, if the event has one.
     pub target: Option<EntityId>,
+    /// The source entities that entity-list filters examine.
     pub source_entities: Vec<EntityId>,
+    /// The target entities of the event.
     pub target_entities: Vec<EntityId>,
     /// Terrain-intersection point at the center of the current camera view.
     pub camera_focus: Option<Vec3>,
@@ -269,7 +363,9 @@ impl GeneralEvent {
 /// Renderer-facing work authored by authoritative trigger effects.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PresentationRequest {
+    /// A chat request.
     Chat(ChatRequest),
+    /// A cinematic request.
     Cinematic(CinematicRequest),
 }
 
@@ -287,20 +383,30 @@ impl PresentationRequest {
 /// A trigger-authored subtitle, voice cue, and talking-head request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatRequest {
+    /// The synchronized request ID. The world sets this value when it adds the request.
     pub id: u32,
+    /// The name of the sound cue to play.
     pub sound_cue: String,
+    /// If `true`, queue the sound after the current sound.
     pub queue_sound: bool,
+    /// The ID of the subtitle string, or -1 for no string.
     pub string_id: i32,
+    /// The display time in milliseconds.
     pub duration_ms: u32,
+    /// The ID of the talking head to show, if any.
     pub talking_head_id: Option<i32>,
 }
 
 /// A trigger-authored cinematic request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CinematicRequest {
+    /// The synchronized request ID. The world sets this value when it adds the request.
     pub id: u32,
+    /// The ID of the cinematic to play.
     pub cinematic_id: i32,
+    /// The squads that the cinematic takes control of, without duplicates.
     pub possessed_squads: Vec<EntityId>,
+    /// If `true`, the cinematic is a pre-rendered video.
     pub pre_rendered: bool,
 }
 

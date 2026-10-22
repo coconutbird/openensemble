@@ -34,12 +34,19 @@ const BALL_PERIOD_MS: u32 = 3_000;
 /// Inputs accepted by retail's direct `InvokePower2` Wave path.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WavePowerInvocation {
+    /// The player that uses the power.
     pub player_id: PlayerId,
+    /// The runtime table index of the power prototype.
     pub proto_power_id: ProtoPowerId,
+    /// The authored power level that selects the power data.
     pub power_level: u32,
+    /// The squad that owns the power charge, or an invalid ID for a player power.
     pub squad_id: EntityId,
+    /// The world location where the gravity ball starts.
     pub target_location: Vec3,
+    /// If `true`, skip the requirement checks and the payment.
     pub ignore_requirements: bool,
+    /// The packed retail power user ID, or `PowerUserId::INVALID` if there is none.
     pub power_user_id: PowerUserId,
 }
 
@@ -64,12 +71,17 @@ pub type WavePowerError = NativePowerError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum WaveGravityBallState {
+    /// The ball moves and does not pull units.
     Stagnant = 1,
+    /// The ball pulls units.
     Pulling = 2,
+    /// The ball holds the maximum number of objects and a full damage bank.
     PullingFull = 3,
+    /// The ball explodes.
     Exploding = 4,
 }
 
+/// A unit that the gravity ball has captured.
 #[derive(Debug, Clone, Copy)]
 pub struct WaveCapturedObject {
     unit_id: EntityId,
@@ -79,11 +91,13 @@ pub struct WaveCapturedObject {
 }
 
 impl WaveCapturedObject {
+    /// Return the captured unit.
     #[must_use]
     pub const fn unit_id(&self) -> EntityId {
         self.unit_id
     }
 
+    /// Return the `PickupAttachment` object attached to the captured unit.
     #[must_use]
     pub const fn pickup_attachment_id(&self) -> EntityId {
         self.pickup_attachment_id
@@ -127,136 +141,163 @@ pub struct WavePowerExecution {
 }
 
 impl WavePowerExecution {
+    /// Return the stable simulation ID of this execution.
     #[must_use]
     pub const fn id(&self) -> PowerExecutionId {
         self.id
     }
 
+    /// Return the player that uses the power.
     #[must_use]
     pub const fn player_id(&self) -> PlayerId {
         self.player_id
     }
 
+    /// Return the runtime table index of the power prototype.
     #[must_use]
     pub const fn proto_power_id(&self) -> ProtoPowerId {
         self.proto_power_id
     }
 
+    /// Return the authored power level.
     #[must_use]
     pub const fn power_level(&self) -> u32 {
         self.power_level
     }
 
+    /// Return the squad that owns the power charge, or an invalid ID.
     #[must_use]
     pub const fn owner_squad_id(&self) -> EntityId {
         self.owner_squad_id
     }
 
+    /// Return the packed retail power user ID.
     #[must_use]
     pub const fn power_user_id(&self) -> PowerUserId {
         self.power_user_id
     }
 
+    /// Return the world location where the gravity ball started.
     #[must_use]
     pub const fn target_location(&self) -> Vec3 {
         self.target_location
     }
 
+    /// Return the position that the player wants the ball to move to.
     #[must_use]
     pub const fn desired_ball_position(&self) -> Vec3 {
         self.desired_ball_position
     }
 
+    /// Return the unit of the gravity ball.
     #[must_use]
     pub const fn ball_object_id(&self) -> EntityId {
         self.ball_object_id
     }
 
+    /// Return the current state of the gravity ball.
     #[must_use]
     pub const fn state(&self) -> WaveGravityBallState {
         self.state
     }
 
+    /// Return the proto-object name from the `BallObject` power data.
     #[must_use]
     pub fn ball_prototype(&self) -> &str {
         &self.profile.ball_prototype
     }
 
+    /// Return the proto-object name from the `LightningProjectile` power data.
     #[must_use]
     pub fn lightning_projectile_prototype(&self) -> &str {
         &self.profile.lightning_projectile
     }
 
+    /// Return the proto-object name from the `DebrisProjectile` power data.
     #[must_use]
     pub fn debris_projectile_prototype(&self) -> &str {
         &self.profile.debris_projectile
     }
 
+    /// Return the proto-object name from the `ExplodeProjectile` power data.
     #[must_use]
     pub fn explode_projectile_prototype(&self) -> &str {
         &self.profile.explode_projectile
     }
 
+    /// Return the proto-object name from the `LightningBeamVisual` power data, if any.
     #[must_use]
     pub fn lightning_beam_prototype(&self) -> Option<&str> {
         self.profile.lightning_beam_visual.as_deref()
     }
 
+    /// Return the `TickLength` power data value, in seconds.
     #[must_use]
     pub const fn tick_length(&self) -> f32 {
         self.profile.tick_length
     }
 
+    /// Return the supplies that each tick costs, from the `SuppliesPerTick` power data.
     #[must_use]
     pub const fn supplies_per_tick(&self) -> f32 {
         self.profile.supplies_per_tick
     }
 
+    /// Return the `PullingRange` power data value, in world units.
     #[must_use]
     pub const fn pulling_range(&self) -> f32 {
         self.profile.pulling_range
     }
 
+    /// Return the `MaxBallSpeedPulling` power data value.
     #[must_use]
     pub const fn maximum_ball_speed_pulling(&self) -> f32 {
         self.profile.maximum_ball_speed_pulling
     }
 
+    /// Return the `CommandInterval` power data value, in milliseconds.
     #[must_use]
     pub const fn command_interval_ms(&self) -> u32 {
         self.profile.command_interval_ms
     }
 
+    /// Return the `MinBallDistance` power data value.
     #[must_use]
     pub const fn minimum_ball_distance(&self) -> f32 {
         self.profile.minimum_ball_distance
     }
 
+    /// Return the `MaxBallDistance` power data value.
     #[must_use]
     pub const fn maximum_ball_distance(&self) -> f32 {
         self.profile.maximum_ball_distance
     }
 
+    /// Return the `MaxCapturedObjects` power data value.
     #[must_use]
     pub const fn maximum_captured_objects(&self) -> usize {
         self.profile.maximum_captured_objects
     }
 
+    /// Return the explosion damage that the ball has stored.
     #[must_use]
     pub const fn current_explosion_damage_bank(&self) -> f32 {
         self.current_explosion_damage_bank
     }
 
+    /// Return the largest explosion damage that the ball can store.
     #[must_use]
     pub const fn maximum_possible_explosion_damage_bank(&self) -> f32 {
         self.maximum_possible_explosion_damage_bank
     }
 
+    /// Return the explosion time that remains, in seconds.
     #[must_use]
     pub const fn explode_cooldown_left(&self) -> f32 {
         self.explode_cooldown_left
     }
 
+    /// Return the units that the ball has captured.
     #[must_use]
     pub fn captured_objects(&self) -> &[WaveCapturedObject] {
         &self.captured_objects
@@ -268,11 +309,15 @@ impl WavePowerExecution {
         &self.fake_objects
     }
 
+    /// Return the projectiles that the power has launched.
     #[must_use]
     pub fn active_projectile_ids(&self) -> &[EntityId] {
         &self.active_projectile_ids
     }
 
+    /// Return the teams that see the ball.
+    ///
+    /// These teams also see the leader of the owner squad.
     #[must_use]
     pub fn revealed_team_ids(&self) -> &[TeamId] {
         &self.revealed_team_ids
