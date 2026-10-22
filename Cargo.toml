@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/xcore",
     "crates/motion",
     "crates/render",
     "crates/sim",
@@ -18,7 +17,6 @@ repository = "https://github.com/coconutbird/openensemble"
 
 [workspace.dependencies]
 # Internal crates
-xcore = { path = "crates/xcore" }
 motion = { path = "crates/motion" }
 render = { path = "crates/render" }
 sim = { path = "crates/sim" }
@@ -78,7 +76,6 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
-xcore = { workspace = true }
 render = { workspace = true }
 sim = { workspace = true }
 pipeline = { workspace = true }

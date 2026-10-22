@@ -88,7 +88,7 @@ repository:
 
 The crates of this repository are in four layers:
 
-1. `xcore` and `motion`.
+1. `motion`.
 2. `sim`.
 3. `net` and `render`.
 4. The root package `openensemble`.
@@ -100,7 +100,7 @@ Two crates contain shared test code. Use them only as dev-dependencies:
   tests.
 
 - Make a crate depend only on crates in lower layers.
-- Do not make `sim` depend on `render`, `net`, `xcore` or a graphics, window or audio crate.
+- Do not make `sim` depend on `render`, `net` or a graphics, window or audio crate.
 - Put a new format parser or writer in `ensemble-formats`. Put new game data loading in
   `ensemble-assets`.
 - If a change needs a change in a sibling repository, change and commit each repository

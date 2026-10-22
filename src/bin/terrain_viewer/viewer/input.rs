@@ -1,9 +1,11 @@
 //! Input handling and UI for the terrain viewer.
 //!
-//! Implements the `Application` trait: update (keyboard/mouse), UI (egui), and clear color.
+//! Implements the `Application` trait: update (keyboard/mouse), UI (egui), clear color and the
+//! GPU callbacks.
 
-use xcore::app::{Application, FrameContext, Input, KeyCode};
-use xcore::prelude::*;
+use render::app::{Application, Color, FrameContext, RenderContext};
+use render::input::{Input, KeyCode};
+use render::wgpu;
 
 use super::TerrainViewer;
 use crate::camera::CameraInput;
@@ -601,5 +603,13 @@ impl Application for TerrainViewer {
 
     fn render(&mut self, _ctx: &FrameContext) -> Color {
         Color::new(0.4, 0.6, 0.9, 1.0)
+    }
+
+    fn render_3d(&mut self, ctx: &mut RenderContext<'_>) {
+        self.render_scene(ctx);
+    }
+
+    fn resize_gpu(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+        self.resize_gpu_resources(device, width, height);
     }
 }

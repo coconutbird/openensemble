@@ -21,8 +21,8 @@ use glam::Vec2;
 use std::path::PathBuf;
 
 use capture::{CaptureConfig, DEFAULT_CAPTURE_SIZE};
+use render::app::WindowConfig;
 use viewer::TerrainViewer;
-use xcore::app::WindowConfig;
 
 #[derive(Debug)]
 struct CliOptions {
@@ -180,7 +180,7 @@ fn main() -> Result<()> {
         config.resizable = false;
         config.vsync = false;
     }
-    render::run_3d(config, viewer)?;
+    render::app::run(config, viewer)?;
 
     Ok(())
 }

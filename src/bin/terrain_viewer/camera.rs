@@ -1,8 +1,8 @@
 //! Camera input handling for the terrain viewer.
 
+use render::input::{GamepadButton, Input, KeyCode};
 use render::terrain::Camera;
 use sim::PlayerPresentationState;
-use xcore::app::{GamepadButton, Input, KeyCode};
 
 /// Extension trait for Camera to add input handling.
 pub trait CameraInput {

@@ -16,6 +16,7 @@ static GAME_DIR: LazyLock<PathBuf> = LazyLock::new(find_game_dir);
 ///
 /// The function uses the path in [`GAME_DIR_ENV_VAR`] if that path exists. Otherwise, it uses
 /// the current working directory. The first call logs and caches the result.
+#[must_use]
 pub fn game_dir() -> &'static PathBuf {
     &GAME_DIR
 }

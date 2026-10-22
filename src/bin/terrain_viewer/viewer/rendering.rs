@@ -1,14 +1,15 @@
 //! 3D rendering for the terrain viewer.
 //!
-//! Implements the `Application3D` trait: GPU initialization, resize, and render pass.
+//! Implements the GPU resize and the render pass that the `Application` callbacks call.
 
 use num_traits::ToPrimitive;
+use render::app::RenderContext;
 use render::lighting::LocalLightView;
 use render::particle::{ParticleScene, ParticleSceneTextures};
 use render::postprocess::{ToneMapResources, ToneMapSettings};
 use render::terrain::{LightingParams, RawXtdData, TerrainParams, TerrainPatchWorldBindings};
 use render::ugx::RendererResources;
-use render::{Application3D, RenderContext, RenderPhase, WorldRenderer, wgpu};
+use render::{RenderPhase, WorldRenderer, wgpu};
 use zerocopy::IntoBytes;
 
 use super::TerrainViewer;
@@ -820,16 +821,9 @@ impl TerrainViewer {
     }
 }
 
-impl Application3D for TerrainViewer {
-    fn init_gpu(
-        &mut self,
-        _device: &wgpu::Device,
-        _queue: &wgpu::Queue,
-        _format: wgpu::TextureFormat,
-    ) {
-    }
-
-    fn resize_gpu(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+impl TerrainViewer {
+    /// Recreates the GPU resources that depend on the window size.
+    pub(super) fn resize_gpu_resources(&mut self, device: &wgpu::Device, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
         }
@@ -849,7 +843,8 @@ impl Application3D for TerrainViewer {
         }
     }
 
-    fn render_3d(&mut self, ctx: &mut RenderContext<'_>) {
+    /// Records the GPU commands of one frame.
+    pub(super) fn render_scene(&mut self, ctx: &mut RenderContext<'_>) {
         self.initialize_gpu_resources(ctx);
         if self.gpu.is_none() {
             return;
