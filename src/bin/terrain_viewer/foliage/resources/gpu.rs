@@ -1,9 +1,9 @@
 use num_traits::ToPrimitive;
 use render::gpu::{
-    buffer_layout_entry, buffer_layout_entry_with_options, sampler_layout_entry,
-    texture_layout_entry,
+    buffer_layout_entry, buffer_layout_entry_with_options, create_mipped_rgba_texture,
+    sampler_layout_entry, texture_layout_entry,
 };
-use render::terrain::{FOLIAGE_SHADER, generate_mipmaps, mip_level_count};
+use render::terrain::FOLIAGE_SHADER;
 use render::wgpu;
 
 use super::{
@@ -249,48 +249,7 @@ pub(super) fn create_uploaded_rgba_texture(
     pixels: &[u8],
     format: wgpu::TextureFormat,
 ) -> (wgpu::Texture, wgpu::TextureView) {
-    let [width, height] = size;
-    let mip_levels = mip_level_count(width, height);
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some(label),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: mip_levels,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    let mips = generate_mipmaps(pixels, width, height);
-    let mut mip_width = width;
-    let mut mip_height = height;
-    for (mip_level, mip_pixels) in mips.iter().enumerate() {
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: u32::try_from(mip_level).expect("foliage mip level must fit u32"),
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            mip_pixels,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(mip_width * 4),
-                rows_per_image: Some(mip_height),
-            },
-            wgpu::Extent3d {
-                width: mip_width,
-                height: mip_height,
-                depth_or_array_layers: 1,
-            },
-        );
-        mip_width = (mip_width / 2).max(1);
-        mip_height = (mip_height / 2).max(1);
-    }
+    let texture = create_mipped_rgba_texture(device, queue, label, size, pixels, format);
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     (texture, view)
 }
