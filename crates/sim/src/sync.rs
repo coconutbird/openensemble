@@ -114,26 +114,31 @@ pub struct SimpleChecksum {
 }
 
 impl SimpleChecksum {
+    /// Creates an empty checksum.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Clears the sum and the value count.
     pub fn reset(&mut self) {
         self.sum = Wrapping(0);
         self.count = 0;
     }
 
+    /// Returns the current wrapping sum.
     #[must_use]
     pub fn value(&self) -> u32 {
         self.sum.0
     }
 
+    /// Adds `value` to the sum with wrapping.
     pub fn add_u32(&mut self, value: u32) {
         self.sum += Wrapping(value);
         self.count += 1;
     }
 
+    /// Adds the bit pattern of `value` to the sum.
     pub fn add_f32(&mut self, value: f32) {
         self.add_u32(value.to_bits());
     }

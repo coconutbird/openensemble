@@ -78,6 +78,7 @@ pub struct ClientTimeHistory {
 }
 
 impl ClientTimeHistory {
+    /// Creates an empty time history.
     #[must_use]
     pub fn new() -> Self {
         Self::default()

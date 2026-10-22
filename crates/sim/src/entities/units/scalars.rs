@@ -87,12 +87,19 @@ fn finite_or_one(value: Option<f32>) -> f32 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum UnitDataScalar {
+    /// Weapon accuracy multiplier (`Accuracy`, value 0).
     Accuracy = 0,
+    /// Work rate multiplier (`WorkRate`, value 1).
     WorkRate = 1,
+    /// Damage dealt multiplier (`Damage`, value 2).
     Damage = 2,
+    /// Line-of-sight radius multiplier (`LOS` or `LineOfSight`, value 3).
     LineOfSight = 3,
+    /// Movement velocity multiplier (`Velocity`, value 4).
     Velocity = 4,
+    /// Weapon range multiplier (`WeaponRange`, value 5).
     WeaponRange = 5,
+    /// Damage taken multiplier (`DamageTaken`, value 6).
     DamageTaken = 6,
 }
 

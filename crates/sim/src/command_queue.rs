@@ -9,10 +9,15 @@ use std::collections::BTreeMap;
 /// A command with its execution time.
 #[derive(Debug, Clone)]
 pub enum QueuedCommand {
+    /// Unit work command.
     Work(WorkCommand),
+    /// Leader power activation command.
     Power(PowerCommand),
+    /// Leader power input command.
     PowerInput(PowerInputCommand),
+    /// Building command.
     Building(BuildingCommand),
+    /// Game-level command.
     Game(GameCommand),
 }
 

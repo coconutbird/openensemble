@@ -183,7 +183,7 @@ mod tests {
         assert_eq!(replacement.hitpoints.to_bits(), 250.0_f32.to_bits());
         assert_eq!(replacement.max_hitpoints.to_bits(), 250.0_f32.to_bits());
         assert!(replacement.squad_id.is_none());
-        assert!(replacement.population_costs.is_empty());
+        assert_eq!(replacement.population_costs, [] as [crate::player::PopulationCost; 0]);
         assert!(replacement.is_physics_replacement());
         assert!(!replacement.base.is_selectable());
     }

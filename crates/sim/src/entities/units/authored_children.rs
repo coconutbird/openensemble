@@ -167,6 +167,6 @@ mod tests {
         assert_eq!(unit.associated_child_units(), &[first]);
         assert_eq!(unit.associated_foundations(), &[second]);
         assert!(unit.remove_authored_child(first));
-        assert!(unit.associated_child_units().is_empty());
+        assert_eq!(unit.associated_child_units(), &[] as &[EntityId]);
     }
 }

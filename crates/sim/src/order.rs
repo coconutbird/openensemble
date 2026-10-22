@@ -10,40 +10,74 @@ use glam::Vec3;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(i32)]
 pub enum OrderType {
+    /// No order.
     #[default]
     None = 0,
+    /// Move to a position.
     Move = 1,
+    /// Attack a target.
     Attack = 2,
+    /// Gather a resource.
     Gather = 3,
+    /// Repair self.
     Repair = 4,
+    /// Repair another entity.
     RepairOther = 5,
+    /// Ask another entity for a repair.
     RequestRepair = 6,
+    /// Build a building.
     Build = 7,
+    /// Capture a target.
     Capture = 8,
+    /// Join another squad.
     Join = 9,
+    /// Enter a container.
     Garrison = 10,
+    /// Leave a container.
     Ungarrison = 11,
+    /// Detonate self.
     Detonate = 12,
+    /// Honk the horn.
     Honk = 13,
+    /// Guard a position or target.
     Guard = 14,
+    /// Change the squad mode.
     ChangeMode = 15,
+    /// Place mines.
     Mines = 16,
+    /// Play an animation that blocks other orders.
     PlayBlockingAnimation = 17,
+    /// Move to a rally point.
     RallyPoint = 18,
+    /// Stay idle.
     Idle = 19,
+    /// Unpack before an attack or deploy.
     Unpack = 20,
+    /// Attach to a carrier.
     Hitch = 21,
+    /// Detach from a carrier.
     Unhitch = 22,
+    /// Transport squads to a position.
     Transport = 23,
+    /// Wander around.
     Wander = 24,
+    /// Turn on the cloak.
     Cloak = 25,
+    /// Jump to a world location.
     Jump = 26,
+    /// Jump beside a resource, then gather.
     JumpGather = 27,
+    /// Jump beside a container, then garrison.
     JumpGarrison = 28,
+    /// Jump toward an attack target.
     JumpAttack = 29,
+    /// Attack a target at point-blank range.
     PointBlankAttack = 30,
+    /// Turn on the energy shield.
     EnergyShield = 31,
+    /// Involuntary pull that the charge system implements.
     JumpPull = 32,
+    /// Turn on the infantry energy shield.
     InfantryEnergyShield = 33,
 }
 

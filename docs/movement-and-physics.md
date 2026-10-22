@@ -158,7 +158,7 @@ ID, flock velocity, position, and offset.
 | Spawned Ghost rigid-body configuration | `entities/units/vehicle.rs` |
 | Marine velocity, acceleration, turn rate, and obstruction size | `entities/units/marine.rs` |
 | Warthog squad physics anchor | `entities/squads/warthog.rs` and `world.rs` |
-| Marine four-member Flock seed and local offsets | `entities/squads/marine.rs` and `entities/squads/mod.rs` |
+| Marine four-member Flock seed and local offsets | `entities/squads/marine.rs` and `entities/squads.rs` |
 | Scenario/database-to-sim expansion | `scenario.rs` |
 | Sim entity transforms to GPU presentation | `crates/render/src/ugx/scene.rs` |
 

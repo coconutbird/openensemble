@@ -23,9 +23,12 @@ const SECONDS_PER_TICK: f32 = 0.05;
 /// Simulation state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SimState {
+    /// The simulation does not run.
     #[default]
     Stopped,
+    /// The simulation advances each tick.
     Running,
+    /// The simulation keeps its state but does not advance.
     Paused,
 }
 

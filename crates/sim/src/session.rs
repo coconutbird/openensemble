@@ -14,13 +14,20 @@ pub const MAX_CLIENTS: usize = 16;
 /// Client state in the session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ClientState {
+    /// The client has no connection.
     #[default]
     Disconnected,
+    /// The client starts a connection.
     Connecting,
+    /// The client has a connection.
     Connected,
+    /// The client loads the game.
     Loading,
+    /// The client is ready to start.
     Ready,
+    /// The client plays the game.
     Playing,
+    /// The client closes its connection.
     Disconnecting,
 }
 
@@ -66,11 +73,16 @@ impl Default for PlayerInfo {
 /// Session state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SessionState {
+    /// Players join and change settings before the game.
     #[default]
     Lobby,
+    /// Clients load the game.
     Loading,
+    /// The game runs.
     Playing,
+    /// The game is paused.
     Paused,
+    /// The game ends.
     Ending,
 }
 

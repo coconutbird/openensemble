@@ -21,12 +21,19 @@ const GENERATION_MASK: u32 = 0x0FFF;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum EntityClass {
+    /// Plain world object, such as a prop or effect.
     Object = 0,
+    /// Unit, including buildings.
     Unit = 1,
+    /// Squad of units.
     Squad = 2,
+    /// Dopple object, a copy of an object that a player saw under fog.
     Dopple = 3,
+    /// Projectile.
     Projectile = 4,
+    /// Platoon of squads.
     Platoon = 5,
+    /// Army of platoons.
     Army = 6,
 }
 

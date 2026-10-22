@@ -13,12 +13,18 @@ pub enum DesignLineLoadError {
     MissingId,
     /// A line supplied an ID that was not a signed retail integer.
     #[error("design-line ID '{value}' is not a valid integer")]
-    InvalidId { value: String },
+    InvalidId {
+        /// Text of the `ID` attribute.
+        value: String,
+    },
     /// A position or path point did not contain three finite floats.
     #[error("design line {line_id} has invalid {field} vector '{value}'")]
     InvalidVector {
+        /// ID of the line with the invalid vector.
         line_id: DesignLineId,
+        /// Source of the vector: `Position` or `Points`.
         field: &'static str,
+        /// Text of the invalid vector.
         value: String,
     },
 }
@@ -86,7 +92,7 @@ fn parse_point(
         component
             .and_then(|component| component.parse::<f32>().ok())
             .filter(|component| component.is_finite())
-            .ok_or_else(&invalid)
+            .ok_or_else(invalid)
     };
     let authored = [
         parse_component(components.next())?,

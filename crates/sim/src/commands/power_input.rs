@@ -76,15 +76,23 @@ impl Default for PowerUserId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(i32)]
 pub enum PowerInputCommandType {
+    /// No operation; also the value for an unknown wire type.
     #[default]
     Undefined = 0,
+    /// Confirm the current input of the power.
     Confirm = 1,
+    /// Send a new target position in `vector`.
     Position = 2,
+    /// Send a new direction in `vector`.
     Direction = 3,
+    /// Stop the power.
     Shutdown = 4,
 }
 
 impl PowerInputCommandType {
+    /// Converts a wire value to a `PowerInputCommandType`.
+    ///
+    /// Returns `None` for an unknown value.
     #[must_use]
     pub const fn from_i32(value: i32) -> Option<Self> {
         match value {
@@ -107,9 +115,13 @@ pub mod command_flags {
 /// Wire-compatible input for a running native power.
 #[derive(Debug, Clone)]
 pub struct PowerInputCommand {
+    /// Common command header (`BCommand`).
     pub base: Command,
+    /// Kind of input.
     pub input_type: PowerInputCommandType,
+    /// Position or direction for the input, as four `f32` values.
     pub vector: Vec4,
+    /// Running power that receives the input.
     pub power_user_id: PowerUserId,
 }
 

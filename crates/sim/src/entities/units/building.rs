@@ -46,31 +46,37 @@ pub struct ResearchTask {
 }
 
 impl ResearchTask {
+    /// Player who owns the research.
     #[must_use]
     pub fn player_id(&self) -> PlayerId {
         self.player_id
     }
 
+    /// Runtime technology ID that the task researches.
     #[must_use]
     pub fn technology_id(&self) -> i32 {
         self.technology_id
     }
 
+    /// Name of the technology that the task researches.
     #[must_use]
     pub fn technology_name(&self) -> &str {
         &self.technology_name
     }
 
+    /// Research points collected so far.
     #[must_use]
     pub fn current_points(&self) -> f32 {
         self.current_points
     }
 
+    /// Research points needed to complete the task.
     #[must_use]
     pub fn total_points(&self) -> f32 {
         self.total_points
     }
 
+    /// Progress in the range 0 to 1. Returns 0 if `total_points` is not positive.
     #[must_use]
     pub fn fraction_complete(&self) -> f32 {
         fraction_complete(self.current_points, self.total_points)
@@ -91,7 +97,9 @@ impl ResearchTask {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TrainingKind {
+    /// Standalone unit prototype (`TrainUnit`, wire value 1).
     Unit = 1,
+    /// Squad prototype (`TrainSquad`, wire value 3).
     Squad = 3,
 }
 
@@ -136,16 +144,19 @@ pub struct TrainingRecharge {
 }
 
 impl TrainingRecharge {
+    /// Kind of prototype that the lockout blocks.
     #[must_use]
     pub const fn kind(self) -> TrainingKind {
         self.kind
     }
 
+    /// Runtime prototype ID that the lockout blocks.
     #[must_use]
     pub const fn prototype_id(self) -> i32 {
         self.prototype_id
     }
 
+    /// Time in seconds until the lockout ends.
     #[must_use]
     pub const fn time_remaining(self) -> f32 {
         self.time_remaining
@@ -174,41 +185,49 @@ pub struct TrainingTask {
 }
 
 impl TrainingTask {
+    /// Player who owns the trained unit or squad.
     #[must_use]
     pub fn player_id(&self) -> PlayerId {
         self.player_id
     }
 
+    /// Kind of prototype that the task trains.
     #[must_use]
     pub fn kind(&self) -> TrainingKind {
         self.kind
     }
 
+    /// Runtime prototype ID that the task trains.
     #[must_use]
     pub fn prototype_id(&self) -> i32 {
         self.prototype_id
     }
 
+    /// Name of the prototype that the task trains.
     #[must_use]
     pub fn prototype_name(&self) -> &str {
         &self.prototype_name
     }
 
+    /// Training points collected so far.
     #[must_use]
     pub fn current_points(&self) -> f32 {
         self.current_points
     }
 
+    /// Training points needed to complete the task.
     #[must_use]
     pub fn total_points(&self) -> f32 {
         self.total_points
     }
 
+    /// Progress in the range 0 to 1. Returns 0 if `total_points` is not positive.
     #[must_use]
     pub fn fraction_complete(&self) -> f32 {
         fraction_complete(self.current_points, self.total_points)
     }
 
+    /// Population that the task reserves.
     #[must_use]
     pub fn population_costs(&self) -> &[PopulationCost] {
         &self.population_costs
@@ -247,51 +266,61 @@ pub struct ConstructionTask {
 }
 
 impl ConstructionTask {
+    /// Player who owns the new building.
     #[must_use]
     pub fn player_id(&self) -> PlayerId {
         self.player_id
     }
 
+    /// Player who paid for the building and gets a refund on cancel.
     #[must_use]
     pub fn purchasing_player_id(&self) -> PlayerId {
         self.purchasing_player_id
     }
 
+    /// Kind of construction command.
     #[must_use]
     pub fn kind(&self) -> ConstructionKind {
         self.kind
     }
 
+    /// Runtime prototype ID of the building.
     #[must_use]
     pub fn prototype_id(&self) -> i32 {
         self.prototype_id
     }
 
+    /// Name of the building prototype.
     #[must_use]
     pub fn prototype_name(&self) -> &str {
         &self.prototype_name
     }
 
+    /// Construction points collected so far.
     #[must_use]
     pub fn current_points(&self) -> f32 {
         self.current_points
     }
 
+    /// Construction points needed to complete the task.
     #[must_use]
     pub fn total_points(&self) -> f32 {
         self.total_points
     }
 
+    /// Progress in the range 0 to 1. Returns 0 if `total_points` is not positive.
     #[must_use]
     pub fn fraction_complete(&self) -> f32 {
         fraction_complete(self.current_points, self.total_points)
     }
 
+    /// Unfinished building that the task constructs, once it exists.
     #[must_use]
     pub fn target_building_id(&self) -> Option<EntityId> {
         self.target_building_id
     }
 
+    /// Returns `true` if the prototype has the `ManualBuild` flag.
     #[must_use]
     pub fn is_manual(&self) -> bool {
         self.manual
@@ -390,6 +419,7 @@ impl BuildingProduction {
         self.air_traffic_control.as_ref()
     }
 
+    /// Research task that the worker runs now, if any.
     #[must_use]
     pub fn current_research(&self) -> Option<&ResearchTask> {
         self.current_item
@@ -397,6 +427,7 @@ impl BuildingProduction {
             .and_then(ProductionTask::as_research)
     }
 
+    /// Training task that the worker runs now, if any.
     #[must_use]
     pub fn current_training(&self) -> Option<&TrainingTask> {
         self.current_item
@@ -404,6 +435,7 @@ impl BuildingProduction {
             .and_then(ProductionTask::as_training)
     }
 
+    /// Construction task that the worker runs now, if any.
     #[must_use]
     pub fn current_construction(&self) -> Option<&ConstructionTask> {
         self.current_item
@@ -411,44 +443,52 @@ impl BuildingProduction {
             .and_then(ProductionTask::as_construction)
     }
 
+    /// Iterates the queued research tasks in queue order.
     pub fn queued_research(&self) -> impl Iterator<Item = &ResearchTask> {
         self.queued_items
             .iter()
             .filter_map(ProductionTask::as_research)
     }
 
+    /// Iterates the queued training tasks in queue order.
     pub fn queued_training(&self) -> impl Iterator<Item = &TrainingTask> {
         self.queued_items
             .iter()
             .filter_map(ProductionTask::as_training)
     }
 
+    /// Iterates the queued construction tasks in queue order.
     pub fn queued_construction(&self) -> impl Iterator<Item = &ConstructionTask> {
         self.queued_items
             .iter()
             .filter_map(ProductionTask::as_construction)
     }
 
+    /// Number of queued research tasks.
     #[must_use]
     pub fn queued_research_count(&self) -> usize {
         self.queued_research().count()
     }
 
+    /// Number of queued training tasks.
     #[must_use]
     pub fn queued_training_count(&self) -> usize {
         self.queued_training().count()
     }
 
+    /// Number of queued construction tasks.
     #[must_use]
     pub fn queued_construction_count(&self) -> usize {
         self.queued_construction().count()
     }
 
+    /// Number of queued tasks of all kinds.
     #[must_use]
     pub fn queued_item_count(&self) -> usize {
         self.queued_items.len()
     }
 
+    /// Returns `true` if no task runs and the queue is empty.
     #[must_use]
     pub fn is_idle(&self) -> bool {
         self.current_item.is_none() && self.queued_items.is_empty()
@@ -718,13 +758,18 @@ impl BuildingProduction {
 /// Snapshot exposed to renderer/UI consumers without duplicating sim logic.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ResearchProgress {
+    /// Building that runs or queues the research.
     pub building_id: EntityId,
+    /// Research points collected so far.
     pub current_points: f32,
+    /// Research points needed to complete the research.
     pub total_points: f32,
+    /// `true` if the research waits in the queue; `false` if it runs now.
     pub queued: bool,
 }
 
 impl ResearchProgress {
+    /// Progress in the range 0 to 1. Returns 0 if `total_points` is not positive.
     #[must_use]
     pub fn fraction_complete(self) -> f32 {
         fraction_complete(self.current_points, self.total_points)
@@ -734,15 +779,22 @@ impl ResearchProgress {
 /// Authoritative training progress exposed to renderer/UI consumers.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TrainingProgress {
+    /// Building that runs or queues the training.
     pub building_id: EntityId,
+    /// Kind of prototype that the building trains.
     pub kind: TrainingKind,
+    /// Runtime prototype ID that the building trains.
     pub prototype_id: i32,
+    /// Training points collected so far.
     pub current_points: f32,
+    /// Training points needed to complete the training.
     pub total_points: f32,
+    /// `true` if the training waits in the queue; `false` if it runs now.
     pub queued: bool,
 }
 
 impl TrainingProgress {
+    /// Progress in the range 0 to 1. Returns 0 if `total_points` is not positive.
     #[must_use]
     pub fn fraction_complete(self) -> f32 {
         fraction_complete(self.current_points, self.total_points)
@@ -752,16 +804,24 @@ impl TrainingProgress {
 /// Authoritative construction progress exposed to renderer/UI consumers.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ConstructionProgress {
+    /// Unit whose production worker owns the task.
     pub worker_id: EntityId,
+    /// Unfinished building that the task constructs, once it exists.
     pub building_id: Option<EntityId>,
+    /// Kind of construction command.
     pub kind: ConstructionKind,
+    /// Runtime prototype ID of the building.
     pub prototype_id: i32,
+    /// Construction points collected so far.
     pub current_points: f32,
+    /// Construction points needed to complete the building.
     pub total_points: f32,
+    /// `true` if the construction waits in the queue; `false` if it runs now.
     pub queued: bool,
 }
 
 impl ConstructionProgress {
+    /// Progress in the range 0 to 1. Returns 0 if `total_points` is not positive.
     #[must_use]
     pub fn fraction_complete(self) -> f32 {
         fraction_complete(self.current_points, self.total_points)

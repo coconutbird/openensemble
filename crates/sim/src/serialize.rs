@@ -10,16 +10,22 @@ use glam::Vec3;
 use std::io::{self, Read, Write};
 use thiserror::Error;
 
+/// Failure while the code reads or writes a command in the vanilla wire format.
 #[derive(Error, Debug)]
 pub enum SerializeError {
+    /// The reader or writer failed.
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
+    /// The command type byte has an unknown value.
     #[error("Invalid command type: {0}")]
     InvalidCommandType(u8),
+    /// The entity type byte has an unknown value.
     #[error("Invalid entity type: {0}")]
     InvalidEntityType(u8),
+    /// The input ends before the command is complete.
     #[error("Buffer too small")]
     BufferTooSmall,
+    /// The named value is too large for its field in the vanilla wire format.
     #[error("{0} does not fit the vanilla wire format")]
     ValueOutOfRange(&'static str),
 }

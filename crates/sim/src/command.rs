@@ -11,16 +11,26 @@ use glam::Vec3;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum CommandType {
+    /// Unit work order, such as move, attack or gather (`cCommandWork`).
     Work = 0,
+    /// Leader power activation (`cCommandPower`).
     Power = 1,
+    /// Player input to an active leader power (`cCommandPowerInput`).
     PowerInput = 2,
+    /// Building action, such as train, research or build (`cCommandBuilding`).
     Building = 3,
+    /// Game-level request, such as resign or chat (`cCommandGame`).
     Game = 4,
+    /// Command from a trigger script.
     Trigger = 5,
+    /// General game event.
     GeneralEvent = 6,
 }
 
 impl CommandType {
+    /// Converts a wire type byte to a `CommandType`.
+    ///
+    /// Returns `None` for an unknown value.
     #[must_use]
     pub fn from_u8(value: u8) -> Option<Self> {
         match value {
@@ -40,15 +50,24 @@ impl CommandType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum EntityType {
+    /// Unit entities.
     Unit = 0,
+    /// Squad entities.
     Squad = 1,
+    /// Army entities.
     Army = 2,
+    /// Players, identified by player ID.
     Player = 3,
+    /// The game itself.
     Game = 4,
+    /// Trigger scripts.
     Trigger = 5,
 }
 
 impl EntityType {
+    /// Converts a wire entity type byte to an `EntityType`.
+    ///
+    /// Returns `None` for an unknown value.
     #[must_use]
     pub fn from_u8(value: u8) -> Option<Self> {
         match value {
@@ -69,22 +88,34 @@ impl EntityType {
 pub struct CommandFlags(pub u16);
 
 impl CommandFlags {
+    /// The command ID is one byte (`cCmdIDByte`).
     pub const ID_BYTE: u16 = 2;
+    /// The command ID is a 32-bit integer (`cCmdIDLong`).
     pub const ID_LONG: u16 = 4;
+    /// One player sender is one byte, with no sender type or count.
     pub const ONE_SENDER_BYTE: u16 = 8;
+    /// A recipient type byte is present because the recipients are not units.
     pub const NON_UNIT_RECIPIENT: u16 = 16;
+    /// The command has exactly one waypoint.
     pub const ONE_WAYPOINT: u16 = 32;
+    /// The command has two or more waypoints, after a count byte.
     pub const MULTI_WAYPOINTS: u16 = 64;
+    /// Each waypoint includes its Y component.
     pub const WAYPOINT_Y: u16 = 128;
+    /// All command flag bytes are present, not only the first byte.
     pub const EXTRA_FLAG_DATA: u16 = 256;
+    /// An urgency count byte is present.
     pub const URGENCY_COUNT: u16 = 512;
+    /// The recipients come from a cached unit set.
     pub const CACHED_UNIT_SET: u16 = 1024;
 
+    /// Returns `true` if `flag` is set.
     #[must_use]
     pub fn has(self, flag: u16) -> bool {
         (self.0 & flag) != 0
     }
 
+    /// Sets `flag`.
     pub fn set(&mut self, flag: u16) {
         self.0 |= flag;
     }

@@ -10,15 +10,23 @@ use std::io::{self, Read, Write};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(i32)]
 pub enum PowerCommandType {
+    /// No operation; also the value for an unknown wire type.
     #[default]
     Undefined = 0,
+    /// Give `num_uses` uses of the power `proto_power_id` to the player.
     GrantPower = 1,
+    /// Start a power. The simulation ignores this type.
     InvokePower = 2,
+    /// Use a squad ability. The simulation ignores this type.
     InvokeAbility = 3,
+    /// Start a native power directly at `target_location`.
     InvokePower2 = 4,
 }
 
 impl PowerCommandType {
+    /// Converts a wire value to a `PowerCommandType`.
+    ///
+    /// Returns `None` for an unknown value.
     #[must_use]
     pub fn from_i32(value: i32) -> Option<Self> {
         match value {
@@ -34,8 +42,11 @@ impl PowerCommandType {
 
 /// Power command flag bits in the base command flag set.
 pub mod command_flags {
+    /// Generic flag bit 0, with a meaning that depends on the power.
     pub const GENERIC_0: usize = 8;
+    /// Generic flag bit 1, with a meaning that depends on the power.
     pub const GENERIC_1: usize = 9;
+    /// Bypass resource payment for this power.
     pub const NO_COST: usize = 10;
 }
 

@@ -116,6 +116,7 @@ impl Default for Random {
 }
 
 impl Random {
+    /// Largest value that `u_rand` and `u_rand_fast` can return.
     pub const U_RAND_MAX: u32 = u32::MAX;
 
     /// Create a new RNG with the default seed.

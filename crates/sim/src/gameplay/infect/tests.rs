@@ -36,7 +36,7 @@ fn only_named_persistent_infect_actions_are_collected() {
     assert_eq!(profile.work_range().to_bits(), 0.0_f32.to_bits());
     assert_eq!(profile.min_idle_duration_ms(), 0);
     assert_eq!(profile.attachment_proto_object(), None);
-    assert!(profile.invalid_targets().is_empty());
+    assert_eq!(profile.invalid_targets(), &[] as &[String]);
     assert!(!profile.starts_disabled());
 }
 

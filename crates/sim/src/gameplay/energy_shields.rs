@@ -12,13 +12,18 @@ use std::collections::BTreeMap;
 pub enum EnergyShieldVisualProfile {
     /// A class-zero proto object attached while integral shields are raised.
     Attachment {
+        /// Name of the attached proto object, from the action `ProtoObject` reference.
         prototype_name: String,
+        /// Runtime proto object ID for `prototype_name`, if the database has it.
         prototype_id: Option<i32>,
+        /// Bone that holds the attachment, if the reference names one.
         bone_name: Option<String>,
     },
     /// A named visual component hidden by the infantry shield action.
     Infantry {
+        /// Name of the visual component to hide. The value is always `Shield`.
         component_name: String,
+        /// Time in milliseconds that a hit shows the shield, from the action `Duration`.
         hit_duration_ms: u32,
     },
 }

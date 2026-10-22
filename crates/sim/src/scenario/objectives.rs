@@ -12,7 +12,10 @@ pub enum ObjectiveLoadError {
     MissingId,
     /// An objective ID was not a signed retail integer.
     #[error("objective ID '{value}' is not a valid integer")]
-    InvalidId { value: String },
+    InvalidId {
+        /// Text of the `id` attribute.
+        value: String,
+    },
 }
 
 pub(super) fn configure_objective_references(world: &mut World, references: &[ObjectiveRef]) {

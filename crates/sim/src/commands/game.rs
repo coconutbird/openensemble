@@ -19,38 +19,69 @@ mod flags {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(i32)]
 pub enum GameCommandType {
+    /// Debug: complete construction at once.
     #[default]
     QuickBuild = 0,
+    /// Debug: control a different player.
     SwitchPlayer = 1,
+    /// Debug: give resources to the player.
     AddResources = 2,
+    /// Debug: give population to the player.
     AddPopulation = 3,
+    /// Debug: change the fog of war.
     FogOfWar = 4,
+    /// Debug: destroy a squad.
     DestroySquad = 5,
+    /// Debug: destroy a unit.
     DestroyUnit = 6,
+    /// The player resigns from the game.
     Resign = 7,
+    /// The player disconnects from the game.
     Disconnect = 8,
+    /// Show a flare at `position` to allies.
     Flare = 9,
+    /// Set the global rally point of the player to `position`.
     SetGlobalRallyPoint = 10,
+    /// Clear the global rally point of the player.
     ClearGlobalRallyPoint = 11,
+    /// Set the rally point of the building in `data` to `position`.
     SetBuildingRallyPoint = 12,
+    /// Clear the rally point of the building in `data`.
     ClearBuildingRallyPoint = 13,
+    /// Select a leader power.
     SelectPower = 14,
+    /// Debug: reveal the map.
     RevealMap = 15,
+    /// Debug: create `data2` squads of prototype `data` at `position`.
     CreateSquad = 16,
+    /// Debug: create `data2` objects of prototype `data` at `position`.
     CreateObject = 17,
+    /// Send resources to another player.
     Tribute = 18,
+    /// Repair a unit or squad.
     Repair = 19,
+    /// Attack-move order.
     AttackMove = 20,
+    /// Use a unit power.
     UnitPower = 21,
+    /// Broadcast the camera look-at position to other players.
     LookAtPosBroadcast = 22,
+    /// Change the game speed.
     GameSpeed = 23,
+    /// Turn the AI of a player on or off.
     ToggleAI = 24,
+    /// Reverse a hot drop.
     ReverseHotDrop = 25,
+    /// Activate a skull modifier.
     ActivateSkull = 26,
+    /// Change the sub-update state.
     SubUpdating = 27,
 }
 
 impl GameCommandType {
+    /// Converts a wire value to a `GameCommandType`.
+    ///
+    /// Returns `None` for an unknown value.
     #[must_use]
     pub fn from_i32(value: i32) -> Option<Self> {
         match value {

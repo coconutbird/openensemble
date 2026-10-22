@@ -7,19 +7,27 @@ use crate::serialize::{SerializeError, deserialize_command};
 use std::io::{Cursor, Read};
 use thiserror::Error;
 
+/// Failure while the dispatcher parses a command packet.
 #[derive(Error, Debug)]
 pub enum DispatchError {
+    /// The channel packet header is not valid.
     #[error("Packet error: {0}")]
     Packet(#[from] PacketError),
+    /// The base command is not valid.
     #[error("Serialize error: {0}")]
     Serialize(#[from] SerializeError),
+    /// The reader failed in the command-specific fields.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    /// The packet type is not a supported command packet.
     #[error("Unknown packet type: {0}")]
     UnknownPacketType(u8),
+    /// The command type in the payload does not match the packet type.
     #[error("Command type mismatch: expected {expected:?}, got {actual:?}")]
     TypeMismatch {
+        /// Command type that the packet type requires.
         expected: CommandType,
+        /// Command type in the base command.
         actual: CommandType,
     },
 }
@@ -27,10 +35,15 @@ pub enum DispatchError {
 /// Dispatched command after parsing.
 #[derive(Debug)]
 pub enum DispatchedCommand {
+    /// Unit work command.
     Work(WorkCommand),
+    /// Leader power activation command.
     Power(PowerCommand),
+    /// Leader power input command.
     PowerInput(PowerInputCommand),
+    /// Building command.
     Building(BuildingCommand),
+    /// Game-level command.
     Game(GameCommand),
     // TODO: Add other command types as needed
     // Trigger(TriggerCommand),

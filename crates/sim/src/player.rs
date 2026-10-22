@@ -87,11 +87,16 @@ impl Default for PlayerRate {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum PlayerState {
+    /// The player is in the game.
     #[default]
     Playing = 0,
+    /// The player resigned.
     Resigned = 1,
+    /// The player lost.
     Defeated = 2,
+    /// The player disconnected.
     Disconnected = 3,
+    /// The player won.
     Won = 4,
 }
 
@@ -99,8 +104,11 @@ pub enum PlayerState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum PlayerType {
+    /// Non-player character (NPC) player that no person or AI controls.
     Npc = 0,
+    /// Computer AI player.
     ComputerAi = 1,
+    /// Human player.
     #[default]
     Human = 2,
 }

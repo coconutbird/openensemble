@@ -13,30 +13,54 @@ pub enum BuildingCommandType {
     /// Invalid/uninitialized command type.
     #[default]
     Undefined = -1,
+    /// Queue or cancel a technology research.
     Research = 0,
+    /// Queue or cancel the training of a standalone unit.
     TrainUnit = 1,
+    /// Place or cancel a building at a position or socket.
     Build = 2,
+    /// Queue or cancel the training of a squad.
     TrainSquad = 3,
+    /// Unload the units that the recipient carries.
     UnloadUnits = 4,
+    /// Reinforce a squad.
     Reinforce = 5,
+    /// Change the squad mode of the recipients.
     ChangeMode = 6,
+    /// Use an ability.
     Ability = 7,
+    /// Start the self-destruct of the recipient.
     Kill = 8,
+    /// Cancel a pending self-destruct.
     CancelKill = 9,
+    /// Send resources to another player.
     Tribute = 10,
+    /// Run a custom command that a trigger script defines.
     CustomCommand = 11,
+    /// Use a leader power from a building.
     Power = 12,
+    /// Build an add-on building in a socket of the recipient.
     BuildOther = 13,
+    /// Lock a training queue.
     TrainLock = 14,
+    /// Unlock a training queue.
     TrainUnlock = 15,
+    /// Set the rally point of the recipient.
     RallyPoint = 16,
+    /// Clear the rally point of the recipient.
     ClearRallyPoint = 17,
+    /// Destroy a base.
     DestroyBase = 18,
+    /// Cancel the destruction of a base.
     CancelDestroyBase = 19,
+    /// Reverse a hot drop.
     ReverseHotDrop = 20,
 }
 
 impl BuildingCommandType {
+    /// Converts a wire value to a `BuildingCommandType`.
+    ///
+    /// Returns `None` for an unknown value.
     #[must_use]
     pub fn from_i32(value: i32) -> Option<Self> {
         match value {
@@ -70,13 +94,17 @@ impl BuildingCommandType {
 /// Fixed payload appended by retail `BBuildingCommand` after `BCommand`.
 #[derive(Debug, Clone)]
 pub struct BuildingCommand {
+    /// Common command header (`BCommand`).
     pub base: Command,
+    /// Action that the building does. Wire field 1, `i32`.
     pub building_type: BuildingCommandType,
     /// Runtime table index for the command target, not its authored DBID.
     pub target_id: i32,
+    /// World position for a placed building. Wire fields 3 to 5, three `f32` values.
     pub target_position: Vec3,
     /// Positive queues work; negative cancels it.
     pub count: i32,
+    /// Socket entity for a socketed building, or `EntityId::INVALID`. Wire field 7, `i32`.
     pub socket_id: EntityId,
 }
 

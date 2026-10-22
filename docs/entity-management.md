@@ -87,17 +87,17 @@ save/load ordering; they are not original debug symbols.
 | --- | --- |
 | Packed `BEntityID` fields | `entity_id.rs`: `EntityId` and `EntityClass` |
 | Separate generational typed pools | `entity.rs`: `EntityManager<T>` |
-| Class-1 mobile units and buildings | `entities/units/mod.rs`: `Unit` and `UnitKind` |
+| Class-1 mobile units and buildings | `entities/units.rs`: `Unit` and `UnitKind` |
 | Stock Warthog and Marine unit profiles | `entities/units/warthog.rs` and `entities/units/marine.rs` |
 | Scenario-layered Ghost body configuration | `gameplay/vehicle_physics.rs` and `entities/units/vehicle.rs` |
 | Persistent per-unit ammunition, tactic state, Ram, Detonate, and death-replacement lifecycle | `entities/units/ammunition.rs`: `UnitAmmunition`; `entities/units/tactic_state.rs`: checksummed current state/revision; `entities/units/collision_attack.rs`: checksummed collision state; `entities/units/detonate.rs`: checksummed action triggers/phases; `entities/units/physics_replacement.rs` and `entities/units/death_replacement.rs`: replacement lifetimes |
-| Class-2 squads and unit membership | `entities/squads/mod.rs`: `Squad::unit_ids` |
+| Class-2 squads and unit membership | `entities/squads.rs`: `Squad::unit_ids` |
 | Stock Warthog and Marine squad profiles | `entities/squads/warthog.rs` and `entities/squads/marine.rs` |
 | Mines target and per-member work lifecycle | `entities/squads/mines.rs`: checksummed order/progress; `world/mines.rs`: range, ammo, placement, and database-backed spawn |
 | Targeted and passive Detonate lifecycle | `entities/squads/detonate.rs`: checksummed moving/glowing/attacking state; `world/detonate.rs` and `world/detonate/`: action selection, countdown/death/proximity/physics triggers, AOE, replacement, self-kill, and recovery |
 | Database- and technology-authored death squads | `world/death_spawns.rs`: atomic pre-cleanup spawn, cap and position checks, Gaia ownership, and hero-down handoff; `player/technology.rs`: player-specific `DeathSpawn` assignment |
 | Database-authored in-place death replacements | `world/death_replacements.rs`: same-ID prototype transform, squad retention, Gaia transfer, damaged-repair state, and immediate-destroy bypass |
-| Class-4 combat projectiles | `entities/projectiles/mod.rs`: `Projectile` and launch state |
+| Class-4 combat projectiles | `entities/projectiles.rs`: `Projectile` and launch state |
 | Shared `BObject` visual requests | `entities/object_state.rs`: `ObjectState` |
 | Building-associated base numbers | `entities/base_site.rs`: `BaseId` and `Base` |
 | Building production and research state | `entities/units/building.rs`, `world/research.rs`, and `player/research.rs` |
