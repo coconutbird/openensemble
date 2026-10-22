@@ -244,7 +244,7 @@ impl World {
 
     /// Return the retail team count: team 0 and teams 1 to the highest player team
     /// (`BScenario_setupPlayers` calls `BWorld_addTeam` for each).
-    fn team_count(&self) -> u16 {
+    pub(crate) fn team_count(&self) -> u16 {
         self.players
             .iter()
             .map(|player| u16::from(player.team_id) + 1)

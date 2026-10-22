@@ -1,6 +1,6 @@
-//! Team diplomacy stored by the authoritative world.
+//! Team diplomacy and team membership stored by the authoritative world.
 
-use crate::player::{MAX_TEAMS, PlayerId, TeamId, TeamRelation};
+use crate::player::{GAIA_PLAYER, MAX_TEAMS, Player, PlayerId, TeamId, TeamRelation};
 use crate::sync::SyncChecksum;
 
 use super::World;
@@ -84,6 +84,21 @@ impl World {
     #[must_use]
     pub fn players_are_enemies(&self, first: PlayerId, second: PlayerId) -> bool {
         self.player_relation(first, second) == Some(TeamRelation::Enemy)
+    }
+
+    /// Append a player with the next player ID, like `BWorld_addPlayer` @ `0x1405C8260`.
+    ///
+    /// Returns `None` if the world already has Gaia and [`super::MAX_PLAYERS`] players.
+    pub(crate) fn add_player(&mut self) -> Option<&mut Player> {
+        if self.players.len() > super::MAX_PLAYERS {
+            return None;
+        }
+        let id = PlayerId::try_from(self.players.len()).ok()?;
+        if id == GAIA_PLAYER {
+            return None;
+        }
+        self.players.push(Player::new(id));
+        self.players.last_mut()
     }
 }
 

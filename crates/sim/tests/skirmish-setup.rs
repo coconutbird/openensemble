@@ -69,4 +69,26 @@ fn blood_gulch_1v1_matches_the_retail_tick_zero_setup() {
     };
     assert_eq!(objects("env_arcadia_pinetree"), 35);
     assert_eq!(objects("snd_play"), 18);
+
+    // `BScenario_load`: the `.scn` trigger systems, then the game mode (`GG`): `SkirmishWorld`
+    // once and `SkirmishPlayer` for the human and computer AI players only.
+    assert_eq!(
+        script_list(world),
+        [
+            ("Audio".to_owned(), None),
+            ("Blood_Gulch".to_owned(), None),
+            ("SkirmishWorld.triggerscript".to_owned(), None),
+            ("SkirmishPlayer.triggerscript".to_owned(), Some(1)),
+            ("SkirmishPlayer.triggerscript".to_owned(), Some(2)),
+        ]
+    );
+}
+
+/// The name and Player external of each trigger script, in script ID order.
+fn script_list(world: &sim::World) -> Vec<(String, Option<i32>)> {
+    world
+        .trigger_engine()
+        .scripts()
+        .map(|(_, script)| (script.name.clone(), script.externals.player))
+        .collect()
 }

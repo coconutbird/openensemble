@@ -9,6 +9,8 @@
 //! 2. The `.sc2` objects, then the `.sc3` objects.
 //! 3. The starting units of the players.
 //! 4. The simulation bounds.
+//! 5. The game mode of a skirmish: its NPC player and tech, the world script and one player
+//!    script for each human and computer AI player (`game_mode`).
 //!
 //! # Example
 //!
@@ -44,6 +46,7 @@ mod animation_requests;
 pub(crate) mod child_objects;
 mod design_objects;
 mod forbids;
+mod game_mode;
 mod game_settings;
 mod objectives;
 mod objects;
@@ -276,6 +279,15 @@ pub fn load_scenario_from_game_dir(
     objectives::load_objectives(&mut simulation.world, &objectives);
     let design_objects = pipeline::hw1::scenario::parse_design_objects(&scenario_document)?;
     design_objects::load_design_objects(&mut simulation.world, &design_objects);
+    let mut load_script = |scenario: &mut LoadedScenario, file_name: &str| {
+        scenario.load_trigger_script(&mut source, database, file_name)
+    };
+    game_mode::start_game_mode(
+        &mut simulation,
+        database,
+        &settings.game_mode,
+        &mut load_script,
+    )?;
     triggers::preload_trigger_scripts(&mut simulation, &mut source, database);
     let animation_requests = triggers::scripted_animation_requests(&simulation)
         .into_iter()

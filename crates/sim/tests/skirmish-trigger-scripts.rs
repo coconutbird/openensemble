@@ -2,7 +2,7 @@
 //!
 //! `OPENENSEMBLE_GAME_DIR=<HaloWarsDE> cargo test -p sim --test skirmish-trigger-scripts -- --ignored`
 
-use sim::trigger::{LibraryScript, TriggerExternals};
+use sim::trigger::LibraryScript;
 
 /// Effect DBIDs that the trigger runtime slice added for the skirmish scripts.
 const NEW_EFFECTS: [u16; 8] = [56, 130, 173, 392, 781, 904, 943, 970];
@@ -33,25 +33,20 @@ fn skirmish_scripts_run_the_new_handlers_without_unsupported_ids() {
         );
     }
 
-    let world_script = scenario
-        .launch_trigger_script(
-            &mut loaded.source,
-            database,
-            "SkirmishWorld.triggerscript",
-            TriggerExternals::default(),
-        )
-        .expect("SkirmishWorld parses")
-        .expect("SkirmishWorld exists");
+    // The load launched `SkirmishWorld`, then `SkirmishPlayer` for players 1 and 2 (the `GG`
+    // block of `BScenario_load`).
     let player_script = scenario
-        .launch_trigger_script(
-            &mut loaded.source,
-            database,
-            "skirmishplayer.TRIGGERSCRIPT",
-            TriggerExternals::with_player(1),
-        )
-        .expect("SkirmishPlayer parses")
-        .expect("SkirmishPlayer exists");
-    assert!(player_script > world_script);
+        .world
+        .trigger_engine()
+        .scripts()
+        .find(|(_, script)| {
+            script
+                .name
+                .eq_ignore_ascii_case("SkirmishPlayer.triggerscript")
+                && script.externals.player == Some(1)
+        })
+        .map(|(&id, _)| id)
+        .expect("the load launched SkirmishPlayer for player 1");
 
     let mut unsupported_effects = Vec::new();
     let mut unsupported_conditions = Vec::new();
@@ -102,15 +97,7 @@ fn skirmish_world_finds_the_blood_gulch_creep_design_spheres() {
     let scenario = &mut loaded.simulation;
     assert_eq!(scenario.world.design_spheres().len(), 6);
 
-    scenario
-        .launch_trigger_script(
-            &mut loaded.source,
-            database,
-            "SkirmishWorld.triggerscript",
-            TriggerExternals::default(),
-        )
-        .expect("SkirmishWorld parses")
-        .expect("SkirmishWorld exists");
+    // The load launched `SkirmishWorld` (the `GG` block of `BScenario_load`).
     let mut unsupported_conditions = Vec::new();
     for _ in 0..30 {
         let update = scenario

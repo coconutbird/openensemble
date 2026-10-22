@@ -4,10 +4,12 @@ Scenario trigger scripts are authoritative simulation state. The `sim` crate loa
 in the fixed tick and includes them in the world checksum. The renderer does not interpret
 triggers. It reads only the results that the sim puts into `World`.
 
-The sim loads the `TriggerSystem` nodes that a scenario SCN file embeds. It also parses the
-`.triggerscript` files that scripts can launch into a script library before the first tick. It
-does not yet start the scripts of game modes, powers, abilities, weapons or the skirmish AI. See
-[Script files and launch](#script-files-and-launch) and [Gaps](#gaps).
+The sim loads the `TriggerSystem` nodes that a scenario SCN file embeds and the
+`ExternalTriggerScript` files that it names. It also parses the `.triggerscript` files that
+scripts can launch into a script library before the first tick. A skirmish also starts the
+game-mode world and player scripts. The sim does not yet start the scripts of powers, abilities,
+weapons or the skirmish AI. See [Script files and launch](#script-files-and-launch) and
+[Gaps](#gaps).
 
 ## Code layout
 
@@ -102,6 +104,21 @@ Setup code uses `LoadedScenario::launch_trigger_script`. It parses the file and 
 it names through the scenario asset source, then launches it. `LaunchScript` (392) v4 returns a
 launch request to the engine. Script IDs start at 0 and follow creation order, like the retail
 `nextTriggerScriptID`.
+
+`load_scenario_from_game_dir` creates the scripts in the order of `BScenario_load`
+(`0x140377BE0`):
+
+1. The `.scn` `TriggerSystem` and `ExternalTriggerScript` elements, in document order.
+2. The game mode of a skirmish (block `GG`, `scenario/game_mode.rs`). The mode is the
+   `gamemodes.xml` entry named by `GameSettings::game_mode`. The block adds the mode `NPC`
+   player if no NPC has its name, activates the mode `Tech` for each human and computer AI
+   player, and launches the `WorldScript` once. Unless the `NoVictoryCondition` config is
+   defined, it then launches the `PlayerScript` for each human and computer AI player in player
+   ID order, with the Player external (`BTriggerManager_setScriptPlayer`, `0x140489390`). A
+   scenario game with the `SkirmishAIOnScenario` config instead makes player 2 a computer AI.
+
+For a 1v1 Blood Gulch skirmish the scripts are `Audio`, `Blood_Gulch`, `SkirmishWorld`, and
+`SkirmishPlayer` for players 1 and 2. The `Creeps` NPC gets no player script.
 
 ## Scheduling
 
@@ -503,10 +520,9 @@ In order of shipped use:
    them. `SetPlayerState` (130) ends a skirmish (`World::game_result`), but the AI manager does
    not learn that a player left (`BAIManager_onPlayerLeft`).
 3. External trigger script starts. `TriggerEngine::launch_script` exists, but nothing calls it
-   for the game-mode world and player scripts (`BScenario_load`), the skirmish AI script
-   (`BAI_startSkirmishAIScript` `0x14014E4D0`), `ExternalTriggerScript` in `BScenario_load`
-   (`0x14037A616`), the power scripts of `BProtoPower_load` (`0x14034EB96`) and the weapon
-   scripts of `BWeapon_loadWeapon` (`0x1403FFE52`).
+   for the skirmish AI script (`BAI_startSkirmishAIScript` `0x14014E4D0`), the power scripts of
+   `BProtoPower_load` (`0x14034EB96`) and the weapon scripts of `BWeapon_loadWeapon`
+   (`0x1403FFE52`).
 4. Hints and UI: `HintMessageShow` (805), `HintMessageDestroy` (815), `FlareMinimapNormal`
    (135), `FlashUIElement` (923), `ConceptPermission` (924) and the UI input effects and
    conditions.

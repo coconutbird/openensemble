@@ -287,11 +287,7 @@ fn create_players(
     teams: &[i32],
     slots: &[Option<usize>],
 ) {
-    let default_difficulty = database
-        .game_data
-        .as_ref()
-        .and_then(|data| data.difficulty_default)
-        .unwrap_or(DEFAULT_PLAYER_DIFFICULTY);
+    let default_difficulty = default_difficulty(database);
     configure_player_slots(world, database, default_difficulty);
     let use_test_leaders = world.is_config_defined(USE_TEST_LEADERS_CONFIG);
     let mut next_slot = 1;
@@ -366,21 +362,78 @@ fn create_players(
 
 /// Give every player the default difficulty and the database population and rate slots.
 fn configure_player_slots(world: &mut World, database: &Database, default_difficulty: f32) {
-    let population_count = database
-        .game_data
-        .as_ref()
-        .and_then(|game_data| game_data.pops.as_ref())
-        .map_or(0, |pops| pops.entries.len());
-    let rate_count = database
-        .game_data
-        .as_ref()
-        .and_then(|game_data| game_data.rates.as_ref())
-        .map_or(0, |rates| rates.entries.len());
+    let (population_count, rate_count) = slot_counts(database);
     for player in world.players_mut() {
         player.difficulty = default_difficulty;
         player.configure_population_slots(population_count);
         player.configure_rate_slots(rate_count);
     }
+}
+
+/// Return gamedata `DifficultyDefault`, or the engine default without it.
+fn default_difficulty(database: &Database) -> f32 {
+    database
+        .game_data
+        .as_ref()
+        .and_then(|data| data.difficulty_default)
+        .unwrap_or(DEFAULT_PLAYER_DIFFICULTY)
+}
+
+/// Return the number of gamedata `Pops` and `Rates` entries.
+fn slot_counts(database: &Database) -> (usize, usize) {
+    let game_data = database.game_data.as_ref();
+    let population_count = game_data
+        .and_then(|game_data| game_data.pops.as_ref())
+        .map_or(0, |pops| pops.entries.len());
+    let rate_count = game_data
+        .and_then(|game_data| game_data.rates.as_ref())
+        .map_or(0, |rates| rates.entries.len());
+    (population_count, rate_count)
+}
+
+/// Add the NPC player of a game mode like the `GG` block of `BScenario_load` @ `0x140377BE0`.
+///
+/// `BWorld_addPlayer` @ `0x1405C8260` sets up an NPC player with the name, civ 0, leader 0 and
+/// the default difficulty. `BWorld_addTeam` then appends a team for the player. The new team is
+/// allied with itself, neutral to team 0 and an enemy of the other teams, in both directions.
+/// The block adds nothing if the world has 9 players or 5 teams.
+pub(super) fn add_npc_player(
+    world: &mut World,
+    database: &Database,
+    name: &str,
+) -> Option<PlayerId> {
+    let team = u8::try_from(world.team_count())
+        .ok()
+        .filter(|team| usize::from(*team) < MAX_TEAMS)?;
+    let difficulty = default_difficulty(database);
+    let (population_count, rate_count) = slot_counts(database);
+    let player = world.add_player()?;
+    name.clone_into(&mut player.name);
+    player.player_type = PlayerType::Npc;
+    player.difficulty = difficulty;
+    player.configure_population_slots(population_count);
+    player.configure_rate_slots(rate_count);
+    player.civ_id = 0;
+    player.leader_id = 0;
+    player.team_id = team;
+    apply_leader_population(player, database, 0);
+    resources::apply_leader_starting_resources(player, database, 0);
+    let player_id = player.id;
+    technology::activate_player_starting_technologies(world, database, player_id);
+    for other in 0..MAX_TEAMS {
+        let Ok(other) = u8::try_from(other) else {
+            continue;
+        };
+        let relation = if other == team {
+            TeamRelation::Ally
+        } else if other == 0 {
+            TeamRelation::Neutral
+        } else {
+            TeamRelation::Enemy
+        };
+        let _set = world.set_mutual_team_relation(team, other, relation);
+    }
+    Some(player_id)
 }
 
 /// Pick a random leader of a civ like `BScenario_pickRandomLeaderForCiv` @ `0x1403861B0`.

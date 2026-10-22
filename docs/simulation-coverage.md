@@ -163,7 +163,7 @@ gaps are in the execution.
 | Skulls | `skulls.xml` `0x1411b8508` | Missing | The `ActivateSkull` command is not executed. |
 | Fatalities | `fatalityData.xml` `0x1411a6f50` | Missing | |
 | Corpse handling | `deathmanager.xml` `0x1411a55d0` | Missing | |
-| Game modes | `gamemodes.xml` `0x1411a53b8`, `BGameMode_load` @ `0x140240e70` | Missing | `Database::game_modes` holds the table, but the sim does not read it. |
+| Game modes | `gamemodes.xml` `0x1411a53b8`, `BGameMode_load` @ `0x140240e70`, `BScenario_load` @ `0x140377be0` (block `GG`) | Implemented | A skirmish adds the mode NPC player, activates the mode tech and launches the world script and one player script for each human and computer AI player (`scenario/game_mode.rs`). The DLC modes need their trigger effects (see `triggers.md`). |
 | Save games | `BWorld_writeSavegame` @ `0x1405d47e0`, `BWorld_readSavegame` @ `0x1405d8530` | Missing | |
 
 ## Not started
@@ -179,4 +179,4 @@ These engine systems have no code in `sim`:
 - the PointBlankAttack, ChangeOwner, AoeHeal, Roar, TentacleDormant, CoreSlide, Dome, AreaAttack,
   UnderAttack, RevealToTeam and AirStrike actions;
 - the weapon effect families: damage over time, stasis, daze, throw and knockback;
-- skulls, fatalities, corpse handling, game modes and save games.
+- skulls, fatalities, corpse handling and save games.

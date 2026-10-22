@@ -12,8 +12,17 @@ fn blood_gulch_triggers_load_remap_and_execute_from_the_authoritative_tick() {
     let mut loaded = test_support::installed_scenario(&scenario);
 
     let engine = loaded.simulation.world.trigger_engine();
-    assert_eq!(engine.script_count(), 2);
-    assert_eq!(engine.active_trigger_count(), 3);
+    // The `.scn` trigger systems come first; the game-mode and AI scripts follow (`GG`, `HH`).
+    let scenario_scripts = scenario_script_ids(&loaded.simulation.world);
+    assert_eq!(scenario_scripts, [0, 1]);
+    assert_eq!(
+        scenario_scripts
+            .iter()
+            .filter_map(|&id| engine.get_script(id))
+            .map(|script| script.active_triggers().len())
+            .sum::<usize>(),
+        3
+    );
     let blood_gulch = engine
         .scripts()
         .map(|(_, script)| script)
@@ -68,7 +77,11 @@ fn blood_gulch_triggers_load_remap_and_execute_from_the_authoritative_tick() {
     simulation.tick_with_scenario(&mut loaded.simulation, &loaded.content.database);
 
     assert_eq!(loaded.simulation.world.game_time(), 50);
-    assert_eq!(loaded.simulation.world.trigger_engine().script_count(), 0);
+    // Both `.scn` scripts fired their triggers and were cleaned up.
+    assert_eq!(
+        scenario_script_ids(&loaded.simulation.world),
+        Vec::<u32>::new()
+    );
     assert_eq!(
         loaded
             .simulation
@@ -87,6 +100,16 @@ fn blood_gulch_triggers_load_remap_and_execute_from_the_authoritative_tick() {
             .teleporter_destination,
         Some(exit_b)
     );
+}
+
+/// The scripts of the `.scn` trigger systems: the scripts not launched from a file.
+fn scenario_script_ids(world: &sim::World) -> Vec<sim::trigger::TriggerScriptId> {
+    world
+        .trigger_engine()
+        .scripts()
+        .filter(|(_, script)| !script.name.to_ascii_lowercase().ends_with(".triggerscript"))
+        .map(|(&id, _)| id)
+        .collect()
 }
 
 fn squad_variable(script: &sim::TriggerScript, variable_id: u32) -> sim::EntityId {
