@@ -250,7 +250,10 @@ mod tests {
         assert_eq!(part.proto_object_name, "vehicle");
         assert_eq!(part.object_state.visual_variation_index(), Some(3));
         assert_eq!(part.visual_mesh_mask().only(), &["panel"]);
-        assert_eq!(part.visual_mesh_mask().section_overrides(), &[] as &[Option<bool>]);
+        assert_eq!(
+            part.visual_mesh_mask().section_overrides(),
+            &[] as &[Option<bool>]
+        );
         assert_eq!(part.visual_opacity().to_bits(), 1.0_f32.to_bits());
         assert!(!part.base.is_selectable());
         assert!(part.is_invulnerable());

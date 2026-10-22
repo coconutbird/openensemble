@@ -393,7 +393,10 @@ fn creation_failures_preserve_each_retail_output_contract() {
 
     assert_eq!(update.effects_applied, 2);
     assert_eq!(script_entity(&world, script_id, 3), EntityId::INVALID);
-    assert_eq!(script_entities(&world, script_id, 4), Vec::<EntityId>::new());
+    assert_eq!(
+        script_entities(&world, script_id, 4),
+        Vec::<EntityId>::new()
+    );
     assert_eq!(script_entity(&world, script_id, 6), EntityId::INVALID);
     assert_eq!(script_entity(&world, script_id, 8), EntityId::INVALID);
     assert_eq!(script_entities(&world, script_id, 7), vec![retained_unit]);

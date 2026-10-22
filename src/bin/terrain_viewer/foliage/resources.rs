@@ -952,6 +952,9 @@ mod tests {
 
     #[test]
     fn foliage_index_buffer_rejects_geometry_that_cannot_match_the_oracle() {
-        assert_eq!(parse_foliage_index_buffer(&[0x0002_0014], 8), [] as [[u32; 2]; 0]);
+        assert_eq!(
+            parse_foliage_index_buffer(&[0x0002_0014], 8),
+            [] as [[u32; 2]; 0]
+        );
     }
 }

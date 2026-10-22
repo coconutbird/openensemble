@@ -286,17 +286,14 @@ impl UnitSceneRenderer {
                     previous_placement
                         .as_ref()
                         .filter(|rendered| same_visual(rendered, placement))
-                        .map_or(
-                            (fresh_clock, fresh_clock, None, true),
-                            |rendered| {
-                                (
-                                    rendered.animation_clock,
-                                    rendered.movement_animation_clock,
-                                    rendered.movement_animation,
-                                    rendered.renderer.ik_idle_transition_complete(),
-                                )
-                            },
-                        );
+                        .map_or((fresh_clock, fresh_clock, None, true), |rendered| {
+                            (
+                                rendered.animation_clock,
+                                rendered.movement_animation_clock,
+                                rendered.movement_animation,
+                                rendered.renderer.ik_idle_transition_complete(),
+                            )
+                        });
                 movement_animation_clock.rebase_movement(
                     previous_movement,
                     placement.movement_animation,
