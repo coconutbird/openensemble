@@ -27,6 +27,19 @@ pub mod command_flags {
     pub const ATTACK_MOVE: usize = 1;
 }
 
+/// Hovered target of a retail right-click Work command.
+///
+/// `BUser_doWorkAtCurrentLocation` (`0x14058C2E0`) sends the hovered unit
+/// (`user+480`) only when the hover classification finds an action, and always
+/// sends the hovered hit zone (`user+496`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UserWorkTarget {
+    /// Hovered unit or squad.
+    pub entity: EntityId,
+    /// Hovered hit zone index, or -1 for none.
+    pub hit_zone: i32,
+}
+
 /// Work command matching vanilla `BWorkCommand`.
 #[derive(Debug, Clone)]
 pub struct WorkCommand {
@@ -110,6 +123,46 @@ impl WorkCommand {
                 ..Command::default()
             },
             unit_id: target,
+            ..Self::default()
+        }
+    }
+
+    /// Build the retail right-click Work command for selected squads.
+    ///
+    /// The fields match `BWorkCommand_ctor` (`0x140195BA0`) and
+    /// `BUser_doWorkAtCurrentLocation` (`0x14058C2E0`): sender type Player,
+    /// recipient type Army (2), `id` -1, ability -1, squad mode -1, one
+    /// waypoint at the cursor ground point, the hovered target only when an
+    /// action applies, its hit zone, and flag bit 0 (`cFlagAlternate`) set
+    /// when the order is queued (shift). Retail moves the waypoint to a
+    /// selected squad's position only for ability work, so this constructor
+    /// always keeps the given waypoint.
+    ///
+    /// The executor decides move or action per squad when it runs the command.
+    #[must_use]
+    pub fn user_work(
+        player_id: i32,
+        squads: Vec<EntityId>,
+        waypoint: Vec3,
+        target: Option<UserWorkTarget>,
+        queue: bool,
+    ) -> Self {
+        let mut base = Command {
+            player_id,
+            id: -1,
+            sender_type: EntityType::Player,
+            senders: vec![player_id],
+            recipient_type: EntityType::Army,
+            recipients: squads,
+            waypoints: vec![waypoint],
+            command_type: CommandType::Work,
+            ..Command::default()
+        };
+        base.set_flag(Command::ALTERNATE_FLAG, queue);
+        Self {
+            base,
+            unit_id: target.map_or(EntityId::INVALID, |target| target.entity),
+            hit_zone_index: target.map_or(-1, |target| target.hit_zone),
             ..Self::default()
         }
     }
@@ -529,3 +582,6 @@ fn squad_work_command(
         ..Command::default()
     }
 }
+
+#[cfg(test)]
+mod tests;

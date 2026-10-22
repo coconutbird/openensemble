@@ -27,6 +27,7 @@ pub mod spawn;
 pub mod sync;
 pub mod time_sync;
 pub mod trigger;
+mod work_action;
 pub mod world;
 
 pub use command::{Command, CommandType, EntityType};
@@ -34,7 +35,7 @@ pub use command_queue::{CommandEntry, CommandQueue};
 pub use commands::{
     BuildingCommand, BuildingCommandType, CommandPayload, GameCommand, GameCommandType,
     PowerCommand, PowerCommandType, PowerInputCommand, PowerInputCommandType, PowerUserId,
-    WorkCommand,
+    UserWorkTarget, WorkCommand,
 };
 pub use dispatcher::{CommandDispatcher, DispatchError};
 pub use entities::{
@@ -108,6 +109,7 @@ pub use trigger::{
     TriggerCost, TriggerEngine, TriggerId, TriggerScript, TriggerScriptId, TriggerUpdate,
     TriggerValue, TriggerVec3, VarId, VarType,
 };
+pub use work_action::{DefaultWorkAction, default_work_action};
 pub use world::{
     CameraControlPermissions, CameraDirective, CameraShake, CarpetBomb, CarpetBombingPhase,
     CarpetBombingPowerError, CarpetBombingPowerExecution, CarpetBombingPowerInvocation,

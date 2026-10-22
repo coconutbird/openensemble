@@ -2,6 +2,7 @@
 //!
 //! This is where commands from the network get wired up to actual game logic.
 
+use crate::command::EntityType;
 use crate::command_queue::CommandEntry;
 use crate::commands::CommandPayload;
 use crate::commands::{
@@ -22,6 +23,8 @@ mod detonate;
 mod jump;
 mod mines;
 mod mode_orders;
+mod target_orders;
+mod user_work;
 
 #[cfg(test)]
 use crate::commands::work_command_flags;
@@ -85,7 +88,15 @@ impl<'database> CommandExecutor<'database> {
     }
 
     /// Execute a work command.
+    ///
+    /// A command with `id` -1 and recipient type Army is the retail
+    /// right-click Work command; the executor picks the order per squad. Other
+    /// commands carry the order type in `id`.
     fn execute_work(&self, world: &mut World, cmd: &WorkCommand) {
+        if cmd.base.id == -1 && cmd.base.recipient_type == EntityType::Army {
+            self.execute_user_work(world, cmd);
+            return;
+        }
         let order_type = OrderType::from_i32(cmd.base.id);
 
         match order_type {
@@ -117,90 +128,6 @@ impl<'database> CommandExecutor<'database> {
         }
     }
 
-    fn execute_gather(&self, world: &mut World, cmd: &WorkCommand) {
-        let (Some(gameplay), Ok(player_id)) = (self.gameplay, u8::try_from(cmd.base.player_id))
-        else {
-            return;
-        };
-        if cmd.unit_id.is_invalid() {
-            return;
-        }
-        for &recipient_id in &cmd.base.recipients {
-            let _accepted =
-                world.issue_gather_order(player_id, recipient_id, cmd.unit_id, gameplay);
-        }
-    }
-
-    fn execute_capture(&self, world: &mut World, cmd: &WorkCommand) {
-        let (Some(database), Some(gameplay), Ok(player_id)) = (
-            self.database,
-            self.gameplay,
-            u8::try_from(cmd.base.player_id),
-        ) else {
-            return;
-        };
-        if cmd.unit_id.is_invalid() {
-            return;
-        }
-        for &recipient_id in &cmd.base.recipients {
-            let _accepted =
-                world.issue_capture_order(player_id, recipient_id, cmd.unit_id, database, gameplay);
-        }
-    }
-
-    fn execute_repair_other(&self, world: &mut World, cmd: &WorkCommand) {
-        let (Some(database), Some(gameplay), Ok(player_id), Ok(ability_id)) = (
-            self.database,
-            self.gameplay,
-            u8::try_from(cmd.base.player_id),
-            self.work_ability_id(cmd.ability_id),
-        ) else {
-            return;
-        };
-        if cmd.unit_id.is_invalid() {
-            return;
-        }
-        for &recipient_id in &cmd.base.recipients {
-            let _accepted = world.issue_repair_other_order(
-                player_id,
-                recipient_id,
-                cmd.unit_id,
-                ability_id,
-                database,
-                gameplay,
-            );
-        }
-    }
-
-    fn execute_garrison(world: &mut World, cmd: &WorkCommand) {
-        let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
-            return;
-        };
-        if cmd.unit_id.is_invalid() {
-            return;
-        }
-        for &recipient_id in &cmd.base.recipients {
-            let _result =
-                world.issue_garrison_order(player_id, recipient_id, cmd.unit_id, cmd.range);
-        }
-    }
-
-    fn execute_join(&self, world: &mut World, cmd: &WorkCommand) {
-        let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
-            return;
-        };
-        if cmd.unit_id.is_invalid() {
-            return;
-        }
-        let Ok(ability_id) = self.work_ability_id(cmd.ability_id) else {
-            return;
-        };
-        for &recipient_id in &cmd.base.recipients {
-            let _accepted =
-                world.issue_join_order(player_id, recipient_id, cmd.unit_id, ability_id);
-        }
-    }
-
     fn execute_cloak(&self, world: &mut World, cmd: &WorkCommand) {
         let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
             return;
@@ -219,18 +146,6 @@ impl<'database> CommandExecutor<'database> {
         };
         for &recipient_id in &cmd.base.recipients {
             let _result = world.issue_ungarrison_order(player_id, recipient_id, cmd.terrain_point);
-        }
-    }
-
-    fn execute_hitch(world: &mut World, cmd: &WorkCommand) {
-        let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
-            return;
-        };
-        if cmd.unit_id.is_invalid() {
-            return;
-        }
-        for &recipient_id in &cmd.base.recipients {
-            let _result = world.issue_hitch_order(player_id, recipient_id, cmd.unit_id);
         }
     }
 

@@ -14,8 +14,8 @@ pub use power::command_flags as power_command_flags;
 pub use power::{PowerCommand, PowerCommandType};
 pub use power_input::command_flags as power_input_command_flags;
 pub use power_input::{PowerInputCommand, PowerInputCommandType, PowerUserId};
-pub use work::WorkCommand;
 pub use work::command_flags as work_command_flags;
+pub use work::{UserWorkTarget, WorkCommand};
 
 /// Parsed command of one supported command type.
 ///

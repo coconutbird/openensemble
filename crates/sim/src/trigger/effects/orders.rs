@@ -5,8 +5,8 @@ use super::support::{
 };
 use super::{EffectOutcome, value_at};
 use crate::gameplay::{AttackQuery, AttackQueryFlags, GameplayCatalog, TacticRelation};
-use crate::player::TeamRelation;
 use crate::trigger::{Effect, TriggerScript, TriggerValue};
+use crate::work_action::{work_action_enabled, work_query, work_units};
 use crate::{EntityId, World};
 use glam::Vec3;
 use num_traits::ToPrimitive;
@@ -269,18 +269,7 @@ fn resolve_contextual_location_work(
         flags: AttackQueryFlags::empty(),
     };
     let selected = gameplay.select_mine_action(&source.proto_object_name, &query, |action| {
-        let authored_enabled = action.start_disabled != Some(true);
-        let player_enabled =
-            world
-                .get_player(source.base.player_id)
-                .map_or(authored_enabled, |player| {
-                    player.technologies.action_enabled(
-                        &source.proto_object_name,
-                        &action.name,
-                        authored_enabled,
-                    )
-                });
-        source.actions.is_enabled(&action.name, !player_enabled)
+        work_action_enabled(world, source, action)
     });
     selected.map_or(ContextualWorkOrder::Move(target), |_| {
         ContextualWorkOrder::Mines {
@@ -336,7 +325,7 @@ fn resolve_contextual_work(
         return ContextualWorkOrder::Unsupported;
     };
     let ability_id = do_ability.then(|| gameplay.command_ability_id()).flatten();
-    let query = contextual_work_query(world, squad_id, target_id, source, target, ability_id);
+    let query = work_query(world, squad_id, target_id, source, target, ability_id);
     let selected = gameplay.select_work_action(&source.proto_object_name, &query, |action| {
         work_action_enabled(world, source, action)
     });
@@ -352,50 +341,6 @@ fn resolve_contextual_work(
         target_position,
         &query,
     )
-}
-
-fn contextual_work_query<'target>(
-    world: &World,
-    squad_id: EntityId,
-    target_id: EntityId,
-    source: &crate::entities::Unit,
-    target: &'target crate::entities::Unit,
-    ability_id: Option<u8>,
-) -> AttackQuery<'target> {
-    let mut flags = AttackQueryFlags::empty();
-    if target.base.player_id == 0 {
-        flags.insert(AttackQueryFlags::TARGET_GAIA);
-    }
-    if target.hitpoints < target.max_hitpoints
-        || world
-            .repair_other_target_squad_id(target_id)
-            .and_then(|target_squad_id| world.get_squad(target_squad_id))
-            .is_some_and(|squad| {
-                squad.unit_ids.iter().any(|unit_id| {
-                    world
-                        .get_unit(*unit_id)
-                        .is_some_and(|unit| unit.hitpoints < unit.max_hitpoints)
-                })
-            })
-    {
-        flags.insert(AttackQueryFlags::TARGET_DAMAGED);
-    }
-    if target.is_building() && !target.built {
-        flags.insert(AttackQueryFlags::TARGET_UNBUILT);
-    }
-    if world.can_squad_capture_target(source.base.player_id, squad_id, target_id) {
-        flags.insert(AttackQueryFlags::TARGET_CAPTURABLE);
-    }
-    AttackQuery {
-        relation: work_relation(world, source.base.player_id, target.base.player_id),
-        squad_mode: world
-            .get_squad(squad_id)
-            .map_or(crate::entities::SquadMode::Normal, |squad| squad.mode),
-        ability_id,
-        target_proto_object_name: Some(&target.proto_object_name),
-        tactic_state: source.tactic_state(),
-        flags,
-    }
 }
 
 fn ruleless_contextual_work(
@@ -509,32 +454,6 @@ fn contextual_action_order(
     }
 }
 
-fn work_units(
-    world: &World,
-    squad_id: EntityId,
-    target_unit_id: EntityId,
-) -> Option<(&crate::entities::Unit, &crate::entities::Unit)> {
-    let squad = world.get_squad(squad_id)?;
-    let source = squad.unit_ids.iter().find_map(|unit_id| {
-        world
-            .get_unit(*unit_id)
-            .filter(|unit| unit.is_operational())
-    })?;
-    let target = world.get_unit(target_unit_id)?;
-    Some((source, target))
-}
-
-fn work_relation(world: &World, source: u8, target: u8) -> TacticRelation {
-    if source == target {
-        return TacticRelation::SelfPlayer;
-    }
-    match world.player_relation(source, target) {
-        Some(TeamRelation::Ally) => TacticRelation::Ally,
-        Some(TeamRelation::Enemy) => TacticRelation::Enemy,
-        Some(TeamRelation::Neutral) | None => TacticRelation::Neutral,
-    }
-}
-
 fn fallback_contextual_work(
     world: &World,
     squad_id: EntityId,
@@ -634,25 +553,6 @@ fn issue_contextual_work(
         }
         ContextualWorkOrder::Unsupported => false,
     }
-}
-
-fn work_action_enabled(
-    world: &World,
-    source: &crate::entities::Unit,
-    action: &pipeline::database::hw1::tactics::Action,
-) -> bool {
-    let authored_enabled = action.start_disabled != Some(true);
-    let player_enabled =
-        world
-            .get_player(source.base.player_id)
-            .map_or(authored_enabled, |player| {
-                player.technologies.action_enabled(
-                    &source.proto_object_name,
-                    &action.name,
-                    authored_enabled,
-                )
-            });
-    source.actions.is_enabled(&action.name, !player_enabled)
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -265,6 +265,10 @@ example `unitactionrangedattack.cpp`, `damagehelper.cpp`, `projectile.cpp`,
   range, and deterministically select a live concrete member when firing. Both
   pursuit and firing ask the same runtime selector, so a mode or ability cannot
   use one action's range and another action's damage.
+- A retail right-click Work command (`id` -1, recipient type Army) gives an
+  attack order when the squad's tactic picks an attack action for the target
+  (`default_work_action`, `BSquad_getDefaultOrderType` `0x140399E30`). The
+  executor then uses the same attack handler as Work order 2.
 - Class-4 projectile entities carry launch-time damage, weapon type, area-
   damage profile, target, lifespan, acceleration, tracking, turn rate, and
   gravity and perturbance state. Their pool and every unit combat timer
