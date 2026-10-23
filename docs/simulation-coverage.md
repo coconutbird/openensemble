@@ -84,7 +84,7 @@ gaps are in the execution.
 | `BUnitActionAreaAttack`, `BUnitActionUnderAttack` | Missing | — | |
 | `BUnitActionDOT` | Missing | — | The weapon `DOTrate`, `DOTduration` and `DOTEffect` fields are not read. |
 | `BUnitActionStasis`, `BSquadActionDaze` | Missing | — | The weapon `Stasis`, `StasisDrain`, `StasisBomb` and `Daze` fields are not read. |
-| `BUnitActionThrown` | Partial | `entities/units/thrown.rs` | The body takes the throw velocity and the throw ends on landing. Only the Wave throws units. Weapon `ThrowUnits`, `PhysicsLaunch*` and `ApplyKnockback` are not read. |
+| `BUnitActionThrown` | Partial | `entities/units/thrown.rs` | The body takes the throw velocity and the throw ends on landing. Only Wave debris and bowled Ram targets are thrown. Weapon `ThrowUnits` is not read here. `ApplyKnockback` is in `world/combat/knockback.rs`. |
 | `BUnitActionBuilding` | Implemented | `world/production/`, `world/research.rs`, `world/construction.rs` | See `production.md` and `research.md`. |
 | `BUnitActionCapture` | Implemented | `world/capture.rs` | |
 | `BUnitActionChangeOwner` | Missing | — | Used by the Covenant supply depots and `rsrc_power_capturepoint_01`. |

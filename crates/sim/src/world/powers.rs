@@ -639,32 +639,40 @@ impl World {
             _ => false,
         }
     }
+}
 
+/// The impact of a projectile that a power owns.
+pub(in crate::world) struct PowerProjectileImpact<'a> {
+    pub execution_id: u32,
+    pub projectile_id: EntityId,
+    pub position: Vec3,
+    pub direction: Vec3,
+    /// The units that the impact damaged.
+    pub damaged_unit_ids: &'a [EntityId],
+}
+
+impl World {
     pub(in crate::world) fn notify_power_projectile_impact(
         &mut self,
         database: Option<&Database>,
         gameplay: Option<&GameplayCatalog>,
-        execution_id: u32,
-        projectile_id: EntityId,
-        position: Vec3,
-        direction: Vec3,
-        damaged_unit_ids: &[EntityId],
+        impact: &PowerProjectileImpact<'_>,
     ) {
         carpet_bombing::notify_projectile_impact(
             self,
-            execution_id,
-            projectile_id,
-            position,
-            damaged_unit_ids,
+            impact.execution_id,
+            impact.projectile_id,
+            impact.position,
+            impact.damaged_unit_ids,
         );
         orbital::notify_projectile_impact(
             self,
             database,
             gameplay,
-            execution_id,
-            projectile_id,
-            position,
-            direction,
+            impact.execution_id,
+            impact.projectile_id,
+            impact.position,
+            impact.direction,
         );
     }
 

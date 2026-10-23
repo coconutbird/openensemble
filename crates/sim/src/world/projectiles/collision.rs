@@ -458,11 +458,13 @@ impl World {
             self.notify_power_projectile_impact(
                 database,
                 gameplay,
-                execution_id,
-                impact.projectile_id,
-                impact.position,
-                impact.direction,
-                &damaged,
+                &crate::world::powers::PowerProjectileImpact {
+                    execution_id,
+                    projectile_id: impact.projectile_id,
+                    position: impact.position,
+                    direction: impact.direction,
+                    damaged_unit_ids: &damaged,
+                },
             );
         }
     }

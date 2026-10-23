@@ -251,9 +251,20 @@ example `unitactionrangedattack.cpp`, `damagehelper.cpp`, `projectile.cpp`,
   lifecycle, impacted IDs, and tactic-state transitions are checksummed.
 - Ram damage does not come from Havok contacts. The collision attack tests
   overlapping unit obstruction boxes where at least one unit has a dynamic
-  body (`world/collision_attacks/obstruction.rs`, `0x1400F1FB0`). A live
-  rigid target and the rammer get mass-scaled impulses on their bodies. A
-  non-rigid bowlable squad gets a displacement of its position.
+  body (`world/collision_attacks/obstruction.rs`, `0x1400F1FB0`).
+- The body motion of a Ram hit follows `BUnitActionCollisionAttack_handleCollisions`
+  (`world/collision_attacks/motion.rs`). A bowlable target that lives is
+  thrown (`throwUnit`): the throw turns 45 degrees off the rammer velocity
+  toward the target, at 30 degrees up and speed 10. A rammable target with a
+  dynamic body gets `(dir·cos 67.5°, sin 67.5°)·7·m`, with less upward impulse
+  when its body already moves up at more than 3. An `Overrun` action bounces
+  the rammer by `OverrunJumpForce` when it bowls a unit above `OverrunMinVel`.
+  After a rammable hit, the rammer body stops, gets `(-dir·cos 45°, sin 45°)·10·m`,
+  and its squad and leash go to `unit − dir·obstructionRadius`.
+- A weapon with `ApplyKnockback` gives its target body an impulse after each
+  attack (`world/combat/knockback.rs`, `doKnockbackAttack`): the direction to
+  the target with a positive Y, times the cosine of a random
+  `PhysicsLaunchAngle`, times a random `PhysicsForce` and the mass.
 - Each unit with a `PhysicsInfo` gets a Havok body from the scenario-layered
   `.physics`, `.blueprint`, and `.shp` records (`physics/bodies.rs`).
   `BPhysicsGhostAction` (`physics/vehicle_actions/ghost.rs`) drives the Ghost
@@ -595,12 +606,12 @@ features are missing:
 
 - Actions: `PointBlankAttack` (shipped Hawk and Hornet), `AreaAttack`,
   `UnderAttack`, and the full thrown-unit and leash action. `BUnitActionThrown`
-  runs only for the Wave (`entities/units/thrown.rs`).
+  runs only for Wave debris and bowled Ram targets (`entities/units/thrown.rs`).
 - Weapon effect families: damage over time (`DOTrate`, `DOTduration`,
   `DOTEffect`, `BUnitActionDOT`), `Stasis`, `StasisDrain`, `StasisBomb`,
-  `Daze` (`BSquadActionDaze`), `ThrowUnits`, `PhysicsLaunch*`,
-  `ApplyKnockback`, `CausePhysicsExplosion`, `Bounces`, and `AirBurst`. The
-  `database` crate parses these fields, but `sim` does not read them.
+  `Daze` (`BSquadActionDaze`), `ThrowUnits`, `CausePhysicsExplosion`,
+  `Bounces`, and `AirBurst`. The `database` crate parses these fields, but
+  `sim` does not read them.
 - Unsupported technology effect families and non-attack recovery start events.
 - Tactic-state transitions for action families other than CollisionAttack and
   Detonate.
