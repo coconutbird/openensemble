@@ -119,10 +119,7 @@ impl World {
                         .action_name()
                         .is_some_and(|name| name.eq_ignore_ascii_case(&hold.action_name))
             });
-            let target_alive = self
-                .units
-                .get(hold.target_id)
-                .is_some_and(Entity::is_alive);
+            let target_alive = self.units.get(hold.target_id).is_some_and(Entity::is_alive);
             if !attacking || !target_alive {
                 self.release_stasis_hold(attacker_id, hold.target_id);
             }
