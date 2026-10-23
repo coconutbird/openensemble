@@ -610,3 +610,6 @@ the full list of gaps.
 
 The ignored test `crates/sim/tests/scenario-campaign-trigger-loading.rs` loads all 15 campaign
 missions and both tutorials. It checks the variable types and that the first update ends.
+The ignored test `crates/sim/tests/scenario-objective-completion.rs` kills the `PHXscn02`
+detonator through the sim API. It then runs the scenario until the active "Detonator is
+destroyed" trigger completes its objective, and checks the completion time and the score.
