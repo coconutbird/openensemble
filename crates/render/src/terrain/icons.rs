@@ -55,18 +55,32 @@ pub fn project_icon_objects(
 mod tests {
     use super::*;
     use glam::Vec3;
-    use pipeline::database::hw1::{Database, ProtoObject};
+    use pipeline::database::hw1::gamedata::{CodeObjectType, CodeObjectTypesWrapper};
+    use pipeline::database::hw1::{Database, GameData, ObjectType, ProtoObject};
 
+    /// Retail icon protos have the declared type that the code object type `Icon` names.
     fn database() -> Database {
         Database {
             objects: vec![ProtoObject {
                 name: "sys_icon_test".to_owned(),
                 dbid: Some(42),
                 object_class: Some("Object".to_owned()),
-                object_types: vec!["Icon".to_owned()],
+                object_types: vec!["Icon".to_owned(), "_Icon".to_owned()],
                 flags: vec!["VisibleForOwnerOnly".to_owned()],
                 ..ProtoObject::default()
             }],
+            object_types: vec![ObjectType {
+                name: "_Icon".to_owned(),
+            }],
+            game_data: Some(GameData {
+                code_object_types: Some(CodeObjectTypesWrapper {
+                    entries: vec![CodeObjectType {
+                        object_type: "Icon".to_owned(),
+                        value: "_Icon".to_owned(),
+                    }],
+                }),
+                ..GameData::default()
+            }),
             ..Database::default()
         }
     }
@@ -75,6 +89,7 @@ mod tests {
     fn projection_consumes_sim_visibility_color_and_position() {
         let database = database();
         let mut world = World::new();
+        world.configure_prototype_catalogs(&database);
         world.init_players(2);
         world.get_player_mut(1).unwrap().team_id = 1;
         world.get_player_mut(2).unwrap().team_id = 2;
