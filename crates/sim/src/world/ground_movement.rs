@@ -229,7 +229,11 @@ mod tests {
     }
 
     #[test]
-    fn squad_arrival_uses_planar_distance_across_terrain_height_changes() {
+    fn squad_arrival_uses_planar_distance_and_keeps_the_squad_height() {
+        // `BSquadActionMove::calcMovement` (2008 `squadactionmove.cpp:2693-2731`) moves the
+        // squad on the X/Z plane only. A ground squad takes the terrain height afterwards, and
+        // the hover flight action writes the height of an aircraft squad
+        // (`physicshoverflightaction.cpp:99-101`), so the move does not write it.
         let mut world = World::new();
         let squad_id = world.create_squad_at(1, Vec3::new(0.0, 8.0, 0.0));
         let target = Vec3::new(1.0, 3.0, 0.0);
@@ -239,7 +243,7 @@ mod tests {
         squad.move_to(target);
 
         assert!(squad.update_movement(0.2));
-        assert_eq!(squad.base.position, target);
+        assert_eq!(squad.base.position, Vec3::new(1.0, 8.0, 0.0));
         assert_eq!(squad.base.velocity, Vec3::ZERO);
     }
 }
