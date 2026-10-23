@@ -176,10 +176,11 @@ fn a_capsule_against_a_sphere_runs_the_sphere_capsule_agent_swapped() {
 #[test]
 fn a_sphere_on_a_turned_box_touches_the_box_face() {
     let mut pair = Pair::new(sphere(0.5), unit_box());
-    let turned = Transform::from_rotation_translation(
-        Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
-        Vec3::new(0.0, 1.0, 0.0),
-    );
+    // A quarter turn about Z: local X goes to world Y and local Y to world −X.
+    let turned = Transform {
+        rotation: glam::Mat3::from_cols(Vec3::Y, -Vec3::X, Vec3::Z),
+        translation: Vec3::new(0.0, 1.0, 0.0),
+    };
     pair.step(at(0.3, 2.55, 0.2), turned);
     assert_eq!(pair.keys(), [0]);
     assert_contact(pair.contact(0), Vec3::new(0.3, 2.05, 0.2), Vec3::Y, 0.0);
@@ -247,7 +248,7 @@ fn every_agent_gives_bit_identical_points_twice() {
             (capsule_x(0.3), capsule_x(0.25)),
             (capsule_x(0.3), sphere(0.5)),
         ];
-        let turn = Quat::from_euler(glam::EulerRot::YXZ, 0.3, -0.2, 0.1);
+        let turn = Quat::from_xyzw(-0.1, 0.15, 0.05, 0.98).normalize();
         shapes
             .into_iter()
             .map(|(a, b)| {
