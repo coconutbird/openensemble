@@ -72,6 +72,10 @@ pub(crate) struct UnitAirAvoidance {
     pub(crate) hover_vertical_velocity: f32,
     hover_look_ahead_heights: [f32; HOVER_LOOK_AHEAD_SAMPLES],
     hover_look_ahead_index: u8,
+    /// `hoverAltitudeOffset` of the current proto action (`mHoverAltitudeOffset`).
+    hover_altitude_offset: f32,
+    /// `MaxPitch` and `MaxRoll` of the current proto action.
+    max_pitch_roll: Option<(f32, f32)>,
     flags: AirAvoidanceFlags,
 }
 
@@ -96,6 +100,8 @@ impl Default for UnitAirAvoidance {
             hover_vertical_velocity: 0.0,
             hover_look_ahead_heights: [EMPTY_HOVER_LOOK_AHEAD_HEIGHT; HOVER_LOOK_AHEAD_SAMPLES],
             hover_look_ahead_index: 0,
+            hover_altitude_offset: 0.0,
+            max_pitch_roll: None,
             flags,
         }
     }
@@ -110,6 +116,9 @@ impl UnitAirAvoidance {
         if self.phase != AircraftCrashPhase::Inactive {
             return;
         }
+        self.hover_altitude_offset =
+            profile.map_or(0.0, AirAvoidanceActionProfile::hover_altitude_offset);
+        self.max_pitch_roll = profile.map(|profile| (profile.max_pitch(), profile.max_roll()));
         let action_name = profile.map(AirAvoidanceActionProfile::action_name);
         if self.action_name.as_deref() == action_name {
             return;
@@ -233,6 +242,23 @@ impl UnitAirAvoidance {
         }
     }
 
+    /// The `hoverAltitudeOffset` of the current action, or 0 without an action.
+    pub(crate) const fn hover_altitude_offset(&self) -> f32 {
+        self.hover_altitude_offset
+    }
+
+    /// The `MaxPitch` and `MaxRoll` of the current action, if the unit has one.
+    pub(crate) const fn max_pitch_roll(&self) -> Option<(f32, f32)> {
+        self.max_pitch_roll
+    }
+
+    /// The nearest obstacle altitude while the action avoids an obstacle (`Avoiding`).
+    pub(crate) fn avoiding_obstacle_altitude(&self) -> Option<f32> {
+        self.flags
+            .contains(AirAvoidanceFlags::AVOIDING)
+            .then_some(self.nearest_obstacle_altitude)
+    }
+
     pub(crate) fn hover_look_ahead_index(&self) -> usize {
         usize::from(self.hover_look_ahead_index)
     }
@@ -283,6 +309,10 @@ impl UnitAirAvoidance {
             checksum.hash_f32(height);
         }
         checksum.hash_u32(u32::from(self.hover_look_ahead_index));
+        checksum.hash_f32(self.hover_altitude_offset);
+        let (pitch, roll) = self.max_pitch_roll.unwrap_or((-1.0, -1.0));
+        checksum.hash_f32(pitch);
+        checksum.hash_f32(roll);
         checksum.hash_u32(u32::from(self.flags.0));
     }
 }

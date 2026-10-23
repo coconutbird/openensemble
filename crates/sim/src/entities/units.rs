@@ -229,6 +229,8 @@ pub struct Unit {
     movement_facing: MovementFacing,
     /// Movement speed in world units per second.
     pub speed: f32,
+    /// The proto `Velocity` (`BProtoObject::getDesiredVelocity`); `speed` is the maximum.
+    pub(crate) desired_velocity: f32,
     /// Authored reverse speed; absence means the retail maximum-speed fallback.
     reverse_speed: Option<f32>,
     /// Acceleration in world units per second squared; zero means immediate.
@@ -391,6 +393,7 @@ impl Default for Unit {
             external_shield: targeting::ExternalShieldState::Disabled,
             movement_facing: MovementFacing::Forward,
             speed: 10.0,
+            desired_velocity: 10.0,
             reverse_speed: None,
             acceleration: 0.0,
             turn_rate_degrees: 0.0,

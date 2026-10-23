@@ -37,6 +37,11 @@ pub(crate) fn atan(value: f32) -> f32 {
     unary(value, F32::atan)
 }
 
+/// Returns the arc sine of `value` in radians, correctly rounded.
+pub(crate) fn asin(value: f32) -> f32 {
+    unary(value, F32::asin)
+}
+
 /// Returns the angle of the point `(x, y)` in radians, correctly rounded, as `y.atan2(x)` does.
 pub(crate) fn atan2(y: f32, x: f32) -> f32 {
     f32::from(F32::from(y).atan2(F32::from(x)))

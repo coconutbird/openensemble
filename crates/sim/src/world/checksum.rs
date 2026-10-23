@@ -214,6 +214,7 @@ fn hash_units(checksum: &mut SyncChecksum, units: &EntityManager<Unit>) {
         checksum.hash_f32(unit.velocity_scalar);
         checksum.hash_f32(unit.weapon_range_scalar);
         checksum.hash_f32(unit.speed);
+        checksum.hash_f32(unit.desired_velocity);
         checksum.hash_f32(unit.reverse_speed());
         checksum.hash_f32(unit.acceleration);
         checksum.hash_f32(unit.turn_rate_degrees);
@@ -349,6 +350,7 @@ fn hash_squads(checksum: &mut SyncChecksum, squads: &EntityManager<Squad>) {
         checksum.hash_f32(squad.turn_radius);
         checksum.hash_f32(squad.min_turn_radius);
         checksum.hash_f32(squad.max_turn_radius);
+        squad.turn_radius_state.hash_state(checksum);
         checksum.hash_f32(squad.aggro_distance);
         checksum.hash_f32(squad.leash_distance);
         squad.hash_leash_state(checksum);

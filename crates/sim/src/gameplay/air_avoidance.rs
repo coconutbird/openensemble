@@ -5,6 +5,10 @@ use pipeline::database::hw1::tactics::{Action, Weapon};
 use std::collections::BTreeMap;
 
 const DEFAULT_MAX_TARGET_DEPRESSION_ANGLE: f32 = 50.0;
+/// `cDefaultMaxPitch` (2008 `tactic.h:32`).
+const DEFAULT_MAX_PITCH: f32 = 30.0;
+/// `cDefaultMaxRoll` (2008 `tactic.h:33`).
+const DEFAULT_MAX_ROLL: f32 = 60.0;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct AirAvoidanceProfileFlags(u8);
@@ -89,6 +93,8 @@ pub struct AirAvoidanceActionProfile {
     flags: AirAvoidanceProfileFlags,
     hover_altitude_offset: f32,
     max_target_depression_angle: f32,
+    max_pitch: f32,
+    max_roll: f32,
     kamikaze_weapon: Option<KamikazeWeaponProfile>,
 }
 
@@ -135,6 +141,18 @@ impl AirAvoidanceActionProfile {
     #[must_use]
     pub const fn max_target_depression_angle(&self) -> f32 {
         self.max_target_depression_angle
+    }
+
+    /// `MaxPitch` in degrees (default 30): the hover action scales its pitch by `max / 40`.
+    #[must_use]
+    pub const fn max_pitch(&self) -> f32 {
+        self.max_pitch
+    }
+
+    /// `MaxRoll` in degrees (default 60): the hover action scales its roll by `max / 40`.
+    #[must_use]
+    pub const fn max_roll(&self) -> f32 {
+        self.max_roll
     }
 
     /// Optional weapon that turns a generic crash into a targeted kamikaze.
@@ -191,6 +209,8 @@ fn profile_from_action(action: &Action, weapons: &[Weapon]) -> AirAvoidanceActio
             DEFAULT_MAX_TARGET_DEPRESSION_ANGLE,
         )
         .clamp(0.0, 180.0),
+        max_pitch: finite_or(action.max_pitch, DEFAULT_MAX_PITCH),
+        max_roll: finite_or(action.max_roll, DEFAULT_MAX_ROLL),
         kamikaze_weapon,
     }
 }

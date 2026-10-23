@@ -92,6 +92,7 @@ mod tower_walls;
 mod training;
 mod transports;
 mod triggers;
+mod turn_radius;
 mod update;
 mod veterancy;
 mod visibility;

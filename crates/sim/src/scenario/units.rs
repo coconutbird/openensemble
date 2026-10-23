@@ -411,6 +411,7 @@ fn configure_unit_movement(
     {
         unit.speed = speed;
     }
+    unit.desired_velocity = valid_nonnegative(proto.velocity).unwrap_or_default();
     unit.acceleration = valid_nonnegative(proto.acceleration).unwrap_or_default();
     unit.turn_rate_degrees = valid_nonnegative(proto.turn_rate).unwrap_or_default();
     unit.obstruction_half_extents = obstruction_half_extents(proto).unwrap_or(Vec3::ZERO);

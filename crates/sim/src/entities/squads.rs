@@ -28,6 +28,7 @@ mod shields;
 mod spirit_bond;
 mod trained_birth;
 mod transport;
+mod turn_radius;
 mod wander;
 pub mod warthog;
 
@@ -61,6 +62,7 @@ pub use transport::{
     PowerTransportPhase, SquadPowerTransport, SquadTransportFlyIn, TransportFlyInPhase,
 };
 pub(crate) use transport::{SquadPowerTransportPlan, SquadTransportPlan};
+pub(crate) use turn_radius::{TurnRadiusLeader, TurnRadiusProgress};
 pub(crate) use wander::{SquadWander, WanderPhase};
 
 use super::{BaseEntity, EntityIdle};
@@ -187,6 +189,8 @@ pub struct Squad {
     pub min_turn_radius: f32,
     /// Maximum pathing turn radius from the proto squad.
     pub max_turn_radius: f32,
+    /// The turn-radius point of a physics vehicle squad (`mTurnRadiusPos`, `mTurnRadiusFwd`).
+    pub(crate) turn_radius_state: turn_radius::SquadTurnRadius,
     /// Distance at which an attack-move may automatically acquire a target.
     pub aggro_distance: f32,
     /// Maximum pursuit distance for an automatically acquired target.
@@ -286,6 +290,7 @@ impl Default for Squad {
             turn_radius: 0.0,
             min_turn_radius: 0.0,
             max_turn_radius: 0.0,
+            turn_radius_state: turn_radius::SquadTurnRadius::default(),
             aggro_distance: 0.0,
             leash_distance: 0.0,
             leash: leash::SquadLeash::default(),
