@@ -127,6 +127,8 @@ fn shipped_wave_profile_uses_scenario_layered_database_and_tactics() {
         &loaded.simulation.world,
         LIGHTNING_BEAM
     ));
+    // The power runs after the projectile updates, so the lightning hits in the next update.
+    advance(&mut loaded, 1);
     let health_after_lightning = total_health(&loaded.simulation.world, &target_units);
     assert!(health_after_lightning < health_before);
     assert!(loaded.simulation.world.submit_wave_power_input(
@@ -377,12 +379,15 @@ fn begin_marine_wave_capture(loaded: &mut sim::LoadedGameScenario) -> MarineWave
         .unwrap()
         .unit_ids[0];
     assert_marine_replacement_catalog(loaded, target_unit_id);
+    // `captureUnit` takes a live unit at or below `HealthToCapture` like a dead one. The power
+    // runs after the unit updates (retail `BWorld_update`), where a killed unit would already
+    // be gone in this sim.
     loaded
         .simulation
         .world
         .get_unit_mut(target_unit_id)
         .unwrap()
-        .kill();
+        .hitpoints = 0.0;
     let power_id =
         power_prototype_id(&loaded.content.database, WAVE_POWER).expect("shipped Wave power");
     let execution_id = loaded
@@ -445,25 +450,6 @@ fn capture_marine_replacement(
         .center_offset();
     let captured_center = captured_unit.base.position + center_offset;
     let pickup = loaded.simulation.world.get_object(pickup_id).unwrap();
-    eprintln!(
-        "DBG unit {:?} fwd {:?} up {:?} body {:?} rot {:?} com {:?} pickup {:?} local {:?} off {:?} vel {:?}",
-        captured_unit.base.position,
-        captured_unit.base.forward,
-        captured_unit.base.up,
-        loaded.simulation.world.unit_body_position(captured_unit_id),
-        loaded.simulation.world.unit_body_rotation(captured_unit_id),
-        loaded
-            .simulation
-            .world
-            .unit_body_center_of_mass(captured_unit_id),
-        pickup.base.position,
-        pickup.object_state.attachment_local_offset(),
-        center_offset,
-        loaded
-            .simulation
-            .world
-            .unit_body_linear_velocity(captured_unit_id),
-    );
     assert!(pickup.base.position.abs_diff_eq(captured_center, 0.000_1));
     let local_offset = pickup.object_state.attachment_local_offset();
     let forward = Vec3::new(
@@ -476,8 +462,13 @@ fn capture_marine_replacement(
     let reconstructed_offset =
         right * local_offset.x + Vec3::Y * local_offset.y + forward * local_offset.z;
     assert!(reconstructed_offset.abs_diff_eq(center_offset, 0.000_1));
-    let captured_velocity = captured_unit.base.velocity;
-    let captured_forward = captured_unit.base.forward;
+    // The explosion runs in the next update, after the readback and before the next physics
+    // step: the debris starts from the body state at the end of this update (2008
+    // `powerwave.cpp:1643-1660`), and the unit then has the axes of the body rotation.
+    let world = &loaded.simulation.world;
+    let body_center = world.unit_body_center_of_mass(captured_unit_id).unwrap();
+    let captured_velocity = world.unit_body_linear_velocity(captured_unit_id).unwrap();
+    let captured_forward = world.unit_body_rotation(captured_unit_id).unwrap() * Vec3::Z;
     let ball_id = loaded.simulation.world.active_wave_powers()[0].ball_object_id();
     let ball = loaded
         .simulation
@@ -486,12 +477,12 @@ fn capture_marine_replacement(
         .unwrap()
         .base
         .position;
-    let radial = (captured_center - ball).normalize_or(Vec3::X);
+    let radial = (body_center - ball).normalize_or(Vec3::X);
     CapturedMarineSnapshot {
         unit_id: captured_unit_id,
         pickup_id,
         variation: captured_variation,
-        center: captured_center,
+        center: body_center,
         visual_center_offset: -center_offset,
         velocity: captured_velocity,
         forward: captured_forward,
