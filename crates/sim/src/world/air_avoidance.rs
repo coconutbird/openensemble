@@ -66,8 +66,14 @@ impl World {
         self.update_aircraft_hover(dt, gameplay);
     }
 
+    /// Records the position of each air unit after its movement. A crashing unit with the hover
+    /// flight action records it in its crash update instead, so that the next impact test runs
+    /// from there to the next read-back position.
     pub(super) fn finalize_air_avoidance_positions(&mut self) {
         for (_, unit) in self.units.iter_mut() {
+            if unit.is_crashing() && unit.has_hover_action() {
+                continue;
+            }
             if unit.air_avoidance.action_name.is_some() || unit.is_crashing() {
                 unit.air_avoidance.previous_position = unit.base.position;
             }

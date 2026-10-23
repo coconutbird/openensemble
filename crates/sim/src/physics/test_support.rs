@@ -7,6 +7,7 @@ use glam::Vec3;
 use pipeline::database::hw1::Vector3;
 use pipeline::database::hw1::physics::{
     MotionType as InfoMotionType, PhysicsBlueprint, PhysicsInfo, PhysicsInfoFlags,
+    PhysicsVehicleType,
 };
 
 use super::{PhysicsBlueprintBody, PhysicsTemplate};
@@ -58,6 +59,18 @@ pub(crate) fn fixed_box_template(name: &str, half_extents: Vec3) -> Arc<PhysicsT
         ..PhysicsInfo::default()
     };
     let body = PhysicsBlueprintBody::with_box(name, &blueprint(1.0), half_extents);
+    Arc::new(PhysicsTemplate::new(name, info, vec![body]).expect("one body"))
+}
+
+/// A hornet info: one box body of `half_extents` and mass 100 that the hover flight action
+/// flies, with the body origin at the unit position.
+pub(crate) fn hover_template(name: &str, half_extents: Vec3) -> Arc<PhysicsTemplate> {
+    let info = PhysicsInfo {
+        blueprints: vec![name.to_owned()],
+        vehicle_type: PhysicsVehicleType::Hornet,
+        ..PhysicsInfo::default()
+    };
+    let body = PhysicsBlueprintBody::with_box(name, &blueprint(100.0), half_extents);
     Arc::new(PhysicsTemplate::new(name, info, vec![body]).expect("one body"))
 }
 

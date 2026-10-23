@@ -99,6 +99,7 @@ use super::{BaseEntity, BaseId, EntityIdle, ObjectState};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::UnitRevivalProfile;
+use crate::physics::vehicle_actions::VehicleAction;
 use crate::player::{PlayerId, PopulationCost};
 use glam::Vec3;
 use revival::{DamageDisposition, UnitRevival};
@@ -557,6 +558,16 @@ impl Unit {
         self.physics_object
             .as_ref()
             .is_some_and(|state| !state.is_fixed())
+    }
+
+    /// Check whether the hover flight action (`BPhysicsHoverFlightAction`) flies the unit. Only
+    /// its body and the readback move the unit, not the kinematic flight controllers.
+    #[must_use]
+    pub(crate) fn has_hover_action(&self) -> bool {
+        self.physics_object
+            .as_ref()
+            .and_then(|state| state.action.as_ref())
+            .is_some_and(VehicleAction::is_hover)
     }
 
     /// Set both current and maximum hit points.

@@ -316,6 +316,131 @@ fn steep_target_blocks_return_to_attack_anchor() {
     assert_eq!(world.get_squad(squad_id).unwrap().base.position, displaced);
 }
 
+#[test]
+fn hover_action_aircraft_takes_only_the_read_back_pose() {
+    // The hover flight action flies the body. The readback moves the unit to the body pose of
+    // the last step, and the kinematic hover controller does not run for the unit.
+    let gameplay = air_gameplay_with_hover_offset(Some(3.0));
+    let (mut world, squad_id, unit_id) = hover_action_world(43, Vec3::new(3.0, 20.0, 3.0));
+    world.configure_flat_test_terrain(4.0);
+    world
+        .get_squad_mut(squad_id)
+        .unwrap()
+        .move_to(Vec3::new(6.0, 20.0, 6.0));
+
+    for _ in 0..10 {
+        let body_position = world.unit_body_position(unit_id).unwrap();
+        world.update_entities_with_gameplay(STEP, &gameplay);
+
+        let unit = world.get_unit(unit_id).unwrap();
+        assert_eq!(unit.base.position, body_position);
+        assert!(unit.air_avoidance.hover_vertical_velocity.abs() <= f32::EPSILON);
+    }
+    assert_ne!(
+        world.unit_body_position(unit_id).unwrap(),
+        Vec3::new(3.0, 20.0, 3.0)
+    );
+}
+
+#[test]
+fn crashing_hover_action_aircraft_is_not_moved_by_the_crash_update() {
+    let gameplay = air_gameplay();
+    let start = Vec3::new(0.0, 20.0, 0.0);
+    let (mut world, squad_id, aircraft_id, _target_id) =
+        crashing_hover_action_world(start, &gameplay);
+
+    world.update_aircraft_crashes(STEP, &gameplay);
+
+    let aircraft = world.get_unit(aircraft_id).unwrap();
+    assert!(aircraft.is_crashing());
+    assert_eq!(aircraft.base.position, start);
+    assert_eq!(aircraft.air_avoidance.previous_position, start);
+    assert_eq!(world.get_squad(squad_id).unwrap().base.position, start);
+    assert!(world.impact_effect_requests_after(0).next().is_none());
+}
+
+#[test]
+fn crashing_hover_action_aircraft_hits_on_the_read_back_segment() {
+    // 2008 `unitactionavoidcollisionair.cpp:174-221`: the segment runs from the last recorded
+    // position to the read-back position. The target box (9..11 on X) lies on that segment, far
+    // ahead of any kinematic crash step.
+    let gameplay = air_gameplay();
+    let start = Vec3::new(0.0, 20.0, 0.0);
+    let (mut world, _squad_id, aircraft_id, target_id) =
+        crashing_hover_action_world(start, &gameplay);
+    world.get_unit_mut(aircraft_id).unwrap().base.position = Vec3::new(20.0, 20.0, 0.0);
+
+    world.update_aircraft_crashes(STEP, &gameplay);
+
+    let impact = world
+        .impact_effect_requests_after(0)
+        .next()
+        .expect("crash impact");
+    assert_eq!(impact.projectile_id(), aircraft_id);
+    assert_eq!(impact.primary_target_id(), Some(target_id));
+}
+
+#[test]
+fn crashing_hover_action_aircraft_hits_the_ground_at_one_point_two_obstruction_heights() {
+    // `0x1404EF13B`: `position.y − 1.2 × obstructionRadiusY ≤ terrain`. The obstruction half
+    // height is 1 and the terrain is at 0.
+    let gameplay = air_gameplay();
+    for (height, hits) in [(1.3, false), (1.1, true)] {
+        let start = Vec3::new(0.0, height, 0.0);
+        let (mut world, _squad_id, _aircraft_id, _target_id) =
+            crashing_hover_action_world(start, &gameplay);
+        world.configure_flat_test_terrain(0.0);
+
+        world.update_aircraft_crashes(STEP, &gameplay);
+
+        assert_eq!(
+            world.impact_effect_requests_after(0).next().is_some(),
+            hits,
+            "height {height}"
+        );
+    }
+}
+
+/// One aircraft of player 1 at `position` with a hornet body and the hover flight action.
+fn hover_action_world(seed: u64, position: Vec3) -> (World, crate::EntityId, crate::EntityId) {
+    let (mut world, squad_id, unit_id) = one_aircraft_world(seed, position);
+    let template = crate::physics::test_support::hover_template("hornet", Vec3::ONE);
+    assert!(world.create_physics_object(unit_id, &template, false));
+    assert!(world.get_unit(unit_id).unwrap().has_hover_action());
+    (world, squad_id, unit_id)
+}
+
+/// A crashing hover-action aircraft at `position` that targets an enemy 10 units ahead. The
+/// recorded position is `position`.
+fn crashing_hover_action_world(
+    position: Vec3,
+    gameplay: &GameplayCatalog,
+) -> (World, crate::EntityId, crate::EntityId, crate::EntityId) {
+    let (mut world, squad_id, aircraft_id) = hover_action_world(45, position);
+    world.init_players(2);
+    world.get_player_mut(1).unwrap().team_id = 1;
+    world.get_player_mut(2).unwrap().team_id = 2;
+    assert!(world.set_mutual_team_relation(1, 2, TeamRelation::Enemy));
+    world.set_fog_of_war_enabled(false);
+    let target_id = world.create_unit_at(2, Vec3::new(10.0, 20.0, 0.0));
+    {
+        let target = world.get_unit_mut(target_id).unwrap();
+        target.proto_object_name = "target".to_owned();
+        target.obstruction_half_extents = Vec3::ONE;
+    }
+    {
+        let aircraft = world.get_unit_mut(aircraft_id).unwrap();
+        aircraft.actions.set_enabled("AvoidCollisionAir", false);
+        aircraft.actions.set_enabled("KamikazeOnDeath", true);
+    }
+    assert!(world.damage_unit_with_gameplay(aircraft_id, 1_000.0, gameplay));
+    world.prepare_aircraft_crashes(gameplay);
+    let aircraft = world.get_unit_mut(aircraft_id).unwrap();
+    assert_eq!(aircraft.kamikaze_target(), Some(target_id));
+    aircraft.air_avoidance.previous_position = position;
+    (world, squad_id, aircraft_id, target_id)
+}
+
 fn overlap_result(seed: u64, gameplay: &GameplayCatalog) -> (Vec3, Vec3, Vec3, Vec3) {
     let (mut world, first_squad, first_unit) = one_aircraft_world(seed, Vec3::ZERO);
     let (second_squad, second_unit) = spawn_aircraft(&mut world, 1, Vec3::ZERO);

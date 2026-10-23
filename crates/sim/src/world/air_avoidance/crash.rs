@@ -1,8 +1,11 @@
 //! Lethal aircraft crash targeting, movement, collision, and detonation.
+//!
+//! The crash update moves a kinematic aircraft to its crash position. The hover flight action
+//! dives the body of an aircraft that has one, so the crash update only tests its impacts.
 
 use super::World;
 use crate::entities::AircraftCrashPhase;
-use crate::entities::units::UnitDeathState;
+use crate::entities::units::{Unit, UnitDeathState};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::{AirAvoidanceActionProfile, GameplayCatalog};
@@ -145,13 +148,46 @@ impl World {
             self.detonate_crashing_aircraft(unit_id, None, gameplay);
             return;
         }
+        if self.units.get(unit_id).is_some_and(Unit::has_hover_action) {
+            self.update_hover_action_crash(unit_id, gameplay);
+            return;
+        }
         let Some(movement) = self.crash_movement(unit_id) else {
             return;
         };
         let next = move_toward(movement.start, movement.destination, movement.speed * dt);
-        let hit = self.crash_collision(&movement, next);
-        let ground_contact = self.crash_hits_ground(&movement, next);
+        let hit = self.crash_collision(unit_id, movement.player_id, movement.start, next);
+        let ground_contact = self.crash_hits_ground(next, movement.half_extents.y);
         self.commit_crash_movement(movement, next, dt);
+        if hit.is_some() || ground_contact {
+            self.detonate_crashing_aircraft(unit_id, hit, gameplay);
+        }
+    }
+
+    /// The impact test of `BUnitActionAvoidCollisionAir_update` (`0x1404EEBB0`, 2008
+    /// `unitactionavoidcollisionair.cpp:154-242`) for an aircraft that its hover flight action
+    /// flies. The body dives to the crash position, so this update does not move the aircraft:
+    ///
+    /// - It tests the enemy bounds on the segment from the last recorded position to the
+    ///   read-back position.
+    /// - Then it tests the ground under the read-back position at 1.2 × obstruction Y.
+    /// - Then it records the read-back position for the next test (`mPrevPos`).
+    fn update_hover_action_crash(&mut self, unit_id: EntityId, gameplay: &GameplayCatalog) {
+        let Some((start, end, player_id, half_height)) = self.units.get(unit_id).map(|unit| {
+            (
+                unit.air_avoidance.previous_position,
+                unit.base.position,
+                unit.base.player_id,
+                unit.obstruction_half_extents.y.abs(),
+            )
+        }) else {
+            return;
+        };
+        let hit = self.crash_collision(unit_id, player_id, start, end);
+        let ground_contact = hit.is_none() && self.crash_hits_ground(end, half_height);
+        if let Some(unit) = self.units.get_mut(unit_id) {
+            unit.air_avoidance.previous_position = end;
+        }
         if hit.is_some() || ground_contact {
             self.detonate_crashing_aircraft(unit_id, hit, gameplay);
         }
@@ -229,19 +265,25 @@ impl World {
         })
     }
 
-    fn crash_collision(&self, movement: &CrashMovement, next: Vec3) -> Option<EntityId> {
+    /// The first enemy whose simulation bounds the segment from `start` to `end` crosses.
+    fn crash_collision(
+        &self,
+        unit_id: EntityId,
+        player_id: u8,
+        start: Vec3,
+        end: Vec3,
+    ) -> Option<EntityId> {
         let mut first_hit = None;
         let mut first_fraction = f32::MAX;
         for (candidate_id, candidate) in self.units.iter() {
-            if candidate_id == movement.unit_id
+            if candidate_id == unit_id
                 || !candidate.is_alive()
-                || !self.players_are_enemies(movement.player_id, candidate.base.player_id)
+                || !self.players_are_enemies(player_id, candidate.base.player_id)
             {
                 continue;
             }
             let (center, half_extents) = candidate.simulation_bounds();
-            let Some(fraction) = segment_aabb_fraction(movement.start, next, center, half_extents)
-            else {
+            let Some(fraction) = segment_aabb_fraction(start, end, center, half_extents) else {
                 continue;
             };
             if fraction < first_fraction {
@@ -252,9 +294,10 @@ impl World {
         first_hit
     }
 
-    fn crash_hits_ground(&self, movement: &CrashMovement, next: Vec3) -> bool {
-        self.terrain_height(next, true)
-            .is_some_and(|height| next.y - 1.2 * movement.half_extents.y <= height)
+    /// `true` if `position` minus 1.2 × the obstruction half height is at or below the terrain.
+    fn crash_hits_ground(&self, position: Vec3, half_height: f32) -> bool {
+        self.terrain_height(position, true)
+            .is_some_and(|height| position.y - 1.2 * half_height <= height)
     }
 
     fn commit_crash_movement(&mut self, movement: CrashMovement, next: Vec3, dt: f32) {

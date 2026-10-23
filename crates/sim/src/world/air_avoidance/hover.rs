@@ -1,4 +1,7 @@
 //! Terrain-relative hover-flight altitude control owned by the simulation.
+//!
+//! A unit with the hover flight action skips this controller: its body flies it, and the
+//! readback moves the unit.
 
 use super::{World, is_active_flight};
 use crate::entities::squads::formation_offset_to_world;
@@ -48,10 +51,9 @@ impl World {
         unit_id: EntityId,
         gameplay: &GameplayCatalog,
     ) -> Option<HoverContext> {
-        let unit = self
-            .units
-            .get(unit_id)
-            .filter(|unit| is_active_flight(unit) && unit.uses_physics_hover())?;
+        let unit = self.units.get(unit_id).filter(|unit| {
+            is_active_flight(unit) && unit.uses_physics_hover() && !unit.has_hover_action()
+        })?;
         let profile = self.enabled_air_avoidance_profile(unit_id, gameplay)?;
         let squad_id = unit.squad_id?;
         let squad = self.squads.get(squad_id)?;
