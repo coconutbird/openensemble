@@ -26,6 +26,7 @@ mod convex;
 mod dispatch;
 mod gsk;
 mod heightfield_agent;
+mod penetration;
 mod primitive;
 mod sink;
 #[cfg(test)]
@@ -45,6 +46,7 @@ use crate::math::Transform;
 use crate::shape::{Aabb, Shape};
 
 use agent::{Agent, CdBody, CollisionInput};
+pub(crate) use penetration::shapes_penetrate;
 use sink::ContactSink;
 
 /// The pose of a body for one collide step.

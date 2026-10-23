@@ -11,7 +11,7 @@ use std::sync::Arc;
 use glam::{Mat3, Quat, Vec3};
 
 use crate::body::{Body, BodyDesc, BodyId, MotionType, normalize_or_identity};
-use crate::collide::{CollidablePose, CollisionWorld, RayHit};
+use crate::collide::{CollidablePose, CollisionWorld, RayHit, shapes_penetrate};
 use crate::contact::{ContactPoint, Manifold, ManifoldId};
 use crate::dynamics::{self, DynamicsConfig, Hinge};
 use crate::filter::{FilterInfo, GroupFilter};
@@ -450,6 +450,20 @@ impl World {
     #[must_use]
     pub fn shape(&self, id: BodyId) -> Option<&Arc<Shape>> {
         self.body(id).map(|body| &body.shape)
+    }
+
+    /// `true` if the shapes of two bodies overlap at their current transforms
+    /// (`hkpCollisionDispatcher::getPenetrationsFunc` with an `hkpAllCdBodyPairCollector`).
+    /// `None` if a body is gone.
+    #[must_use]
+    pub fn bodies_penetrate(&self, a: BodyId, b: BodyId) -> Option<bool> {
+        let (body_a, body_b) = (self.body(a)?, self.body(b)?);
+        Some(shapes_penetrate(
+            &body_a.shape,
+            &body_a.transform(),
+            &body_b.shape,
+            &body_b.transform(),
+        ))
     }
 
     /// Wakes the island of a body (`hkpEntity_activate`). A fixed body stays inactive.

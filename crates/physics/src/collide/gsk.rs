@@ -40,7 +40,7 @@ use crate::contact::ContactPoint;
 use crate::math::Transform;
 use crate::shape::Shape;
 
-use cache::GskCache;
+pub(crate) use cache::GskCache;
 use manifold::{Frame, GskManifold};
 
 /// The cylinder flag of shape A (`GSK_FLAGS_SHAPE_A_IS_CYLINDER`).
