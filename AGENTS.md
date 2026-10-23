@@ -88,7 +88,7 @@ repository:
 
 The crates of this repository are in four layers:
 
-1. `motion`.
+1. `motion` and `physics`.
 2. `sim`.
 3. `net` and `render`.
 4. The root package `openensemble`.
@@ -101,6 +101,8 @@ Two crates contain shared test code. Use them only as dev-dependencies:
 
 - Make a crate depend only on crates in lower layers.
 - Do not make `sim` depend on `render`, `net` or a graphics, window or audio crate.
+- Keep `physics` free of game rules and game data. It must not depend on `pipeline`. Put the
+  rules that read squads, units or data files in `sim`.
 - Put a new format parser or writer in `ensemble-formats`. Put new game data loading in
   `ensemble-assets`.
 - If a change needs a change in a sibling repository, change and commit each repository

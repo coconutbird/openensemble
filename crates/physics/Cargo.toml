@@ -1,0 +1,13 @@
+[package]
+name = "physics"
+version.workspace = true
+edition.workspace = true
+description = "Deterministic rigid-body physics that follows the Havok 5.1 world of Halo Wars DE"
+
+[lints]
+workspace = true
+
+[dependencies]
+glam = { workspace = true }
+half = { workspace = true }
+thiserror = { workspace = true }

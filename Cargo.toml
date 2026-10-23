@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/physics",
     "crates/motion",
     "crates/render",
     "crates/sim",
@@ -17,6 +18,7 @@ repository = "https://github.com/coconutbird/openensemble"
 
 [workspace.dependencies]
 # Internal crates
+physics = { path = "crates/physics" }
 motion = { path = "crates/motion" }
 render = { path = "crates/render" }
 sim = { path = "crates/sim" }
@@ -142,4 +144,7 @@ debug = false
 opt-level = 1
 
 [profile.dev.package.motion]
+opt-level = 1
+
+[profile.dev.package.physics]
 opt-level = 1
