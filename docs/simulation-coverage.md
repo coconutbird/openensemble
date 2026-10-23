@@ -182,5 +182,5 @@ These engine systems have no code in `sim`:
 - the Reinforce, Unload, Unpack and unit-power commands;
 - the PointBlankAttack, ChangeOwner, AoeHeal, Roar, TentacleDormant, CoreSlide, Dome, AreaAttack,
   UnderAttack, RevealToTeam and AirStrike actions;
-- the weapon effect families: damage over time, stasis, daze, throw and knockback;
+- the weapon effect families: damage over time, stasis and daze;
 - skulls, fatalities, corpse handling and save games.
