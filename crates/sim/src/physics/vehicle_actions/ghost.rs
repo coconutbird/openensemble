@@ -84,7 +84,6 @@ impl GhostAction {
         }
     }
 
-    #[cfg(test)]
     /// `true` if no wheel ray hit the terrain in the last substep.
     pub(crate) fn in_air(&self) -> bool {
         self.in_air

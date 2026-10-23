@@ -214,7 +214,6 @@ impl VehicleAction {
         }
     }
 
-    #[cfg(test)]
     /// `mFlagInAir`: no wheel touched the terrain in the last substep. Aircraft are never in
     /// the air in this sense.
     pub(crate) fn in_air(&self) -> bool {

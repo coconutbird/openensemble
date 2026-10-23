@@ -128,7 +128,6 @@ impl WarthogAction {
         self.chopper
     }
 
-    #[cfg(test)]
     /// `mFlagInAir`.
     pub(crate) fn in_air(&self) -> bool {
         self.in_air

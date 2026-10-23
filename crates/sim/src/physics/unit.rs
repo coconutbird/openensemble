@@ -156,6 +156,13 @@ impl UnitPhysics {
         self.action.is_some()
     }
 
+    /// `mFlagInAir` of the vehicle action: `true` if no wheel touched the terrain in the last
+    /// substep. `None` without a vehicle action; aircraft always give `false`.
+    #[must_use]
+    pub fn vehicle_in_air(&self) -> Option<bool> {
+        self.action.as_ref().map(VehicleAction::in_air)
+    }
+
     /// The upper and lower bodies of a clamshell.
     #[must_use]
     pub fn clamshell_bodies(&self) -> Option<[BodyId; 2]> {
