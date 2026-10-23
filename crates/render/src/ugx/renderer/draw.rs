@@ -72,22 +72,17 @@ impl Renderer {
     /// The cascade index follows the oracle's 8x, 4x, 2x, and 1x projection
     /// scale order. Out-of-range indices are ignored.
     pub fn render_shadow<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>, cascade: usize) {
-        let Some(pipeline_base) = cascade.checked_mul(2) else {
+        let Some(pipeline) = self.shared.shadow_pipelines.get(cascade) else {
             return;
         };
-        if pipeline_base + 1 >= self.shared.shadow_pipelines.len() {
-            return;
-        }
 
         pass.set_bind_group(0, &self.scene_bind_group, &[]);
+        pass.set_pipeline(pipeline);
         for section in self.visible_sections() {
             let material = &self.gpu_model.materials[section.material_index];
             if !material.casts_shadows {
                 continue;
             }
-            pass.set_pipeline(
-                &self.shared.shadow_pipelines[pipeline_base + material.two_sided_pipeline_index],
-            );
             pass.set_bind_group(1, &material.bind_group, &[]);
             pass.set_vertex_buffer(0, section.vertex_buffer.slice(..));
             pass.set_index_buffer(section.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
@@ -113,14 +108,12 @@ impl Renderer {
 
         render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
         render_pass.set_bind_group(2, &self.shared.shadow_bind_group, &[offset]);
+        render_pass.set_pipeline(&self.shared.local_shadow_pipeline);
         for section in self.visible_sections() {
             let material = &self.gpu_model.materials[section.material_index];
             if !material.casts_shadows {
                 continue;
             }
-            render_pass.set_pipeline(
-                &self.shared.local_shadow_pipelines[material.two_sided_pipeline_index],
-            );
             render_pass.set_bind_group(1, &material.bind_group, &[]);
             render_pass.set_vertex_buffer(0, section.vertex_buffer.slice(..));
             render_pass.set_index_buffer(section.index_buffer.slice(..), wgpu::IndexFormat::Uint16);

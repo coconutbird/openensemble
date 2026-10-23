@@ -87,12 +87,15 @@ To write a top-down capture, run this command:
 cargo run --locked --bin terrain_viewer -- --capture-top-down target/terrain-captures/complete-xz-transform.png --capture-size 2048
 ```
 
-The capture also writes companion images: `.height.png` and `.alignment.png` show the terrain
-against the texture registration, `.foliage-map.png` plots the decoded blade locations, and each
-`.foliage-N-view.png` frames a dense foliage region.
+The capture shows `+X` to the right and `+Z` to the top, like the retail minimap
+(`art\ui\flash\minimaps\<scenario>.ddx`). The capture also writes companion images: `.height.png`
+and `.alignment.png` show the terrain against the texture registration, `.foliage-map.png` plots
+the decoded blade locations, and each `.foliage-N-view.png` frames a dense foliage region. The
+world maps `.packed-height.png`, `.tessellation.png` and `.foliage-map.png` have the same
+orientation as the capture. `.xtt.png` keeps the texture rows of the albedo atlas.
 
-To capture the rock in the lower-right corner, run this command:
+To capture the rock in the upper-right corner, run this command:
 
 ```text
-cargo run --locked --bin terrain_viewer -- --capture-top-down target/terrain-captures/bottom-right-landmark-complete-xz.png --capture-size 768 --capture-center 880 880 --capture-span 224
+cargo run --locked --bin terrain_viewer -- --capture-top-down target/terrain-captures/top-right-landmark-complete-xz.png --capture-size 768 --capture-center 880 880 --capture-span 224
 ```

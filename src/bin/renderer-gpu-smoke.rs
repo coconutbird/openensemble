@@ -298,8 +298,8 @@ fn create_patch_renderer(
             },
         },
     );
-    let view = Mat4::look_at_rh(Vec3::new(0.0, 3.0, 0.0), Vec3::ZERO, Vec3::Z);
-    let projection = Mat4::orthographic_rh(-2.0, 2.0, -2.0, 2.0, 0.1, 10.0);
+    let view = Mat4::look_at_lh(Vec3::new(0.0, 3.0, 0.0), Vec3::ZERO, Vec3::Z);
+    let projection = Mat4::orthographic_lh(-2.0, 2.0, -2.0, 2.0, 0.1, 10.0);
     let mut lighting = LightingParams {
         world_camera_pos: [0.0, 3.0, 0.0, 0.0],
         ..LightingParams::default()
@@ -465,9 +465,9 @@ fn run_overlay_smoke(device: &wgpu::Device, queue: &wgpu::Queue) -> anyhow::Resu
     let scene_view = scene.create_view(&wgpu::TextureViewDescriptor::default());
     let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
     let output_view = output.create_view(&wgpu::TextureViewDescriptor::default());
-    let world_to_view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+    let world_to_view = Mat4::look_at_lh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
     let camera = WorldCamera {
-        view_projection: Mat4::orthographic_rh(-2.0, 2.0, -2.0, 2.0, 0.1, 10.0) * world_to_view,
+        view_projection: Mat4::orthographic_lh(-2.0, 2.0, -2.0, 2.0, 0.1, 10.0) * world_to_view,
         world_to_view,
         position: Vec3::new(0.0, 0.0, 5.0),
         depth_unproject: [0.0, 1.0],
@@ -481,8 +481,8 @@ fn run_overlay_smoke(device: &wgpu::Device, queue: &wgpu::Queue) -> anyhow::Resu
         Some(wgpu::TextureFormat::Depth32Float),
         TerrainPatchWorldBindings::default(),
     );
-    let top_down = Mat4::orthographic_rh(-2.0, 2.0, -2.0, 2.0, 0.1, 10.0)
-        * Mat4::look_at_rh(Vec3::new(0.0, 3.0, 0.0), Vec3::ZERO, Vec3::Z);
+    let top_down = Mat4::orthographic_lh(-2.0, 2.0, -2.0, 2.0, 0.1, 10.0)
+        * Mat4::look_at_lh(Vec3::new(0.0, 3.0, 0.0), Vec3::ZERO, Vec3::Z);
     decals.update(
         device,
         queue,

@@ -11,10 +11,10 @@ use super::{
 
 #[test]
 fn perspective_depth_coefficients_reconstruct_positive_eye_distance() {
-    let projection = glam::Mat4::perspective_rh(1.0, 1.5, 0.25, 4096.0);
+    let projection = glam::Mat4::perspective_lh(1.0, 1.5, 0.25, 4096.0);
     let [scale, bias] = ParticleScene::perspective_depth_unproject(projection);
     for distance in [0.25_f32, 1.0, 100.0, 4096.0] {
-        let clip = projection * glam::Vec4::new(0.0, 0.0, -distance, 1.0);
+        let clip = projection * glam::Vec4::new(0.0, 0.0, distance, 1.0);
         let device_depth = clip.z / clip.w;
         let reconstructed = (device_depth * scale + bias).recip();
         assert!((reconstructed - distance).abs() <= distance * 0.001 + 0.000_01);

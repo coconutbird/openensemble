@@ -733,15 +733,15 @@ mod tests {
 
     #[test]
     fn spot_proxy_reduces_projected_area_and_culls_an_offscreen_cone() {
-        let projection = Mat4::orthographic_rh(-10.0, 10.0, -10.0, 10.0, 0.1, 100.0);
+        let projection = Mat4::orthographic_lh(-10.0, 10.0, -10.0, 10.0, 0.1, 100.0);
         let view = LocalLightView::new(projection, Mat4::IDENTITY, Vec3::ZERO, [200, 100]);
         let outer_cos = 30.0_f32.to_radians().cos();
         let radius = view
-            .project_capped_cone_radius([0.0, 0.0, -10.0], [0.0, 0.0, -1.0], outer_cos, 2.0)
+            .project_capped_cone_radius([0.0, 0.0, 10.0], [0.0, 0.0, 1.0], outer_cos, 2.0)
             .expect("front-facing cone proxy projects");
 
         assert!((radius - (200.0 / std::f32::consts::PI).sqrt()).abs() < 1.0e-4);
-        assert!(view.capped_cone_visible([0.0, 0.0, -10.0], [0.0, 0.0, -1.0], outer_cos, 2.0,));
-        assert!(!view.capped_cone_visible([50.0, 0.0, -10.0], [0.0, 0.0, -1.0], outer_cos, 2.0,));
+        assert!(view.capped_cone_visible([0.0, 0.0, 10.0], [0.0, 0.0, 1.0], outer_cos, 2.0,));
+        assert!(!view.capped_cone_visible([50.0, 0.0, 10.0], [0.0, 0.0, 1.0], outer_cos, 2.0,));
     }
 }

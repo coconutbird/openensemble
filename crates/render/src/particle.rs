@@ -555,14 +555,21 @@ impl ParticleScene {
     }
 
     /// Derives the retail reciprocal eye-depth reconstruction coefficients
-    /// from a right-handed perspective projection matrix.
+    /// from a perspective projection matrix.
+    ///
+    /// With clip w = `z_axis.w` × view z, the eye distance e satisfies
+    /// 1 / e = depth / `w_axis.z` − `z_axis.z` × `z_axis.w` / `w_axis.z`. The left-handed
+    /// projections of retail (`XMMatrixPerspectiveOffCenterLH`) have `z_axis.w` = 1.
     #[must_use]
     pub fn perspective_depth_unproject(projection: Mat4) -> [f32; 2] {
         let depth_offset = projection.w_axis.z;
         if !depth_offset.is_finite() || depth_offset.abs() <= f32::EPSILON {
             return [0.0, 0.0];
         }
-        [depth_offset.recip(), projection.z_axis.z / depth_offset]
+        [
+            depth_offset.recip(),
+            -projection.z_axis.z * projection.z_axis.w / depth_offset,
+        ]
     }
 }
 

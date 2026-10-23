@@ -313,10 +313,12 @@ pub(super) fn create_gpu_pipeline(
             })],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
         }),
+        // Up-facing terrain triangles are clockwise on screen under the left-handed camera,
+        // like retail's default `D3DCULL_CCW` front face.
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
             strip_index_format: None,
-            front_face: wgpu::FrontFace::Ccw,
+            front_face: wgpu::FrontFace::Cw,
             cull_mode: Some(wgpu::Face::Back),
             unclipped_depth: false,
             polygon_mode: wgpu::PolygonMode::Fill,

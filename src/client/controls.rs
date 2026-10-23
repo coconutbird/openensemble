@@ -105,9 +105,10 @@ impl CameraControls {
 
 /// Returns the rotate input of one frame. A positive value turns the view to the right.
 ///
-/// Retail adds the input to the yaw, which turns the view to the left, so the sign is the
-/// opposite of the retail input. Retail takes the `Pan` input of the last mouse event of the
-/// frame; the client uses the cursor move of the whole frame.
+/// Retail adds the input to the yaw, and `PanLeft` (Insert) gives +0.5. The client turns the
+/// view to the left for Insert, so the sign is the opposite of the retail input. Retail takes
+/// the `Pan` input of the last mouse event of the frame; the client uses the cursor move of the
+/// whole frame.
 fn rotate_input(input: &Input, alt: bool, mouse_dx: f32, window_width: f32) -> f32 {
     let keys = PAN_KEY_INPUT * axis(input, KeyCode::Delete, KeyCode::Insert);
     if keys != 0.0 {

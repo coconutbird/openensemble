@@ -43,13 +43,13 @@ impl CameraInput for Camera {
             }
         }
 
-        // Keyboard look (arrow keys)
+        // Keyboard look (arrow keys). The view is left-handed, so a smaller yaw turns right.
         if state.camera_controls.yaw {
             if input.is_key_held(KeyCode::Left) {
-                self.yaw -= 1.5 * dt;
+                self.yaw += 1.5 * dt;
             }
             if input.is_key_held(KeyCode::Right) {
-                self.yaw += 1.5 * dt;
+                self.yaw -= 1.5 * dt;
             }
         }
         if state.camera_controls.zoom {
@@ -82,7 +82,7 @@ impl CameraInput for Camera {
             let look_sensitivity = 2.0;
 
             if state.camera_controls.yaw && look_x.abs() > 0.0 {
-                self.yaw += look_x * look_sensitivity * dt;
+                self.yaw -= look_x * look_sensitivity * dt;
             }
             if state.camera_controls.zoom && look_y.abs() > 0.0 {
                 // Up on stick = look up (increase pitch)

@@ -273,14 +273,14 @@ fn top_down_camera_for_bounds(
     let clearance = (terrain_size.y + 64.0).max(64.0);
     let position = Vec3::new(center.x, mesh.world_max[1] + clearance, center.y);
     let target = Vec3::new(center.x, mesh.center().y, center.y);
-    // -Z points toward the top of the image, making +X screen-right and +Z
-    // screen-down. This matches the terrain texture coordinate convention. The
-    // retail minimap shows +X right and +Z up, so it is the vertical mirror of
-    // this capture while the renderer uses right-handed camera matrices.
-    let view = Mat4::look_at_rh(position, target, Vec3::NEG_Z);
+    // The left-handed view looks down with +Z toward the top of the image, so +X is
+    // screen-right (retail `BCamera_calcCameraRight`: right = up × dir). This is the
+    // orientation of the retail minimap. The world-map references beside the capture are
+    // written in the same orientation (see `write_world_map_png`).
+    let view = Mat4::look_at_lh(position, target, Vec3::Z);
     let far = (position.y - mesh.world_min[1] + clearance).max(1.0);
     let projection =
-        Mat4::orthographic_rh(-half_width, half_width, -half_height, half_height, 0.1, far);
+        Mat4::orthographic_lh(-half_width, half_width, -half_height, half_height, 0.1, far);
     let foliage_fade_start = Vec3::new(terrain_size.x, far, terrain_size.z).length();
 
     ValidationCamera {
@@ -443,9 +443,9 @@ pub fn foliage_camera(
     let tile_scale = raw.tile_scale.abs().max(0.25);
     let target = terrain_focus + Vec3::Y * (2.5 * tile_scale);
     let position = target + Vec3::new(18.0, 13.0, 18.0) * tile_scale;
-    let view = Mat4::look_at_rh(position, target, Vec3::Y);
+    let view = Mat4::look_at_lh(position, target, Vec3::Y);
     let aspect = viewport_size.0.to_f32()? / viewport_size.1.to_f32()?;
-    let projection = Mat4::perspective_rh(40.0_f32.to_radians(), aspect, 0.1, 4096.0);
+    let projection = Mat4::perspective_lh(40.0_f32.to_radians(), aspect, 0.1, 4096.0);
     Some(ValidationCamera {
         view_projection: projection * view,
         world_to_view: view,
@@ -455,11 +455,18 @@ pub fn foliage_camera(
     })
 }
 
-/// Writes the XTT's decoded precomposited albedo beside a GPU capture.
+/// Writes the XTT's decoded precomposited albedo atlas beside a GPU capture.
+///
+/// The atlas keeps its texture rows: a row goes along +Z and the rows follow +X.
 pub fn write_xtt_reference(config: &CaptureConfig, albedo: &AlbedoData) -> Result<PathBuf> {
     let path = config.xtt_reference_path();
     write_rgba_png(&path, albedo.width, albedo.height, &albedo.pixels)?;
     Ok(path)
+}
+
+/// Byte offset of the albedo atlas texel in atlas row `x` and atlas column `z`.
+fn albedo_texel_offset(albedo: &AlbedoData, x: u32, z: u32) -> Result<usize> {
+    usize::try_from((x * albedo.width + z) * 4).context("albedo reference offset overflow")
 }
 
 fn capture_grid_bounds(config: &CaptureConfig, raw: &RawXtdData) -> (Vec2, Vec2) {
@@ -522,7 +529,7 @@ pub fn write_packed_height_reference(config: &CaptureConfig, raw: &RawXtdData) -
     }
 
     let path = config.packed_height_path();
-    write_rgba_png(&path, size, size, &pixels)?;
+    write_world_map_png(&path, size, size, &pixels)?;
     Ok(path)
 }
 
@@ -573,7 +580,7 @@ pub fn write_tessellation_reference(
     }
 
     let path = config.tessellation_path();
-    write_rgba_png(&path, size, size, &pixels)?;
+    write_world_map_png(&path, size, size, &pixels)?;
     Ok(Some(path))
 }
 
@@ -621,11 +628,10 @@ pub fn write_foliage_placement_reference(
         .context("placement map dimensions do not fit memory")?;
     let mut pixels = vec![0_u8; texel_count * 4];
     for y in 0..size {
-        let source_y = y * albedo.height / size;
+        let source_z = y * albedo.width / size;
         for x in 0..size {
-            let source_x = x * albedo.width / size;
-            let source = usize::try_from((source_y * albedo.width + source_x) * 4)
-                .context("albedo reference offset overflow")?;
+            let source_x = x * albedo.height / size;
+            let source = albedo_texel_offset(albedo, source_x, source_z)?;
             let destination = usize::try_from((y * size + x) * 4)
                 .context("placement reference offset overflow")?;
             pixels[destination] = albedo.pixels[source] / 3;
@@ -674,7 +680,7 @@ pub fn write_foliage_placement_reference(
     }
 
     let path = config.foliage_placement_path();
-    write_rgba_png(&path, size, size, &pixels)?;
+    write_world_map_png(&path, size, size, &pixels)?;
     Ok(path)
 }
 
@@ -864,6 +870,25 @@ fn write_rgba_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<(
         .write_image_data(rgba)
         .context("failed to write PNG pixels")?;
     Ok(())
+}
+
+/// Writes a world map whose rows go along +Z, with the last row at the top.
+///
+/// The top-down capture shows +X right and +Z up like the retail minimap, so the map rows
+/// are written in reverse order to give the same orientation.
+fn write_world_map_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<()> {
+    let row_bytes = usize::try_from(width)
+        .ok()
+        .and_then(|width| width.checked_mul(4))
+        .filter(|&row_bytes| row_bytes > 0)
+        .context("world map row size does not fit memory")?;
+    let flipped = rgba
+        .chunks_exact(row_bytes)
+        .rev()
+        .flatten()
+        .copied()
+        .collect::<Vec<_>>();
+    write_rgba_png(path, width, height, &flipped)
 }
 
 #[cfg(test)]

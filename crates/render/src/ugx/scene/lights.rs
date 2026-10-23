@@ -551,15 +551,15 @@ mod tests {
 
     #[test]
     fn projected_light_fade_keeps_the_retail_byte_quantization() {
-        let projection = Mat4::orthographic_rh(-10.0, 10.0, -10.0, 10.0, 0.1, 100.0);
+        let projection = Mat4::orthographic_lh(-10.0, 10.0, -10.0, 10.0, 0.1, 100.0);
         let view = LocalLightView::new(projection, Mat4::IDENTITY, Vec3::ZERO, [200, 100]);
-        let light = LocalLight::omni([0.0, 0.0, -10.0], [1.0; 3], 2.0);
+        let light = LocalLight::omni([0.0, 0.0, 10.0], [1.0; 3], 2.0);
         let faded = screen_faded_light(light, view).expect("twenty-pixel light remains visible");
         let expected = 85.0 / 255.0;
         assert!((faded.light.color[0] - expected).abs() < 1.0e-6);
         assert!((faded.screen_radius - 20.0).abs() < 1.0e-4);
 
-        let tiny = LocalLight::omni([0.0, 0.0, -10.0], [1.0; 3], 0.5);
+        let tiny = LocalLight::omni([0.0, 0.0, 10.0], [1.0; 3], 0.5);
         assert!(screen_faded_light(tiny, view).is_none());
     }
 }

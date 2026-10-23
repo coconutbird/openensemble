@@ -204,8 +204,8 @@ mod tests {
 
     fn perspective_camera() -> WorldCamera {
         let position = Vec3::new(10.0, 50.0, 30.0);
-        let world_to_view = Mat4::look_at_rh(position, Vec3::new(10.0, 0.0, 0.0), Vec3::Y);
-        let projection = Mat4::perspective_rh(1.0, 1.5, 0.5, 2_000.0);
+        let world_to_view = Mat4::look_at_lh(position, Vec3::new(10.0, 0.0, 0.0), Vec3::Y);
+        let projection = Mat4::perspective_lh(1.0, 1.5, 0.5, 2_000.0);
         WorldCamera {
             view_projection: projection * world_to_view,
             world_to_view,

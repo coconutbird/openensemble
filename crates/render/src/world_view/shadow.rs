@@ -254,7 +254,7 @@ fn create_shadow_pipeline(
         }),
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
-            front_face: wgpu::FrontFace::Ccw,
+            front_face: wgpu::FrontFace::Cw,
             cull_mode: None,
             ..Default::default()
         },
@@ -303,7 +303,7 @@ fn create_local_shadow_pipeline(
         }),
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
-            front_face: wgpu::FrontFace::Ccw,
+            front_face: wgpu::FrontFace::Cw,
             cull_mode: None,
             ..Default::default()
         },
@@ -437,7 +437,8 @@ impl ShadowResources {
         let light_dir = light_dir.normalize();
         let light_distance = terrain_size.length();
         let light_pos = terrain_center + light_dir * light_distance;
-        let view = Mat4::look_at_rh(light_pos, terrain_center, Vec3::Y);
+        // Left-handed like every retail view (`BMatrix_makeView`, `0x140109450`).
+        let view = Mat4::look_at_lh(light_pos, terrain_center, Vec3::Y);
         let half = terrain_size * 0.5;
         let corners = [
             terrain_center + Vec3::new(-half.x, -half.y, -half.z),
@@ -461,7 +462,7 @@ impl ShadowResources {
         min_ls -= padding;
         max_ls += padding;
         let projection =
-            Mat4::orthographic_rh(min_ls.x, max_ls.x, min_ls.y, max_ls.y, -max_ls.z, -min_ls.z);
+            Mat4::orthographic_lh(min_ls.x, max_ls.x, min_ls.y, max_ls.y, min_ls.z, max_ls.z);
         self.base_light_vp = projection * view;
 
         for (light_vp, &scale) in self.light_vps.iter_mut().zip(&SHADOW_CASCADE_SCALES) {

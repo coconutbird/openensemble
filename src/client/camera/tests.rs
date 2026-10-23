@@ -97,7 +97,7 @@ fn a_positive_rotation_turns_the_view_to_the_right() {
     assert_vec_near(rts.forward(), right);
 
     rts.rotate(1.0, false, 0.5);
-    assert_near(rts.yaw_degrees, (317.2_f32 - 90.0 - 80.0).rem_euclid(360.0));
+    assert_near(rts.yaw_degrees, (317.2_f32 + 90.0 + 80.0).rem_euclid(360.0));
 }
 
 #[test]

@@ -22,7 +22,7 @@ mod visibility;
 mod tests;
 
 use pipelines::{
-    create_distortion_pipelines, create_fade_pipelines, create_local_shadow_pipelines,
+    create_distortion_pipelines, create_fade_pipelines, create_local_shadow_pipeline,
     create_material_layout, create_pipelines, create_scene_layout, create_shadow_layout,
     create_shadow_pipelines, create_sky_pipelines, pipeline_index,
 };
@@ -222,7 +222,7 @@ pub(super) struct SharedResources {
     sky_pipelines: Vec<wgpu::RenderPipeline>,
     distortion_pipelines: [wgpu::RenderPipeline; 2],
     shadow_pipelines: Vec<wgpu::RenderPipeline>,
-    local_shadow_pipelines: [wgpu::RenderPipeline; 2],
+    local_shadow_pipeline: wgpu::RenderPipeline,
     local_shadow_stride: u32,
 }
 
@@ -503,7 +503,7 @@ impl SharedResources {
             create_distortion_pipelines(device, &shader, &scene_layout, &material_layout);
         let shadow_pipelines =
             create_shadow_pipelines(device, &shader, &scene_layout, &material_layout);
-        let local_shadow_pipelines = create_local_shadow_pipelines(
+        let local_shadow_pipeline = create_local_shadow_pipeline(
             device,
             &local_shadow_shader,
             &scene_layout,
@@ -529,7 +529,7 @@ impl SharedResources {
             sky_pipelines,
             distortion_pipelines,
             shadow_pipelines,
-            local_shadow_pipelines,
+            local_shadow_pipeline,
             local_shadow_stride,
         }
     }

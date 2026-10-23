@@ -118,26 +118,14 @@ pub(super) fn create_shadow_layout(device: &wgpu::Device) -> wgpu::BindGroupLayo
     })
 }
 
-pub(super) fn create_local_shadow_pipelines(
+/// Builds the local shadow pipeline. Retail shadow passes draw both faces of every section
+/// (`D3DCULL_NONE` in `localShadowManager.cpp`), so one pipeline serves every material.
+pub(super) fn create_local_shadow_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     scene_layout: &wgpu::BindGroupLayout,
     material_layout: &wgpu::BindGroupLayout,
     shadow_layout: &wgpu::BindGroupLayout,
-) -> [wgpu::RenderPipeline; 2] {
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("UGX Local Shadow Pipeline Layout"),
-        bind_group_layouts: &[scene_layout, material_layout, shadow_layout],
-        push_constant_ranges: &[],
-    });
-    [false, true].map(|two_sided| create_local_shadow_pipeline(device, shader, &layout, two_sided))
-}
-
-fn create_local_shadow_pipeline(
-    device: &wgpu::Device,
-    shader: &wgpu::ShaderModule,
-    layout: &wgpu::PipelineLayout,
-    two_sided: bool,
 ) -> wgpu::RenderPipeline {
     const ATTRIBUTES: [wgpu::VertexAttribute; 10] = wgpu::vertex_attr_array![
         0 => Float32x3,
@@ -151,9 +139,14 @@ fn create_local_shadow_pipeline(
         8 => Uint32x4,
         9 => Float32x4
     ];
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("UGX Local Shadow Pipeline Layout"),
+        bind_group_layouts: &[scene_layout, material_layout, shadow_layout],
+        push_constant_ranges: &[],
+    });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("UGX Local Shadow Pipeline"),
-        layout: Some(layout),
+        layout: Some(&layout),
         vertex: wgpu::VertexState {
             module: shader,
             entry_point: Some("vs_main"),
@@ -173,8 +166,8 @@ fn create_local_shadow_pipeline(
         }),
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: (!two_sided).then_some(wgpu::Face::Back),
+            front_face: wgpu::FrontFace::Cw,
+            cull_mode: None,
             ..Default::default()
         },
         depth_stencil: Some(wgpu::DepthStencilState {
@@ -305,6 +298,8 @@ pub(super) fn create_distortion_pipelines(
         .map(|two_sided| create_distortion_pipeline(device, shader, &pipeline_layout, two_sided))
 }
 
+/// Builds one directional shadow pipeline for each cascade. Retail shadow passes draw both
+/// faces of every section (`D3DCULL_NONE` in `dirShadowManager.cpp`).
 pub(super) fn create_shadow_pipelines(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
@@ -318,10 +313,8 @@ pub(super) fn create_shadow_pipelines(
     });
     DIRECTIONAL_SHADOW_CASCADE_SCALES
         .into_iter()
-        .flat_map(|cascade_scale| {
-            [false, true].map(|two_sided| {
-                create_shadow_pipeline(device, shader, &pipeline_layout, cascade_scale, two_sided)
-            })
+        .map(|cascade_scale| {
+            create_shadow_pipeline(device, shader, &pipeline_layout, cascade_scale)
         })
         .collect()
 }
@@ -331,7 +324,6 @@ fn create_shadow_pipeline(
     shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
     cascade_scale: f32,
-    two_sided: bool,
 ) -> wgpu::RenderPipeline {
     const ATTRIBUTES: [wgpu::VertexAttribute; 10] = wgpu::vertex_attr_array![
         0 => Float32x3,
@@ -375,8 +367,8 @@ fn create_shadow_pipeline(
         }),
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: (!two_sided).then_some(wgpu::Face::Back),
+            front_face: wgpu::FrontFace::Cw,
+            cull_mode: None,
             ..Default::default()
         },
         depth_stencil: Some(wgpu::DepthStencilState {
@@ -444,7 +436,7 @@ fn create_distortion_pipeline(
         }),
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
-            front_face: wgpu::FrontFace::Ccw,
+            front_face: wgpu::FrontFace::Cw,
             cull_mode: (!two_sided).then_some(wgpu::Face::Back),
             ..Default::default()
         },
@@ -561,9 +553,11 @@ fn create_material_pipeline(
             })],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
         }),
+        // Retail's default state is `D3DCULL_CCW` (`renderDraw.cpp`), so clockwise triangles
+        // face the left-handed camera.
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
-            front_face: wgpu::FrontFace::Ccw,
+            front_face: wgpu::FrontFace::Cw,
             cull_mode: (!two_sided).then_some(wgpu::Face::Back),
             ..Default::default()
         },

@@ -103,8 +103,10 @@ impl RtsCamera {
     }
 
     /// Returns the horizontal direction to the right of the view.
+    ///
+    /// This is up × forward like retail `BCamera_calcCameraRight` (`0x140183E50`).
     fn right(&self) -> Vec3 {
-        self.forward().cross(Vec3::Y)
+        Vec3::Y.cross(self.forward())
     }
 
     /// Returns the view direction from the eye to the hover point.
@@ -142,8 +144,9 @@ impl RtsCamera {
 
     /// Turns the view by `degrees`. A positive value turns the view to the right.
     pub(crate) fn rotate_degrees(&mut self, degrees: f32) {
-        // The yaw direction is (sin yaw, 0, cos yaw), so a smaller yaw turns it to the right.
-        self.yaw_degrees = (self.yaw_degrees - degrees).rem_euclid(360.0);
+        // The yaw direction is (sin yaw, 0, cos yaw) in a left-handed world, so a larger yaw
+        // turns it to the right.
+        self.yaw_degrees = (self.yaw_degrees + degrees).rem_euclid(360.0);
     }
 
     /// Changes the zoom at `CameraZoomRate`. A positive `amount` moves the eye nearer.

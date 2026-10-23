@@ -74,28 +74,37 @@ impl Camera {
     }
 
     /// Get the right direction vector.
+    ///
+    /// Retail `BCamera_calcCameraRight` (`0x140183E50`) computes up × dir, which is the
+    /// right of a left-handed basis: dir +Z with up +Y gives right +X.
     #[must_use]
     pub fn right(&self) -> Vec3 {
-        self.forward().cross(Vec3::Y).normalize()
+        Vec3::Y.cross(self.forward()).normalize()
     }
 
     /// Get the up direction vector.
     #[must_use]
     pub fn up(&self) -> Vec3 {
-        self.right().cross(self.forward()).normalize()
+        self.forward().cross(self.right()).normalize()
     }
 
     /// Get the view matrix.
+    ///
+    /// The view is left-handed like retail `BMatrix_makeView` (`0x140109450`): view +Z is the
+    /// camera direction and view +X is [`Self::right`].
     #[must_use]
     pub fn view_matrix(&self) -> Mat4 {
         let eye = self.position + self.shake_offset;
-        Mat4::look_at_rh(eye, eye + self.forward(), Vec3::Y)
+        Mat4::look_at_lh(eye, eye + self.forward(), Vec3::Y)
     }
 
     /// Get the projection matrix for the given aspect ratio.
+    ///
+    /// The projection is left-handed like retail `XMMatrixPerspectiveOffCenterLH`
+    /// (`0x1406E2200`): clip w is view +Z and depth runs from 0 at `near` to 1 at `far`.
     #[must_use]
     pub fn projection_matrix(&self, aspect: f32) -> Mat4 {
-        Mat4::perspective_rh(self.fov, aspect, self.near, self.far)
+        Mat4::perspective_lh(self.fov, aspect, self.near, self.far)
     }
 
     /// Get the combined view-projection matrix.
@@ -119,9 +128,10 @@ impl Camera {
         self.position += Vec3::Y * amount;
     }
 
-    /// Rotate the camera by mouse delta.
+    /// Rotate the camera by mouse delta. A positive `delta_x` turns the view to the right.
     pub fn rotate(&mut self, delta_x: f32, delta_y: f32) {
-        self.yaw += delta_x * self.sensitivity;
+        // Forward is (cos yaw, sin yaw) in XZ, so a smaller yaw turns the left-handed view right.
+        self.yaw -= delta_x * self.sensitivity;
         self.pitch -= delta_y * self.sensitivity;
         // Clamp pitch to avoid gimbal lock
         self.pitch = self.pitch.clamp(-1.5, 1.5);
