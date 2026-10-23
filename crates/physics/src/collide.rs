@@ -7,9 +7,14 @@
 //! 2. Find the overlapping pairs. Remove the agent and the manifold of each pair that stopped
 //!    overlapping.
 //! 3. Make an agent and an empty manifold for each new pair, unless both bodies are fixed or
-//!    the group filter disables the pair.
-//! 4. Run the agent of each pair that has at least one active body. The manifolds of sleeping
-//!    pairs stay as they are.
+//!    the group filter disables the pair. New manifolds get their ids in `(BodyId, BodyId)`
+//!    pair order.
+//! 4. Run the agent of each pair that has at least one active body, in manifold order. The
+//!    manifolds of sleeping pairs stay as they are.
+//!
+//! The bodies of a manifold are in the order of its agent: body A is the lower id, unless
+//! retail registers the agent for the other order of the two shape types. For example, a convex
+//! body against the terrain is always body A of its manifold.
 //!
 //! The terrain heightfield keeps the height range that it had when it was inserted, like the
 //! retail shape that computes its range once (`0x140874E70`).
@@ -223,11 +228,7 @@ impl CollisionWorld {
             .collect();
         let overlaps = broadphase::overlapping_pairs(&boxes);
         self.retain_pairs(|a, b| overlaps.binary_search(&(a, b)).is_ok());
-        let mut existing: Vec<(BodyId, BodyId)> = self
-            .manifolds
-            .iter()
-            .map(|manifold| (manifold.body_a, manifold.body_b))
-            .collect();
+        let mut existing: Vec<(BodyId, BodyId)> = self.manifolds.iter().map(pair_key).collect();
         existing.sort_unstable();
         for &(a, b) in &overlaps {
             if existing.binary_search(&(a, b)).is_err() && self.is_pair_enabled(a, b) {
@@ -334,10 +335,14 @@ impl CollisionWorld {
         else {
             return;
         };
-        let agent = Agent::new(&collidable_a.shape, &collidable_b.shape);
+        // A pair that retail registers in the other order swaps the bodies (`0x1408928D0`).
+        let (agent, body_a, body_b) = match Agent::new(&collidable_a.shape, &collidable_b.shape) {
+            Agent::Symmetric(inner) => (*inner, b, a),
+            agent => (agent, a, b),
+        };
         let id = ManifoldId::from_raw(self.next_manifold);
         self.next_manifold += 1;
-        self.manifolds.push(Manifold::new(id, a, b));
+        self.manifolds.push(Manifold::new(id, body_a, body_b));
         self.pairs.push(Pair { agent, next_key: 0 });
     }
 
@@ -354,12 +359,15 @@ impl CollisionWorld {
         self.retain_flagged(&kept);
     }
 
-    /// Keeps only the pairs for which `keep(body_a, body_b)` is `true`.
+    /// Keeps only the pairs for which `keep(lower id, higher id)` is `true`.
     fn retain_pairs(&mut self, keep: impl Fn(BodyId, BodyId) -> bool) {
         let kept: Vec<bool> = self
             .manifolds
             .iter()
-            .map(|manifold| keep(manifold.body_a, manifold.body_b))
+            .map(|manifold| {
+                let (a, b) = pair_key(manifold);
+                keep(a, b)
+            })
             .collect();
         self.retain_flagged(&kept);
     }
@@ -371,5 +379,14 @@ impl CollisionWorld {
             .retain(|_| flags.next().copied().unwrap_or(true));
         let mut flags = kept.iter();
         self.pairs.retain(|_| flags.next().copied().unwrap_or(true));
+    }
+}
+
+/// Returns the bodies of a manifold as `(lower id, higher id)`.
+fn pair_key(manifold: &Manifold) -> (BodyId, BodyId) {
+    if manifold.body_a < manifold.body_b {
+        (manifold.body_a, manifold.body_b)
+    } else {
+        (manifold.body_b, manifold.body_a)
     }
 }

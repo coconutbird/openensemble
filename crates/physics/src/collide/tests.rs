@@ -61,11 +61,12 @@ fn unit_box() -> Arc<Shape> {
     })
 }
 
+/// Returns the manifold of two bodies in either order.
 fn manifold_of(world: &CollisionWorld, a: BodyId, b: BodyId) -> Option<&Manifold> {
-    world
-        .manifolds()
-        .iter()
-        .find(|manifold| manifold.body_a == a && manifold.body_b == b)
+    world.manifolds().iter().find(|manifold| {
+        (manifold.body_a == a && manifold.body_b == b)
+            || (manifold.body_a == b && manifold.body_b == a)
+    })
 }
 
 #[test]
@@ -81,8 +82,10 @@ fn a_box_at_rest_on_the_terrain_touches_with_its_corner_spheres() {
     let manifold = manifold_of(&world, TERRAIN, body).expect("terrain manifold");
     assert_eq!(manifold.points.len(), 4);
     for point in &manifold.points {
-        // The terrain is body A, so the normal points down toward the terrain.
-        assert!((point.contact.normal - Vec3::NEG_Y).length() < 1e-6);
+        // The heightfield agent takes the convex body as body A, so the normal points up from
+        // the terrain toward the box.
+        assert_eq!(manifold.body_a, body);
+        assert!((point.contact.normal - Vec3::Y).length() < 1e-6);
         assert!(
             point.contact.distance.abs() < 1e-5,
             "{}",

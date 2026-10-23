@@ -1,15 +1,22 @@
 //! The collision agents of a body pair and the dispatch from shape types to agents.
 //!
 //! Retail registers the Havok 5.1 agents in `hkpAgentRegisterUtil::registerAllAgents`
-//! (`0x140D94750`). Each pair of shape types gets one agent:
+//! (`0x140D94750`). The discrete world selects the agent of a pair through the agent3 table
+//! (`hkAgentNnMachine_getAgentType`, `0x1408A34C0`). Each pair of shape types gets one agent:
 //!
+//! - a transform of a shape that is not convex, against any shape: the transform agent
+//!   (`hkpTransformAgent`, registered last, so it wins against a list);
+//! - a list shape against any other shape: one child agent for each child (`hkpListAgent`);
 //! - a heightfield against a convex shape: the heightfield agent with the collision spheres;
-//! - a list shape against any shape: one child agent for each child (`hkpListAgent`);
-//! - a transform of a shape that is not convex: the transform agent (`hkpTransformAgent`);
 //! - two convex shapes: [`dispatch::convex_pair`] (box–box, the primitive agents or GSK).
 //!
-//! A pair in the other order runs the same agent with the bodies swapped
-//! (`hkpSymmetricAgent`).
+//! Retail registers some pairs in one order only. For the other order, the world swaps the two
+//! bodies when it creates the agent (`0x1408928D0`), so the manifold takes the agent order.
+//! Inside a list or a transform the bodies cannot swap; there the agent runs with the bodies
+//! swapped and its points are turned back (`hkpSymmetricAgent`).
+//!
+//! Two lists use `hkpCollectionCollectionAgent3` in retail, which expands both lists. This
+//! crate expands the list of body A first; the same child pairs meet.
 
 use crate::collide::box_box::BoxBoxAgent;
 use crate::collide::dispatch;
@@ -111,14 +118,14 @@ impl Agent {
     pub(crate) fn new(a: &Shape, b: &Shape) -> Self {
         match (a, b) {
             (Shape::HeightField(_), Shape::HeightField(_)) => Self::Null,
-            (Shape::List { children }, _) => {
-                Self::List(children.iter().map(|child| Self::new(child, b)).collect())
-            }
-            (Shape::HeightField(_), _) | (_, Shape::List { .. }) => Self::symmetric(a, b),
             (Shape::Transform { child, .. }, _) if !child.is_convex() => {
                 Self::Transform(Box::new(Self::new(child, b)))
             }
             (_, Shape::Transform { child, .. }) if !child.is_convex() => Self::symmetric(a, b),
+            (Shape::List { children }, _) => {
+                Self::List(children.iter().map(|child| Self::new(child, b)).collect())
+            }
+            (Shape::HeightField(_), _) | (_, Shape::List { .. }) => Self::symmetric(a, b),
             (_, Shape::HeightField(_)) if a.is_convex() => {
                 Self::HeightField(HeightFieldAgent::new(a))
             }
