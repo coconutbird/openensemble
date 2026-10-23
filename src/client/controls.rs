@@ -103,19 +103,19 @@ impl CameraControls {
     }
 }
 
-/// Returns the rotate input of one frame. A positive value turns the view to the right.
+/// Returns the rotate input of one frame, like `BUser_handleInput`. The camera adds it to the
+/// yaw, so a positive value turns the view to the right.
 ///
-/// Retail adds the input to the yaw, and `PanLeft` (Insert) gives +0.5. The client turns the
-/// view to the left for Insert, so the sign is the opposite of the retail input. Retail takes
-/// the `Pan` input of the last mouse event of the frame; the client uses the cursor move of the
-/// whole frame.
+/// `PanLeft` (Insert) gives +0.5 and `PanRight` (Delete) gives -0.5. `Pan` gives
+/// `0.2 * (1920 / window width) * dx`. Retail takes the `Pan` input of the last mouse event of
+/// the frame; the client uses the cursor move of the whole frame.
 fn rotate_input(input: &Input, alt: bool, mouse_dx: f32, window_width: f32) -> f32 {
-    let keys = PAN_KEY_INPUT * axis(input, KeyCode::Delete, KeyCode::Insert);
+    let keys = PAN_KEY_INPUT * axis(input, KeyCode::Insert, KeyCode::Delete);
     if keys != 0.0 {
         return keys;
     }
     if alt && window_width > 0.0 {
-        -PAN_MOUSE_INPUT_PER_PIXEL * (PAN_MOUSE_REFERENCE_WIDTH / window_width) * mouse_dx
+        PAN_MOUSE_INPUT_PER_PIXEL * (PAN_MOUSE_REFERENCE_WIDTH / window_width) * mouse_dx
     } else {
         0.0
     }
@@ -202,17 +202,17 @@ mod tests {
     #[test]
     fn insert_and_delete_turn_at_half_input_and_alt_mouse_scales_with_the_width() {
         let close = |a: f32, b: f32| (a - b).abs() < 1e-5;
-        // PanLeft (+0.5 retail yaw input) turns to the left: -0.5 in the client sign.
+        // PanLeft (Insert) is the retail yaw input +0.5, PanRight (Delete) is -0.5.
         assert!(close(
             rotate_input(&keys(&[KeyCode::Insert]), false, 0.0, 1920.0),
-            -0.5
+            0.5
         ));
         assert!(close(
             rotate_input(&keys(&[KeyCode::Delete]), false, 0.0, 1920.0),
-            0.5
+            -0.5
         ));
-        // Pan: 0.2 * (1920 / 960) * 10 pixels = 4, opposite sign.
-        assert!(close(rotate_input(&keys(&[]), true, 10.0, 960.0), -4.0));
+        // Pan: 0.2 * (1920 / 960) * 10 pixels = 4.
+        assert!(close(rotate_input(&keys(&[]), true, 10.0, 960.0), 4.0));
         assert!(close(rotate_input(&keys(&[]), false, 10.0, 960.0), 0.0));
     }
 
