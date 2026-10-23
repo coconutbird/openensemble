@@ -410,6 +410,11 @@ pub struct BuildingProduction {
     trained_squads: Vec<TrainedSquadBirth>,
     trained_squad_birth_time: f32,
     pub(crate) air_traffic_control: Option<AirTrafficControl>,
+    /// `BUnitActionBuilding` state 9 (Fading): the building recycles itself on its next update
+    /// (`BUnitActionBuilding_doSelfDestruct` @ `0x1404F9780` sets the destruct time to 0).
+    pub(crate) self_destructing: bool,
+    /// Player of the `TrainLock` entity reference (`BUnit_setTrainLock` @ `0x1404D12E0`).
+    pub(crate) train_lock_player: Option<PlayerId>,
 }
 
 impl BuildingProduction {
@@ -513,7 +518,10 @@ impl BuildingProduction {
     }
 
     pub(crate) fn needs_update(&self) -> bool {
-        !self.is_idle() || !self.recharges.is_empty() || self.has_trained_squad_birth_work()
+        !self.is_idle()
+            || !self.recharges.is_empty()
+            || self.has_trained_squad_birth_work()
+            || self.self_destructing
     }
 
     pub(crate) fn set_training_recharge(
@@ -731,6 +739,8 @@ impl BuildingProduction {
         if let Some(control) = &self.air_traffic_control {
             control.hash_state(checksum);
         }
+        checksum.hash_u32(u32::from(self.self_destructing));
+        checksum.hash_u32(self.train_lock_player.map_or(u32::MAX, u32::from));
     }
 
     pub(crate) fn tasks(&self) -> impl Iterator<Item = &ProductionTask> {

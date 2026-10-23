@@ -6,11 +6,11 @@ use crate::command::EntityType;
 use crate::command_queue::CommandEntry;
 use crate::commands::CommandPayload;
 use crate::commands::{
-    BuildingCommand, BuildingCommandType, GameCommand, GameCommandType, PowerCommand,
-    PowerCommandType, PowerInputCommand, PowerInputCommandType, PowerUserId, WorkCommand,
-    power_command_flags, power_input_command_flags,
+    GameCommand, GameCommandType, PowerCommand, PowerCommandType, PowerInputCommand,
+    PowerInputCommandType, PowerUserId, WorkCommand, power_command_flags,
+    power_input_command_flags,
 };
-use crate::entities::{RecoveryType, SquadMode, TrainingKind};
+use crate::entities::{RecoveryType, SquadMode};
 use crate::gameplay::{GameplayCatalog, resolve_database_ability};
 use crate::order::OrderType;
 use crate::player::PowerGrant;
@@ -18,6 +18,7 @@ use crate::spawn::{MAX_SPAWN_BATCH, spawn_object_at, spawn_squads_at};
 use crate::world::{NativePowerInvocation, World};
 use pipeline::database::hw1::Database;
 
+mod building;
 mod change_mode;
 mod detonate;
 mod jump;
@@ -27,6 +28,8 @@ mod target_orders;
 mod user_work;
 mod work_orders;
 
+#[cfg(test)]
+mod building_tests;
 #[cfg(test)]
 mod recipient_tests;
 #[cfg(test)]
@@ -319,108 +322,6 @@ impl<'database> CommandExecutor<'database> {
             world.submit_native_power_input(database, cmd.power_user_id, input, no_cost);
     }
 
-    /// Execute supported building production commands.
-    ///
-    /// Building commands have unit recipients, so only the units that pass the
-    /// `BCommand_processUnits` @ `0x140194560` gate get the command.
-    fn execute_building(&self, world: &mut World, cmd: &BuildingCommand) {
-        let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
-            return;
-        };
-        let recipients = command_unit_recipients(world, player_id, &cmd.base.recipients);
-        if cmd.building_type == BuildingCommandType::ClearRallyPoint {
-            for &building_id in &recipients {
-                let _cleared = world.clear_unit_rally_point(building_id, player_id);
-            }
-            return;
-        }
-        if cmd.building_type == BuildingCommandType::ChangeMode {
-            self.execute_building_change_mode(world, cmd, &recipients);
-            return;
-        }
-        if cmd.count == 0 {
-            return;
-        }
-        for &building_id in &recipients {
-            if cmd.building_type == BuildingCommandType::CustomCommand {
-                if cmd.count > 0 {
-                    let _queued = world.queue_custom_command(player_id, building_id, cmd.target_id);
-                } else {
-                    let _canceled =
-                        world.cancel_custom_command(player_id, building_id, cmd.target_id);
-                }
-                continue;
-            }
-            let Some(database) = self.database else {
-                continue;
-            };
-            match cmd.building_type {
-                BuildingCommandType::Research if cmd.count > 0 => {
-                    let _result =
-                        world.queue_research(player_id, building_id, database, cmd.target_id);
-                }
-                BuildingCommandType::Research => {
-                    let _result =
-                        world.cancel_research(player_id, building_id, database, cmd.target_id);
-                }
-                BuildingCommandType::TrainUnit | BuildingCommandType::TrainSquad => {
-                    let kind = if cmd.building_type == BuildingCommandType::TrainUnit {
-                        TrainingKind::Unit
-                    } else {
-                        TrainingKind::Squad
-                    };
-                    if cmd.count > 0 {
-                        let _result = world.queue_training(
-                            player_id,
-                            building_id,
-                            database,
-                            kind,
-                            cmd.target_id,
-                            cmd.count.cast_unsigned(),
-                        );
-                    } else {
-                        let _result = world.cancel_training(
-                            player_id,
-                            building_id,
-                            database,
-                            kind,
-                            cmd.target_id,
-                            cmd.count.unsigned_abs(),
-                        );
-                    }
-                }
-                BuildingCommandType::Build => {
-                    if cmd.count > 0 {
-                        let _result = world.start_build(
-                            player_id,
-                            building_id,
-                            database,
-                            cmd.target_id,
-                            cmd.target_position,
-                            cmd.socket_id,
-                        );
-                    } else {
-                        let _result = world.cancel_build(player_id, building_id, cmd.target_id);
-                    }
-                }
-                BuildingCommandType::BuildOther => {
-                    if cmd.count > 0 {
-                        let _result = world.queue_build_other(
-                            player_id,
-                            building_id,
-                            database,
-                            cmd.target_id,
-                        );
-                    } else {
-                        let _result =
-                            world.cancel_build_other(player_id, building_id, cmd.target_id);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
     /// Execute a game command.
     fn execute_game(&self, world: &mut World, cmd: &GameCommand) {
         let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
@@ -513,23 +414,6 @@ impl<'database> CommandExecutor<'database> {
     }
 }
 
-/// Keep the recipient units that pass the `BCommand_processUnits` gate, in command order.
-fn command_unit_recipients(
-    world: &World,
-    player_id: u8,
-    recipients: &[crate::EntityId],
-) -> Vec<crate::EntityId> {
-    recipients
-        .iter()
-        .copied()
-        .filter(|&unit_id| {
-            world
-                .get_unit(unit_id)
-                .is_some_and(|unit| world.command_reaches_owner(player_id, unit.base.player_id))
-        })
-        .collect()
-}
-
 fn optional_entity_id(raw: i32) -> Option<crate::EntityId> {
     let entity_id = crate::EntityId::from_u32(raw.cast_unsigned());
     (!entity_id.is_invalid()).then_some(entity_id)
@@ -539,7 +423,7 @@ fn optional_entity_id(raw: i32) -> Option<crate::EntityId> {
 mod tests {
     use super::*;
     use crate::command::Command;
-    use crate::commands::CommandPayload;
+    use crate::commands::{BuildingCommand, BuildingCommandType, CommandPayload};
     use crate::entities::SquadState;
     use crate::order::OrderType;
     use pipeline::database::hw1::Power;

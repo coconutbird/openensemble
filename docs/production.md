@@ -263,7 +263,6 @@ layouts from the scenario-layered database and tactics.
   remain outside the current child-object slice.
 - Shadow technologies that depend only on unit counts are not rechecked when
   unit counts change. See `research.md`.
-- `CommandExecutor::execute_building` ignores the `UnloadUnits`, `Reinforce`,
-  `Ability`, `Kill`, `CancelKill`, `Tribute`, `Power`, `TrainLock`,
-  `TrainUnlock`, `RallyPoint`, `DestroyBase`, `CancelDestroyBase`, and
-  `ReverseHotDrop` building commands. See `simulation-coverage.md`.
+- Building Kill and DestroyBase do not model the construction-paused branch of
+  `BUnitActionBuilding_doSelfDestruct`, and the owner (not the creating player)
+  gets the recycle refund of a finished building. See `simulation-coverage.md`.

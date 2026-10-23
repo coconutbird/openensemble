@@ -19,6 +19,7 @@ mod attachments;
 mod authored_children;
 mod bomb;
 mod bounds;
+mod building_commands;
 mod capture;
 mod change_mode;
 mod charge;

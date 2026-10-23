@@ -83,7 +83,16 @@ impl World {
             .collect::<Vec<_>>();
         let mut completed = Vec::new();
         let mut invalid = Vec::new();
+        let mut recycled = Vec::new();
         for building_id in building_ids {
+            // State 9 (Fading) replaces the work of `BUnitActionBuilding_update`.
+            if self
+                .get_building(building_id)
+                .is_some_and(|building| building.production.self_destructing)
+            {
+                recycled.push(building_id);
+                continue;
+            }
             if let Some(building) = self.get_building_mut(building_id) {
                 building.production.advance_training_recharges(dt);
             }
@@ -111,6 +120,9 @@ impl World {
                 ProductionTick::Invalid(task) => invalid.push((building_id, task)),
                 ProductionTick::None => {}
             }
+        }
+        for building_id in recycled {
+            self.recycle_building(building_id, database);
         }
         for (building_id, task) in invalid {
             let trigger_state = task.trigger_state();

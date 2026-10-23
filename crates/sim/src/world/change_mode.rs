@@ -196,6 +196,26 @@ impl World {
         })
     }
 
+    /// `BSquad_doChangeMode` with an explicit mode and no ability, for the squad owner. Used
+    /// by `BUnit_setTrainLock` (`0x1404D12E0`).
+    pub(super) fn start_explicit_change_mode(
+        &mut self,
+        squad_id: EntityId,
+        mode: SquadMode,
+    ) -> bool {
+        let Some(player_id) = self.squads.get(squad_id).map(|squad| squad.base.player_id) else {
+            return false;
+        };
+        self.start_change_mode(
+            player_id,
+            squad_id,
+            ChangeModeRequest {
+                target_mode: mode,
+                ability_id: None,
+            },
+        )
+    }
+
     fn start_change_mode(
         &mut self,
         player_id: PlayerId,

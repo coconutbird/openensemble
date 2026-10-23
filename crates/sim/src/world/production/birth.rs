@@ -101,7 +101,9 @@ impl World {
         let ready = self
             .get_building_mut(building_id)
             .is_some_and(|building| building.production.advance_trained_squad_birth_time(dt));
-        if !ready {
+        // `BUnitActionBuilding_updateTrainedSquadBirth` @ `0x1404FBDC0` skips every trained
+        // squad while `BUnit_getTrainLock` holds: the squads stay inside the building.
+        if !ready || self.building_train_locked(building_id) {
             return;
         }
         let Some((squad_id, player_id)) = self
