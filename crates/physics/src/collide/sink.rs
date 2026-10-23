@@ -116,16 +116,6 @@ impl<'a> ContactSink<'a> {
             self.manifold.points.remove(index);
         }
     }
-
-    /// Returns the current geometry of a point as the agent sees it, or `None` for an unknown
-    /// key.
-    pub(crate) fn point(&self, key: u32) -> Option<ContactPoint> {
-        self.manifold
-            .points
-            .iter()
-            .find(|point| point.key == key)
-            .map(|point| self.orient(point.contact))
-    }
 }
 
 #[cfg(test)]
@@ -174,7 +164,7 @@ mod tests {
         let mut next_key = 0;
         let mut sink = ContactSink::new(&mut manifold, &mut next_key);
         let key = sink.flipped().add_point(contact(1.0)).expect("room");
-        assert_eq!(sink.flipped().point(key), Some(contact(1.0)));
+        assert_eq!(key, 0);
         let stored = manifold.points[0].contact;
         assert_eq!(stored.position, Vec3::new(0.0, 1.5, 0.0));
         assert_eq!(stored.normal, -Vec3::Y);
