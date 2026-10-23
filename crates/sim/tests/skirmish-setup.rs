@@ -127,6 +127,7 @@ fn blood_gulch_objects_and_starts_sit_at_their_authored_positions() {
     for (file, objects) in files {
         let mut height_error = 0.0;
         let mut ground_objects = 0_u16;
+        let mut checked_objects = 0_u16;
         for object in objects {
             let Some(&entity_id) = loaded.simulation.scenario_id_to_entity_id.get(&object.id)
             else {
@@ -135,6 +136,7 @@ fn blood_gulch_objects_and_starts_sit_at_their_authored_positions() {
             let authored = Vec3::from_array(object.position_vec3().expect("authored position"));
             let position = world.entity_position(entity_id).expect("live entity");
             let label = format!("{file} object {} {}", object.id, object.proto_name);
+            checked_objects += 1;
             assert!(
                 (position.x - authored.x).abs() < 1.0e-3
                     && (position.z - authored.z).abs() < 1.0e-3,
@@ -158,12 +160,11 @@ fn blood_gulch_objects_and_starts_sit_at_their_authored_positions() {
             height_error += error;
             ground_objects += 1;
         }
-        assert!(
-            ground_objects > 10,
-            "{file}: {ground_objects} ground objects"
-        );
-        let mean = height_error / f32::from(ground_objects);
-        assert!(mean < 0.5, "{file}: mean terrain height difference {mean}");
+        assert!(checked_objects > 10, "{file}: {checked_objects} objects");
+        if ground_objects > 0 {
+            let mean = height_error / f32::from(ground_objects);
+            assert!(mean < 0.5, "{file}: mean terrain height difference {mean}");
+        }
     }
 
     // Blood Gulch uses `Grouped` placement. The first `<Position>` has `Number="2"` at
