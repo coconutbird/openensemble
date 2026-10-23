@@ -140,8 +140,7 @@ cargo test -p render --test scenario-air-avoidance -- --ignored
 
 The hover action uses the terrain height plus 16 as its flight height, because the sim does not
 load the retail flight-height mesh. The pivoting engines and the physics-shape refinement used
-for building impacts are not modeled. Squad stasis counters are
-not yet modeled, so stasis cannot force the fallback deadline to zero. Death audio,
+for building impacts are not modeled. Death audio,
 selection-manager notification, shockwave instances, rumble, and camera shake also await their
 shared authoritative presentation systems. The named source's return-to-base landing block is
 commented out, and its

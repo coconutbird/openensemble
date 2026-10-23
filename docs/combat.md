@@ -620,6 +620,22 @@ example `unitactionrangedattack.cpp`, `damagehelper.cpp`, `projectile.cpp`,
   vehicle action input read the multiplier. A stasis beam heals its squad by
   `DamagePerSecond * StasisHealToDrainRatio` per attack, and a `StasisBomb` hold
   deals the area damage of the `LinkedAction` at a target with 1 HP or less.
+  Other systems read the stasis count: a crashing aircraft of a squad in stasis
+  detonates at once, a squad in stasis does not dodge, and an aircraft with a
+  stasis action looks for no kamikaze target. An attack-blocked squad finds no
+  attack-move targets.
+- Smart targeting (`BSquad_chooseSmartTarget`, `0x1403A3C20`). When a squad
+  starts an attack with a stasis or daze weapon, it claims one smart-target
+  reference on the target squad. A stasis target takes up to
+  `NumStasisFieldsToStop` references, a daze target one. A full target makes the
+  squad look for another enemy squad within the `SmartTargetRange` of its
+  command ability (default 15) around the target. The candidate must be alive,
+  visible to the squad's player and share an object type with the target's
+  leader. The first candidate with a free reference becomes the target. If no
+  candidate has one, the last candidate becomes the target and the attack drops
+  its ability. The attack releases its reference when it ends or changes
+  target, and a smart daze releases its daze reference when it ends. The sim
+  visits the candidates in squad ID order.
 
 ## Known gaps
 
@@ -631,8 +647,7 @@ features are missing:
   runs only for Wave debris and bowled Ram targets (`entities/units/thrown.rs`).
 - Weapon effect families `CausePhysicsExplosion`, `Bounces` and `AirBurst`. The
   `database` crate parses these fields, but `sim` does not read them.
-- Smart targeting of stasis and daze weapons (`BSquad::chooseSmartTarget`), the
-  stasis and stunned animations, and the stasis crash-delay and Dodge gates.
+- The stasis and stunned animations.
 - Unsupported technology effect families and non-attack recovery start events.
 - Tactic-state transitions for action families other than CollisionAttack and
   Detonate.
