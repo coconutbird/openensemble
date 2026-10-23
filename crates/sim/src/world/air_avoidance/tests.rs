@@ -250,6 +250,43 @@ fn crash_final_damage_credits_the_original_killer() {
 }
 
 #[test]
+fn an_aircraft_in_stasis_skips_the_kamikaze_target_and_detonates_at_once() {
+    let gameplay = air_gameplay();
+    let (mut world, squad_id, aircraft_id) = one_aircraft_world(31, Vec3::Y * 20.0);
+    world.init_players(2);
+    world.get_player_mut(1).unwrap().team_id = 1;
+    world.get_player_mut(2).unwrap().team_id = 2;
+    assert!(world.set_mutual_team_relation(1, 2, TeamRelation::Enemy));
+    world.set_fog_of_war_enabled(false);
+    let target_id = world.create_unit_at(2, Vec3::new(10.0, 20.0, 0.0));
+    world.get_unit_mut(target_id).unwrap().proto_object_name = "target".to_owned();
+    {
+        let aircraft = world.get_unit_mut(aircraft_id).unwrap();
+        aircraft.actions.set_enabled("AvoidCollisionAir", false);
+        aircraft.actions.set_enabled("KamikazeOnDeath", true);
+        aircraft.weapon_effects.stasis_action = true;
+    }
+    world
+        .squads
+        .get_mut(squad_id)
+        .unwrap()
+        .weapon_effects
+        .stasis_effects = 1;
+
+    assert!(world.damage_unit_with_gameplay(aircraft_id, 1_000.0, &gameplay));
+    world.prepare_aircraft_crashes(&gameplay);
+    assert_eq!(world.get_unit(aircraft_id).unwrap().kamikaze_target(), None);
+
+    // A squad in stasis has no crash delay: the first crash update detonates.
+    world.update_aircraft_crashes(STEP, &gameplay);
+    assert!(
+        world
+            .get_unit(aircraft_id)
+            .is_none_or(|aircraft| !aircraft.is_alive())
+    );
+}
+
+#[test]
 fn kamikaze_target_query_rejects_unrevealed_enemies() {
     let gameplay = air_gameplay();
     let (mut world, _squad_id, aircraft_id) = one_aircraft_world(27, Vec3::Y * 20.0);

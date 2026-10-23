@@ -164,7 +164,7 @@ pub(super) fn dot_end_time(game_time_ms: u32, duration: f32) -> u32 {
 
 /// Retail adds a stack to the first damage over time action of the same source, else to
 /// every action of the same effect, rate and multiplier, else to a new action.
-fn add_stack(
+pub(super) fn add_stack(
     actions: &mut Vec<DotAction>,
     stack: DotStack,
     effect: Option<&str>,

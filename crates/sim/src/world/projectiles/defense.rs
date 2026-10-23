@@ -190,9 +190,17 @@ impl World {
         let Some(squad) = target.squad else {
             return false;
         };
+        // `BUnitActionDodge_canDodge` (`0x14052B060`): no dodge while the squad is in stasis.
+        let in_stasis = self
+            .units
+            .get(target_id)
+            .and_then(|unit| unit.squad_id)
+            .and_then(|id| self.squads.get(id))
+            .is_some_and(|squad| squad.stasis_effect_count() > 0);
         if squad.mode == SquadMode::Cover
             || squad.frozen
             || squad.joining
+            || in_stasis
             || !self.defense_action_enabled(
                 target_id,
                 profile.action_name(),

@@ -3,6 +3,7 @@
 
 use super::Squad;
 use crate::entity_id::EntityId;
+use crate::gameplay::SmartTargetType;
 use crate::sync::SyncChecksum;
 
 /// `BSquadActionDaze`. `BSquadActionDaze_init` (`0x1403BA2B0`) sets 10000 ms and modifier 1;
@@ -19,6 +20,16 @@ pub(crate) struct SquadDaze {
     pub smart_target: bool,
     /// `mFXAttachment`: the effect object of each child unit.
     pub effects: Vec<Option<EntityId>>,
+}
+
+/// The smart-target choice of the squad attack (`BSquadActionAttack`) at one target.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SmartTargetChoice {
+    /// The attack target that the choice ran for.
+    pub target_id: EntityId,
+    /// The reference that the attack holds on the target squad, released at its end
+    /// (`BSquadActionAttack_disconnect`, `0x1403B1920`).
+    pub claim: Option<SmartTargetType>,
 }
 
 /// The weapon effect state of one squad.
@@ -38,6 +49,8 @@ pub(crate) struct SquadWeaponEffects {
     pub smart_targets: [u8; 2],
     /// The self heal of stasis beam attacks that waits for the next weapon effect update.
     pub pending_self_heal: f32,
+    /// The smart-target choice of the current squad attack.
+    pub smart_target_choice: Option<SmartTargetChoice>,
 }
 
 impl Default for SquadWeaponEffects {
@@ -50,6 +63,7 @@ impl Default for SquadWeaponEffects {
             daze_immobilized: false,
             smart_targets: [0; 2],
             pending_self_heal: 0.0,
+            smart_target_choice: None,
         }
     }
 }
@@ -75,6 +89,12 @@ impl SquadWeaponEffects {
         checksum.hash_u32(u32::from(self.daze_immobilized));
         checksum.hash_bytes(&self.smart_targets);
         checksum.hash_f32(self.pending_self_heal);
+        if let Some(choice) = self.smart_target_choice {
+            checksum.hash_u32(choice.target_id.as_u32());
+            checksum.hash_u32(choice.claim.map_or(u32::MAX, |kind| u32::from(kind as u8)));
+        } else {
+            checksum.hash_u32(u32::MAX);
+        }
     }
 }
 
@@ -110,6 +130,13 @@ impl Squad {
     #[must_use]
     pub const fn is_attack_blocked(&self) -> bool {
         self.weapon_effects.attack_blocked
+    }
+
+    /// `mSmartTargetValues[kind]`: the smart-target attacks that hold a reference on the
+    /// squad.
+    #[must_use]
+    pub const fn smart_target_references(&self, kind: SmartTargetType) -> u8 {
+        self.weapon_effects.smart_targets[kind as usize]
     }
 
     /// `BSquad::canMove` (2008 `squad.cpp:3943-3946`): a full stasis or a daze with a zero

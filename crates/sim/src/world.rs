@@ -416,6 +416,9 @@ impl World {
         self.prepare_remove_squad_actions(id);
         let squad = self.squads.remove(id)?;
         self.release_removed_entity(id);
+        if let Some(choice) = squad.weapon_effects.smart_target_choice {
+            self.release_smart_target_reference(choice);
+        }
         for (_, other_squad) in self.squads.iter_mut() {
             other_squad.clear_teleporter_destination(id);
             other_squad.clear_join_reference(id);

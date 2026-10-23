@@ -135,6 +135,7 @@ impl World {
             self.prepare_squad_carpet_bombs();
             self.update_move_air_tactics(dt, gameplay);
             self.update_squad_carpet_bomb_attacks(dt, gameplay);
+            self.update_smart_targets(gameplay);
             self.update_combat_orders(dt, gameplay);
             self.update_protection(dt, gameplay);
             self.update_shields(dt, gameplay);

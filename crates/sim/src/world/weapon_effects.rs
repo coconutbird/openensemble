@@ -10,8 +10,11 @@ use pipeline::database::hw1::Database;
 
 mod daze;
 mod dot;
+mod smart_target;
 mod stasis;
 
+#[cfg(test)]
+mod effect_tests;
 #[cfg(test)]
 mod tests;
 

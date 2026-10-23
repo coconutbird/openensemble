@@ -69,8 +69,15 @@ impl World {
             self.kill_unresolved_crashing_aircraft(unit_id);
             return;
         };
+        // `BUnitActionAvoidCollisionAir_findKamikazeTarget` (`0x1404F0290`): an aircraft with a
+        // stasis action looks for no target.
+        let in_stasis = self
+            .units
+            .get(unit_id)
+            .is_some_and(|unit| unit.weapon_effects.stasis_action);
         let target = profile
             .kamikaze_weapon()
+            .filter(|_| !in_stasis)
             .and_then(|weapon| self.find_kamikaze_target(unit_id, source, weapon.max_range()));
         let crash_position = target
             .and_then(|target_id| self.units.get(target_id).map(|unit| unit.base.position))
@@ -202,13 +209,18 @@ impl World {
             return;
         }
         let rolled = CRASH_DELAY_MIN_MS + self.trigger_random_index(CRASH_DELAY_SPREAD_MS);
-        let delay = if rolled < IMMEDIATE_CRASH_DELAY_CUTOFF_MS {
+        let squad_id = self.units.get(unit_id).and_then(|unit| unit.squad_id);
+        // `BUnitActionAvoidCollisionAir_update` (`0x1404EEDAD`): a squad in stasis detonates
+        // at once.
+        let in_stasis = squad_id
+            .and_then(|id| self.squads.get(id))
+            .is_some_and(|squad| squad.stasis_effect_count() > 0);
+        let delay = if in_stasis || rolled < IMMEDIATE_CRASH_DELAY_CUTOFF_MS {
             0
         } else {
             rolled
         };
         let detonate_at = self.game_time_ms.wrapping_add(delay);
-        let squad_id = self.units.get(unit_id).and_then(|unit| unit.squad_id);
         if let Some(unit) = self.units.get_mut(unit_id) {
             unit.air_avoidance.begin_crash_update(detonate_at);
             unit.clear_attack_order();

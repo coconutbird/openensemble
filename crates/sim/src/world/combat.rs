@@ -16,7 +16,7 @@ mod pull;
 mod range;
 mod selection;
 #[cfg(test)]
-mod test_catalog;
+pub(in crate::world) mod test_catalog;
 mod turrets;
 
 use super::World;
@@ -24,7 +24,9 @@ use crate::entities::projectiles::{ProjectileLaunch, launch_target_position};
 use crate::entities::{AttackAdvance, Projectile, Squad, SquadMode, SquadState, Unit, UnitState};
 use crate::entity::Entity;
 use crate::entity_id::{EntityClass, EntityId};
-use crate::gameplay::{AreaDamageProfile, AttackAnimationAnchor, AttackProfile, GameplayCatalog};
+use crate::gameplay::{
+    AreaDamageProfile, AttackAnimationAnchor, AttackProfile, GameplayCatalog, WeaponEffectProfile,
+};
 use crate::player::PlayerId;
 pub(crate) use area_damage::{AttackDamage, AttackThrow, ProjectileHit};
 pub(in crate::world) use damage::WeaponEffectHit;
@@ -209,9 +211,12 @@ impl World {
             .squads
             .iter()
             .filter_map(|(id, squad)| {
+                // `BOpportunityList` (2008 `opportunity.cpp:218`): an attack-blocked squad
+                // finds no attack opportunities.
                 (squad.state == SquadState::Moving
                     && squad.is_executing_attack_move()
                     && !squad.is_cryo_frozen()
+                    && !squad.is_attack_blocked()
                     && squad.aggro_distance.is_finite()
                     && squad.aggro_distance > 0.0)
                     .then_some(id)
@@ -923,6 +928,21 @@ impl World {
         gameplay
             .object(&unit.proto_object_name)?
             .attack_profile(&action.action.name)
+    }
+
+    /// The weapon effects of the attack that a unit selects against an ordered target
+    /// (`BSquad::getProtoActionForTarget` and the weapon of the tactic).
+    pub(in crate::world) fn selected_attack_weapon_effects<'gameplay>(
+        &self,
+        unit_id: EntityId,
+        ordered_target_id: EntityId,
+        gameplay: &'gameplay GameplayCatalog,
+    ) -> Option<&'gameplay WeaponEffectProfile> {
+        let player_id = self.units.get(unit_id)?.base.player_id;
+        let target = self.concrete_attack_target(player_id, ordered_target_id)?;
+        self.selected_unit_attack_profile(unit_id, &target, gameplay)?
+            .weapon_effects
+            .as_deref()
     }
 
     pub(in crate::world) fn active_ranged_attack_target_position(

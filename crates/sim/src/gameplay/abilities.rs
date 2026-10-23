@@ -4,6 +4,9 @@ use crate::entities::{RecoveryType, SquadMode};
 use pipeline::database::hw1::{Ability, Database};
 use std::collections::BTreeMap;
 
+/// `BAbility::mSmartTargetRange` default (2008 `ability.cpp:42`).
+const DEFAULT_SMART_TARGET_RANGE: f32 = 15.0;
+
 /// Authored point at which an ability begins its recovery channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AbilityRecoveryStart {
@@ -32,6 +35,7 @@ pub struct AbilityGameplay {
     duration: f32,
     damage_taken_modifier: f32,
     dodge_modifier: f32,
+    smart_target_range: f32,
 }
 
 impl AbilityGameplay {
@@ -132,6 +136,12 @@ impl AbilityGameplay {
     pub const fn dodge_modifier(&self) -> f32 {
         self.dodge_modifier
     }
+
+    /// Return the `SmartTargetRange` search radius of smart-target weapons (default 15).
+    #[must_use]
+    pub const fn smart_target_range(&self) -> f32 {
+        self.smart_target_range
+    }
 }
 
 pub(super) fn collect_abilities(database: &Database) -> Vec<AbilityGameplay> {
@@ -177,6 +187,10 @@ pub(super) fn collect_abilities(database: &Database) -> Vec<AbilityGameplay> {
                     .unwrap_or_default(),
                 damage_taken_modifier: finite_modifier(ability.damage_taken_modifier),
                 dodge_modifier: finite_modifier(ability.dodge_modifier),
+                smart_target_range: ability
+                    .smart_target_range
+                    .filter(|range| range.is_finite())
+                    .unwrap_or(DEFAULT_SMART_TARGET_RANGE),
             })
         })
         .collect()

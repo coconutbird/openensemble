@@ -276,7 +276,7 @@ pub(super) fn secondary_turret_catalog_with_minimum(min_range: f32) -> GameplayC
     )
 }
 
-fn ranged_action(name: &str, weapon: &str) -> Action {
+pub(in crate::world) fn ranged_action(name: &str, weapon: &str) -> Action {
     Action {
         name: name.to_owned(),
         action_type: Some("RangedAttack".to_owned()),
@@ -285,7 +285,7 @@ fn ranged_action(name: &str, weapon: &str) -> Action {
     }
 }
 
-fn instant_profile(action_name: &str, max_range: f32) -> AttackProfile {
+pub(in crate::world) fn instant_profile(action_name: &str, max_range: f32) -> AttackProfile {
     AttackProfile {
         action_name: action_name.to_owned(),
         animation_type: "Attack".to_owned(),
