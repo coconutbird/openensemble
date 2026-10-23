@@ -22,6 +22,7 @@
 mod agent;
 mod box_box;
 mod broadphase;
+mod convex;
 mod dispatch;
 mod gsk;
 mod heightfield_agent;

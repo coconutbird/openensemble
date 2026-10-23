@@ -9,7 +9,7 @@ use glam::{Vec3, Vec4};
 use crate::heightfield::HeightField;
 use crate::math::Transform;
 
-pub(crate) use query::Aabb;
+pub(crate) use query::{Aabb, CylinderFrame};
 
 /// The convex radius that Havok uses by default (`hkConvexShapeDefaultRadius`).
 ///
