@@ -8,6 +8,14 @@
 //! before each step (see `ground`).
 
 mod ground;
+mod state;
+mod step;
+mod unit;
+pub(crate) mod vehicle_actions;
+mod vehicle_hull;
+
+pub use state::SimPhysics;
+pub use unit::UnitPhysics;
 
 use ground::GroundPlane;
 pub(crate) use ground::{filter_up, sample_ground};

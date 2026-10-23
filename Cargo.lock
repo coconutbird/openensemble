@@ -2916,6 +2916,7 @@ dependencies = [
  "log",
  "motion",
  "num-traits",
+ "physics",
  "pipeline",
  "test-support",
  "thiserror 2.0.18",

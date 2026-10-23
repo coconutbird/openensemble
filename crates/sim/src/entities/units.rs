@@ -248,6 +248,8 @@ pub struct Unit {
     air_obstruction: air_avoidance::AirObstructionState,
     /// Deterministic rigid body, when this object participates in physics.
     pub physics: Option<PhysicsBody>,
+    /// The Havok body and its `BUnitActionPhysics` state (`BEntity::mpPhysicsObject`).
+    pub physics_object: Option<crate::physics::UnitPhysics>,
     /// Standalone movement target.
     pub move_target: Option<Vec3>,
     /// Standalone attack target, retained as a generational entity ID.
@@ -402,6 +404,7 @@ impl Default for Unit {
             obstruction_half_extents: Vec3::ZERO,
             air_obstruction: air_avoidance::AirObstructionState::default(),
             physics: None,
+            physics_object: None,
             move_target: None,
             attack_target: None,
             attack_range: 0.0,

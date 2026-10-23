@@ -46,6 +46,7 @@ impl World {
         let Some((step_count, step_duration)) = substeps(dt) else {
             return;
         };
+        self.resolve_vehicle_terrain_penetrations();
         self.update_power_visual_lifetimes();
         if let Some(gameplay) = gameplay {
             self.grant_secondary_turret_scan_tokens(gameplay);
@@ -63,6 +64,7 @@ impl World {
             self.update_auto_repairs(database, gameplay);
         }
         self.update_object_states();
+        self.step_physics(dt);
     }
 
     fn update_entity_substep(

@@ -80,7 +80,7 @@ pub use gameplay::{
 };
 pub use order::{JumpOrderRequest, JumpOrderType, OrderType};
 pub use packet::{ChannelPacketHeader, PacketError};
-pub use physics::{BoxCollider, MotionType, PhysicsBody, PhysicsMaterial};
+pub use physics::{BoxCollider, MotionType, PhysicsBody, PhysicsMaterial, SimPhysics, UnitPhysics};
 pub use player::{
     CivId, DEFAULT_PLAYER_DIFFICULTY, GAIA_PLAYER, LeaderId, MAX_POP_TYPES, MAX_RESOURCES,
     MAX_TEAMS, Player, PlayerId, PlayerResearchState, PlayerState, PlayerTechState, PlayerType,
