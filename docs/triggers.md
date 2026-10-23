@@ -205,6 +205,20 @@ subscribers, pending presentation requests, and unit and squad idle state.
   54 defeated, 56 won). The game layer reads `World::take_player_state_changes`. Each event
   checks for game over at once (`BWorld_checkForGameOver`); the client reads
   `World::game_result`. After the game ended, the trigger manager does not update again.
+- Objectives follow `BObjectiveManager`. `ObjectiveComplete` (133, only v2) calls
+  `BObjectiveManager_setObjectiveCompleted` (`0x1402B04F0`): a change stores the completion
+  time, adds or removes the objective score for each human player
+  (`BScoreManager_reportObjectiveCompleted` `0x1403875F0`, no co-op halving, no skull bonus)
+  and, when the objective is not complete again, adds a notification. `ObjectiveDisplay` (183)
+  sets the displayed flag and adds a notification when shown: 10 seconds, or v2 slot 3 times
+  0.001. The UI reads `World::objective_notifications_after` with its own cursor.
+- `IsObjectiveComplete` (746) uses the objective value as a position in the objective list,
+  not as an ID (`BTriggerCondition_evaluate` case 746). The sim keeps this retail behavior.
+- `MissionResult` (1002, `0x14047D510`) only sets the scenario result of the UI and shows the
+  end screen if the primary user still plays. It does not end the game. The sim stores the
+  result for each human player that plays (`World::mission_result`); each human is the
+  primary user on its own computer. `GrantAchievement` (1030) adds the name (empty if slot 1
+  is null) once to `World::granted_achievements`. All of this state is checksummed.
 
 ## Retail behavior that the sim keeps
 
@@ -361,8 +375,6 @@ code in `BTriggerEffect_fire` without a separate function.
 | 557 | `AIMissionGetValidSquads` | 601 (13) | 54 | inline case @ `0x14044C508` |
 | 550 | `AIMissionCancel` | 577 (13) | 46 | `BTriggerEffect_teAIMissionCancel` @ `0x140480A30` |
 | 555 | `AIMissionAddSquads` | 339 (13) | 36 | `BTriggerEffect_teAIMissionAddSquads` @ `0x140481980` |
-| 133 | `ObjectiveComplete` | 238 (17) | 0 | inline case @ `0x14044A943` |
-| 183 | `ObjectiveDisplay` | 224 (17) | 2 | inline case @ `0x14044ABDA` |
 | 135 | `FlareMinimapNormal` | 193 (15) | 18 | inline case @ `0x14044A99C` |
 | 1008 | `AICreateTargetWrapper` | 189 (13) | 28 | `BTriggerEffect_teAICreateTargetWrapper` @ `0x140486B50` |
 | 1011 | `AIWrapperModifyRadius` | 189 (13) | 28 | `BTriggerEffect_teAIWrapperModifyRadius` @ `0x140486C60` |
@@ -375,7 +387,6 @@ code in `BTriggerEffect_fire` without a separate function.
 | 605 | `AIGetMissions` | 155 (11) | 17 | `BTriggerEffect_teAIGetMissions` @ `0x140481C00` |
 | 815 | `HintMessageDestroy` | 151 (15) | 55 | `BTriggerEffect_teHintMessageDestroy` @ `0x140473960` |
 | 388 | `ChangeSquadMode` | 82 (6) | 14 | inline case @ `0x14044BA68` |
-| 1002 | `MissionResult` | 68 (17) | 0 | `BTriggerEffect_teMissionResult` @ `0x14047D510` |
 | 888 | `FloatListRemove` | 63 (5) | 0 | `BTriggerEffect_teFloatListRemove` @ `0x140478560` |
 | 59 | `LocationAdjust` | 60 (7) | 50 | inline case @ `0x14044A42F` |
 | 923 | `FlashUIElement` | 60 (3) | 26 | `BTriggerEffect_teFlashUIElement` @ `0x14047AFF0` |
@@ -392,7 +403,6 @@ code in `BTriggerEffect_fire` without a separate function.
 | 1060 | `TeleportUnitsOffObstruction` | 34 (4) | 0 | `BTriggerEffect_teTeleportUnitsOffObstruction` @ `0x14047E9F0` |
 | 751 | `TimeToFloat` | 33 (5) | 4 | `BTriggerEffect_teTimeToFloat` @ `0x140470880` |
 | 512 | `GetDistanceLocationLocation` | 30 (6) | 64 | inline case @ `0x14044C1AA` |
-| 1030 | `GrantAchievement` | 30 (15) | 6 | `BTriggerEffect_teGrantAchievement` @ `0x14047FF40` |
 | 537 | `SetPosition` | 29 (4) | 18 | inline case @ `0x14044C3F8` |
 | 284 | `InvertBool` | 29 (4) | 2 | inline case @ `0x14044B143` |
 | 316 | `RefCountSquadAdd` | 28 (2) | 88 | `BTriggerEffect_teRefCountSquadAdd` @ `0x14045F520` |
@@ -540,10 +550,8 @@ In order of shipped use:
 
 1. AI mission effects and conditions (DBIDs 550 to 557, 605, 619, 757, 982, 1004 to 1013, 547).
    13 campaign missions use them. The sim has no trigger AI mission system.
-2. Objectives and mission result: `ObjectiveComplete` (133), `ObjectiveDisplay` (183) and
-   `MissionResult` (1002). All 17 campaign scenarios use them. A campaign cannot end without
-   them. `SetPlayerState` (130) ends a skirmish (`World::game_result`), but the AI manager does
-   not learn that a player left (`BAIManager_onPlayerLeft`).
+2. The AI manager does not learn that a player left (`BAIManager_onPlayerLeft`) after
+   `SetPlayerState` (130).
 3. External trigger script starts. `TriggerEngine::launch_script` exists, but nothing calls it
    for the power scripts of `BProtoPower_load` (`0x14034EB96`) and the weapon scripts of
    `BWeapon_loadWeapon` (`0x1403FFE52`).
