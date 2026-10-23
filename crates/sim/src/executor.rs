@@ -25,6 +25,7 @@ mod mines;
 mod mode_orders;
 mod target_orders;
 mod user_work;
+mod work_orders;
 
 #[cfg(test)]
 mod recipient_tests;
@@ -127,7 +128,30 @@ impl<'database> CommandExecutor<'database> {
             Some(OrderType::JumpAttack) => {
                 self.execute_jump(world, cmd, crate::JumpOrderType::Attack);
             }
-            _ => {}
+            Some(OrderType::Repair) => self.execute_repair(world, cmd),
+            Some(OrderType::PlayBlockingAnimation) => {
+                Self::execute_play_blocking_animation(world, cmd);
+            }
+            Some(OrderType::Unpack) => self.execute_unpack(world, cmd),
+            Some(OrderType::Transport) => Self::execute_transport(world, cmd),
+            Some(OrderType::PointBlankAttack) => Self::execute_point_blank_attack(world, cmd),
+            // `BSquad_executeOrder` @ `0x140399780` has no case for RequestRepair, Build,
+            // Honk, Guard, RallyPoint, Wander, EnergyShield and InfantryEnergyShield: the
+            // order gets no action. Idle and JumpPull do not come from a Work command.
+            Some(
+                OrderType::None
+                | OrderType::RequestRepair
+                | OrderType::Build
+                | OrderType::Honk
+                | OrderType::Guard
+                | OrderType::RallyPoint
+                | OrderType::Idle
+                | OrderType::Wander
+                | OrderType::EnergyShield
+                | OrderType::JumpPull
+                | OrderType::InfantryEnergyShield,
+            )
+            | None => {}
         }
     }
 

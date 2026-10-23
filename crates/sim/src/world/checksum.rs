@@ -391,6 +391,10 @@ fn hash_squads(checksum: &mut SyncChecksum, squads: &EntityManager<Squad>) {
         squad.hash_gather_state(checksum);
         squad.hash_capture_state(checksum);
         squad.hash_repair_other_state(checksum);
+        checksum.hash_u32(u32::from(squad.work_action.is_some()));
+        if let Some(action) = &squad.work_action {
+            action.hash_state(checksum);
+        }
         squad.hash_pull_state(checksum);
         squad.hash_jump_state(checksum);
         squad.hash_ability_execution(checksum);

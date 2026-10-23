@@ -9,6 +9,7 @@ use num_traits::ToPrimitive;
 use pipeline::database::hw1::{Database, ProtoObject};
 
 mod other;
+mod squad;
 
 #[derive(Debug, Clone)]
 struct RepairMemberProfile {

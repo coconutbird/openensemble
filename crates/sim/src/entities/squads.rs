@@ -32,6 +32,7 @@ mod turn_radius;
 mod wander;
 pub mod warthog;
 pub(crate) mod weapon_effects;
+mod work_action;
 
 pub use ambient_life::AmbientLifeBehavior;
 pub(crate) use ambient_life::{
@@ -65,6 +66,7 @@ pub use transport::{
 pub(crate) use transport::{SquadPowerTransportPlan, SquadTransportPlan};
 pub(crate) use turn_radius::{TurnRadiusLeader, TurnRadiusProgress};
 pub(crate) use wander::{SquadWander, WanderPhase};
+pub(crate) use work_action::{RepairMember, SquadRepairAction, SquadWorkAction};
 
 use super::{BaseEntity, EntityIdle};
 use crate::entity::Entity;
@@ -153,6 +155,8 @@ pub struct Squad {
     pub(crate) repair: repair::SquadRepair,
     /// Active targeted `RepairOther` order and renderer-facing effect entities.
     pub(crate) repair_other: repair_other::SquadRepairOther,
+    /// Repair, Unpack, `PointBlankAttack` or `PlayBlockingAnimation` Work order action.
+    pub(crate) work_action: Option<SquadWorkAction>,
     /// Persistent Rage controller references locking ordinary squad work.
     pub(crate) rage: rage::SquadRage,
     /// Persistent two-member Hunter damage bond and its visual entity.
@@ -272,6 +276,7 @@ impl Default for Squad {
             weapon_effects: weapon_effects::SquadWeaponEffects::default(),
             repair: repair::SquadRepair::default(),
             repair_other: repair_other::SquadRepairOther::default(),
+            work_action: None,
             rage: rage::SquadRage::default(),
             spirit_bond: SquadSpiritBond::default(),
             cloak: SquadCloak::default(),

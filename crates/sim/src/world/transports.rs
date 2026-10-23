@@ -11,6 +11,7 @@ use glam::Vec3;
 use num_traits::ToPrimitive;
 use std::collections::BTreeSet;
 
+mod controllable;
 mod planning;
 mod power;
 
@@ -220,6 +221,14 @@ impl World {
             );
         }
         if let Some(transport) = self.squads.get_mut(transport_squad_id) {
+            if action.is_controllable() {
+                // `BSquadActionTransport::setState(cStateFlyOff)` ends a controllable
+                // transport at once: the carrier stays at the drop-off.
+                transport.transport_fly_in = None;
+                transport.base.velocity = Vec3::ZERO;
+                transport.state = SquadState::Idle;
+                return;
+            }
             if let Some(action) = &mut transport.transport_fly_in {
                 action.begin_outgoing();
             }

@@ -122,6 +122,9 @@ impl World {
             self.update_repair_other(dt, database, gameplay);
             self.update_heals(dt, database, gameplay);
         }
+        if let Some(database) = database {
+            self.update_squad_work_actions(dt, database);
+        }
         if let Some(gameplay) = gameplay {
             self.update_change_modes(dt, gameplay);
             self.update_gathering(dt, gameplay);

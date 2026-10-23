@@ -30,6 +30,9 @@ pub struct SquadTransportFlyIn {
     facing: Option<Vec3>,
     speed: f32,
     phase: TransportFlyInPhase,
+    /// `mFlagControllableTransport`: a Work `Transport` order. The carrier stays after the
+    /// drop-off instead of leaving the map.
+    controllable: bool,
 }
 
 /// Validated setup supplied by the trigger effect after creating a carrier.
@@ -57,7 +60,23 @@ impl SquadTransportFlyIn {
             facing: plan.facing,
             speed: valid_speed(speed),
             phase: TransportFlyInPhase::Incoming,
+            controllable: false,
         }
+    }
+
+    /// Build the controllable transport of a Work `Transport` order (`BSquad_doTransport` @
+    /// `0x1403A2C70` sets the flag at action `+270`).
+    pub(crate) fn new_controllable(plan: SquadTransportPlan, speed: f32) -> Self {
+        Self {
+            controllable: true,
+            ..Self::new(plan, speed)
+        }
+    }
+
+    /// Whether a Work `Transport` order created this action.
+    #[must_use]
+    pub const fn is_controllable(&self) -> bool {
+        self.controllable
     }
 
     /// Logical squad currently carried by this transport.
@@ -139,6 +158,7 @@ impl SquadTransportFlyIn {
             TransportFlyInPhase::Incoming => 0,
             TransportFlyInPhase::Outgoing => 1,
         });
+        checksum.hash_u32(u32::from(self.controllable));
     }
 }
 

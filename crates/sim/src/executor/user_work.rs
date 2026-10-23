@@ -7,8 +7,8 @@
 //!    command): when the target unit has capture work in progress
 //!    (`unit+759 & 0x40`), drop the squads that already capture it (a unit
 //!    with entity reference type 15 on the target). Drop squads with
-//!    `mFlagIsRepairing` (`squad+741` bit 7); the simulation has no such
-//!    state. Keep only squads of the command player or Gaia.
+//!    `mFlagIsRepairing` (`squad+741` bit 7), the squads with a Repair work
+//!    action. Keep only squads of the command player or Gaia.
 //! 2. The target entity position, or else the last waypoint, must be inside
 //!    the simulation bounds (`BWorld_isInsideSimBounds`, `gWorld+1192`; the
 //!    maximum edges are exclusive). Otherwise no squad gets an order.
@@ -26,7 +26,7 @@ use super::CommandExecutor;
 use super::mode_orders::WorkOrderContext;
 use crate::commands::WorkCommand;
 use crate::world::World;
-use crate::{DefaultWorkAction, EntityId, GAIA_PLAYER, default_work_action};
+use crate::{DefaultWorkAction, EntityId, default_work_action};
 use glam::Vec3;
 
 impl CommandExecutor<'_> {
@@ -114,7 +114,8 @@ fn user_work_recipients(
         let Some(squad) = world.get_squad(squad_id) else {
             continue;
         };
-        if (squad.base.player_id != player_id && squad.base.player_id != GAIA_PLAYER)
+        if !World::command_reaches_squad_owner(player_id, squad.base.player_id)
+            || squad.is_self_repairing()
             || squad
                 .unit_ids
                 .iter()

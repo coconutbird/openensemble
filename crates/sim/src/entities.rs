@@ -36,7 +36,9 @@ pub use squads::{
     SquadRecovery, SquadShields, SquadState, SquadTrainedAirBirth, SquadTransportFlyIn,
     TransportFlyInPhase,
 };
-pub(crate) use squads::{SquadChangeModeResume, SquadModeOrder};
+pub(crate) use squads::{
+    RepairMember, SquadChangeModeResume, SquadModeOrder, SquadRepairAction, SquadWorkAction,
+};
 pub use units::{
     AIR_TRAFFIC_LANDING_SPOT_COUNT, AirTrafficControl, AirTrafficLandingSpot, AircraftCrashPhase,
     BombPhase, BuildingProduction, CapturePhase, ConstructionKind, ConstructionProgress,
