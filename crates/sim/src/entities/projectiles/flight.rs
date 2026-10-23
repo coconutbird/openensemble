@@ -1,11 +1,24 @@
 //! Retail projectile launch and in-flight steering calculations.
 
-use super::ProjectileLaunch;
+use super::{Projectile, ProjectileLaunch};
 use crate::gameplay::ProjectileProfile;
 use crate::math;
 use glam::Vec3;
 
 const MOTION_EPSILON: f32 = 0.000_001;
+
+impl Projectile {
+    pub(crate) fn is_close_to_target(&self) -> bool {
+        self.initial_position.distance_squared(self.base.position)
+            >= self.initial_position.distance_squared(self.target_position) * 0.95
+    }
+
+    /// World-space launch position retained for range and presentation checks.
+    #[must_use]
+    pub const fn initial_position(&self) -> Vec3 {
+        self.initial_position
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct LaunchMotion {

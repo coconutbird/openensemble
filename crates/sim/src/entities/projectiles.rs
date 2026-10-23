@@ -170,8 +170,7 @@ pub struct Projectile {
     /// Launch-time area-damage values applied at the impact position.
     pub area_damage: Option<AreaDamageProfile>,
     impact_effect: Option<crate::gameplay::ImpactEffectProfile>,
-    /// The physics throw values of the weapon, or `None` for a projectile without weapon
-    /// damage info.
+    /// The weapon throw values, or `None` without weapon damage info.
     death_throw: Option<DeathThrowProfile>,
     /// Desired flight speed.
     pub desired_speed: f32,
@@ -497,28 +496,6 @@ impl Projectile {
         } else {
             ProjectileStep::Flying
         }
-    }
-
-    pub(crate) fn is_close_to_target(&self) -> bool {
-        self.initial_position.distance_squared(self.base.position)
-            >= self.initial_position.distance_squared(self.target_position) * 0.95
-    }
-
-    /// World-space launch position retained for range and presentation checks.
-    #[must_use]
-    pub const fn initial_position(&self) -> Vec3 {
-        self.initial_position
-    }
-
-    /// The physics throw values of the weapon that launched the projectile.
-    #[must_use]
-    pub const fn death_throw(&self) -> Option<DeathThrowProfile> {
-        self.death_throw
-    }
-
-    /// Set the physics throw values of the weapon that launched the projectile.
-    pub(crate) const fn set_death_throw(&mut self, death_throw: Option<DeathThrowProfile>) {
-        self.death_throw = death_throw;
     }
 
     /// Associate this projectile with one running native power.
