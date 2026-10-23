@@ -219,6 +219,44 @@ subscribers, pending presentation requests, and unit and squad idle state.
   result for each human player that plays (`World::mission_result`); each human is the
   primary user on its own computer. `GrantAchievement` (1030) adds the name (empty if slot 1
   is null) once to `World::granted_achievements`. All of this state is checksummed.
+- Hints, flares, user messages and scene cues are checksummed `World` state. The UI reads them;
+  it does not acknowledge them.
+  - `HintMessageShow` (805, `0x140472EA0`): slot 1 is the player list, slot 2 the string ID and
+    slot 3 the time in whole seconds (`ms / 1000`). `BHintManager_addHint` (`0x1400473C0`)
+    keeps one hint for each human player. The same string ID only resets the time; another ID
+    removes the old hint. `HintMessageDestroy` (815) v1 removes the hint; v2 removes it if slot
+    1 is not used or names its ID. The UI reads `World::hint_message`.
+  - `FlareMinimapNormal` (135, `0x140459290`) adds a flare for each player whose team is an
+    ally of the source team, Gaia included. `FlareMinimapSpoof` (132, `0x1404589B0`) adds a
+    flare for the player in slot 3 and then the list in slot 4; slot 2 names the source. The
+    flare type is ignored. A flare shows for 6 s and expires after 30 s
+    (`BAlertManager_createFlareAlert` `0x14017B5F0`). The UI reads `World::minimap_flares`.
+  - `UserMessage` (164) runs only v3 (`0x140458EC0`). It writes one of the 20 shared slots
+    (`BUser_setUserMessage` `0x1405A5900`): the text "NULL" keeps the old text, a negative
+    number keeps the old value, and justify 0, 1 and 2 give left, center and right. Retail does
+    not test the index; the sim skips an index outside the slots. The UI reads
+    `World::user_message`.
+  - `FlashUIElement` (923) runs only v2 (`0x14047AFF0`). It sets bit `item` of
+    `PlayerPresentationState::flashing_ui_items`. Retail does nothing for the D-pad items 12
+    to 16. `UITogglePowerOverlay` (726) runs only for false and then increases
+    `power_targeting_cancel_revision` of the player.
+  - `EnableMusicManager` (1006) and `ChatForceSubtitles` (1049) set
+    `World::music_manager_enabled` and `World::chat_subtitles_forced`.
+  - `SetFollowCam` (521, `0x14046A060`) takes the first used of unit, squad and object, an
+    optional direction and the follow mode (slot 5). The renderer reads `World::follow_camera`.
+  - `LightsetAnimate` (533, `0x14046A880`) starts an animation to a scenario `Lightsets` ID;
+    an unknown ID changes nothing. The scenario load gives the IDs to
+    `World::configure_lightsets`. The renderer reads `World::lightset_animation`.
+  - `PlayWorldSoundOnEntity` (515) v1 takes the unit or object in slot 2. v2 takes the first
+    used of slots 2, 4 and 5, squads included. The audio client reads
+    `World::world_sound_requests_after` with its own cursor.
+  - `SetCamera` (884) runs v2, v3 and v4 with the same slots. v3 and v4 add the absolute
+    position and direction flags of `CameraDirective`; v4 adds the hover height offset.
+- `SetOverrideTint` (775, `0x140471E00`) and `HintGlowToggle` (808) change `ObjectState`.
+  The tint is the slot 7 color and the slot 8 alpha (1 if not used) times 255, clamped to a
+  byte; slot 9 enables it. `HintGlowToggle` runs v2 (`0x140473180`, one entity in slot 6, the
+  first unit of a squad) and v3 (`0x1404732D0`, all targets) and sets the glow intensity to 1 or
+  0.
 
 ## Retail behavior that the sim keeps
 
@@ -344,76 +382,69 @@ The coverage data comes from three sources:
   shared no-op block `0x14044DDD7`. `BTriggerCondition_evaluate` (`0x140432070`) has 188 DBIDs
   in its switches and direct tests. It also tests 1059, 1081 and 1087 after the switches. Async
   conditions read their async result there.
-- Our code: `EffectType` has 344 variants and `ConditionType` has 195. Handlers exist for 248
-  effect DBIDs (including the copy family in `is_copy_effect`) and 89 condition DBIDs.
+- Our code: `EffectType` has 363 variants and `ConditionType` has 195. Handlers exist for 278
+  effect DBIDs (including the copy family in `is_copy_effect`) and 94 condition DBIDs.
 - Shipped data: the 33 installed scenarios (15 campaign missions, 2 tutorials, 16 skirmish maps)
   and the 90 unique files in `data/triggerscripts` of `root.era`, `root_update.era`, `dlc01.era`
   and `dlc02.era`. The counts include nodes with `CommentOut="true"`.
 
 | Kind | Distinct DBIDs used | Implemented | Retail no-op | Missing | Scenario uses covered | External uses covered |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Effects | 471 (315 in scenarios) | 223 (202) | 26 | 227 (102) | 66,422 of 72,757 (91%) | 23,647 of 26,345 (90%) |
-| Conditions | 148 (79 in scenarios) | 81 (63) | 0 | 67 (16) | 16,638 of 17,177 (97%) | 6,459 of 7,257 (89%) |
+| Effects | 471 (315 in scenarios) | 253 (223) | 26 | 197 (81) | 67,718 of 72,757 (93%) | 23,883 of 26,345 (91%) |
+| Conditions | 148 (79 in scenarios) | 85 (63) | 0 | 63 (16) | 16,638 of 17,177 (97%) | 6,564 of 7,257 (90%) |
 
 "Implemented" includes 5 `DebugVar` effects that retail compiles as no-ops. The other retail
 no-ops are the other `DebugVar` effects, `KillUnits` (271), `AIRegisterHook` (855),
 `PlaySoundFile` (1084), `ConnectHitpointWidget` (638), `Breakpoint` (614) and `AIGetMemory`
 (957). They are not gaps.
 
-The "covered" columns count uses of implemented DBIDs. A handler can still report a version or a
-path as unsupported. See [Partial handlers](#partial-handlers).
+The "covered" columns count uses of implemented DBIDs and of retail no-op DBIDs. A handler can
+still report a version or a path as unsupported. See [Partial handlers](#partial-handlers).
 
 ### Missing effects used by scenarios
 
 The table ranks the effects by the number of uses in scenarios. The number in parentheses is the
-number of scenarios. "External uses" counts uses in `data/triggerscripts`. An "inline case" is
+number of scenarios. "External uses" counts uses in the 90 unique files. An "inline case" is
 code in `BTriggerEffect_fire` without a separate function.
 
 | DBID | Authored name | Scenario uses (scenarios) | External uses | Engine evidence |
 | ---: | --- | ---: | ---: | --- |
-| 556 | `AIMissionRemoveSquads` | 887 (13) | 52 | `BTriggerEffect_teAIMissionRemoveSquads` @ `0x140481A20` |
-| 557 | `AIMissionGetValidSquads` | 601 (13) | 54 | inline case @ `0x14044C508` |
-| 550 | `AIMissionCancel` | 577 (13) | 46 | `BTriggerEffect_teAIMissionCancel` @ `0x140480A30` |
-| 555 | `AIMissionAddSquads` | 339 (13) | 36 | `BTriggerEffect_teAIMissionAddSquads` @ `0x140481980` |
-| 135 | `FlareMinimapNormal` | 193 (15) | 18 | inline case @ `0x14044A99C` |
-| 1008 | `AICreateTargetWrapper` | 189 (13) | 28 | `BTriggerEffect_teAICreateTargetWrapper` @ `0x140486B50` |
-| 1011 | `AIWrapperModifyRadius` | 189 (13) | 28 | `BTriggerEffect_teAIWrapperModifyRadius` @ `0x140486C60` |
-| 1012 | `AIWrapperModifyFlags` | 189 (13) | 28 | `BTriggerEffect_teAIWrapperModifyFlags` @ `0x140486D70` |
-| 1013 | `AIWrapperModifyParms` | 189 (13) | 28 | `BTriggerEffect_teAIWrapperModifyParms` @ `0x140486E40` |
-| 1005 | `AIMissionCreate` | 189 (13) | 20 | `BTriggerEffect_teAIMissionCreate` @ `0x140486A00` |
-| 982 | `AIMissionSetMoveAttack` | 189 (13) | 17 | `BTriggerEffect_teAIMissionSetMoveAttack` @ `0x140486460` |
-| 805 | `HintMessageShow` | 188 (15) | 35 | `BTriggerEffect_teHintMessageShow` @ `0x140472EA0` |
-| 1004 | `AICreateAreaTarget` | 184 (13) | 28 | `BTriggerEffect_teAICreateAreaTarget` @ `0x140486900` |
-| 605 | `AIGetMissions` | 155 (11) | 17 | `BTriggerEffect_teAIGetMissions` @ `0x140481C00` |
-| 815 | `HintMessageDestroy` | 151 (15) | 55 | `BTriggerEffect_teHintMessageDestroy` @ `0x140473960` |
+| 556 | `AIMissionRemoveSquads` | 887 (13) | 50 | `BTriggerEffect_teAIMissionRemoveSquads` @ `0x140481A20` |
+| 557 | `AIMissionGetValidSquads` | 601 (13) | 48 | inline case @ `0x14044C508` |
+| 550 | `AIMissionCancel` | 577 (13) | 42 | `BTriggerEffect_teAIMissionCancel` @ `0x140480A30` |
+| 555 | `AIMissionAddSquads` | 339 (13) | 32 | `BTriggerEffect_teAIMissionAddSquads` @ `0x140481980` |
+| 1008 | `AICreateTargetWrapper` | 189 (13) | 23 | `BTriggerEffect_teAICreateTargetWrapper` @ `0x140486B50` |
+| 1011 | `AIWrapperModifyRadius` | 189 (13) | 23 | `BTriggerEffect_teAIWrapperModifyRadius` @ `0x140486C60` |
+| 1012 | `AIWrapperModifyFlags` | 189 (13) | 23 | `BTriggerEffect_teAIWrapperModifyFlags` @ `0x140486D70` |
+| 1013 | `AIWrapperModifyParms` | 189 (13) | 23 | `BTriggerEffect_teAIWrapperModifyParms` @ `0x140486E40` |
+| 1005 | `AIMissionCreate` | 189 (13) | 17 | `BTriggerEffect_teAIMissionCreate` @ `0x140486A00` |
+| 982 | `AIMissionSetMoveAttack` | 189 (13) | 15 | `BTriggerEffect_teAIMissionSetMoveAttack` @ `0x140486460` |
+| 1004 | `AICreateAreaTarget` | 184 (13) | 23 | `BTriggerEffect_teAICreateAreaTarget` @ `0x140486900` |
+| 605 | `AIGetMissions` | 155 (11) | 15 | `BTriggerEffect_teAIGetMissions` @ `0x140481C00` |
 | 388 | `ChangeSquadMode` | 82 (6) | 14 | inline case @ `0x14044BA68` |
 | 888 | `FloatListRemove` | 63 (5) | 0 | `BTriggerEffect_teFloatListRemove` @ `0x140478560` |
-| 59 | `LocationAdjust` | 60 (7) | 50 | inline case @ `0x14044A42F` |
-| 923 | `FlashUIElement` | 60 (3) | 26 | `BTriggerEffect_teFlashUIElement` @ `0x14047AFF0` |
+| 59 | `LocationAdjust` | 60 (7) | 42 | inline case @ `0x14044A42F` |
 | 671 | `CopyObjectList` | 56 (3) | 0 | inline case @ `0x14044CAC2` |
-| 619 | `AIMissionGetTarget` | 53 (7) | 10 | `BTriggerEffect_teAIMissionGetTarget` @ `0x140482460` |
-| 757 | `AIMissionTargetGetLocation` | 48 (7) | 28 | `BTriggerEffect_teAIMissionTargetGetLocation` @ `0x140482BD0` |
-| 939 | `GetClosestUnit` | 42 (6) | 8 | `BTriggerEffect_teGetClosestUnit` @ `0x14047BD00` |
+| 619 | `AIMissionGetTarget` | 53 (7) | 8 | `BTriggerEffect_teAIMissionGetTarget` @ `0x140482460` |
+| 757 | `AIMissionTargetGetLocation` | 48 (7) | 21 | `BTriggerEffect_teAIMissionTargetGetLocation` @ `0x140482BD0` |
+| 939 | `GetClosestUnit` | 42 (6) | 6 | `BTriggerEffect_teGetClosestUnit` @ `0x14047BD00` |
 | 886 | `CopyFloatList` | 42 (5) | 0 | `BTriggerEffect_teCopyFloatList` @ `0x140487470` |
 | 924 | `ConceptPermission` | 40 (4) | 6 | `BTriggerEffect_teConceptPermission` @ `0x14047B5E0` |
-| 1006 | `EnableMusicManager` | 36 (9) | 0 | `BTriggerEffect_teEnableMusicManager` @ `0x14047C470` |
-| 132 | `FlareMinimapSpoof` | 36 (3) | 3 | inline case @ `0x14044A917` |
 | 631 | `GetProtoObject` | 35 (8) | 11 | inline case @ `0x14044C82E` |
-| 515 | `PlayWorldSoundOnEntity` | 34 (2) | 0 | inline case @ `0x14044C1F8` |
 | 1060 | `TeleportUnitsOffObstruction` | 34 (4) | 0 | `BTriggerEffect_teTeleportUnitsOffObstruction` @ `0x14047E9F0` |
-| 751 | `TimeToFloat` | 33 (5) | 4 | `BTriggerEffect_teTimeToFloat` @ `0x140470880` |
-| 512 | `GetDistanceLocationLocation` | 30 (6) | 64 | inline case @ `0x14044C1AA` |
+| 751 | `TimeToFloat` | 33 (5) | 3 | `BTriggerEffect_teTimeToFloat` @ `0x140470880` |
+| 512 | `GetDistanceLocationLocation` | 30 (6) | 40 | inline case @ `0x14044C1AA` |
 | 537 | `SetPosition` | 29 (4) | 18 | inline case @ `0x14044C3F8` |
 | 284 | `InvertBool` | 29 (4) | 2 | inline case @ `0x14044B143` |
-| 316 | `RefCountSquadAdd` | 28 (2) | 88 | `BTriggerEffect_teRefCountSquadAdd` @ `0x14045F520` |
+| 316 | `RefCountSquadAdd` | 28 (2) | 52 | `BTriggerEffect_teRefCountSquadAdd` @ `0x14045F520` |
 | 845 | `ClearCorpseUnits` | 28 (3) | 0 | `BTriggerEffect_teClearCorpseUnits` @ `0x140474CF0` |
 | 1070 | `FilterAddJacking` | 28 (3) | 0 | inline case @ `0x14044B5F1` |
-| 968 | `SetGarrisonedCount` | 26 (1) | 18 | `BTriggerEffect_teSetGarrisonedCount` @ `0x14047C4A0` |
+| 968 | `SetGarrisonedCount` | 26 (1) | 6 | `BTriggerEffect_teSetGarrisonedCount` @ `0x14047C4A0` |
 | 1068 | `PatherObstructionUpdates` | 24 (1) | 0 | `BTriggerEffect_tePatherObstructionUpdates` @ `0x140461550` |
 | 874 | `GetObstructionRadius` | 23 (8) | 4 | `BTriggerEffect_teGetObstructionRadius` @ `0x1404756C0` |
 | 887 | `FloatListAdd` | 21 (5) | 0 | `BTriggerEffect_teFloatListAdd` @ `0x140478370` |
-| 820 | `SetLevel` | 14 (4) | 22 | `BTriggerEffect_teSetLevel` @ `0x140473A00` |
-| 83 | `AttachmentRemoveType` | 14 (3) | 16 | inline case @ `0x14044A66C` |
+| 83 | `AttachmentRemoveType` | 14 (3) | 12 | inline case @ `0x14044A66C` |
+| 820 | `SetLevel` | 14 (4) | 10 | `BTriggerEffect_teSetLevel` @ `0x140473A00` |
 | 160 | `PlayAnimationSquad` | 12 (3) | 0 | inline case @ `0x14044AA56` |
 | 780 | `TimerGet` | 12 (1) | 0 | `BTriggerEffect_teTimerGet` @ `0x140472950` |
 | 1069 | `PatherObstructionRebuild` | 12 (1) | 0 | `BTriggerEffect_tePatherObstructionRebuild` @ `0x140461570` |
@@ -423,49 +454,42 @@ code in `BTriggerEffect_fire` without a separate function.
 | 910 | `SquadFlagSet` | 10 (3) | 4 | `BTriggerEffect_teSquadFlagSet` @ `0x14047ABA0` |
 | 1032 | `ResetAbilityTimer` | 10 (3) | 0 | `BTriggerEffect_teResetAbilityTimer` @ `0x140480010` |
 | 934 | `ConceptSetParameters` | 9 (2) | 8 | `BTriggerEffect_teConceptSetParameters` @ `0x14047B8E0` |
-| 498 | `AsInt` | 8 (2) | 43 | inline case @ `0x14044C09B` |
-| 767 | `GetGarrisonedSquads` | 8 (1) | 14 | `BTriggerEffect_teGetGarrisonedSquads` @ `0x140470990` |
+| 498 | `AsInt` | 8 (2) | 26 | inline case @ `0x14044C09B` |
+| 767 | `GetGarrisonedSquads` | 8 (1) | 13 | `BTriggerEffect_teGetGarrisonedSquads` @ `0x140470990` |
 | 319 | `UnitFlagSet` | 8 (2) | 2 | `BTriggerEffect_teUnitFlagSet` @ `0x14045FC50` |
 | 738 | `MegaTurretAttack` | 8 (3) | 2 | `BTriggerEffect_teMegaTurretAttack` @ `0x14046D130` |
 | 180 | `MathHitpoints` | 8 (1) | 0 | inline case @ `0x14044B189` |
 | 779 | `TimerSet` | 8 (1) | 0 | `BTriggerEffect_teTimerSet` @ `0x1404728A0` |
 | 1031 | `AIAddTeleporterZone` | 8 (1) | 0 | `BTriggerEffect_teAIAddTeleporterZone` @ `0x140486EF0` |
-| 505 | `GetLegalSquads` | 7 (6) | 12 | `BTriggerEffect_teGetLegalSquads` @ `0x140468F30` |
-| 506 | `GetLegalTechs` | 7 (6) | 4 | `BTriggerEffect_teGetLegalTechs` @ `0x140468FE0` |
+| 505 | `GetLegalSquads` | 7 (6) | 9 | `BTriggerEffect_teGetLegalSquads` @ `0x140468F30` |
+| 506 | `GetLegalTechs` | 7 (6) | 3 | `BTriggerEffect_teGetLegalTechs` @ `0x140468FE0` |
 | 459 | `GetTechResearcherType` | 7 (6) | 1 | inline case @ `0x14044BE4D` |
 | 279 | `MathResources` | 7 (6) | 0 | inline case @ `0x14044B0F8` |
 | 458 | `GetSquadTrainerType` | 7 (6) | 0 | inline case @ `0x14044BDFB` |
-| 726 | `UITogglePowerOverlay` | 6 (2) | 38 | inline case @ `0x14044D1EF` |
 | 765 | `EventFilterGameState` | 6 (2) | 30 | `BTriggerEffect_teEventFilterGameState` @ `0x140474EA0` |
 | 595 | `CopyObject` | 6 (1) | 0 | inline case @ `0x14044CEC2` |
 | 979 | `LocationListGetByIndex` | 6 (1) | 0 | `BTriggerEffect_teLocationListGetByIndex` @ `0x14047C6E0` |
 | 983 | `Infect` | 6 (1) | 0 | `BTriggerEffect_teInfect` @ `0x14047CC50` |
-| 164 | `UserMessage` | 5 (2) | 122 | inline case @ `0x14044A985` |
-| 544 | `AIScoreMissionTargets` | 5 (3) | 22 | `BTriggerEffect_teAIScoreMissionTargets` @ `0x140480900` |
-| 564 | `AISetScoringParms` | 5 (3) | 18 | `BTriggerEffect_teAISetScoringParms` @ `0x140481570` |
-| 551 | `AIGetMissionTargets` | 5 (3) | 17 | inline case @ `0x14044C465` |
-| 545 | `AISortMissionTargets` | 5 (3) | 16 | `BTriggerEffect_teAISortMissionTargets` @ `0x1404809B0` |
-| 311 | `RefCountUnitAdd` | 5 (2) | 10 | `BTriggerEffect_teRefCountUnitAdd` @ `0x14045EFE0` |
+| 544 | `AIScoreMissionTargets` | 5 (3) | 19 | `BTriggerEffect_teAIScoreMissionTargets` @ `0x140480900` |
+| 564 | `AISetScoringParms` | 5 (3) | 15 | `BTriggerEffect_teAISetScoringParms` @ `0x140481570` |
+| 551 | `AIGetMissionTargets` | 5 (3) | 14 | inline case @ `0x14044C465` |
+| 545 | `AISortMissionTargets` | 5 (3) | 13 | `BTriggerEffect_teAISortMissionTargets` @ `0x1404809B0` |
+| 311 | `RefCountUnitAdd` | 5 (2) | 6 | `BTriggerEffect_teRefCountUnitAdd` @ `0x14045EFE0` |
 | 312 | `RefCountUnitRemove` | 5 (2) | 2 | `BTriggerEffect_teRefCountUnitRemove` @ `0x14045F230` |
-| 853 | `GetClosestSquad` | 4 (1) | 20 | `BTriggerEffect_teGetClosestSquad` @ `0x140475240` |
+| 853 | `GetClosestSquad` | 4 (1) | 15 | `BTriggerEffect_teGetClosestSquad` @ `0x140475240` |
 | 828 | `EventFilterNumeric` | 4 (1) | 6 | `BTriggerEffect_teEventFilterNumeric` @ `0x1404750A0` |
 | 190 | `MathPercent` | 4 (2) | 0 | inline case @ `0x14044B6A0` |
-| 533 | `LightsetAnimate` | 4 (1) | 0 | `BTriggerEffect_teLightsetAnimate` @ `0x14046A880` |
 | 737 | `PowerClear` | 4 (2) | 0 | `BTriggerEffect_tePowerClear` @ `0x14046F890` |
-| 808 | `HintGlowToggle` | 4 (2) | 0 | `BTriggerEffect_teHintGlowToggle` @ `0x140473160` |
 | 822 | `GetLevel` | 4 (2) | 0 | `BTriggerEffect_teGetLevel` @ `0x140473AD0` |
 | 981 | `LocationListGetClosest` | 4 (1) | 0 | `BTriggerEffect_teLocationListGetClosest` @ `0x14047C820` |
-| 1049 | `ChatForceSubtitles` | 4 (2) | 0 | `BTriggerEffect_teChatForceSubtitles` @ `0x1404803F0` |
 | 57 | `LaunchProjectile` | 2 (2) | 38 | inline case @ `0x14044A3AC` |
-| 359 | `Settle` | 2 (1) | 6 | `BTriggerEffect_teSettle` @ `0x1404627D0` |
-| 775 | `SetOverrideTint` | 2 (1) | 6 | `BTriggerEffect_teSetOverrideTint` @ `0x140471E00` |
+| 359 | `Settle` | 2 (1) | 5 | `BTriggerEffect_teSettle` @ `0x1404627D0` |
 | 891 | `RepairByCombatValue` | 2 (2) | 5 | `BTriggerEffect_teRepairByCombatValue` @ `0x140478710` |
 | 710 | `SetUnitAttackTarget` | 2 (1) | 0 | `BTriggerEffect_teSetUnitAttackTarget` @ `0x14046EBA0` |
 | 941 | `TeamSetDiplomacy` | 2 (1) | 0 | `BTriggerEffect_teTeamSetDiplomacy` @ `0x14047B060` |
 | 1022 | `PowerUserShutdown` | 2 (1) | 0 | `BTriggerEffect_tePowerUserShutdown` @ `0x14047E090` |
 | 1027 | `ChangeControlledPlayer` | 2 (1) | 0 | `BTriggerEffect_teChangeControlledPlayer` @ `0x14047FDC0` |
 | 186 | `CalculatePercentTime` | 1 (1) | 2 | `BTriggerEffect_teCalculatePercentTime` @ `0x14045CA80` |
-| 521 | `SetFollowCam` | 1 (1) | 0 | `BTriggerEffect_teSetFollowCam` @ `0x14046A060` |
 
 Retail sends `CopyObject` (595), `IntToCount` (568), 567 and 700 to the same copy block
 (`0x14044CEC2`) as the copy effects 85 to 103. `is_copy_effect` in `effects.rs` does not include
@@ -475,17 +499,17 @@ them.
 
 | DBID | Authored name | Scenario uses (scenarios) | External uses | Engine evidence |
 | ---: | --- | ---: | ---: | --- |
-| 575 | `CompareProtoObject` | 168 (8) | 101 | inline case @ `0x140432242` |
-| 547 | `CompareAIMissionState` | 78 (10) | 28 | inline case @ `0x140432C5F` |
+| 575 | `CompareProtoObject` | 168 (8) | 76 | inline case @ `0x140432242` |
+| 547 | `CompareAIMissionState` | 78 (10) | 22 | inline case @ `0x140432C5F` |
 | 956 | `CanGetRandomLocation` | 59 (13) | 1 | `BTriggerCondition_tcCanGetRandomLocation` @ `0x140430600` |
 | 835 | `CanGetOneObject` | 56 (3) | 0 | `BTriggerCondition_tcCanGetOneObject` @ `0x14042EB50` |
 | 885 | `CanGetOneFloat` | 42 (5) | 0 | `BTriggerCondition_tcCanGetOneFloat` @ `0x14042EFA0` |
-| 763 | `CheckPop` | 36 (7) | 11 | `BTriggerCondition_tcCheckPop` @ `0x14042DD40` |
+| 763 | `CheckPop` | 36 (7) | 9 | `BTriggerCondition_tcCheckPop` @ `0x14042DD40` |
 | 844 | `CanGetCorpseUnits` | 28 (3) | 0 | `BTriggerCondition_tcCanGetCorpseUnits` @ `0x14042EC70` |
 | 386 | `CheckModeChange` | 25 (3) | 4 | `BTriggerCondition_tcCheckModeChange` @ `0x1404294F0` |
-| 576 | `CompareTech` | 21 (6) | 4 | inline case @ `0x140432242` |
+| 576 | `CompareTech` | 21 (6) | 3 | inline case @ `0x140432242` |
 | 604 | `IsAttached` | 10 (1) | 0 | inline case @ `0x140432F57` |
-| 314 | `RefCountUnit` | 5 (2) | 36 | `BTriggerCondition_tcRefCountUnit` @ `0x1404281F0` |
+| 314 | `RefCountUnit` | 5 (2) | 18 | `BTriggerCondition_tcRefCountUnit` @ `0x1404281F0` |
 | 558 | `CanGetUnitsAlongRay` | 4 (1) | 0 | inline case @ `0x140432CF6` |
 | 714 | `CanGetUnitLaunchLocation` | 2 (1) | 0 | `BTriggerCondition_tcCanGetUnitLaunchLocation` @ `0x14042D0D0` |
 | 743 | `CanGetGreatestThreat` | 2 (1) | 0 | `BTriggerCondition_tcCanGetGreatestThreat` @ `0x14042D600` |
@@ -497,44 +521,46 @@ them.
 These DBIDs occur only in `data/triggerscripts`. They become important when the sim loads those
 scripts.
 
-Effects (124 DBIDs):
+Effects (116 DBIDs):
 
-- AI: 32 DBIDs, 776 uses. `AIFactoidSubmit` (993), `AIRemoveFromMissions` (612),
-  `AITopicLotto` (625), `AIAnalyzeKBSquadList` (673), `AISetPlayerAssetModifier` (1035),
-  `AISetFocus` (711), `AITopicModifyTickets` (591), `AITopicCreate` (589), and 24 more.
-- AI bids: 14 DBIDs, 345 uses. `BidQuery` (778), `BidDelete` (373), `BidSetQueueLimits` (871),
+- AI: 30 DBIDs, 559 uses. `AIFactoidSubmit` (993), `AIRemoveFromMissions` (612),
+  `AITopicLotto` (625), `AISetPlayerAssetModifier` (1035), `AIAnalyzeKBSquadList` (673),
+  `AITopicModifyTickets` (591), `AIMissionTargetGetScores` (561), `AISetAssetMultipliers` (878),
+  and 22 more.
+- AI bids: 14 DBIDs, 262 uses. `BidQuery` (778), `BidDelete` (373), `BidSetQueueLimits` (871),
   `BidCreatePower` (958), `BidCreateBuilding` (370), `BidCreateTech` (371), `BidPurchase` (391),
-  `BidCreateSquad` (372), and 6 more.
-- AI knowledge base: 11 DBIDs, 272 uses. `KBSQInit` (663), `KBSQExecute` (665),
-  `KBSquadListFilter` (691), `KBBQExecute` (449), `KBAddSquadsToKB` (985), and 6 more.
+  `BidGetData` (587), and 6 more.
+- AI knowledge base: 11 DBIDs, 206 uses. `KBSQInit` (663), `KBSQExecute` (665),
+  `KBSquadListFilter` (691), `KBSFAddObjectTypes` (686), `KBSQObjectType` (704), and 6 more.
 - Hint concepts: 5 DBIDs, 90 uses. `ConceptSetState` (925), `ConceptSetPrecondition` (926),
   `ConceptGetParameters` (849), `ConceptStartSub` (927), `ConceptResetCooldown` (971).
 - UI input: 6 DBIDs, 84 uses. `UIUnlock` (330), `InputUILocation` (84), `InputUIButton` (529),
   `InputUISquadList` (639), `InputUIPlaceSquads` (771), `InputUILocationMinigame` (892).
-- DLC game modes: 7 DBIDs, 74 uses. `TugOfWarMarkPlayersAsTrailing` (1071), `setCTFCount`
-  (1083), `GetCTFFlag` (1074), `GetCTFFlagCarrier` (1075), `TowSetVisible` (1079), `TowSetScore`
+- DLC game modes: 7 DBIDs, 28 uses. `TugOfWarMarkPlayersAsTrailing` (1071), `GetCTFFlag`
+  (1074), `GetCTFFlagCarrier` (1075), `setCTFCount` (1083), `TowSetVisible` (1079), `TowSetScore`
   (1080), `ClearCTFFlagOrCarrier` (1082).
-- Other: 49 DBIDs, 722 uses. `ModifyProtoSquadData` (829), `PowerChargeUseOf` (77),
-  `AttachmentAddObject` (363), `GetDistanceUnitLocation` (111), `RefCountSquadRemove` (317),
-  `MathLocation` (295), `TableLoad` (796), and 42 more.
+- Other: 43 DBIDs, 393 uses. `ModifyProtoSquadData` (829), `PowerChargeUseOf` (77),
+  `GetDistanceUnitLocation` (111), `RefCountSquadRemove` (317), `TableLoad` (796),
+  `SetUIPowerRadius` (79), `FilterAddRefCount` (351), and 36 more.
 
-Conditions (51 DBIDs):
+Conditions (47 DBIDs):
 
 - UI input: 13 DBIDs, 77 uses. The `UILocation*`, `UISquadList*` and `UILocationMinigame*`
   result conditions, and `UIButtonPressed` (527).
-- AI: 5 DBIDs, 132 uses. `AICanGetDifficultySetting` (920), `AITopicIsActive` (600),
-  `AITopicGetTickets` (1059), `AICanGetFocusTopic` (883), `BidState` (586).
-- Hint concepts: `ConceptGetCommand` (930), `ConceptGetStateChange` (931).
-- Other: 31 DBIDs, 636 uses. `CheckAndSetFalse` (1056), `CanRemoveOneInteger` (563),
-  `RefCountSquad` (315), `CanUsePower` (27), `ProtoObjectListContains` (577),
-  `CanGetHoverPoint` (990), and 25 more.
+- AI: 4 DBIDs, 49 uses. `BidState` (586), `AITopicIsActive` (600), `AITopicGetTickets` (1059),
+  `AICanGetFocusTopic` (883).
+- Hint concepts: 2 DBIDs, 19 uses. `ConceptGetCommand` (930), `ConceptGetStateChange` (931).
+- Other: 28 DBIDs, 415 uses. `CheckAndSetFalse` (1056), `CanUsePower` (27),
+  `CanGetHoverPoint` (990), `ProtoObjectListContains` (577), `RefCountSquad` (315),
+  `CheckPlacement` (82), and 22 more.
 
 ### Partial handlers
 
 These handlers exist but do not cover all shipped uses:
 
-- `SetCamera` (884) accepts only v4. Retail `BTriggerEffect_teSetCamera` (`0x140477280`) also
-  handles v2 and v3. Shipped data has 11 v3 uses.
+- `SetCamera` (884) runs v2, v3 and v4, like the version dispatch of retail
+  `BTriggerEffect_teSetCamera` (`0x140477280`). Retail has no v1 case, and the sim reports v1 as
+  unsupported. Shipped data has 0 v1 uses, 11 v3 uses and 17 v4 uses.
 - `CreateObject` (35) v4, `ChangeOwner` (137) v2 and `MovePath` (439) v1 are reported as
   unsupported. Retail does nothing for these versions, so the state is the same.
 - `SetDirection` (489) turret aiming and `Teleport` (354) squad plotting are unsupported. Object
@@ -555,9 +581,7 @@ In order of shipped use:
 3. External trigger script starts. `TriggerEngine::launch_script` exists, but nothing calls it
    for the power scripts of `BProtoPower_load` (`0x14034EB96`) and the weapon scripts of
    `BWeapon_loadWeapon` (`0x1403FFE52`).
-4. Hints and UI: `HintMessageShow` (805), `HintMessageDestroy` (815), `FlareMinimapNormal`
-   (135), `FlashUIElement` (923), `ConceptPermission` (924) and the UI input effects and
-   conditions.
+4. Hints and UI: `ConceptPermission` (924) and the UI input effects and conditions.
 5. The other rows of the tables above.
 
 Not gaps: the retail no-op DBIDs listed in [Coverage](#coverage). The DLC game modes (capture

@@ -151,6 +151,8 @@ impl ObjectRuntimeFlags {
     const GRAY_MAP_DOPPLES: Self = Self(1 << 1);
     const DOPPLES: Self = Self(1 << 2);
     const FORCE_VISIBILITY_UPDATE: Self = Self(1 << 3);
+    /// Retail `BObject` flag byte 761 bit 5, set by `SetOverrideTint` (775).
+    const OVERRIDE_TINT: Self = Self(1 << 4);
 
     const fn contains(self, flag: Self) -> bool {
         self.0 & flag.0 != 0
@@ -171,6 +173,7 @@ pub struct ObjectState {
     runtime_flags: ObjectRuntimeFlags,
     visual_variation_index: i32,
     override_tint: [u8; 4],
+    highlight_intensity: f32,
     targeting_selection: Option<TargetingSelection>,
     scripted_animation: Option<ScriptedAnimation>,
     scripted_animation_revision: u32,
@@ -186,6 +189,7 @@ impl Default for ObjectState {
             runtime_flags: ObjectRuntimeFlags::default(),
             visual_variation_index: -1,
             override_tint: [0, 0, 0, u8::MAX],
+            highlight_intensity: 0.0,
             targeting_selection: None,
             scripted_animation: None,
             scripted_animation_revision: 0,
@@ -221,6 +225,25 @@ impl ObjectState {
     #[must_use]
     pub const fn targeting_selection(&self) -> Option<TargetingSelection> {
         self.targeting_selection
+    }
+
+    /// The override tint as red, green, blue and alpha (retail `mOverrideTint`).
+    #[must_use]
+    pub const fn override_tint(&self) -> [u8; 4] {
+        self.override_tint
+    }
+
+    /// Whether the renderer draws the object with its override tint (`SetOverrideTint`, 775).
+    #[must_use]
+    pub const fn override_tint_enabled(&self) -> bool {
+        self.runtime_flags
+            .contains(ObjectRuntimeFlags::OVERRIDE_TINT)
+    }
+
+    /// The hint glow intensity: 1 while `HintGlowToggle` (808) turns the glow on, else 0.
+    #[must_use]
+    pub const fn highlight_intensity(&self) -> f32 {
+        self.highlight_intensity
     }
 
     /// Return the current scripted animation, including its locked final pose.
@@ -298,6 +321,16 @@ impl ObjectState {
 
     pub(crate) fn set_visual_variation_index(&mut self, index: i32) {
         self.visual_variation_index = index.max(-1);
+    }
+
+    pub(crate) fn set_override_tint(&mut self, tint: [u8; 4], enabled: bool) {
+        self.override_tint = tint;
+        self.runtime_flags
+            .set(ObjectRuntimeFlags::OVERRIDE_TINT, enabled);
+    }
+
+    pub(crate) fn set_highlight_intensity(&mut self, intensity: f32) {
+        self.highlight_intensity = intensity;
     }
 
     pub(crate) fn set_render_enabled(&mut self, enabled: bool) {
@@ -381,6 +414,8 @@ impl ObjectState {
         for channel in self.override_tint {
             checksum.hash_u32(u32::from(channel));
         }
+        checksum.hash_u32(u32::from(self.override_tint_enabled()));
+        checksum.hash_f32(self.highlight_intensity);
         if let Some(selection) = self.targeting_selection {
             checksum.hash_u32(1);
             checksum.hash_u32(selection.started_at_ms);

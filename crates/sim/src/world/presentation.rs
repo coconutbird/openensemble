@@ -11,19 +11,28 @@ use crate::sync::SyncChecksum;
 mod callouts;
 mod camera_shakes;
 mod fades;
+mod flares;
+mod hints;
 mod messages;
 mod objective_pointers;
 mod rumbles;
+mod scene;
+mod user_messages;
 
 pub use callouts::{HintCallout, HintCalloutAnchor};
 pub use camera_shakes::CameraShake;
 pub use fades::{ScreenFadeOverlay, ScreenFadeSequence};
+pub use flares::MinimapFlare;
+pub use hints::HintMessage;
 pub use messages::TriggerMessage;
 pub use objective_pointers::ObjectivePointer;
 pub use rumbles::{RumbleMotor, RumbleRequest};
+pub use scene::{FollowCamera, LightsetAnimation, WorldSoundRequest};
+pub(crate) use user_messages::UserMessageUpdate;
+pub use user_messages::{USER_MESSAGE_COUNT, UserMessage, UserMessageJustify};
 
 const HUD_ITEM_COUNT: usize = 11;
-const GLOBAL_TOGGLE_COUNT: usize = 4;
+const GLOBAL_TOGGLE_COUNT: usize = 6;
 
 #[derive(Debug, Clone, Copy)]
 enum GlobalPresentationToggle {
@@ -31,9 +40,13 @@ enum GlobalPresentationToggle {
     RenderTerrainSkirt,
     ScreenBlur,
     MinimapSkirtMirroring,
+    /// `EnableMusicManager` (1006): the music manager plays music.
+    MusicManager,
+    /// `ChatForceSubtitles` (1049): chats show subtitles also when the options hide them.
+    ChatForceSubtitles,
 }
 
-const DEFAULT_GLOBAL_TOGGLES: [bool; GLOBAL_TOGGLE_COUNT] = [true, true, false, true];
+const DEFAULT_GLOBAL_TOGGLES: [bool; GLOBAL_TOGGLE_COUNT] = [true, true, false, true, true, false];
 
 /// One retail `BUser::cHUDItem*` slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,7 +129,7 @@ const DEFAULT_HUD_ITEMS: [bool; HUD_ITEM_COUNT] = [
     true, true, false, true, true, false, false, true, false, true, true,
 ];
 
-/// One version-4 retail camera directive waiting for a renderer/UI adapter.
+/// One retail camera directive (`SetCamera` v2, v3 or v4) waiting for a renderer/UI adapter.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CameraDirective {
     /// The nonzero identity of this directive, which increases with each new directive.
@@ -127,6 +140,23 @@ pub struct CameraDirective {
     pub direction: Option<Vec3>,
     /// Optional hover-height offset introduced by version 4.
     pub hover_height_offset: Option<f32>,
+    /// Version 3 and 4 slot 8: the location is absolute. Retail then clears the camera lock
+    /// flags of the user before it moves the camera.
+    pub absolute_position: bool,
+    /// Version 3 and 4 slot 9: the camera takes the direction as its own direction. A
+    /// direction with zero x and z keeps the current direction and only changes the pitch.
+    pub absolute_direction: bool,
+}
+
+/// The inputs of one `SetCamera` directive for one player.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct CameraDirectiveInput {
+    pub(crate) controls: [bool; 3],
+    pub(crate) location: Option<Vec3>,
+    pub(crate) direction: Option<Vec3>,
+    pub(crate) hover_height_offset: Option<f32>,
+    pub(crate) absolute_position: bool,
+    pub(crate) absolute_direction: bool,
 }
 
 /// Trigger-authored permissions for renderer-owned camera input.
@@ -163,6 +193,12 @@ pub struct PlayerPresentationState {
     pub power_menu_enabled: bool,
     /// The ID of the trigger script that locks the user input, if any.
     pub user_lock_owner_script: Option<u32>,
+    /// Bit `n` is set while `FlashUIElement` (923) flashes `FlashableUIItem` `n` for the
+    /// player.
+    pub flashing_ui_items: u32,
+    /// Increases each time `UITogglePowerOverlay` (726) cancels the power targeting of the
+    /// player. The UI closes its power targeting when the value changes.
+    pub power_targeting_cancel_revision: u32,
 }
 
 impl PlayerPresentationState {
@@ -181,6 +217,8 @@ impl Default for PlayerPresentationState {
             ignore_dpad: false,
             power_menu_enabled: true,
             user_lock_owner_script: None,
+            flashing_ui_items: 0,
+            power_targeting_cancel_revision: 0,
         }
     }
 }
@@ -189,10 +227,14 @@ impl Default for PlayerPresentationState {
 pub(super) struct PresentationControlState {
     callouts: callouts::HintCalloutState,
     camera_shakes: camera_shakes::CameraShakeState,
+    flares: flares::FlareState,
+    hints: hints::HintMessageState,
     messages: messages::TriggerMessageState,
     objective_pointers: objective_pointers::ObjectivePointerState,
     rumbles: rumbles::RumbleState,
+    scene: scene::SceneCueState,
     screen_fade: fades::ScreenFadeState,
+    user_messages: user_messages::UserMessageState,
     global_toggles: [bool; GLOBAL_TOGGLE_COUNT],
     hud_items: [bool; HUD_ITEM_COUNT],
     minimap_rotation_degrees: f32,
@@ -206,10 +248,14 @@ impl Default for PresentationControlState {
         Self {
             callouts: callouts::HintCalloutState::default(),
             camera_shakes: camera_shakes::CameraShakeState::default(),
+            flares: flares::FlareState::default(),
+            hints: hints::HintMessageState::default(),
             messages: messages::TriggerMessageState::default(),
             objective_pointers: objective_pointers::ObjectivePointerState::default(),
             rumbles: rumbles::RumbleState::default(),
+            scene: scene::SceneCueState::default(),
             screen_fade: fades::ScreenFadeState::default(),
+            user_messages: user_messages::UserMessageState::default(),
             global_toggles: DEFAULT_GLOBAL_TOGGLES,
             hud_items: DEFAULT_HUD_ITEMS,
             minimap_rotation_degrees: 0.0,
@@ -267,6 +313,21 @@ impl World {
         self.presentation_control.circle_menu_reset_revision
     }
 
+    /// Whether the music manager plays music (`EnableMusicManager`, 1006).
+    #[must_use]
+    pub const fn music_manager_enabled(&self) -> bool {
+        self.presentation_control
+            .toggle(GlobalPresentationToggle::MusicManager)
+    }
+
+    /// Whether chats show subtitles also when the options hide them (`ChatForceSubtitles`,
+    /// 1049).
+    #[must_use]
+    pub const fn chat_subtitles_forced(&self) -> bool {
+        self.presentation_control
+            .toggle(GlobalPresentationToggle::ChatForceSubtitles)
+    }
+
     /// Snapshot the authoritative renderer/UI controls for one player.
     #[must_use]
     pub fn player_presentation_state(&self, player_id: PlayerId) -> PlayerPresentationState {
@@ -305,6 +366,42 @@ impl World {
             .set_toggle(GlobalPresentationToggle::MinimapSkirtMirroring, enabled);
     }
 
+    pub(crate) fn set_music_manager_enabled(&mut self, enabled: bool) {
+        self.presentation_control
+            .set_toggle(GlobalPresentationToggle::MusicManager, enabled);
+    }
+
+    pub(crate) fn set_chat_subtitles_forced(&mut self, forced: bool) {
+        self.presentation_control
+            .set_toggle(GlobalPresentationToggle::ChatForceSubtitles, forced);
+    }
+
+    /// `FlashUIElement` (923) v2: start or stop the flash of one `FlashableUIItem` for a
+    /// player.
+    pub(crate) fn set_player_ui_item_flashing(
+        &mut self,
+        player_id: PlayerId,
+        item: u32,
+        flash: bool,
+    ) {
+        let bit = 1_u32.checked_shl(item).unwrap_or(0);
+        self.update_player_presentation(player_id, |state| {
+            if flash {
+                state.flashing_ui_items |= bit;
+            } else {
+                state.flashing_ui_items &= !bit;
+            }
+        });
+    }
+
+    /// `UITogglePowerOverlay` (726) off: cancel the power targeting of the user of a player.
+    pub(crate) fn cancel_player_power_targeting(&mut self, player_id: PlayerId) {
+        self.update_player_presentation(player_id, |state| {
+            state.power_targeting_cancel_revision =
+                state.power_targeting_cancel_revision.wrapping_add(1).max(1);
+        });
+    }
+
     pub(crate) fn reset_circle_menu(&mut self) {
         let revision = self
             .presentation_control
@@ -333,33 +430,30 @@ impl World {
         });
     }
 
-    pub(crate) fn set_player_camera_v4(
-        &mut self,
-        player_id: PlayerId,
-        controls: [bool; 3],
-        location: Option<Vec3>,
-        direction: Option<Vec3>,
-        hover_height_offset: Option<f32>,
-    ) {
+    pub(crate) fn set_player_camera(&mut self, player_id: PlayerId, input: CameraDirectiveInput) {
         if player_id == 0 || self.get_player(player_id).is_none() {
             return;
         }
-        let directive =
-            if location.is_some() || direction.is_some() || hover_height_offset.is_some() {
-                Some(CameraDirective {
-                    revision: self.presentation_control.allocate_camera_revision(),
-                    location,
-                    direction,
-                    hover_height_offset,
-                })
-            } else {
-                None
-            };
+        let directive = if input.location.is_some()
+            || input.direction.is_some()
+            || input.hover_height_offset.is_some()
+        {
+            Some(CameraDirective {
+                revision: self.presentation_control.allocate_camera_revision(),
+                location: input.location,
+                direction: input.direction,
+                hover_height_offset: input.hover_height_offset,
+                absolute_position: input.absolute_position,
+                absolute_direction: input.absolute_direction,
+            })
+        } else {
+            None
+        };
         self.update_player_presentation(player_id, |state| {
             state.camera_controls = CameraControlPermissions {
-                scroll: controls[0],
-                yaw: controls[1],
-                zoom: controls[2],
+                scroll: input.controls[0],
+                yaw: input.controls[1],
+                zoom: input.controls[2],
             };
             if directive.is_some() {
                 state.camera_directive = directive;
@@ -404,9 +498,13 @@ impl PresentationControlState {
     pub(super) fn hash_state(&self, checksum: &mut SyncChecksum) {
         self.callouts.hash_state(checksum);
         self.camera_shakes.hash_state(checksum);
+        self.flares.hash_state(checksum);
+        self.hints.hash_state(checksum);
         self.messages.hash_state(checksum);
         self.objective_pointers.hash_state(checksum);
         self.rumbles.hash_state(checksum);
+        self.scene.hash_state(checksum);
+        self.user_messages.hash_state(checksum);
         self.hash_screen_fade(checksum);
         for enabled in self.global_toggles {
             checksum.hash_u32(u32::from(enabled));
@@ -439,6 +537,8 @@ impl PlayerPresentationState {
         checksum.hash_u32(u32::from(self.ignore_dpad));
         checksum.hash_u32(u32::from(self.power_menu_enabled));
         checksum.hash_u32(self.user_lock_owner_script.unwrap_or(u32::MAX));
+        checksum.hash_u32(self.flashing_ui_items);
+        checksum.hash_u32(self.power_targeting_cancel_revision);
     }
 }
 
@@ -448,6 +548,8 @@ impl CameraDirective {
         hash_optional_vec3(checksum, self.location);
         hash_optional_vec3(checksum, self.direction);
         hash_optional_f32(checksum, self.hover_height_offset);
+        checksum.hash_u32(u32::from(self.absolute_position));
+        checksum.hash_u32(u32::from(self.absolute_direction));
     }
 }
 

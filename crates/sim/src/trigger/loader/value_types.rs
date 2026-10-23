@@ -90,3 +90,61 @@ pub(super) fn parse_vector_list(text: &str) -> Vec<Vec3> {
         })
         .collect()
 }
+
+pub(super) fn parse_compare_operator(text: &str) -> i32 {
+    text.parse().unwrap_or_else(|_| match text.trim() {
+        "NotEqualTo" => 0,
+        "LessThan" => 1,
+        "LessThanOrEqualTo" => 2,
+        "EqualTo" => 3,
+        "GreaterThanOrEqualTo" => 4,
+        "GreaterThan" => 5,
+        _ => -1,
+    })
+}
+
+pub(super) fn parse_math_operator(text: &str) -> i32 {
+    text.parse().unwrap_or_else(|_| match text.trim() {
+        "Add" => 0,
+        "Subtract" => 1,
+        "Multiply" => 2,
+        "Divide" => 3,
+        "Modulus" => 4,
+        _ => -1,
+    })
+}
+
+/// `BDatabase::getFlashableUIItem` names in `BUIGame::cFlashableItem*` order. Retail compares
+/// without case.
+const FLASHABLE_UI_ITEMS: [&str; 21] = [
+    "Minimap",
+    "CircleMenu0",
+    "CircleMenu1",
+    "CircleMenu2",
+    "CircleMenu3",
+    "CircleMenu4",
+    "CircleMenu5",
+    "CircleMenu6",
+    "CircleMenu7",
+    "CircleMenuPop",
+    "CircleMenuPower",
+    "CircleMenuSupply",
+    "Dpad",
+    "DpadUp",
+    "DpadDown",
+    "DpadLeft",
+    "DpadRight",
+    "ResourcePanel",
+    "ResourcePanelPop",
+    "ResourcePanelPower",
+    "ResourcePanelSupply",
+];
+
+/// Resolve a `FlashableUIItem` name. An unknown name gives `-1`.
+pub(super) fn parse_flashable_ui_item(text: &str) -> i32 {
+    FLASHABLE_UI_ITEMS
+        .iter()
+        .position(|name| name.eq_ignore_ascii_case(text))
+        .and_then(|index| i32::try_from(index).ok())
+        .unwrap_or(-1)
+}

@@ -406,6 +406,13 @@ impl<'a> ScenarioBuilder<'a> {
         );
         world.init_players(0);
         objectives::configure_objective_references(&mut world, scenario.objectives());
+        world.configure_lightsets(
+            scenario
+                .lightsets()
+                .iter()
+                .map(|lightset| lightset.id)
+                .collect(),
+        );
         Self {
             loaded: LoadedScenario {
                 world,

@@ -136,10 +136,12 @@ pub use powers::{
     power_prototype_id,
 };
 pub use presentation::{
-    CameraControlPermissions, CameraDirective, CameraShake, HintCallout, HintCalloutAnchor,
-    HudItem, ObjectivePointer, PlayerPresentationState, RumbleMotor, RumbleRequest,
-    ScreenFadeOverlay, ScreenFadeSequence, TriggerMessage,
+    CameraControlPermissions, CameraDirective, CameraShake, FollowCamera, HintCallout,
+    HintCalloutAnchor, HintMessage, HudItem, LightsetAnimation, MinimapFlare, ObjectivePointer,
+    PlayerPresentationState, RumbleMotor, RumbleRequest, ScreenFadeOverlay, ScreenFadeSequence,
+    TriggerMessage, USER_MESSAGE_COUNT, UserMessage, UserMessageJustify, WorldSoundRequest,
 };
+pub(crate) use presentation::{CameraDirectiveInput, UserMessageUpdate};
 pub use production::ProductionUpdate;
 pub use research::{ResearchError, ResearchQueueResult, ResearchQuote, technology_prototype_id};
 pub use scoring::ScenarioScoreInfo;

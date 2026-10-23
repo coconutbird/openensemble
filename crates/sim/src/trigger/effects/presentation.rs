@@ -3,11 +3,13 @@
 use super::{EffectOutcome, value_at};
 use crate::player::PlayerId;
 use crate::trigger::{Effect, EffectType, TriggerScript, TriggerValue};
-use crate::world::{HudItem, ScreenFadeSequence, World};
+use crate::world::{CameraDirectiveInput, HudItem, ScreenFadeSequence, World};
 use glam::Vec3;
 
 mod callouts;
 mod rumbles;
+mod scene;
+mod ui;
 
 pub(super) fn execute(
     effect: &Effect,
@@ -38,6 +40,24 @@ pub(super) fn execute(
         EffectType::SetMinimapSkirtMirroring => set_minimap_skirt_mirroring(effect, script, world),
         EffectType::LockPlayerUser => set_user_lock(effect, script, world),
         EffectType::ShowMessage => show_message(effect, script, world),
+        EffectType::HintMessageShow => ui::hint_message_show(effect, script, world),
+        EffectType::HintMessageDestroy => ui::hint_message_destroy(effect, script, world),
+        EffectType::FlareMinimapNormal => ui::flare_minimap_normal(effect, script, world),
+        EffectType::FlareMinimapSpoof => ui::flare_minimap_spoof(effect, script, world),
+        EffectType::FlashUIElement => ui::flash_ui_element(effect, script, world),
+        EffectType::UserMessage => ui::user_message(effect, script, world),
+        EffectType::UITogglePowerOverlay => ui::ui_toggle_power_overlay(effect, script, world),
+        EffectType::EnableMusicManager => {
+            ui::global_flag(effect, script, world, World::set_music_manager_enabled)
+        }
+        EffectType::ChatForceSubtitles => {
+            ui::global_flag(effect, script, world, World::set_chat_subtitles_forced)
+        }
+        EffectType::PlayWorldSoundOnEntity => {
+            scene::play_world_sound_on_entity(effect, script, world)
+        }
+        EffectType::SetFollowCam => scene::set_follow_cam(effect, script, world),
+        EffectType::LightsetAnimate => scene::lightset_animate(effect, script, world),
         _ => return None,
     };
     Some(outcome)
@@ -216,8 +236,13 @@ fn set_terrain_skirt(effect: &Effect, script: &TriggerScript, world: &mut World)
     EffectOutcome::Presentation
 }
 
+/// `SetCamera` (884) v2 (`0x1404772B0`), v3 (`0x1404776F0`) and v4.
+///
+/// Slots 1 to 3 are the scroll, yaw and zoom permissions, slot 4 the location, slot 5 the
+/// direction, slot 6 a player and slot 7 a player list. v3 and v4 add the absolute position
+/// (slot 8) and absolute direction (slot 9) flags. v4 adds the hover height offset (slot 10).
 fn set_camera(effect: &Effect, script: &TriggerScript, world: &mut World) -> EffectOutcome {
-    if effect.version != 4 {
+    if !matches!(effect.version, 2..=4) {
         return EffectOutcome::Unsupported(effect.raw_type);
     }
     let (Some(scroll), Some(yaw), Some(zoom)) = (
@@ -227,26 +252,31 @@ fn set_camera(effect: &Effect, script: &TriggerScript, world: &mut World) -> Eff
     ) else {
         return EffectOutcome::Skipped;
     };
-    let Ok(mut location) = optional_vector(effect, script, 4) else {
+    let (Ok(mut location), Ok(mut direction), Ok(players)) = (
+        optional_vector(effect, script, 4),
+        optional_vector(effect, script, 5),
+        player_targets(effect, script, 6, 7),
+    ) else {
         return EffectOutcome::Skipped;
     };
-    let Ok(mut direction) = optional_vector(effect, script, 5) else {
-        return EffectOutcome::Skipped;
+    let (absolute_position, absolute_direction) = if effect.version >= 3 {
+        let (Ok(position), Ok(direction)) = (
+            optional_bool(effect, script, 8),
+            optional_bool(effect, script, 9),
+        ) else {
+            return EffectOutcome::Skipped;
+        };
+        (position.unwrap_or(false), direction.unwrap_or(false))
+    } else {
+        (false, false)
     };
-    let Ok(players) = player_targets(effect, script, 6, 7) else {
-        return EffectOutcome::Skipped;
-    };
-    let Ok(absolute_position) = optional_bool(effect, script, 8) else {
-        return EffectOutcome::Skipped;
-    };
-    let Ok(absolute_direction) = optional_bool(effect, script, 9) else {
-        return EffectOutcome::Skipped;
-    };
-    if absolute_position == Some(true) || absolute_direction == Some(true) {
-        return EffectOutcome::Unsupported(effect.raw_type);
-    }
-    let Ok(height_offset) = optional_float(effect, script, 10) else {
-        return EffectOutcome::Skipped;
+    let height_offset = if effect.version == 4 {
+        let Ok(height_offset) = optional_float(effect, script, 10) else {
+            return EffectOutcome::Skipped;
+        };
+        height_offset
+    } else {
+        None
     };
 
     if let Some(value) = &mut location
@@ -254,17 +284,19 @@ fn set_camera(effect: &Effect, script: &TriggerScript, world: &mut World) -> Eff
     {
         value.y = height;
     }
-    if let Some(value) = &mut direction {
+    if !absolute_direction && let Some(value) = &mut direction {
         value.y = 0.0;
     }
+    let input = CameraDirectiveInput {
+        controls: [scroll, yaw, zoom],
+        location,
+        direction,
+        hover_height_offset: height_offset,
+        absolute_position,
+        absolute_direction,
+    };
     for player_id in players {
-        world.set_player_camera_v4(
-            player_id,
-            [scroll, yaw, zoom],
-            location,
-            direction,
-            height_offset,
-        );
+        world.set_player_camera(player_id, input);
     }
     EffectOutcome::Presentation
 }

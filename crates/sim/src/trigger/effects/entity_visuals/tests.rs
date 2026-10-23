@@ -97,6 +97,88 @@ fn reset_dopple_changes_policy_and_invalidates_existing_team_ghosts() {
     assert!(policy.visibility_update_pending());
 }
 
+#[test]
+fn override_tint_scales_alpha_to_a_byte_and_defaults_to_disabled() {
+    assert_eq!(EffectType::from_u16(775), Some(EffectType::SetOverrideTint));
+    let mut world = World::new();
+    let unit = world.create_unit(1);
+    let mut script = TriggerScript::new(1);
+    add_value(&mut script, 1, VarType::Unit, TriggerValue::Unit(unit));
+    add_value(
+        &mut script,
+        2,
+        VarType::Color,
+        TriggerValue::Color(TriggerColor::new(10, 20, 30, 255)),
+    );
+    add_value(&mut script, 3, VarType::Float, TriggerValue::Float(2.0));
+    add_value(&mut script, 4, VarType::Bool, TriggerValue::Bool(true));
+    let effect = Effect::new(1, EffectType::SetOverrideTint)
+        .with_input_at(1, 1)
+        .with_input_at(7, 2);
+    assert_eq!(
+        execute(&effect, &script, &mut world),
+        Some(EffectOutcome::Presentation)
+    );
+    let state = world.entity_object_state(unit).unwrap();
+    assert_eq!(state.override_tint(), [10, 20, 30, 255]);
+    assert!(!state.override_tint_enabled());
+
+    let effect = effect.with_input_at(8, 3).with_input_at(9, 4);
+    let _ = execute(&effect, &script, &mut world);
+    let state = world.entity_object_state(unit).unwrap();
+    assert_eq!(state.override_tint()[3], 255);
+    assert!(state.override_tint_enabled());
+    assert_eq!(unit_float_to_byte(0.5), 127);
+    assert_eq!(unit_float_to_byte(-1.0), 0);
+    assert_eq!(unit_float_to_byte(f32::NAN), 0);
+}
+
+#[test]
+fn hint_glow_v2_uses_the_first_squad_unit_and_v3_uses_all_targets() {
+    assert_eq!(EffectType::from_u16(808), Some(EffectType::HintGlowToggle));
+    let mut world = World::new();
+    let squad_id = world.create_squad(1);
+    let first = world.create_unit(1);
+    let second = world.create_unit(1);
+    assert!(world.attach_unit_to_squad(first, squad_id));
+    assert!(world.attach_unit_to_squad(second, squad_id));
+    let mut script = TriggerScript::new(1);
+    add_value(&mut script, 1, VarType::Bool, TriggerValue::Bool(true));
+    add_value(
+        &mut script,
+        2,
+        VarType::Squad,
+        TriggerValue::Squad(squad_id),
+    );
+    let glow = |world: &World, unit| {
+        world
+            .entity_object_state(unit)
+            .unwrap()
+            .highlight_intensity()
+    };
+
+    let mut effect = Effect::new(1, EffectType::HintGlowToggle)
+        .with_input_at(2, 1)
+        .with_input_at(6, 2);
+    effect.version = 2;
+    let _ = execute(&effect, &script, &mut world);
+    assert!((glow(&world, first) - 1.0).abs() < f32::EPSILON);
+    assert!(glow(&world, second).abs() < f32::EPSILON);
+
+    let mut effect = Effect::new(1, EffectType::HintGlowToggle)
+        .with_input_at(2, 1)
+        .with_input_at(9, 2);
+    effect.version = 3;
+    let _ = execute(&effect, &script, &mut world);
+    assert!((glow(&world, second) - 1.0).abs() < f32::EPSILON);
+
+    effect.version = 1;
+    assert_eq!(
+        execute(&effect, &script, &mut world),
+        Some(EffectOutcome::Unsupported(808))
+    );
+}
+
 fn add_value(script: &mut TriggerScript, id: u32, var_type: VarType, value: TriggerValue) {
     script.add_variable(TriggerVar::new(id, var_type).with_value(value));
 }

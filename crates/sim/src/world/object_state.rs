@@ -78,6 +78,33 @@ impl World {
         true
     }
 
+    /// Set the override tint of one live entity (`BTriggerEffect_teSetOverrideTint`).
+    pub(crate) fn set_entity_override_tint(
+        &mut self,
+        entity_id: EntityId,
+        tint: [u8; 4],
+        enabled: bool,
+    ) -> bool {
+        let Some(state) = self.entity_object_state_mut(entity_id) else {
+            return false;
+        };
+        state.set_override_tint(tint, enabled);
+        true
+    }
+
+    /// Set the hint glow intensity of one live entity (`HintGlowToggle` v2 and v3).
+    pub(crate) fn set_entity_highlight_intensity(
+        &mut self,
+        entity_id: EntityId,
+        intensity: f32,
+    ) -> bool {
+        let Some(state) = self.entity_object_state_mut(entity_id) else {
+            return false;
+        };
+        state.set_highlight_intensity(intensity);
+        true
+    }
+
     /// Change fog-memory policy and invalidate every existing team dopple.
     pub fn reset_entity_dopples(
         &mut self,

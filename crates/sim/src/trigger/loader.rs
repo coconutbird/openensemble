@@ -572,8 +572,8 @@ fn parse_var_value(text: &str, var_type: VarType, context: TriggerLoadContext<'_
                 .collect(),
         ),
         VarType::Time => TriggerValue::Time(text.parse().unwrap_or(0)),
-        VarType::Operator => TriggerValue::Int(parse_compare_operator(text)),
-        VarType::MathOperator => TriggerValue::Int(parse_math_operator(text)),
+        VarType::Operator => TriggerValue::Int(value_types::parse_compare_operator(text)),
+        VarType::MathOperator => TriggerValue::Int(value_types::parse_math_operator(text)),
         VarType::ListPosition => TriggerValue::Int(value_types::parse_list_position(text)),
         VarType::UILocation => parse_vec3_value(text, TriggerValue::Location),
         VarType::Vector => parse_vec3_value(text, TriggerValue::Vector),
@@ -650,6 +650,12 @@ fn parse_var_value(text: &str, var_type: VarType, context: TriggerLoadContext<'_
         | VarType::Cinematic
         | VarType::CinematicTag
         | VarType::TalkingHead => TriggerValue::Int(text.trim().parse().unwrap_or(-1)),
+        // `BTriggerScript_loadTriggerVars` reads these with `asLong` and `asFloat`.
+        VarType::MessageIndex | VarType::MessageJustify => {
+            TriggerValue::Int(text.trim().parse().unwrap_or(0))
+        }
+        VarType::MessagePoint => TriggerValue::Float(text.trim().parse().unwrap_or(0.0)),
+        VarType::FlashableUIItem => TriggerValue::Int(value_types::parse_flashable_ui_item(text)),
         // Trigger references
         VarType::Trigger => TriggerValue::Trigger(text.parse().unwrap_or(0)),
         VarType::Objective => TriggerValue::Objective(text.parse().unwrap_or(0)),
@@ -970,29 +976,6 @@ fn parse_cost_value(text: &str) -> TriggerValue {
         *amount = part.trim().parse().unwrap_or(0.0);
     }
     TriggerValue::Cost(Cost::from_amounts(amounts))
-}
-
-fn parse_compare_operator(text: &str) -> i32 {
-    text.parse().unwrap_or_else(|_| match text.trim() {
-        "NotEqualTo" => 0,
-        "LessThan" => 1,
-        "LessThanOrEqualTo" => 2,
-        "EqualTo" => 3,
-        "GreaterThanOrEqualTo" => 4,
-        "GreaterThan" => 5,
-        _ => -1,
-    })
-}
-
-fn parse_math_operator(text: &str) -> i32 {
-    text.parse().unwrap_or_else(|_| match text.trim() {
-        "Add" => 0,
-        "Subtract" => 1,
-        "Multiply" => 2,
-        "Divide" => 3,
-        "Modulus" => 4,
-        _ => -1,
-    })
 }
 
 #[cfg(test)]

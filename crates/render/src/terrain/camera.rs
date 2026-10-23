@@ -435,6 +435,8 @@ mod tests {
             location: Some(Vec3::new(20.0, 5.0, 30.0)),
             direction: Some(Vec3::X),
             hover_height_offset: Some(3.0),
+            absolute_position: false,
+            absolute_direction: false,
         };
 
         adapter.apply_directive(&mut camera, directive);

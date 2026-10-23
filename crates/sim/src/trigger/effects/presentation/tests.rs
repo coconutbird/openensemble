@@ -250,6 +250,48 @@ fn camera_v4_combines_players_and_preserves_one_shot_pose() {
     }
 }
 
+#[test]
+fn camera_v2_and_v3_use_the_v4_slots_without_later_inputs() {
+    let mut world = World::new();
+    world.init_players(1);
+    let mut script = TriggerScript::new(9);
+    for slot in [1_u32, 2, 3, 8, 9] {
+        add_value(&mut script, slot, VarType::Bool, TriggerValue::Bool(true));
+    }
+    add_value(
+        &mut script,
+        5,
+        VarType::Vector,
+        TriggerValue::Vector(crate::trigger::value::Vec3::new(1.0, 8.0, 0.0)),
+    );
+    add_value(&mut script, 6, VarType::Player, TriggerValue::Player(1));
+    add_value(&mut script, 10, VarType::Float, TriggerValue::Float(4.0));
+    let mut effect = Effect::new(1, EffectType::SetCamera);
+    for slot in [1_u16, 2, 3, 5, 6, 8, 9, 10] {
+        effect = effect.with_input_at(slot, u32::from(slot));
+    }
+
+    effect.version = 2;
+    let _ = execute(&effect, &mut script, &mut world);
+    let directive = world.player_presentation_state(1).camera_directive.unwrap();
+    assert_eq!(directive.direction, Some(Vec3::X));
+    assert_eq!(directive.hover_height_offset, None);
+    assert!(!directive.absolute_position && !directive.absolute_direction);
+
+    effect.version = 3;
+    let _ = execute(&effect, &mut script, &mut world);
+    let directive = world.player_presentation_state(1).camera_directive.unwrap();
+    assert_eq!(directive.direction, Some(Vec3::new(1.0, 8.0, 0.0)));
+    assert_eq!(directive.hover_height_offset, None);
+    assert!(directive.absolute_position && directive.absolute_direction);
+
+    effect.version = 1;
+    assert_eq!(
+        execute(&effect, &mut script, &mut world),
+        Some(EffectOutcome::Unsupported(884))
+    );
+}
+
 fn add_value(script: &mut TriggerScript, id: u32, var_type: VarType, value: TriggerValue) {
     script.add_variable(TriggerVar::new(id, var_type).with_value(value));
 }
