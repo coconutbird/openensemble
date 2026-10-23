@@ -3,6 +3,7 @@
 mod error;
 mod on_built;
 mod placement;
+mod population;
 
 use super::World;
 use crate::entities::units::{ProductionTask, TriggerCommandStateRef};
@@ -11,12 +12,13 @@ use crate::entity_id::EntityId;
 use crate::player::{PlayerId, PlayerTechState, PopulationCost, Resources};
 use crate::prototypes::{object_by_id, object_by_name_trim_query as object_by_name};
 use crate::scenario::create_unbuilt_building_from_prototype;
-use crate::scenario::population::{object_population_costs, object_population_type_id};
+use crate::scenario::population::object_population_costs;
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use pipeline::database::hw1::objects::{ProtoObject, TrainLimitType};
 
 use placement::{direct_build_transform, find_build_other_socket};
+use population::validate_object_population;
 
 pub use error::ConstructionError;
 
@@ -894,47 +896,6 @@ fn direct_construction_task(
         manual: definition.manual,
         train_limit_bucket,
         trigger_state: None,
-    }
-}
-
-fn validate_object_population(
-    database: &Database,
-    prototype: &ProtoObject,
-) -> Result<(), ConstructionError> {
-    for amount in &prototype.population {
-        if !amount.amount.is_finite() || amount.amount < 0.0 {
-            return Err(unknown_population(
-                prototype,
-                amount.population_type.as_deref(),
-            ));
-        }
-        if amount.amount == 0.0 {
-            continue;
-        }
-        if database
-            .game_data
-            .as_ref()
-            .and_then(|game_data| game_data.pops.as_ref())
-            .is_none()
-        {
-            return Err(ConstructionError::MissingPopulationTable(
-                prototype.name.clone(),
-            ));
-        }
-        if object_population_type_id(database, prototype, amount).is_none() {
-            return Err(unknown_population(
-                prototype,
-                amount.population_type.as_deref(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn unknown_population(prototype: &ProtoObject, population: Option<&str>) -> ConstructionError {
-    ConstructionError::UnknownPopulation {
-        prototype: prototype.name.clone(),
-        population: population.unwrap_or("inferred default").to_owned(),
     }
 }
 
