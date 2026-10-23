@@ -10,7 +10,6 @@ mod icon;
 mod revealer;
 
 pub use icon::IconObject;
-pub(crate) use icon::is_icon_prototype;
 pub use revealer::Revealer;
 
 pub(crate) use ambient_life_spawner::ObjectAmbientLifeSpawner;

@@ -3,17 +3,14 @@ use crate::trigger::{TriggerColor, TriggerVar, TriggerVec3, VarType};
 use pipeline::database::hw1::ProtoObject;
 
 fn database() -> Database {
-    Database {
-        objects: vec![ProtoObject {
-            name: "sys_icon_30_01".to_owned(),
-            dbid: Some(30),
-            object_class: Some("Object".to_owned()),
-            object_types: vec!["Icon".to_owned()],
-            flags: vec!["VisibleForOwnerOnly".to_owned()],
-            ..ProtoObject::default()
-        }],
-        ..Database::default()
-    }
+    crate::world::icon_test_database(vec![ProtoObject {
+        name: "sys_icon_30_01".to_owned(),
+        dbid: Some(30),
+        object_class: Some("Object".to_owned()),
+        object_types: vec!["Icon".to_owned(), "_Icon".to_owned()],
+        flags: vec!["VisibleForOwnerOnly".to_owned()],
+        ..ProtoObject::default()
+    }])
 }
 
 fn add(script: &mut TriggerScript, id: u32, var_type: VarType, value: TriggerValue) {
@@ -80,6 +77,7 @@ fn version_three_creates_sim_icon_and_updates_retail_outputs() {
     );
     let database = database();
     let mut world = World::new();
+    world.configure_prototype_catalogs(&database);
     world.init_players(2);
     world.get_player_mut(1).unwrap().team_id = 1;
     world.get_player_mut(2).unwrap().team_id = 2;
@@ -106,6 +104,7 @@ fn version_three_creates_sim_icon_and_updates_retail_outputs() {
 fn failed_creation_writes_invalid_object_and_clears_only_when_requested() {
     let database = database();
     let mut world = World::new();
+    world.configure_prototype_catalogs(&database);
     world.init_players(1);
     let mut script = script();
     script.get_variable_mut(9).unwrap().value = TriggerValue::String("not-an-icon".to_owned());

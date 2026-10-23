@@ -41,6 +41,7 @@ impl World {
         self.game_time_ms = 0;
         self.construction_damage_multiplier = 1.0;
         self.prototype_object_types.clear();
+        self.icon_object_type = None;
         self.prototype_squads.clear();
         self.prototype_shield_coverages.clear();
         self.prototype_physics.clear();

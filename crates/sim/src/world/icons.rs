@@ -1,7 +1,6 @@
 //! Creation and visibility of authoritative class-zero icon objects.
 
 use super::World;
-use crate::entities::objects::is_icon_prototype;
 use crate::entities::{IconObject, Object};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
@@ -37,7 +36,7 @@ impl World {
             return None;
         }
         let prototype = object_by_id(database, prototype_id)?;
-        if !is_icon_prototype(prototype) {
+        if !self.prototype_is_icon(prototype_id) {
             return None;
         }
         Some(self.insert_icon_object(
@@ -106,22 +105,89 @@ impl World {
     }
 }
 
+/// Build a database with retail's icon types: the gamedata code object type `Icon`
+/// names the declared type `_Icon`, and the shipped icon protos list `Icon` and `_Icon`.
+#[cfg(test)]
+pub(crate) fn icon_test_database(objects: Vec<ProtoObject>) -> Database {
+    use pipeline::database::hw1::gamedata::{CodeObjectType, CodeObjectTypesWrapper};
+    use pipeline::database::hw1::{GameData, ObjectType};
+
+    Database {
+        objects,
+        object_types: vec![ObjectType {
+            name: "_Icon".to_owned(),
+        }],
+        game_data: Some(GameData {
+            code_object_types: Some(CodeObjectTypesWrapper {
+                entries: vec![CodeObjectType {
+                    object_type: "Icon".to_owned(),
+                    value: "_Icon".to_owned(),
+                }],
+            }),
+            ..GameData::default()
+        }),
+        ..Database::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn icon_database() -> Database {
-        Database {
-            objects: vec![ProtoObject {
-                name: "sys_icon_test".to_owned(),
-                dbid: Some(42),
-                object_class: Some("Object".to_owned()),
-                object_types: vec!["Icon".to_owned()],
-                flags: vec!["VisibleForOwnerOnly".to_owned()],
-                ..ProtoObject::default()
-            }],
+        icon_test_database(vec![ProtoObject {
+            name: "sys_icon_test".to_owned(),
+            dbid: Some(42),
+            object_class: Some("Object".to_owned()),
+            object_types: vec!["Icon".to_owned(), "_Icon".to_owned()],
+            flags: vec!["VisibleForOwnerOnly".to_owned()],
+            ..ProtoObject::default()
+        }])
+    }
+
+    #[test]
+    fn icon_objects_use_the_code_object_type_and_declared_types() {
+        let raw_only = ProtoObject {
+            name: "raw_icon".to_owned(),
+            object_class: Some("Object".to_owned()),
+            object_types: vec!["Icon".to_owned()],
+            ..ProtoObject::default()
+        };
+        let declared_only = ProtoObject {
+            name: "declared_icon".to_owned(),
+            object_class: Some("Object".to_owned()),
+            object_types: vec!["_Icon".to_owned()],
+            ..ProtoObject::default()
+        };
+        let database = icon_test_database(vec![raw_only.clone(), declared_only]);
+        let mut world = World::new();
+        world.init_players(1);
+        world.configure_prototype_catalogs(&database);
+
+        assert!(
+            world
+                .create_icon_object(&database, 1, 0, Vec3::ZERO, None, false)
+                .is_none()
+        );
+        assert!(
+            world
+                .create_icon_object(&database, 1, 1, Vec3::ZERO, None, false)
+                .is_some()
+        );
+
+        // Without the gamedata code object type no proto is an icon.
+        let untyped = Database {
+            objects: vec![raw_only],
             ..Database::default()
-        }
+        };
+        let mut world = World::new();
+        world.init_players(1);
+        world.configure_prototype_catalogs(&untyped);
+        assert!(
+            world
+                .create_icon_object(&untyped, 1, 0, Vec3::ZERO, None, false)
+                .is_none()
+        );
     }
 
     #[test]
@@ -129,6 +195,7 @@ mod tests {
         let database = icon_database();
         let mut world = World::new();
         world.init_players(2);
+        world.configure_prototype_catalogs(&database);
         world.get_player_mut(1).unwrap().team_id = 1;
         world.get_player_mut(2).unwrap().team_id = 2;
 

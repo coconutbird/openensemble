@@ -3,7 +3,6 @@
 use super::World;
 use super::icons::IconObjectSpawn;
 use crate::entities::Object;
-use crate::entities::objects::is_icon_prototype;
 use crate::entities::squads::{formation_offset_to_local, formation_offset_to_world};
 use crate::entity_id::{EntityClass, EntityId};
 use crate::prototypes::object_by_id;
@@ -53,7 +52,7 @@ impl World {
         {
             return None;
         }
-        let attachment_id = if is_icon_prototype(prototype) {
+        let attachment_id = if self.prototype_is_icon(prototype_id) {
             self.insert_icon_object(
                 prototype,
                 &IconObjectSpawn {

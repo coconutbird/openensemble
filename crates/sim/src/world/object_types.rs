@@ -25,6 +25,7 @@ impl World {
                 (proto_id(position), names)
             })
             .collect();
+        self.icon_object_type = code_object_type(database, "Icon");
         self.prototype_squads = proto_squads(database)
             .map(|(id, entry)| (id, (entry.name().trim().to_owned(), entry.size(database))))
             .collect();
@@ -88,6 +89,18 @@ impl World {
             .map_or(crate::entities::FlightControllerKind::Direct, |profile| {
                 profile.resolve(self.is_config_defined("EnableFlight"))
             })
+    }
+
+    /// Test whether a proto-object is an icon object.
+    ///
+    /// Like effect `CreateIconObject` (v2 `sub_140469A50`), the test uses the
+    /// object type that the gamedata code object type `Icon` names, and the declared
+    /// types of the proto. A raw `<ObjectType>Icon</ObjectType>` is not a declared type.
+    #[must_use]
+    pub(crate) fn prototype_is_icon(&self, prototype_id: i32) -> bool {
+        self.icon_object_type
+            .as_deref()
+            .is_some_and(|icon| self.prototype_is_object_type(prototype_id, icon))
     }
 
     /// Test whether a proto-object has a concrete or abstract object type.
@@ -255,6 +268,19 @@ fn object_type_names(
         add_type(&mut names, &object_types[type_index].name);
     }
     names
+}
+
+fn code_object_type(database: &Database, code_type: &str) -> Option<String> {
+    database
+        .game_data
+        .as_ref()?
+        .code_object_types
+        .as_ref()?
+        .entries
+        .iter()
+        .find(|entry| entry.object_type.trim().eq_ignore_ascii_case(code_type))
+        .map(|entry| entry.value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 fn add_type(names: &mut Vec<String>, value: &str) {

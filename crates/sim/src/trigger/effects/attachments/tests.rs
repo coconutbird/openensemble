@@ -3,16 +3,13 @@ use crate::trigger::{TriggerVar, VarType};
 use pipeline::database::hw1::ProtoObject;
 
 fn database() -> Database {
-    Database {
-        objects: vec![ProtoObject {
-            name: "sys_icon_27_01".to_owned(),
-            dbid: Some(1187),
-            object_class: Some("Object".to_owned()),
-            object_types: vec!["Icon".to_owned()],
-            ..ProtoObject::default()
-        }],
-        ..Database::default()
-    }
+    crate::world::icon_test_database(vec![ProtoObject {
+        name: "sys_icon_27_01".to_owned(),
+        dbid: Some(1187),
+        object_class: Some("Object".to_owned()),
+        object_types: vec!["Icon".to_owned(), "_Icon".to_owned()],
+        ..ProtoObject::default()
+    }])
 }
 
 fn add(script: &mut TriggerScript, id: u32, var_type: VarType, value: TriggerValue) {
@@ -23,6 +20,7 @@ fn add(script: &mut TriggerScript, id: u32, var_type: VarType, value: TriggerVal
 fn version_five_expands_a_squad_into_unit_owned_icon_entities() {
     let database = database();
     let mut world = World::new();
+    world.configure_prototype_catalogs(&database);
     world.init_players(1);
     let squad_id = world.create_squad(1);
     let first = world.create_unit(1);
@@ -65,6 +63,7 @@ fn version_five_expands_a_squad_into_unit_owned_icon_entities() {
 fn version_three_deduplicates_receiving_units_before_creation() {
     let database = database();
     let mut world = World::new();
+    world.configure_prototype_catalogs(&database);
     world.init_players(1);
     let unit_id = world.create_unit(1);
     let mut script = TriggerScript::new(1);

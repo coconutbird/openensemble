@@ -86,13 +86,6 @@ impl IconObject {
     }
 }
 
-pub(crate) fn is_icon_prototype(prototype: &ProtoObject) -> bool {
-    prototype
-        .object_types
-        .iter()
-        .any(|object_type| object_type.trim().eq_ignore_ascii_case("Icon"))
-}
-
 fn has_flag(prototype: &ProtoObject, expected: &str) -> bool {
     prototype
         .flags

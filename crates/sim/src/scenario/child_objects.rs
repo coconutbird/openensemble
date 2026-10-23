@@ -5,7 +5,6 @@ use super::{
     find_proto_squad, population,
     prototypes::{is_class_zero_object, prototype_has_flag},
 };
-use crate::entities::objects::is_icon_prototype;
 use crate::entities::units::AuthoredUnitChildKind;
 use crate::entities::{BaseId, IconObject, Object, Unit};
 use crate::entity_id::EntityId;
@@ -305,7 +304,7 @@ fn materialize_associated_object(
     }
     let object_id = world.objects.allocate_id();
     let prototype_id = crate::prototypes::proto_id(prototype_index);
-    let object = if is_icon_prototype(prototype) {
+    let object = if world.prototype_is_icon(prototype_id) {
         Object::new_icon(
             object_id,
             parent.player_id,

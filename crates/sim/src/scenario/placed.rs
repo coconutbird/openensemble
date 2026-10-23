@@ -5,7 +5,6 @@ use super::{
     PlacedUnitKind, classify_proto_object, configure_unit_from_proto, create_squad_from_prototype,
     is_class_zero_object, refresh_squad_member_settings, valid_nonnegative,
 };
-use crate::entities::objects::is_icon_prototype;
 use crate::entities::squads::marine::is_marine_squad;
 use crate::entities::squads::warthog::{WarthogSquadSpec, is_warthog_squad};
 use crate::entities::{IconObject, Object, SquadArchetype, SquadFormation};
@@ -127,7 +126,7 @@ pub(crate) fn create_class_zero_object_at(
 ) -> EntityId {
     let owner = object_owner(requested_owner, prototype);
     let id = world.objects.allocate_id();
-    let object = if is_icon_prototype(prototype) {
+    let object = if world.prototype_is_icon(prototype_id) {
         Object::new_icon(
             id,
             owner,

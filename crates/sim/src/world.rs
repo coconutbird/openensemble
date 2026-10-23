@@ -47,6 +47,8 @@ mod heal;
 mod health;
 mod hitch;
 mod icons;
+#[cfg(test)]
+pub(crate) use icons::icon_test_database;
 mod idle;
 mod infect;
 mod jump;
@@ -211,6 +213,8 @@ pub struct World {
     construction_damage_multiplier: f32,
     /// Concrete and abstract object types keyed by proto object ID (load-order index).
     prototype_object_types: BTreeMap<i32, Vec<String>>,
+    /// Object type that the gamedata code object type `Icon` names (`_Icon` in retail data).
+    icon_object_type: Option<String>,
     /// Name and maximum unit count of every engine proto squad (records, merged
     /// and implicit squads), keyed by proto squad ID.
     prototype_squads: BTreeMap<i32, (String, u32)>,
@@ -278,6 +282,7 @@ impl World {
             rocket_death_chance: None,
             construction_damage_multiplier: 1.0,
             prototype_object_types: BTreeMap::new(),
+            icon_object_type: None,
             prototype_squads: BTreeMap::new(),
             prototype_shield_coverages: BTreeMap::new(),
             prototype_physics: BTreeMap::new(),
