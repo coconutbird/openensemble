@@ -333,6 +333,18 @@ impl World {
         self.collision.heightfield_mut()
     }
 
+    /// The terrain heights (`getHeightAndNormalAt` reads them).
+    #[must_use]
+    pub fn heightfield(&self) -> Option<&HeightField> {
+        self.collision.heightfield()
+    }
+
+    /// The gravity of the world (`hkpWorld::getGravity`).
+    #[must_use]
+    pub fn gravity(&self) -> Vec3 {
+        self.config.gravity
+    }
+
     fn body(&self, id: BodyId) -> Option<&Body> {
         self.bodies.get(&id)
     }
@@ -420,6 +432,12 @@ impl World {
     pub fn damping(&self, id: BodyId) -> Option<(f32, f32)> {
         self.body(id)
             .map(|body| (body.linear_damping, body.angular_damping))
+    }
+
+    /// `false` if the body has `DEACTIVATOR_NEVER` (see [`World::enable_deactivation`]).
+    #[must_use]
+    pub fn is_deactivation_enabled(&self, id: BodyId) -> Option<bool> {
+        self.body(id).map(|body| body.deactivation.counter != 0xff)
     }
 
     /// The collision filter information.

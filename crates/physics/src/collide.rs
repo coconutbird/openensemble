@@ -296,6 +296,11 @@ impl CollisionWorld {
         })
     }
 
+    /// Returns the terrain heightfield.
+    pub(crate) fn heightfield(&self) -> Option<&HeightField> {
+        self.terrain().map(|(field, _)| field)
+    }
+
     /// Returns the terrain heights for changes (`flattenInstant`).
     ///
     /// The collision world keeps the old height range of the terrain box, like retail.
