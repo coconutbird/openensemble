@@ -44,6 +44,20 @@ impl World {
         }
     }
 
+    /// `BUnit::doDeathSpawnSquad` (DE `BUnit_doDeathSpawnSquad`, `0x1404EC0C0`) of one unit,
+    /// outside the dead-unit pass: the end of a rocket death calls it for the thrown
+    /// replacement.
+    pub(super) fn do_death_spawn_squad(
+        &mut self,
+        unit_id: EntityId,
+        database: &Database,
+        gameplay: Option<&GameplayCatalog>,
+    ) {
+        if let Some(request) = self.death_spawn_request(unit_id, database) {
+            self.execute_death_spawn(&request, database, gameplay);
+        }
+    }
+
     fn death_spawn_request(
         &self,
         unit_id: EntityId,

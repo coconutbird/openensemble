@@ -4,14 +4,21 @@
 //! animation kill (`BUnit_killAndThrowPhysicsReplacement`, `0x1404E01B0`).
 
 use super::World;
+use crate::ImpactEffectRequest;
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
-use crate::gameplay::{DeathThrowProfile, GameplayCatalog};
+use crate::gameplay::{DeathThrowProfile, GameplayCatalog, ImpactEffectProfile, ImpactEffectSize};
 use crate::math;
 use crate::physics::ClamshellAnimation;
 use crate::physics::death::{MIN_ROCKET_TIME_MS, RocketOnDeath};
+use crate::world::events::ImpactEffectRequestData;
 use glam::Vec3;
+use pipeline::database::hw1::Database;
 use std::f32::consts::{PI, TAU};
+
+/// The impact effect of `explode(cExplodeTypeMethane)` (`BObject_explodeMethane`,
+/// `0x1402A6190`).
+const METHANE_EXPLOSION: &str = "MethaneExplosion";
 
 /// The smallest squared length of the horizontal throw direction (`cFloatCompareEpsilon`).
 const MIN_DIRECTION_LENGTH_SQUARED: f32 = 0.000_001;
@@ -286,6 +293,45 @@ impl World {
             .map(|(unit_id, _)| unit_id)
             .collect();
         for unit_id in removable {
+            let _removed = self.remove_unit(unit_id);
+        }
+    }
+
+    /// The end of each rocket death whose timer ended in the last readback (DE `0x1405482B2`,
+    /// 2008 `unitactionphysics.cpp:550-566`):
+    ///
+    /// - `explode(cExplodeTypeMethane)` puts the `MethaneExplosion` impact effect (size large,
+    ///   no surface) at the unit.
+    /// - `setLifespan(0)` removes the unit.
+    /// - `doDeathSpawnSquad` spawns the death spawn squad of the proto object first.
+    pub(in crate::world) fn finish_rocket_deaths(
+        &mut self,
+        database: Option<&Database>,
+        gameplay: Option<&GameplayCatalog>,
+    ) {
+        for unit_id in self.finished_rocket_deaths() {
+            let Some(unit) = self.units.get(unit_id) else {
+                continue;
+            };
+            let request = ImpactEffectRequest::new(ImpactEffectRequestData {
+                occurred_at_ms: self.game_time_ms,
+                projectile_id: unit_id,
+                primary_target_id: None,
+                player_id: unit.base.player_id,
+                effect: ImpactEffectProfile {
+                    name: METHANE_EXPLOSION.to_owned(),
+                    size: ImpactEffectSize::Large,
+                    do_shockwave_action: false,
+                },
+                position: unit.base.position,
+                forward: unit.base.forward,
+                surface: None,
+                emit_surface_effect: false,
+            });
+            self.queue_impact_effect(request);
+            if let Some(database) = database {
+                self.do_death_spawn_squad(unit_id, database, gameplay);
+            }
             let _removed = self.remove_unit(unit_id);
         }
     }
