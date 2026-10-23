@@ -583,10 +583,9 @@ database beside `xgameFinal.exe`.
   - An active keyframed body does not wake a sleeping dynamic body through a contact.
   - The wake rule (reset the inactive counts, keep the velocities) is not confirmed in IDA.
 - Contacts of class-0 objects are not recorded.
-- The Orbital debris rocks (`world/powers/orbital/debris.rs`) are power visuals with their own
-  motion. They get no body.
 - Retail sets the acceleration to 2 × `Velocity` when a proto has no `Acceleration`
-  (`BProtoObject_load`, `0x14034241B`). The sim uses 0.
+  (`BProtoObject_load`, `0x14034241B`). The sim uses 0
+  ([#37](https://github.com/coconutbird/openensemble/issues/37)).
 - The Warthog move action's terrain impulses
   (`BUnitActionMoveWarthog_collectTerrainImpulses`) are not modeled.
 - Formation reassignment, formation priorities, and movement-animation
