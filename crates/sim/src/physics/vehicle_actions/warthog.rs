@@ -122,11 +122,13 @@ impl WarthogAction {
         }
     }
 
+    #[cfg(test)]
     /// `true` for the brute chopper.
     pub(crate) fn is_chopper(&self) -> bool {
         self.chopper
     }
 
+    #[cfg(test)]
     /// `mFlagInAir`.
     pub(crate) fn in_air(&self) -> bool {
         self.in_air

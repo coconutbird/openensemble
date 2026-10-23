@@ -142,6 +142,12 @@ impl World {
             squad.update_with_speed_limit(dt, air_speed_limits.get(&squad.base.id).copied());
         }
         self.update_physics_vehicle_squads();
+        // `BSquad::update` (`0x140397DE0`) calls `BSquad_updateTurning` (`0x1403A70E0`) after
+        // the orders and the move of each squad (2008 `squad.cpp:1531-1540`).
+        let squad_ids = self.squads.iter().map(|(id, _)| id).collect::<Vec<_>>();
+        for squad_id in squad_ids {
+            self.update_squad_turn_radius(squad_id, dt);
+        }
         if let Some(gameplay) = gameplay {
             self.advance_air_avoidance(dt, gameplay);
         }

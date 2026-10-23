@@ -1,10 +1,3 @@
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the body creation of the plumbing branch calls the setup and the hook"
-    )
-)]
 //! The vehicle actions (`hkpUnaryAction` subclasses) that drive the vehicle bodies.
 //!
 //! `BEntity_setupVehiclePhysics` (`0x1402055D0`, 2008 `entity.cpp:2399-2507`) picks the action
@@ -153,6 +146,7 @@ impl VehicleAction {
         Some((action, setup))
     }
 
+    #[cfg(test)]
     /// The vehicle type that selected the action.
     pub(crate) const fn vehicle_type(&self) -> PhysicsVehicleType {
         self.vehicle_type
@@ -220,6 +214,7 @@ impl VehicleAction {
         }
     }
 
+    #[cfg(test)]
     /// `mFlagInAir`: no wheel touched the terrain in the last substep. Aircraft are never in
     /// the air in this sense.
     pub(crate) fn in_air(&self) -> bool {

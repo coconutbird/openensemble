@@ -106,11 +106,13 @@ impl GroundAction {
         }
     }
 
+    #[cfg(test)]
     /// The derived action.
     pub(crate) fn variant(&self) -> GroundVariant {
         self.variant
     }
 
+    #[cfg(test)]
     /// `true` if no wheel ray hit the terrain in the last substep.
     pub(crate) fn in_air(&self) -> bool {
         !self.wheels.iter().any(|wheel| wheel.hit)

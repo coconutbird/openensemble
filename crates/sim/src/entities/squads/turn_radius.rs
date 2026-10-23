@@ -1,10 +1,3 @@
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the squad update of the plumbing branch calls the turn-radius update"
-    )
-)]
 //! The turn-radius position and forward axis of a physics vehicle squad.
 //!
 //! Retail `BSquad` (DE `+0x1D0` and `+0x1E0`, 2008 `squad.cpp:8490-8741`, `NEW_TURNRADIUS`)

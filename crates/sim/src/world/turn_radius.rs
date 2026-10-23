@@ -1,10 +1,3 @@
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the squad update of the plumbing branch calls the turn-radius update"
-    )
-)]
 //! The turn-radius update of the physics vehicle squads (`BSquad::update` calls
 //! `updateTurning` after `updateOrders`).
 
