@@ -49,6 +49,13 @@ The installed-data test pins both shipped Banshee profiles and its squad's 45-un
   0.2-to-1.0-second future probe. Its checksummed five-height ring, vertical velocity, authored
   hover offset, 16-unit terrain fallback, 13-unit minimum clearance, slower descent, and
   collision-avoidance altitude offset produce the squad height.
+- A transport carrier (trigger or Transport power) keeps the bounds clamp, but its flight legs count
+  as move orders, as in retail, so it does not steer away or return to its anchor. The kinematic
+  hover controller does not run on it: `BPhysicsHoverFlightAction_applyAction` (`0x1402D12D9`) takes
+  the carrier altitude from `BSquadActionTransport_getDesiredHeight` (`0x1403DC5A0`), and the sim
+  transport flight sets that altitude itself. Because the clamp holds the carrier in the inset
+  bounds, the Transport power clamps each flight target into them. Retail does this for the
+  fly-off point (`BSquadActionTransport_transportSquads`, `0x1403D9635`).
 - A crashing aircraft with a hover action does not use the crash movement. Its impact test uses
   the segment from its previous position to the read-back position. The ground test is
   `y − 1.2·obstruction Y ≤ terrain` (`BUnitActionAvoidCollisionAir_update`, `0x1404EEBB0`).

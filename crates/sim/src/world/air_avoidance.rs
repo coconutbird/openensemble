@@ -113,6 +113,19 @@ impl World {
             .find(|profile| self.air_avoidance_action_enabled(unit, profile))
     }
 
+    /// Moves a flight target into the bounds that the air avoidance keeps an aircraft squad of
+    /// obstruction radius `radius` in. `BSquadActionTransport` (`0x1403D9635`) clamps the
+    /// transport fly-off point in this way, so that the carrier can reach it.
+    pub(in crate::world) fn clamp_to_air_bounds(
+        &self,
+        position: glam::Vec3,
+        radius: f32,
+    ) -> glam::Vec3 {
+        self.effective_playable_bounds().map_or(position, |bounds| {
+            steering::clamp_to_air_bounds(position, bounds, radius)
+        })
+    }
+
     pub(crate) fn current_air_avoidance_profile<'a>(
         unit: &Unit,
         gameplay: &'a GameplayCatalog,

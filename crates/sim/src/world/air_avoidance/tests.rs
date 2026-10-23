@@ -74,6 +74,37 @@ fn hover_flight_tracks_terrain_clearance_instead_of_order_altitude() {
     assert!(squad.base.position.x > 50.0);
 }
 
+/// The transport action owns the carrier altitude (`0x1402D12D9`) and its legs are move orders, so
+/// neither the hover altitude nor the anchor return holds the carrier below its fly-off point.
+#[test]
+fn transport_carrier_reaches_its_fly_off_point_through_the_air_avoidance() {
+    use crate::entities::squads::{SquadPowerTransport, SquadPowerTransportPlan};
+
+    let gameplay = air_gameplay_with_hover_offset(Some(3.0));
+    let start = Vec3::new(20.0, 40.0, 20.0);
+    let (mut world, squad_id, _unit_id) = one_aircraft_world(17, start);
+    world.configure_flat_test_terrain(0.0);
+    assert!(world.configure_terrain_bounds(Vec3::ZERO, Vec3::new(200.0, 0.0, 200.0)));
+    world.get_squad_mut(squad_id).unwrap().power_transport = Some(SquadPowerTransport::new(
+        SquadPowerTransportPlan {
+            passenger_squad_ids: Vec::new(),
+            start_position: start,
+            pickup_position: Vec3::new(30.0, 0.0, 20.0),
+            pickup_target: Vec3::new(30.0, 8.0, 20.0),
+            dropoff_position: Vec3::new(90.0, 0.0, 20.0),
+            dropoff_target: Vec3::new(90.0, 15.0, 20.0),
+            outgoing_target: Vec3::new(50.0, 120.0, 20.0),
+        },
+        30.0,
+    ));
+
+    for _ in 0..200 {
+        world.update_entities_with_gameplay(STEP, &gameplay);
+    }
+
+    assert!(world.get_squad(squad_id).is_none());
+}
+
 #[test]
 fn exact_overlap_separates_friendly_aircraft_deterministically() {
     let gameplay = air_gameplay();

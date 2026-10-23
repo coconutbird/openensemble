@@ -691,6 +691,11 @@ impl Squad {
         self.power_transport.as_ref()
     }
 
+    /// True while a trigger or power transport action flies this carrier squad.
+    pub(crate) const fn has_transport_flight(&self) -> bool {
+        self.transport_fly_in.is_some() || self.power_transport.is_some()
+    }
+
     pub(crate) fn add_associated_wall_tower(&mut self, target: EntityId) {
         self.associated_wall_tower_ids.push(target);
     }

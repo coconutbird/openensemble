@@ -161,6 +161,37 @@ fn shutdown_rolls_back_pickup_before_destroying_the_targeting_session() {
     assert!(world.active_transport_powers().is_empty());
 }
 
+/// The air avoidance holds the carrier inside the sim bounds inset by its obstruction radius, so
+/// a pickup in the map corner must end the incoming leg at the nearest point inside them.
+#[test]
+fn carrier_legs_end_inside_the_inset_air_bounds() {
+    let database = database();
+    let mut world = test_world(&database);
+    assert!(world.configure_terrain_bounds(Vec3::ZERO, Vec3::new(200.0, 0.0, 200.0)));
+    let _passenger = spawn(&mut world, &database, "infantry_squad", Vec3::ZERO);
+    let execution_id = world
+        .invoke_transport_power(&database, invocation(true, PowerUserId::INVALID))
+        .unwrap();
+    for location in [Vec3::ZERO, Vec3::new(60.0, 0.0, 0.0)] {
+        assert!(world.submit_transport_power_input(
+            &database,
+            execution_id,
+            NativePowerInput::Confirm(location),
+            false,
+        ));
+    }
+
+    let carrier_ids = power_carriers(&world);
+    assert_eq!(carrier_ids.len(), 1);
+    let action = world
+        .get_squad(carrier_ids[0])
+        .unwrap()
+        .power_transport()
+        .unwrap();
+    assert_eq!(action.phase(), PowerTransportPhase::Incoming);
+    assert_eq!(action.target(), Vec3::new(3.0, 0.0, 3.0));
+}
+
 #[test]
 fn commanding_a_reserved_squad_cancels_its_incoming_pickup() {
     let database = database();

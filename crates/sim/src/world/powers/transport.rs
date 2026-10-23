@@ -688,16 +688,21 @@ fn launch_transport_group(
         carrier.speed = execution.carrier_speed;
     }
     world.release_physics_object(carrier_unit_id);
+    // The air avoidance keeps the carrier inside the inset sim bounds, so each leg ends at the
+    // nearest point inside them. Retail clamps the fly-off point in the same way (`0x1403D9635`).
+    let radius = world
+        .get_unit(carrier_unit_id)
+        .map_or(0.0, crate::entities::Unit::obstruction_radius);
     let started = world.start_power_transport_flight(
         carrier_id,
         SquadPowerTransportPlan {
             passenger_squad_ids: group.passenger_squad_ids,
             start_position: start,
             pickup_position: group.pickup_position,
-            pickup_target,
+            pickup_target: world.clamp_to_air_bounds(pickup_target, radius),
             dropoff_position: group.dropoff_position,
-            dropoff_target,
-            outgoing_target,
+            dropoff_target: world.clamp_to_air_bounds(dropoff_target, radius),
+            outgoing_target: world.clamp_to_air_bounds(outgoing_target, radius),
         },
     );
     if !started {

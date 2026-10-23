@@ -56,7 +56,13 @@ impl World {
         })?;
         let profile = self.enabled_air_avoidance_profile(unit_id, gameplay)?;
         let squad_id = unit.squad_id?;
-        let squad = self.squads.get(squad_id)?;
+        // `BPhysicsHoverFlightAction_applyAction` (`0x1402D12D9`) takes the altitude of a
+        // transport carrier from `BSquadActionTransport_getDesiredHeight` (`0x1403DC5A0`). The
+        // sim transport flight sets that altitude itself, so the hover altitude does not apply.
+        let squad = self
+            .squads
+            .get(squad_id)
+            .filter(|squad| !squad.has_transport_flight())?;
         let formation_offset = formation_offset_to_world(squad.base.forward, unit.formation_offset);
         let mut position = squad.base.position + formation_offset;
         // Squad pathing is planar in retail. Until the shared squad mover is

@@ -152,7 +152,11 @@ impl World {
             speed: unit.speed * unit.effective_velocity_scalar(),
             can_reverse: unit.can_reverse_for_air_avoidance(),
             stationary: profile.stationary(),
-            has_move_action: squad.move_target.is_some() || squad.is_carpet_bombing(),
+            // The legs of a transport flight are move orders in retail
+            // (2008 `squadactiontransport.cpp` `flyInFrom`, `moveTransports`, `flyOffTo`).
+            has_move_action: squad.move_target.is_some()
+                || squad.is_carpet_bombing()
+                || squad.has_transport_flight(),
             attack_target: squad
                 .carpet_bomb_attack_position()
                 .or_else(|| attack_target_id.and_then(|target| self.entity_position(target))),
@@ -392,17 +396,30 @@ fn remove_component_away_from_target(avoidance: &mut Vec3, planar_to_target: Vec
     }
 }
 
+/// Moves a position into the bounds that `BUnitActionAvoidCollisionAir_update` (`0x1404EF2A8`)
+/// keeps an aircraft squad in: the sim bounds inset by `radius` on each side.
+pub(super) fn clamp_to_air_bounds(
+    position: Vec3,
+    bounds: super::super::WorldBounds,
+    radius: f32,
+) -> Vec3 {
+    let min_x = bounds.min_x() + radius;
+    let max_x = bounds.max_x() - radius;
+    let min_z = bounds.min_z() + radius;
+    let max_z = bounds.max_z() - radius;
+    Vec3::new(
+        clamp_axis(position.x, min_x, max_x),
+        position.y,
+        clamp_axis(position.z, min_z, max_z),
+    )
+}
+
 fn clamp_squad_to_bounds(
     squad: &mut crate::entities::Squad,
     bounds: super::super::WorldBounds,
     radius: f32,
 ) {
-    let min_x = bounds.min_x() + radius;
-    let max_x = bounds.max_x() - radius;
-    let min_z = bounds.min_z() + radius;
-    let max_z = bounds.max_z() - radius;
-    squad.base.position.x = clamp_axis(squad.base.position.x, min_x, max_x);
-    squad.base.position.z = clamp_axis(squad.base.position.z, min_z, max_z);
+    squad.base.position = clamp_to_air_bounds(squad.base.position, bounds, radius);
 }
 
 fn clamp_axis(value: f32, minimum: f32, maximum: f32) -> f32 {
