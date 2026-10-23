@@ -183,3 +183,96 @@ impl Agent {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use glam::Vec3;
+
+    use super::Agent;
+    use crate::heightfield::HeightField;
+    use crate::math::Transform;
+    use crate::shape::{DEFAULT_CONVEX_RADIUS, Shape};
+
+    fn cube() -> Arc<Shape> {
+        Arc::new(Shape::Box {
+            half_extents: Vec3::ONE,
+            radius: DEFAULT_CONVEX_RADIUS,
+        })
+    }
+
+    fn terrain() -> Shape {
+        Shape::HeightField(Arc::new(
+            HeightField::new(2, 1.0, vec![0.0; 4]).expect("grid"),
+        ))
+    }
+
+    fn list() -> Shape {
+        Shape::List {
+            children: vec![cube(), Arc::new(Shape::Sphere { radius: 1.0 })],
+        }
+    }
+
+    fn moved_list() -> Shape {
+        Shape::Transform {
+            transform: Transform::IDENTITY,
+            child: Arc::new(list()),
+        }
+    }
+
+    #[test]
+    fn a_convex_body_against_the_terrain_uses_the_heightfield_agent() {
+        assert!(matches!(
+            Agent::new(&cube(), &terrain()),
+            Agent::HeightField(_)
+        ));
+        let swapped = Agent::new(&terrain(), &cube());
+        assert!(
+            matches!(swapped, Agent::Symmetric(inner) if matches!(*inner, Agent::HeightField(_)))
+        );
+        assert!(matches!(Agent::new(&terrain(), &terrain()), Agent::Null));
+    }
+
+    #[test]
+    fn a_list_runs_one_agent_for_each_child() {
+        let Agent::List(children) = Agent::new(&list(), &terrain()) else {
+            panic!("list agent expected");
+        };
+        assert_eq!(children.len(), 2);
+        assert!(
+            children
+                .iter()
+                .all(|child| matches!(child, Agent::HeightField(_)))
+        );
+        assert!(matches!(
+            Agent::new(&terrain(), &list()),
+            Agent::Symmetric(inner) if matches!(*inner, Agent::List(_))
+        ));
+    }
+
+    #[test]
+    fn a_transform_of_a_list_wins_over_a_list() {
+        assert!(matches!(
+            Agent::new(&moved_list(), &list()),
+            Agent::Transform(inner) if matches!(*inner, Agent::List(_))
+        ));
+        assert!(matches!(
+            Agent::new(&list(), &moved_list()),
+            Agent::Symmetric(inner) if matches!(*inner, Agent::Transform(_))
+        ));
+    }
+
+    #[test]
+    fn a_transform_of_a_convex_shape_is_convex() {
+        let moved_cube = Shape::Transform {
+            transform: Transform::IDENTITY,
+            child: cube(),
+        };
+        assert!(matches!(
+            Agent::new(&moved_cube, &terrain()),
+            Agent::HeightField(_)
+        ));
+        assert!(matches!(Agent::new(&moved_cube, &cube()), Agent::Gsk(_)));
+    }
+}
