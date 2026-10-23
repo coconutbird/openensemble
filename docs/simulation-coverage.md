@@ -19,6 +19,18 @@ The packet dispatcher (`dispatcher.rs`) decodes the five command packets: Work, 
 Building and Game. `executor.rs` applies them to the `World`. The wire formats are complete. The
 gaps are in the execution.
 
+Recipient gates follow `BCommandManager_processCommands` @ `0x140195790`. A command with unit
+recipients (all Building commands) reaches a unit of the command player, of Gaia, or, in a co-op
+game, of a human player on the same team as the human command player (`BCommand_processUnits` @
+`0x140194560`, `World::command_reaches_owner`). A command with squad or army recipients (all Work
+commands) reaches a squad of the command player or of Gaia, and no co-op teammate squad
+(`BCommand_processSquads` @ `0x1401946D0`, `BCommand_processArmies` @ `0x1401947B0`,
+`World::command_reaches_squad_owner`). The executor filters Building recipients, and the Work
+order entry points (move, attack, gather, capture, repair other, cloak, detonate, change mode,
+join, garrison, ungarrison, hitch, mines, jump) use the squad gate. A co-op `BuildOther` belongs
+to the co-op player of the command player, and the command player pays
+(`BBuildingCommand_processUnit` @ `0x1401987D0` case 13).
+
 | Command | Engine evidence | Status | Notes |
 | --- | --- | --- | --- |
 | Work: Move, Attack, Gather, Capture, RepairOther, Cloak, Detonate, ChangeMode, Join, Garrison, Ungarrison, Hitch, Unhitch, Mines, Jump family | `BEventDefinitions_getGeneralEventEnum` @ `0x140448700` (`CommandMove`, `CommandAttack`, `CommandDoWork`) | Implemented | `executor.rs`, `executor/` |

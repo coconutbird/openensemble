@@ -70,7 +70,7 @@ impl World {
         if self
             .squads
             .get(squad_id)
-            .is_none_or(|squad| squad.base.player_id != player_id)
+            .is_none_or(|squad| !Self::command_reaches_squad_owner(player_id, squad.base.player_id))
         {
             return false;
         }

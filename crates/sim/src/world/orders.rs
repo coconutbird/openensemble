@@ -39,7 +39,7 @@ impl World {
             return false;
         }
         if self.squads.get(recipient_id).is_some_and(|squad| {
-            squad.base.player_id == player_id
+            Self::command_reaches_squad_owner(player_id, squad.base.player_id)
                 && squad.is_alive()
                 && !self.is_squad_incapacitated(recipient_id)
                 && !squad.garrison.is_garrisoned()
@@ -59,7 +59,7 @@ impl World {
             return accepted;
         }
         if self.units.get(recipient_id).is_some_and(|unit| {
-            unit.base.player_id == player_id
+            self.command_reaches_owner(player_id, unit.base.player_id)
                 && unit.is_alive()
                 && !unit.is_building()
                 && unit.squad_id.is_none()
@@ -181,7 +181,7 @@ impl World {
         context: ResolvedSquadMoveContext,
     ) -> bool {
         if !self.squads.get(squad_id).is_some_and(|squad| {
-            squad.base.player_id == player_id
+            Self::command_reaches_squad_owner(player_id, squad.base.player_id)
                 && squad.is_alive()
                 && !self.is_squad_incapacitated(squad_id)
                 && !squad.garrison.is_garrisoned()

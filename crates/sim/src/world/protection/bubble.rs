@@ -584,7 +584,7 @@ impl World {
 
     fn valid_join_source(&self, player_id: PlayerId, squad_id: EntityId) -> bool {
         self.squads.get(squad_id).is_some_and(|squad| {
-            squad.base.player_id == player_id
+            Self::command_reaches_squad_owner(player_id, squad.base.player_id)
                 && squad.is_alive()
                 && !self.is_squad_incapacitated(squad_id)
                 && !squad.garrison.is_garrisoned()

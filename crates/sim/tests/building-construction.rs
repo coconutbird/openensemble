@@ -394,6 +394,35 @@ fn build_other_reaches_gaia_builders_but_not_other_players() {
 }
 
 #[test]
+fn coop_build_other_belongs_to_the_coop_partner_and_the_command_player_pays() {
+    // `BBuildingCommand_processUnit` @ 0x1401987D0 case 13: worker player is the co-op
+    // player (`BPlayer+688`), purchasing player is the command player.
+    let database = construction_database();
+    let mut world = construction_players(2);
+    world.set_coop(true);
+    world.get_player_mut(1).unwrap().set_coop_player_id(Some(2));
+    let target_id = object_prototype_id(&database, SOCKET_BUILDING).unwrap();
+    let builder_proto_id = object_prototype_id(&database, BUILDER).unwrap();
+    let builder_id = spawn_object_at(
+        &mut world,
+        &database,
+        GAIA_PLAYER,
+        builder_proto_id,
+        Vec3::new(40.0, 0.0, 0.0),
+        Vec3::Z,
+    )
+    .unwrap();
+
+    world
+        .queue_build_other(1, builder_id, &database, target_id)
+        .expect("a Gaia socket should accept the player's BuildOther");
+    let _promoted = world.update_production(0.05, &database);
+    let building_id = constructed_by(&world, builder_id, SOCKET_BUILDING);
+    assert_eq!(world.get_building(building_id).unwrap().base.player_id, 2);
+    assert_close(world.get_player(1).unwrap().resources.get(0), 950.0);
+}
+
+#[test]
 fn manual_build_waits_for_external_build_points() {
     let database = construction_database();
     let (mut world, builder_id) = construction_world(&database);

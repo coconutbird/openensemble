@@ -541,7 +541,7 @@ impl World {
         let building = self
             .get_building(building_id)
             .ok_or(TrainingError::BuildingNotFound(building_id))?;
-        if building.base.player_id != player_id {
+        if !self.command_reaches_owner(player_id, building.base.player_id) {
             return Err(TrainingError::BuildingNotOwned {
                 building_id,
                 player_id,

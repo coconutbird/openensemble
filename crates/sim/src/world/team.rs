@@ -105,6 +105,20 @@ impl World {
                 })
     }
 
+    /// Return whether a command from `player_id` reaches a squad of `owner_id`.
+    ///
+    /// Follows the recipient gate of `BCommand_processSquads` @ `0x1401946D0` and of the new
+    /// armies of `BCommand_processArmies` @ `0x1401947B0`: the squad belongs to the command
+    /// player or to Gaia. Unlike the unit gate, a co-op teammate's squad does not get the
+    /// command.
+    #[must_use]
+    pub(crate) const fn command_reaches_squad_owner(
+        player_id: PlayerId,
+        owner_id: PlayerId,
+    ) -> bool {
+        owner_id == player_id || owner_id == GAIA_PLAYER
+    }
+
     /// Append a player with the next player ID, like `BWorld_addPlayer` @ `0x1405C8260`.
     ///
     /// Returns `None` if the world already has Gaia and [`super::MAX_PLAYERS`] players.

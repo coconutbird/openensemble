@@ -63,7 +63,7 @@ impl World {
         squad_id: EntityId,
     ) -> Option<EntityId> {
         let squad = self.squads.get(squad_id)?;
-        if squad.base.player_id != player_id
+        if !Self::command_reaches_squad_owner(player_id, squad.base.player_id)
             || !squad.is_alive()
             || self.is_squad_incapacitated(squad_id)
             || squad.garrison.is_garrisoned()

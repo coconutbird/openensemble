@@ -132,7 +132,7 @@ impl World {
         squad_id: EntityId,
     ) -> Option<Vec<EntityId>> {
         let squad = self.squads.get(squad_id)?;
-        (squad.base.player_id == player_id
+        (Self::command_reaches_squad_owner(player_id, squad.base.player_id)
             && squad.is_alive()
             && !self.is_squad_incapacitated(squad_id)
             && !squad.garrison.is_garrisoned()

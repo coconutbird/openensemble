@@ -78,7 +78,9 @@ impl World {
         gameplay: &GameplayCatalog,
     ) -> Option<ChangeModeRequest> {
         let squad = self.squads.get(squad_id)?;
-        if squad.base.player_id != player_id || !self.change_mode_context_valid(squad_id) {
+        if !Self::command_reaches_squad_owner(player_id, squad.base.player_id)
+            || !self.change_mode_context_valid(squad_id)
+        {
             return None;
         }
         let unit = squad
@@ -201,7 +203,7 @@ impl World {
         request: ChangeModeRequest,
     ) -> bool {
         if !self.squads.get(squad_id).is_some_and(|squad| {
-            squad.base.player_id == player_id
+            Self::command_reaches_squad_owner(player_id, squad.base.player_id)
                 && squad.mode != request.target_mode
                 && self.change_mode_context_valid(squad_id)
         }) {

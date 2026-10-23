@@ -27,6 +27,9 @@ mod target_orders;
 mod user_work;
 
 #[cfg(test)]
+mod recipient_tests;
+
+#[cfg(test)]
 use crate::commands::work_command_flags;
 #[cfg(test)]
 use glam::Vec3;
@@ -291,24 +294,28 @@ impl<'database> CommandExecutor<'database> {
     }
 
     /// Execute supported building production commands.
+    ///
+    /// Building commands have unit recipients, so only the units that pass the
+    /// `BCommand_processUnits` @ `0x140194560` gate get the command.
     fn execute_building(&self, world: &mut World, cmd: &BuildingCommand) {
         let Ok(player_id) = u8::try_from(cmd.base.player_id) else {
             return;
         };
+        let recipients = command_unit_recipients(world, player_id, &cmd.base.recipients);
         if cmd.building_type == BuildingCommandType::ClearRallyPoint {
-            for &building_id in &cmd.base.recipients {
+            for &building_id in &recipients {
                 let _cleared = world.clear_unit_rally_point(building_id, player_id);
             }
             return;
         }
         if cmd.building_type == BuildingCommandType::ChangeMode {
-            self.execute_building_change_mode(world, cmd, player_id);
+            self.execute_building_change_mode(world, cmd, &recipients);
             return;
         }
         if cmd.count == 0 {
             return;
         }
-        for &building_id in &cmd.base.recipients {
+        for &building_id in &recipients {
             if cmd.building_type == BuildingCommandType::CustomCommand {
                 if cmd.count > 0 {
                     let _queued = world.queue_custom_command(player_id, building_id, cmd.target_id);
@@ -478,6 +485,23 @@ impl<'database> CommandExecutor<'database> {
             }
         }
     }
+}
+
+/// Keep the recipient units that pass the `BCommand_processUnits` gate, in command order.
+fn command_unit_recipients(
+    world: &World,
+    player_id: u8,
+    recipients: &[crate::EntityId],
+) -> Vec<crate::EntityId> {
+    recipients
+        .iter()
+        .copied()
+        .filter(|&unit_id| {
+            world
+                .get_unit(unit_id)
+                .is_some_and(|unit| world.command_reaches_owner(player_id, unit.base.player_id))
+        })
+        .collect()
 }
 
 fn optional_entity_id(raw: i32) -> Option<crate::EntityId> {

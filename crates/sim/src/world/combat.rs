@@ -145,7 +145,8 @@ impl World {
         }
 
         if self.squads.get(recipient_id).is_some_and(|squad| {
-            squad.base.player_id == player_id && !self.is_squad_incapacitated(recipient_id)
+            Self::command_reaches_squad_owner(player_id, squad.base.player_id)
+                && !self.is_squad_incapacitated(recipient_id)
         }) {
             let _cancelled = self.cancel_capture_order(recipient_id);
             let _repair_cancelled = self.cancel_repair_other_order(recipient_id);
@@ -161,7 +162,7 @@ impl World {
         if self
             .units
             .get(recipient_id)
-            .is_some_and(|unit| unit.base.player_id == player_id)
+            .is_some_and(|unit| self.command_reaches_owner(player_id, unit.base.player_id))
         {
             return self
                 .units

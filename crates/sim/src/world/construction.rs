@@ -54,6 +54,7 @@ struct TrainLimitRule {
 #[derive(Debug, Clone, Copy)]
 struct BuildOtherRequest<'database> {
     player_id: PlayerId,
+    worker_player_id: PlayerId,
     builder_id: EntityId,
     database: &'database Database,
     prototype_id: i32,
@@ -192,6 +193,10 @@ impl World {
 
     /// Validate, pay, reserve population, and enqueue one `BuildOther` item.
     ///
+    /// Like `BBuildingCommand_processUnit` @ `0x1401987D0` case 13, the command player pays
+    /// and the work belongs to the co-op player of the command player (`BPlayer+688`) when
+    /// it has one.
+    ///
     /// # Errors
     ///
     /// Returns an error for invalid construction data, unavailable commands or
@@ -203,8 +208,13 @@ impl World {
         database: &Database,
         prototype_id: i32,
     ) -> Result<ConstructionQueueResult, ConstructionError> {
+        let worker_player_id = self
+            .get_player(player_id)
+            .and_then(crate::player::Player::coop_player_id)
+            .unwrap_or(player_id);
         self.queue_build_other_internal(BuildOtherRequest {
             player_id,
+            worker_player_id,
             builder_id,
             database,
             prototype_id,
@@ -224,6 +234,7 @@ impl World {
     ) -> Result<ConstructionQueueResult, ConstructionError> {
         self.queue_build_other_internal(BuildOtherRequest {
             player_id,
+            worker_player_id: player_id,
             builder_id,
             database,
             prototype_id,
@@ -238,6 +249,7 @@ impl World {
     ) -> Result<ConstructionQueueResult, ConstructionError> {
         let BuildOtherRequest {
             player_id,
+            worker_player_id,
             builder_id,
             database,
             prototype_id,
@@ -279,7 +291,7 @@ impl World {
         self.pay_construction(player_id, &definition, true, no_cost)?;
 
         let task = ConstructionTask {
-            player_id,
+            player_id: worker_player_id,
             purchasing_player_id: player_id,
             kind: ConstructionKind::BuildOther,
             prototype_id,

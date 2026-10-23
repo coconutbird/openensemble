@@ -139,7 +139,7 @@ impl World {
             .squads
             .get(squad_id)
             .ok_or(GarrisonError::SquadNotFound)?;
-        if squad.base.player_id != player_id {
+        if !Self::command_reaches_squad_owner(player_id, squad.base.player_id) {
             return Err(GarrisonError::NotOwned);
         }
         let SquadContainmentState::Garrisoned { container, .. } = squad.garrison.state() else {
@@ -303,7 +303,7 @@ impl World {
             .squads
             .get(squad_id)
             .ok_or(GarrisonError::SquadNotFound)?;
-        if squad.base.player_id != player_id {
+        if !Self::command_reaches_squad_owner(player_id, squad.base.player_id) {
             return Err(GarrisonError::NotOwned);
         }
         if squad.garrison.is_garrisoned() {

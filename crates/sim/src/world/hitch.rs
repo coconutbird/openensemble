@@ -149,7 +149,7 @@ impl World {
         squad_id: EntityId,
     ) -> Result<(), HitchError> {
         let squad = self.squads.get(squad_id).ok_or(HitchError::SquadNotFound)?;
-        if squad.base.player_id != player_id {
+        if !Self::command_reaches_squad_owner(player_id, squad.base.player_id) {
             return Err(HitchError::NotOwned);
         }
         if !squad.is_alive() || squad.garrison.is_garrisoned() {
