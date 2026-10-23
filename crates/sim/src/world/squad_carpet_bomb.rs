@@ -399,6 +399,7 @@ mod tests {
                 friendly_fire: false,
             }),
             knockback: None,
+            death_throw: crate::gameplay::DeathThrowProfile::default(),
             pull: None,
             hardpoint: None,
             orientation: crate::gameplay::AttackOrientationProfile::default(),

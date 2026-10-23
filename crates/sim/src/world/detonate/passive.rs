@@ -249,6 +249,7 @@ impl World {
                 damage: finite_nonnegative(authored_damage * explosion.damage_multiplier),
                 weapon_type: explosion.profile.weapon_type().map(str::to_owned),
                 area_damage: explosion.profile.area_damage(),
+                death_throw: None,
             },
             Some(gameplay),
         );

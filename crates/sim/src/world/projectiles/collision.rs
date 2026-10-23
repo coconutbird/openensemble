@@ -6,7 +6,7 @@ use crate::entities::{Projectile, Unit};
 use crate::entity_id::EntityId;
 use crate::gameplay::{GameplayCatalog, ProjectileCollisionTraits};
 use crate::player::{GAIA_PLAYER, PlayerId};
-use crate::world::combat::AttackDamage;
+use crate::world::combat::{AttackDamage, AttackThrow};
 use crate::world::events::ImpactEffectRequestData;
 use crate::{ImpactEffectRequest, ImpactSurface};
 use glam::Vec3;
@@ -37,6 +37,9 @@ struct ProjectileImpact {
     weapon_type: Option<String>,
     area_damage: Option<crate::gameplay::AreaDamageProfile>,
     impact_effect: Option<crate::gameplay::ImpactEffectProfile>,
+    /// The weapon throw values with the launch position of the projectile
+    /// (`mInitialProjectilePosition`) as the force origin of a direct hit.
+    death_throw: Option<AttackThrow>,
 }
 
 enum ProjectileCollisionOutcome {
@@ -435,6 +438,7 @@ impl World {
                 damage: impact.damage,
                 weapon_type: impact.weapon_type,
                 area_damage: impact.area_damage,
+                death_throw: impact.death_throw,
             },
             gameplay,
         );
@@ -542,6 +546,10 @@ fn projectile_impact(
         weapon_type: projectile.weapon_type.clone(),
         area_damage: projectile.area_damage,
         impact_effect: projectile.impact_effect().cloned(),
+        death_throw: projectile.death_throw().map(|profile| AttackThrow {
+            profile,
+            force_origin: projectile.initial_position(),
+        }),
     }
 }
 

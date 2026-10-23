@@ -28,6 +28,12 @@ impl DamageAttribution {
         }
     }
 
+    /// The attribution with the throw context of a weapon damage.
+    pub(super) const fn with_death_throw(mut self, death_throw: Option<DeathThrowContext>) -> Self {
+        self.death_throw = death_throw;
+        self
+    }
+
     const fn reflected(player_id: PlayerId) -> Self {
         Self {
             unit_id: None,

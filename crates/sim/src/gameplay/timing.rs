@@ -203,6 +203,8 @@ pub struct AttackProfile {
     pub impact_effect: Option<super::ImpactEffectProfile>,
     /// Authored area-damage contract, present only for a positive radius.
     pub area_damage: Option<AreaDamageProfile>,
+    /// The physics throw values of the weapon (`ThrowUnits` and the `Physics*` values).
+    pub death_throw: super::DeathThrowProfile,
     /// Authored charged squad-pull contract, present only for `PullUnits` weapons.
     pub pull: Option<PullAttackProfile>,
     /// Knockback of an `ApplyKnockback` weapon, applied to the target body at each attack.
@@ -491,6 +493,7 @@ fn build_attack_profile(
         projectile: ranged.weapon.projectile.clone(),
         impact_effect: super::ImpactEffectProfile::from_weapon(ranged.weapon),
         area_damage: area_damage_profile(ranged.weapon),
+        death_throw: super::DeathThrowProfile::from_weapon(ranged.weapon),
         pull: pull_attack_profile(ranged.action, ranged.weapon),
         knockback: super::KnockbackProfile::from_weapon(ranged.weapon),
         hardpoint: AttackHardpointProfile::from_weapon(object, ranged.weapon),

@@ -114,6 +114,10 @@ impl World {
                 damage: event.damage,
                 weapon_type: event.weapon_type.clone(),
                 area_damage: event.area_damage,
+                death_throw: Some(super::AttackThrow {
+                    profile: event.death_throw,
+                    force_origin: event.source_position,
+                }),
             },
             gameplay,
         );

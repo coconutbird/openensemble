@@ -724,6 +724,7 @@ mod tests {
             impact_effect: None,
             area_damage: None,
             knockback: None,
+            death_throw: crate::gameplay::DeathThrowProfile::default(),
             pull: None,
             hardpoint: None,
             orientation: crate::gameplay::AttackOrientationProfile::default(),

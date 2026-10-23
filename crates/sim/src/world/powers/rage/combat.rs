@@ -52,6 +52,7 @@ pub(super) fn apply_landing_impact(
             damage: profile.damage * damage_multiplier,
             weapon_type: profile.weapon_type,
             area_damage: profile.area_damage,
+            death_throw: None,
         };
         let _dealt = world.apply_attack_damage(&attack, gameplay);
     }

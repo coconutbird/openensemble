@@ -75,6 +75,7 @@ fn collision_catalog(
         impact_effect: None,
         area_damage,
         knockback: None,
+        death_throw: crate::gameplay::DeathThrowProfile::default(),
         pull: None,
         hardpoint: None,
         orientation: crate::gameplay::AttackOrientationProfile::default(),
@@ -302,6 +303,7 @@ fn impact_request_retains_proto_surface_and_intended_target_flying_rule() {
         weapon_type: None,
         area_damage: None,
         impact_effect: Some(effect.clone()),
+        death_throw: None,
     };
 
     world.apply_projectile_impact(impact.clone(), Some(&database), None);

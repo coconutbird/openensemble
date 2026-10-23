@@ -4,8 +4,9 @@ use super::{World, damage::DamageAttribution};
 use crate::entities::Unit;
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
-use crate::gameplay::{AreaDamageProfile, GameplayCatalog};
+use crate::gameplay::{AreaDamageProfile, DeathThrowProfile, GameplayCatalog};
 use crate::player::{GAIA_PLAYER, PlayerId};
+use crate::world::death_throw::DeathThrowContext;
 use glam::Vec3;
 
 const DAMAGE_EPSILON: f32 = 0.000_001;
@@ -20,12 +21,48 @@ pub(crate) struct AttackDamage {
     pub damage: f32,
     pub weapon_type: Option<String>,
     pub area_damage: Option<AreaDamageProfile>,
+    /// The weapon throw data of the damage, or `None` for a damage without `mpDamageInfo`.
+    pub death_throw: Option<AttackThrow>,
+}
+
+/// The physics throw data of a weapon damage (`BDamage::mpDamageInfo` and the
+/// `physicsForceOrigin` of `BDamageHelper::doDamageWithWeaponType`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct AttackThrow {
+    /// The throw values of the weapon.
+    pub profile: DeathThrowProfile,
+    /// The force origin of a direct hit: the launch position of the projectile, or the
+    /// position of the attacker for a hit without a projectile. An area damage uses its
+    /// ground zero.
+    pub force_origin: Vec3,
+}
+
+impl AttackDamage {
+    /// The attribution of one damage call with the throw context of retail
+    /// `doDamageWithWeaponType(direction, distanceFactor, physicsForceOrigin)`.
+    fn attribution(
+        &self,
+        damage_position: Vec3,
+        direction: Vec3,
+        distance_factor: f32,
+    ) -> DamageAttribution {
+        DamageAttribution::combat(self.attacker_id, self.attacker_player_id).with_death_throw(
+            self.death_throw.map(|throw| DeathThrowContext {
+                profile: throw.profile,
+                damage_position,
+                direction,
+                distance_factor,
+            }),
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
 struct AreaCandidate {
     id: EntityId,
     distance: f32,
+    /// The area factor of the distance (`distanceFactor`).
+    distance_factor: f32,
     damage: f32,
 }
 
@@ -65,8 +102,11 @@ impl World {
     ) -> f32 {
         let Some(profile) = attack.area_damage else {
             return attack.primary_target_id.map_or(0.0, |target_id| {
+                let force_origin = attack
+                    .death_throw
+                    .map_or(attack.ground_zero, |throw| throw.force_origin);
                 self.apply_attributed_directional_weapon_damage(
-                    DamageAttribution::combat(attack.attacker_id, attack.attacker_player_id),
+                    attack.attribution(force_origin, attack.direction, 1.0),
                     target_id,
                     attack.damage,
                     attack.weapon_type.as_deref(),
@@ -100,7 +140,6 @@ impl World {
         } else {
             self.apply_primary_area_damage(attack, profile, gameplay)
         };
-        let attribution = DamageAttribution::combat(attack.attacker_id, attack.attacker_player_id);
         let splash_pool = attack.primary_target_id.map_or(attack.damage, |_| {
             (1.0 - profile.primary_target_factor) * attack.damage
         });
@@ -113,31 +152,16 @@ impl World {
             suppress_primary,
         );
         let mut total = primary.dealt;
-        total += self.apply_uncapped_gaia_damage(
-            &candidates.uncapped_gaia,
-            attribution,
-            attack.weapon_type.as_deref(),
-            gameplay,
-        );
+        total += self.apply_uncapped_gaia_damage(&candidates.uncapped_gaia, attack, gameplay);
         if profile.linear_damage {
             candidates
                 .capped
                 .sort_by(|left, right| left.distance.total_cmp(&right.distance));
-            total += self.apply_linear_area_damage(
-                &candidates.capped,
-                splash_pool,
-                attribution,
-                attack.weapon_type.as_deref(),
-                gameplay,
-            );
+            total +=
+                self.apply_linear_area_damage(&candidates.capped, splash_pool, attack, gameplay);
         } else {
-            total += self.apply_capped_area_damage(
-                &candidates.capped,
-                splash_pool,
-                attribution,
-                attack.weapon_type.as_deref(),
-                gameplay,
-            );
+            total +=
+                self.apply_capped_area_damage(&candidates.capped, splash_pool, attack, gameplay);
         }
         total
     }
@@ -157,7 +181,11 @@ impl World {
             .get(receiving_target_id)
             .is_some_and(Entity::is_alive);
         let dealt = self.apply_attributed_weapon_damage(
-            DamageAttribution::combat(attack.attacker_id, attack.attacker_player_id),
+            attack.attribution(
+                attack.ground_zero,
+                attack.direction,
+                profile.primary_target_factor,
+            ),
             target_id,
             attack.damage * profile.primary_target_factor,
             attack.weapon_type.as_deref(),
@@ -206,10 +234,12 @@ impl World {
                 continue;
             }
             let distance = distance_squared.sqrt();
+            let distance_factor = area_distance_factor(distance, profile);
             let candidate = AreaCandidate {
                 id,
                 distance,
-                damage: area_distance_factor(distance, profile) * attack.damage,
+                distance_factor,
+                damage: distance_factor * attack.damage,
             };
             if unit.base.player_id == GAIA_PLAYER && !unit.is_object_type("Cover") {
                 candidates.uncapped_gaia.push(candidate);
@@ -274,42 +304,45 @@ impl World {
         })
     }
 
+    /// Gaia targets get their full area damage, without a direction (retail passes
+    /// `XMVectorZero()`) and with the area factor as the throw distance factor.
     fn apply_uncapped_gaia_damage(
         &mut self,
         candidates: &[AreaCandidate],
-        attribution: DamageAttribution,
-        weapon_type: Option<&str>,
+        attack: &AttackDamage,
         gameplay: Option<&GameplayCatalog>,
     ) -> f32 {
         candidates
             .iter()
             .map(|candidate| {
                 self.apply_attributed_weapon_damage(
-                    attribution,
+                    attack.attribution(attack.ground_zero, Vec3::ZERO, candidate.distance_factor),
                     candidate.id,
                     candidate.damage,
-                    weapon_type,
+                    attack.weapon_type.as_deref(),
                     gameplay,
                 )
             })
             .sum()
     }
 
+    /// Linear area targets share the splash pool in distance order; the throw distance
+    /// factor is 1.
     fn apply_linear_area_damage(
         &mut self,
         candidates: &[AreaCandidate],
         mut splash_pool: f32,
-        attribution: DamageAttribution,
-        weapon_type: Option<&str>,
+        attack: &AttackDamage,
         gameplay: Option<&GameplayCatalog>,
     ) -> f32 {
+        let attribution = attack.attribution(attack.ground_zero, attack.direction, 1.0);
         let mut total = 0.0;
         for candidate in candidates {
             let dealt = self.apply_attributed_weapon_damage(
                 attribution,
                 candidate.id,
                 splash_pool,
-                weapon_type,
+                attack.weapon_type.as_deref(),
                 gameplay,
             );
             total += dealt;
@@ -321,12 +354,13 @@ impl World {
         total
     }
 
+    /// Capped area targets get their share of the splash pool; the throw distance factor is
+    /// the capped damage divided by the attack damage.
     fn apply_capped_area_damage(
         &mut self,
         candidates: &[AreaCandidate],
         splash_pool: f32,
-        attribution: DamageAttribution,
-        weapon_type: Option<&str>,
+        attack: &AttackDamage,
         gameplay: Option<&GameplayCatalog>,
     ) -> f32 {
         let total_damage = candidates
@@ -341,11 +375,17 @@ impl World {
         candidates
             .iter()
             .map(|candidate| {
+                let damage = candidate.damage * reduction;
+                let distance_factor = if attack.damage > 0.0 {
+                    damage / attack.damage
+                } else {
+                    damage
+                };
                 self.apply_attributed_weapon_damage(
-                    attribution,
+                    attack.attribution(attack.ground_zero, attack.direction, distance_factor),
                     candidate.id,
-                    candidate.damage * reduction,
-                    weapon_type,
+                    damage,
+                    attack.weapon_type.as_deref(),
                     gameplay,
                 )
             })
@@ -451,6 +491,7 @@ mod tests {
             damage: 100.0,
             weapon_type: None,
             area_damage: Some(profile),
+            death_throw: None,
         }
     }
 
@@ -484,6 +525,7 @@ mod tests {
                 damage: 10.0,
                 weapon_type: None,
                 area_damage: None,
+                death_throw: None,
             },
             None,
         );
@@ -502,6 +544,7 @@ mod tests {
                 damage: 10.0,
                 weapon_type: None,
                 area_damage: None,
+                death_throw: None,
             },
             None,
         );
@@ -522,6 +565,7 @@ mod tests {
                 damage: 10.0,
                 weapon_type: None,
                 area_damage: Some(area),
+                death_throw: None,
             },
             None,
         );

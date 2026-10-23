@@ -355,6 +355,7 @@ impl World {
                 damage: weapon.damage() * damage_multiplier,
                 weapon_type: weapon.weapon_type().map(str::to_owned),
                 area_damage: weapon.area_damage(),
+                death_throw: None,
             };
             let _damage = self.apply_attack_damage(&attack, Some(gameplay));
             self.queue_crash_impact(unit_id, hit, player_id, position, &profile);

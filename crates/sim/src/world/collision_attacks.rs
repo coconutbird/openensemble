@@ -215,6 +215,7 @@ impl World {
                 damage: requested_damage,
                 weapon_type: profile.weapon_type.map(str::to_owned),
                 area_damage: None,
+                death_throw: None,
             },
             Some(gameplay),
         );

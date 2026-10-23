@@ -94,6 +94,7 @@ fn combat_catalog(options: CombatCatalogOptions) -> GameplayCatalog {
         impact_effect: None,
         area_damage,
         knockback: None,
+        death_throw: crate::gameplay::DeathThrowProfile::default(),
         pull: None,
         hardpoint: None,
         orientation: crate::gameplay::AttackOrientationProfile::default(),
@@ -847,6 +848,7 @@ fn weapon_damage_modifier_technology_is_owned_by_the_attacking_player() {
                 ignores_y_axis: false,
                 friendly_fire: false,
             }),
+            death_throw: None,
         },
         Some(&gameplay),
     );

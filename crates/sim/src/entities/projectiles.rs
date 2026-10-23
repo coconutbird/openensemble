@@ -10,7 +10,7 @@ mod visual_source;
 use crate::entities::{BaseEntity, ObjectState};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
-use crate::gameplay::{AreaDamageProfile, ProjectileProfile};
+use crate::gameplay::{AreaDamageProfile, DeathThrowProfile, ProjectileProfile};
 use crate::math;
 use crate::player::PlayerId;
 use crate::random::SimRandom;
@@ -170,6 +170,9 @@ pub struct Projectile {
     /// Launch-time area-damage values applied at the impact position.
     pub area_damage: Option<AreaDamageProfile>,
     impact_effect: Option<crate::gameplay::ImpactEffectProfile>,
+    /// The physics throw values of the weapon, or `None` for a projectile without weapon
+    /// damage info.
+    death_throw: Option<DeathThrowProfile>,
     /// Desired flight speed.
     pub desired_speed: f32,
     /// Current scalar speed before gravity is applied.
@@ -236,6 +239,7 @@ impl Projectile {
             weapon_type: launch.weapon_type,
             area_damage: launch.area_damage,
             impact_effect: launch.impact_effect,
+            death_throw: None,
             desired_speed: profile.speed,
             current_speed,
             acceleration: profile.acceleration,
@@ -504,6 +508,17 @@ impl Projectile {
     #[must_use]
     pub const fn initial_position(&self) -> Vec3 {
         self.initial_position
+    }
+
+    /// The physics throw values of the weapon that launched the projectile.
+    #[must_use]
+    pub const fn death_throw(&self) -> Option<DeathThrowProfile> {
+        self.death_throw
+    }
+
+    /// Set the physics throw values of the weapon that launched the projectile.
+    pub(crate) const fn set_death_throw(&mut self, death_throw: Option<DeathThrowProfile>) {
+        self.death_throw = death_throw;
     }
 
     /// Associate this projectile with one running native power.

@@ -207,6 +207,7 @@ fn apply_attack(
             damage,
             weapon_type: None,
             area_damage: None,
+            death_throw: None,
         },
         Some(gameplay),
     );

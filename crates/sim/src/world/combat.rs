@@ -26,7 +26,7 @@ use crate::entity::Entity;
 use crate::entity_id::{EntityClass, EntityId};
 use crate::gameplay::{AreaDamageProfile, AttackAnimationAnchor, AttackProfile, GameplayCatalog};
 use crate::player::PlayerId;
-pub(crate) use area_damage::AttackDamage;
+pub(crate) use area_damage::{AttackDamage, AttackThrow};
 use fire::{FireEvent, LaunchTuning};
 use glam::Vec3;
 use helpers::{
@@ -687,6 +687,10 @@ impl World {
                     damage: event.damage,
                     weapon_type: event.weapon_type,
                     area_damage: event.area_damage,
+                    death_throw: Some(AttackThrow {
+                        profile: event.death_throw,
+                        force_origin: event.source_position,
+                    }),
                 },
                 Some(gameplay),
             );
@@ -745,6 +749,7 @@ impl World {
             profile,
         );
         projectile.configure_reactions(event.projectile_reactions);
+        projectile.set_death_throw(Some(event.death_throw));
         self.projectiles.insert(id, projectile);
     }
 
