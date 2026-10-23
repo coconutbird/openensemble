@@ -189,13 +189,13 @@ fn normalized(value: Vec3) -> Vec3 {
     }
 }
 
-/// The three bodies of a unit for the clamshell overrides of `applyImpulse`,
-/// `setLinearVelocity` and the other virtual setters: the main body, then the upper and lower
-/// bodies of a clamshell.
-pub(crate) fn body_and_parts(main: BodyId, parts: Option<[BodyId; 2]>) -> Vec<BodyId> {
-    let mut bodies = vec![main];
-    bodies.extend(parts.into_iter().flatten());
-    bodies
+/// The bodies of a unit for the clamshell overrides of `BClamshellPhysicsObject` (vtable
+/// `0x1411E4120`): the main body, then the upper and lower bodies of a clamshell.
+pub(crate) fn body_and_parts(
+    main: BodyId,
+    parts: Option<[BodyId; 2]>,
+) -> impl Iterator<Item = BodyId> {
+    std::iter::once(main).chain(parts.into_iter().flatten())
 }
 
 impl World {
@@ -292,7 +292,10 @@ impl World {
         unit.base.up = pose.up;
     }
 
-    /// The rocket on death branch of the readback (DE `0x1405480A8`-`0x1405482B0`).
+    /// The rocket on death branch of the readback (DE `0x1405480A8`-`0x1405482B0`). The
+    /// damping and the linear impulses go through the clamshell overrides
+    /// (`setAngularDamping`, `applyImpulse`); the spin impulse is a point impulse on the main
+    /// body only.
     fn update_rocket_on_death(&mut self, unit_id: EntityId, elapsed: f32, first_update: bool) {
         let Some(unit) = self.units.get(unit_id) else {
             return;
@@ -304,35 +307,25 @@ impl World {
             return;
         };
         let (up, forward) = (unit.base.up, unit.base.forward);
-        let bodies = body_and_parts(state.body, state.clamshell_bodies());
         let main = state.body;
         let rocket_on = self.game_time_ms.wrapping_sub(rocket.start_ms) < rocket.duration_ms;
-        let lift = if !rocket_on {
-            Vec3::ZERO
-        } else if first_update {
-            Vec3::Y
-                * self
-                    .sim_random_mut()
-                    .range_float(INITIAL_ROCKET_UP_FORCE_MIN, INITIAL_ROCKET_UP_FORCE_MAX)
-        } else {
-            Vec3::Y * (ROCKET_UP_FORCE * elapsed)
-        };
-        let world = self.physics.world_mut();
         if first_update {
-            for &body in &bodies {
-                let (linear, _) = world.damping(body).unwrap_or_default();
-                world.set_damping(body, linear, ROCKET_ANGULAR_DAMPING);
-            }
+            let _damped = self.set_unit_body_angular_damping(unit_id, ROCKET_ANGULAR_DAMPING);
         }
         if rocket_on {
-            let push = up * (ROCKET_FORCE * elapsed);
-            for impulse in [push, lift] {
-                for &body in &bodies {
-                    world.apply_linear_impulse(body, impulse);
-                }
-            }
+            let lift = if first_update {
+                Vec3::Y
+                    * self
+                        .sim_random_mut()
+                        .range_float(INITIAL_ROCKET_UP_FORCE_MIN, INITIAL_ROCKET_UP_FORCE_MAX)
+            } else {
+                Vec3::Y * (ROCKET_UP_FORCE * elapsed)
+            };
+            let _pushed = self.apply_unit_impulse(unit_id, up * (ROCKET_FORCE * elapsed));
+            let _lifted = self.apply_unit_impulse(unit_id, lift);
             if let Some(head) = rocket.head_bone {
                 let spin = -forward * (ROCKET_SPIN_FORCE * elapsed);
+                let world = self.physics.world_mut();
                 let origin = world.position(main).unwrap_or(Vec3::ZERO);
                 world.apply_point_impulse(main, spin, head + origin);
             }
