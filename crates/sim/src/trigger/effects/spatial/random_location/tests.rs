@@ -12,9 +12,9 @@ fn random_location_uses_retail_radius_distribution_rotation_and_rng_stream() {
     let radius = radial_sample.sqrt() * 8.0 + 2.0;
     let theta = oracle.trigger_random_float(0.0, std::f32::consts::TAU);
     let expected = TriggerVec3::new(
-        100.0 + theta.cos() * radius,
+        100.0 + crate::math::cos(theta) * radius,
         7.0,
-        200.0 - theta.sin() * radius,
+        200.0 - crate::math::sin(theta) * radius,
     );
 
     assert_eq!(
