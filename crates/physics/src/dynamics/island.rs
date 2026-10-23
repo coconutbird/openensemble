@@ -59,8 +59,12 @@ pub(crate) fn step_islands(
             }
         }
         let root = islands.find(members[0]);
-        let in_island =
-            |index: Option<usize>| index.is_some_and(|i| islands.root_of(i) == Some(root));
+        // A keyframed body is an island of its own; its constraints belong to the dynamic
+        // island on the other side.
+        let owns_constraints = members.iter().any(|&member| bodies[member].is_dynamic());
+        let in_island = |index: Option<usize>| {
+            owns_constraints && index.is_some_and(|i| islands.root_of(i) == Some(root))
+        };
         let constrained_manifolds: Vec<usize> = manifolds
             .iter()
             .enumerate()

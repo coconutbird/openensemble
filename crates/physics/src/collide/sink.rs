@@ -109,7 +109,6 @@ impl<'a> ContactSink<'a> {
             self.manifold.remove_point(index);
         }
     }
-
 }
 
 #[cfg(test)]
