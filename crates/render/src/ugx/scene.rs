@@ -723,7 +723,7 @@ pub fn simulation_entity_visual_opacity(world: &SimWorld, entity_id: EntityId) -
 }
 
 fn simulation_object_transform(object: &sim::Object) -> Option<Mat4> {
-    simulation_model_transform(object.base.position, object.base.forward)
+    simulation_model_transform(object.base.position, object.base.forward, object.base.up)
 }
 
 /// Project the simulation's authoritative team visibility into presentation.
@@ -767,24 +767,30 @@ fn simulation_unit_model_transform(unit: &sim::Unit) -> Option<Mat4> {
     if unit.is_crashing() {
         simulation_directional_model_transform(unit.base.position, unit.base.forward, Vec3::ZERO)
     } else {
-        simulation_model_transform(unit.base.position, unit.base.forward)
+        simulation_model_transform(unit.base.position, unit.base.forward, unit.base.up)
     }
 }
 
-/// Build the object matrix of a ground unit from its position and planar facing.
+/// Build the object matrix of a ground entity from its position, heading and up axis.
 ///
 /// Retail keeps the entity frame as right, up, forward and position rows and maps a local
-/// point to `position + x * right + y * up + z * forward` with `right = up × forward`
-/// (`BWorld_createEntity` @ `0x1405C7D50`). The columns here are the same vectors.
-fn simulation_model_transform(position: Vec3, world_forward: Vec3) -> Option<Mat4> {
-    if !position.is_finite() || !world_forward.is_finite() {
+/// point to `position + x * right + y * up + z * forward` (`BWorld_createEntity` @
+/// `0x1405C7D50`). Like `BUnitActionMove_applyGroundTransform` @ `0x140540A40`, this keeps the
+/// up axis, sets `right = up × forward` and makes the forward axis orthogonal again. The
+/// columns here are the same vectors. An entity that retail keeps upright has world up.
+fn simulation_model_transform(position: Vec3, world_forward: Vec3, up: Vec3) -> Option<Mat4> {
+    if !position.is_finite() || !world_forward.is_finite() || !up.is_finite() {
         return None;
     }
-    let forward = Vec3::new(world_forward.x, 0.0, world_forward.z).try_normalize()?;
-    let right = Vec3::Y.cross(forward).try_normalize()?;
+    let up = up
+        .try_normalize()
+        .filter(|up| up.y > 0.0)
+        .unwrap_or(Vec3::Y);
+    let right = up.cross(world_forward).try_normalize()?;
+    let forward = right.cross(up).try_normalize()?;
     Some(Mat4::from_cols(
         right.extend(0.0),
-        Vec3::Y.extend(0.0),
+        up.extend(0.0),
         forward.extend(0.0),
         position.extend(1.0),
     ))

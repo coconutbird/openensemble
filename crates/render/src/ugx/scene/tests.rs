@@ -33,6 +33,28 @@ fn simulation_transform_uses_only_live_position_and_facing() {
 }
 
 #[test]
+fn simulation_transform_tilts_with_the_sim_up_axis() {
+    let mut world = sim::World::new();
+    let entity_id = world.create_unit_at(0, Vec3::new(4.0, 2.0, 8.0));
+    let unit = world.get_unit_mut(entity_id).expect("new unit");
+    unit.base.set_forward(Vec3::X);
+    let up = Vec3::new(-0.25, 1.0, 0.0).normalize();
+    unit.base.up = up;
+
+    let transform = simulation_unit_transform(unit).expect("valid transform");
+    let forward = transform.transform_vector3(Vec3::Z);
+    assert!(transform.transform_vector3(Vec3::Y).abs_diff_eq(up, 1.0e-6));
+    assert!(forward.dot(up).abs() < 1.0e-6);
+    assert!(forward.x > 0.0 && forward.y > 0.0);
+    assert!(
+        transform
+            .transform_vector3(Vec3::X)
+            .abs_diff_eq(up.cross(forward), 1.0e-6)
+    );
+    assert!(transform.determinant() > 0.0);
+}
+
+#[test]
 fn invalid_simulation_facing_has_no_render_transform() {
     let mut world = sim::World::new();
     let entity_id = world.create_unit_at(0, Vec3::ZERO);
