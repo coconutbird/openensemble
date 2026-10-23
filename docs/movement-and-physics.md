@@ -421,6 +421,32 @@ $env:OPENENSEMBLE_GAME_DIR = 'C:\Program Files (x86)\Steam\steamapps\common\Halo
 cargo test -p sim --test scenario-physics-world --test scenario-ground-follow --test scenario-object-physics -- --ignored
 ```
 
+### Physics deaths
+
+| Address | IDA name | Recovered role |
+| --- | --- | --- |
+| `0x1404DEA30` | `BUnit_createAndThrowPhysicsReplacement` | Replaces a killed unit with its `PhysicsReplacementInfo` body and throws it. |
+| `0x1407B8300` | `BClamshellPhysicsObject_applyImpulse` | Applies the impulse to the pelvis, then to the upper and lower bodies. |
+| `0x1411E4120` | `BClamshellPhysicsObject` vtable | Slots 10 to 17 and 25 act on all three clamshell bodies. |
+| `0x1402A6190` | `BObject_explodeMethane` | Plays the `MethaneExplosion` impact effect (size large) at the end of a rocket death. |
+| `0x1404EC0C0` | `BUnit_doDeathSpawnSquad` | Spawns the death spawn squad of a unit. |
+
+A weapon damage carries the throw values of its weapon (`ThrowUnits`, `PhysicsForce*`,
+`PhysicsLaunch*`, `FlailThrownUnits`) from the attack profile through the fire event and
+the projectile to `World::apply_attack_damage` (`world/combat/area_damage.rs`). The force
+origin is the launch position of the projectile, or the attacker position for a hit without a
+projectile. An area damage uses its ground zero. The distance factor is 1 for a direct hit,
+`PrimaryTargetFactor` for the area primary target, the capped damage divided by the attack
+damage for a capped area target, 1 for a linear area target, and the area factor (with a zero
+direction) for a Gaia target (`BDamageHelper::doAreaEffectDamage`).
+
+A kill with these values throws the physics replacement (`world/death_throw.rs`). The dead
+replacement is a corpse: the dead-unit pass (death replacements, passive detonations, death
+spawns, removal) skips it. It goes when its physics action waits, that is when its body
+sleeps (`CompleteOnInactivePhysics`). The sim does not model the fade of the corpse manager.
+A rocket death ends at its timer with the methane explosion, the death spawn squad and the
+removal of the unit.
+
 ## Ground contact and orientation
 
 ### Retail rules
