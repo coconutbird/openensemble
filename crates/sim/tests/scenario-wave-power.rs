@@ -223,13 +223,17 @@ fn shipped_wave_throws_live_marines_with_layered_action_and_clamshell_data() {
     // The thrown Marine takes the clamshell body of its `PhysicsReplacementInfo`.
     let state = marine.physics_object.as_ref().unwrap();
     assert!(state.clamshell_bodies().is_some());
-    let expected_horizontal = expected_speed * 30.0_f32.to_radians().cos();
-    let horizontal = Vec3::new(marine.base.velocity.x, 0.0, marine.base.velocity.z);
-    assert!(horizontal.normalize().abs_diff_eq(planar, 0.000_1));
-    assert!(horizontal.length() <= expected_horizontal);
-    assert!(horizontal.length() > expected_horizontal * 0.98);
-    assert!(marine.base.velocity.y > 0.0);
-    assert!(marine.base.velocity.y < expected_speed * 30.0_f32.to_radians().sin());
+    // The throw sets the launch velocity on the body and the unit in this update; the
+    // readback runs before the physics step, so only the body has felt gravity yet.
+    let launch = planar * (expected_speed * 30.0_f32.to_radians().cos())
+        + Vec3::Y * (expected_speed * 30.0_f32.to_radians().sin());
+    assert!(marine.base.velocity.abs_diff_eq(launch, 0.000_1));
+    let body_velocity = loaded
+        .simulation
+        .world
+        .unit_body_linear_velocity(setup.target_unit_id)
+        .expect("the thrown Marine body");
+    assert!(body_velocity.y < launch.y);
 }
 
 #[derive(Debug, Clone, Copy)]
