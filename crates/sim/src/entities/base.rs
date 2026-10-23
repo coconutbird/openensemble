@@ -37,7 +37,7 @@ impl Default for EntityFlags {
 ///
 /// Based on `BEntity` fields from entity.h:
 /// - mPosition (`BVector`) - 16 bytes
-/// - mForward (`BVector`) - 16 bytes
+/// - mRight, mUp, mForward (`BVector`) - 16 bytes each
 /// - mVelocity (`BVector`) - 16 bytes
 /// - mID (`BEntityID`) - 4 bytes
 /// - mPlayerID (`BPlayerID`) - 4 bytes
@@ -50,7 +50,15 @@ pub struct BaseEntity {
     /// Position in world space.
     pub position: Vec3,
     /// Forward direction (normalized).
+    ///
+    /// The simulation keeps the heading here. The render frame projects it onto the plane of
+    /// [`Self::up`].
     pub forward: Vec3,
+    /// Up direction (normalized), `BEntity` `+0x30`.
+    ///
+    /// Ground units that orient with the ground take it from the terrain normal. All other
+    /// entities keep world up.
+    pub up: Vec3,
     /// Current velocity.
     pub velocity: Vec3,
     /// Whether the entity is alive/valid.
@@ -66,6 +74,7 @@ impl Default for BaseEntity {
             player_id: 0,
             position: Vec3::ZERO,
             forward: Vec3::Z, // Default facing +Z
+            up: Vec3::Y,
             velocity: Vec3::ZERO,
             alive: true,
             flags: EntityFlags::default(),

@@ -4,6 +4,13 @@
 //! gameplay actions provide target velocity, impulses, and collision policy.
 //! This module keeps that separation: [`PhysicsBody`] owns deterministic body
 //! state and `prepare_squad_movement` bridges squad orders to physical units.
+//! Each body collides with the terrain plane that the world samples under it
+//! before each step (see `ground`).
+
+mod ground;
+
+use ground::GroundPlane;
+pub(crate) use ground::{filter_up, sample_ground};
 
 use crate::entities::squads::formation_offset_to_world;
 use crate::entities::{BaseEntity, Squad, SquadState, Unit, UnitState};
@@ -22,7 +29,6 @@ const MIN_MASS: f32 = 0.001;
 const MIN_ACCELERATION: f32 = 0.001;
 const MIN_VECTOR_LENGTH_SQUARED: f32 = 0.000_001;
 const ARRIVAL_THRESHOLD: f32 = 0.5;
-const GROUND_SNAP_SPEED: f32 = 0.5;
 pub(crate) const PHYSICS_GRAVITY: f32 = 9.81;
 const COLLISION_SLOP: f32 = 0.000_1;
 const SOLVER_ITERATIONS: usize = 4;
@@ -99,7 +105,7 @@ pub struct PhysicsBody {
     turn_rate_radians: f32,
     min_turn_radius: f32,
     max_turn_radius: f32,
-    ground_height: f32,
+    ground: GroundPlane,
     grounded: bool,
     angular_velocity: Vec3,
     accumulated_force: Vec3,
@@ -121,7 +127,7 @@ impl PhysicsBody {
             turn_rate_radians: 0.0,
             min_turn_radius: 0.0,
             max_turn_radius: 0.0,
-            ground_height: 0.0,
+            ground: GroundPlane::flat(0.0),
             grounded: true,
             angular_velocity: Vec3::ZERO,
             accumulated_force: Vec3::ZERO,
@@ -149,7 +155,7 @@ impl PhysicsBody {
             turn_rate_radians: 0.0,
             min_turn_radius: 0.0,
             max_turn_radius: 0.0,
-            ground_height,
+            ground: GroundPlane::flat(ground_height),
             grounded: position_y <= ground_height,
             angular_velocity: Vec3::ZERO,
             accumulated_force: Vec3::ZERO,
@@ -159,7 +165,7 @@ impl PhysicsBody {
         }
     }
 
-    /// Create a dynamic ground vehicle.
+    /// Create a dynamic ground vehicle on a flat plane until the world samples the terrain.
     #[must_use]
     pub fn ground_vehicle(
         material: PhysicsMaterial,
@@ -178,7 +184,7 @@ impl PhysicsBody {
             turn_rate_radians: finite_nonnegative(turn_rate_degrees).to_radians(),
             min_turn_radius: 0.0,
             max_turn_radius: 0.0,
-            ground_height: finite_or_zero(ground_height),
+            ground: GroundPlane::flat(finite_or_zero(ground_height)),
             grounded: true,
             angular_velocity: Vec3::ZERO,
             accumulated_force: Vec3::ZERO,
@@ -251,7 +257,7 @@ impl PhysicsBody {
         self.angular_velocity
     }
 
-    /// Check whether the body is resting on its ground plane.
+    /// Check whether the body is resting on the terrain.
     #[must_use]
     pub const fn is_grounded(&self) -> bool {
         self.grounded
@@ -286,7 +292,7 @@ impl PhysicsBody {
             return;
         }
         entity.velocity += impulse * self.inverse_mass();
-        if entity.velocity.y > 0.0 {
+        if impulse.y > 0.0 {
             self.grounded = false;
         }
     }
@@ -303,7 +309,7 @@ impl PhysicsBody {
             return false;
         }
         entity.velocity = velocity;
-        if velocity.y > 0.0 {
+        if self.leaves_ground(velocity) {
             self.grounded = false;
         }
         true
@@ -345,9 +351,11 @@ impl PhysicsBody {
         if let Some(target) = move_target {
             self.drive_toward(entity, target, dt, velocity_scalar, reverse_move);
         }
+        self.follow_ground(entity);
         self.integrate_angular_velocity(entity, dt);
+        let planar_step = planar(entity.velocity).length() * dt;
         entity.position += entity.velocity * dt;
-        self.resolve_ground(entity);
+        self.resolve_ground(entity, planar_step);
         self.clear_accumulators();
         move_target.is_some_and(|target| Self::finish_arrival(entity, target, target_before))
     }
@@ -361,7 +369,7 @@ impl PhysicsBody {
         checksum.hash_f32(self.turn_rate_radians);
         checksum.hash_f32(self.min_turn_radius);
         checksum.hash_f32(self.max_turn_radius);
-        checksum.hash_f32(self.ground_height);
+        self.ground.hash_state(checksum);
         checksum.hash_u32(u32::from(self.grounded));
         hash_vec3(checksum, self.angular_velocity);
         hash_vec3(checksum, self.accumulated_force);
@@ -392,10 +400,13 @@ impl PhysicsBody {
     }
 
     fn integrate_forces(&mut self, entity: &mut BaseEntity, dt: f32) {
-        entity.velocity += self.accumulated_force * self.inverse_mass() * dt;
+        let force_delta = self.accumulated_force * self.inverse_mass() * dt;
+        entity.velocity += force_delta;
         self.angular_velocity += self.accumulated_torque * self.inverse_inertia() * dt;
-        if !self.grounded || entity.velocity.y > 0.0 {
+        if force_delta.y > 0.0 {
             self.grounded = false;
+        }
+        if !self.grounded {
             entity.velocity.y -= PHYSICS_GRAVITY * dt;
         }
         entity.velocity *= damping_factor(self.material.linear_damping, dt);
@@ -465,23 +476,6 @@ impl PhysicsBody {
             entity.set_forward(rotate_planar(entity.forward, yaw));
         }
         self.angular_velocity *= damping_factor(self.material.angular_damping, dt);
-    }
-
-    fn resolve_ground(&mut self, entity: &mut BaseEntity) {
-        if entity.position.y > self.ground_height || entity.velocity.y > 0.0 {
-            self.grounded = false;
-            return;
-        }
-        entity.position.y = self.ground_height;
-        self.ground_impact_speed_this_step = entity.velocity.y.abs();
-        let rebound = (-entity.velocity.y * self.material.restitution).max(0.0);
-        if rebound > GROUND_SNAP_SPEED {
-            entity.velocity.y = rebound;
-            self.grounded = false;
-        } else {
-            entity.velocity.y = 0.0;
-            self.grounded = true;
-        }
     }
 
     fn finish_arrival(entity: &mut BaseEntity, target: Vec3, target_before: Option<Vec3>) -> bool {

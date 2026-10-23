@@ -282,6 +282,7 @@ fn hash_unit_action_state(checksum: &mut SyncChecksum, unit: &Unit) {
     unit.hash_ground_move_state(checksum);
     unit.hash_jump_state(checksum);
     unit.hash_turn_in_place_state(checksum);
+    unit.hash_ground_tie_state(checksum);
     unit.hash_change_mode_state(checksum);
     unit.combat.hash_state(checksum);
     unit.turret_combat.hash_state(checksum);

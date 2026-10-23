@@ -342,6 +342,11 @@ fn configure_unit_traits(
     unit.set_ignores_squad_ai(prototype_has_flag(proto, "IgnoreSquadAI"));
     unit.set_ungarrison_to_gaia(prototype_has_flag(proto, "UngarrisonToGaia"));
     unit.configure_turn_in_place(prototype_has_flag(proto, "TurnInPlace"));
+    unit.configure_ground_tie(
+        prototype_has_flag(proto, "NoTieToGround"),
+        prototype_has_flag(proto, "OrientUnitWithGround"),
+        prototype_has_flag(proto, "DoNotFilterOrient"),
+    );
     unit.set_invulnerable(
         prototype_has_flag(proto, "Invulnerable")
             || (unit.base.player_id == GAIA_PLAYER

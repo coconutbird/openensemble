@@ -100,6 +100,9 @@ pub(super) fn load_objects(
         ) else {
             continue;
         };
+        if object.no_tie_to_ground() {
+            clear_ground_tie(&mut scenario.world, entity_id);
+        }
         let visual_variation_index = match visual_variations {
             VisualVariations::Authored => object.visual_variation_index.unwrap_or(-1).max(-1),
             VisualVariations::ById(indices) => indices.get(&object.id).copied().unwrap_or(-1),
@@ -116,7 +119,22 @@ pub(super) fn load_objects(
 
 /// Terrain height below a world position, or the position height without terrain.
 ///
-/// This is the ground tie of a new object (`sub_140062EB0` with clamping).
+/// This is the ground tie of a new object (`BTerrainSimRep_getHeight` @ `0x140062EB0` with
+/// clamping).
 pub(super) fn ground_height(world: &World, position: Vec3) -> f32 {
     world.terrain_height(position, true).unwrap_or(position.y)
+}
+
+/// Clear `mFlagTiesToGround` on a scenario object with the `NoTieToGround` flag.
+///
+/// `BScenario_loadObject` @ `0x14037D6A0` sets the `NoTieToGround` bit on the new object.
+fn clear_ground_tie(world: &mut World, entity_id: crate::EntityId) {
+    let unit_ids = world
+        .get_squad(entity_id)
+        .map_or_else(|| vec![entity_id], |squad| squad.unit_ids.clone());
+    for unit_id in unit_ids {
+        if let Some(unit) = world.get_unit_mut(unit_id) {
+            unit.set_ties_to_ground(false);
+        }
+    }
 }

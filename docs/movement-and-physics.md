@@ -145,6 +145,79 @@ the deterministic sim physics loop. The stock Warthog continues through its
 specialized movement profile while the layered Warthog chain is retained in
 the immutable catalog for subsequent controller parity work.
 
+## Ground contact and orientation
+
+### Retail rules
+
+`BEntity` stores the frame as rows at `+0x20` (right), `+0x30` (up) and `+0x40` (forward).
+The position is at `+0x10`. The flag byte `+0xC0` holds `mFlagTiesToGround` (`0x10`),
+`mFlagUseMaxHeight` (`0x20`) and `mFlagPhysicsControl` (`0x40`). `BEntity_writeSavegame`
+(`0x140207090`) gives the flag names and bits.
+
+`BEntity_tieToGround` (`0x140202EB0`) does these steps:
+
+1. Return if `mFlagTiesToGround` is clear or `mFlagPhysicsControl` is set.
+2. For a flying entity with a maximum height, apply the flying height limits and return.
+3. For a unit whose prototype has `OrientUnitWithGround` (`BProtoObject` data `+0x428 & 8`),
+   call `BEntity_orientWithGround`. Then call `BEntity_filterOrientation` with weight 0.1 if
+   the prototype has `FilterOrient` (`+0x42F & 1`) and the previous `up.y` is not exactly 1.
+   `DoNotFilterOrient` clears `FilterOrient`.
+4. Skip a squad that holds one Havok vehicle.
+5. Otherwise set Y to the clamped terrain height (`BTerrainSimRep_getHeight` @ `0x140062EB0`).
+   The up axis does not change.
+
+`BEntity_orientWithGround` (`0x1402032A0`) samples the clamped terrain height at the four
+corners `position ± 1.25 right ± 2.25 forward`. These constants are the same for all units.
+
+- Y is the mean of the four heights.
+- The diagonal with the higher mean height and half of the other diagonal give the normal
+  (`normal = diagonal × other`, turned so that `normal.y ≥ 0`).
+- The up axis is the normal. The forward axis is projected onto the terrain plane, and
+  `right = up × forward`.
+
+`BEntity_filterOrientation` (`0x1402035F0`) blends the right and forward axes as
+`0.1 new + 0.9 old`. It then sets `up = forward × right` and `right = up × forward`.
+
+`mFlagTiesToGround` is the inverse of `NoTieToGround` (`BProtoObject` `+181 & 8`). The unit
+setup code (`0x1403E0130`, `0x1404DCC80`) ties a new unit unless that bit is set.
+`BScenario_loadObject` also reads `NoTieToGround` on a scenario object. Retail calls the tie
+after a position change, for example in `BSquad_setPositionAndSyncChildren` (`0x14039FC30`) for
+the squad and each member without `mFlagPhysicsControl`.
+
+In the shipped `objects.xml`, all ground vehicles have `OrientUnitWithGround` (Warthog, Ghost,
+Scorpion, Wraith, Cobra, Grizzly, Wolverine, Elephant, Chopper, Gremlin, Locust). Infantry and
+buildings do not have it, so they stay upright. The Flood infection forms also have
+`DoNotFilterOrient`.
+
+A Havok vehicle does not use the tie. `BTerrainSimRep_initPhysics` (`0x140063F20`) calls
+`BTerrainPhysics_createHeightFieldBody` (`0x14041B500`). It makes a fixed body with a
+`hkpSampledHeightFieldShape` (`0x140874D40`) over the simulation height grid, with a clamped
+border of 10 samples. `BTerrainHeightFieldShape_getHeightAt` (`0x14041B3B0`) reads the same
+half-float heights as the simulation queries. The Warthog box body
+(`warthog.blueprint`, `warthog.shp`) collides with that shape. `BUnitActionPhysics_update`
+(`0x140547C73`–`0x140547DC4`) reads the body position and rotation quaternion back. It writes
+the entity position and its right, up and forward rows. The Warthog `.physics` file selects the
+code vehicle `warthog` and has no suspension data.
+
+### Simulation model
+
+- `BaseEntity::up` is the up axis. `BaseEntity::forward` stays the heading. The renderer
+  projects the heading onto the plane of the up axis.
+- Before each substep, `World::sample_physics_ground` samples the terrain under each dynamic
+  body with the `BEntity_orientWithGround` footprint. `PhysicsBody` collides with that plane
+  for the step. A grounded body slides on the plane, so it climbs and descends with the
+  terrain. It keeps contact while the terrain falls away by no more than the planar distance
+  of the step. A steeper drop makes it airborne, and gravity acts on it. When grounded, the
+  body's up axis is the plane normal. This replaces the Havok box and height-field contact.
+- After the unit step and again after the squad member sync, `World::tie_units_to_ground`
+  ties each ground unit with `mFlagTiesToGround`. The second pass also orients and filters
+  units with `OrientUnitWithGround`. Other units keep world up. Physics-driven units, aircraft,
+  buildings, sockets, contained, jumping and thrown units, and members of a pulled or jumping
+  squad are not tied.
+- Squads keep the plain terrain height and world up.
+- The up axis is not in the sync checksum. It only changes the rendered frame, and no retail
+  sync data for it was found. The ground-tie flags are in the checksum.
+
 ## Formation serialization
 
 | Address | IDA name |
@@ -164,6 +237,9 @@ ID, flock velocity, position, and offset.
 | Behavior | Implementation |
 | --- | --- |
 | Deterministic fixed substeps and rigid-body state | `crates/sim/src/physics.rs` |
+| Terrain plane contact and retail ground orientation | `crates/sim/src/physics/ground.rs` |
+| Ground tie of units and physics bodies each substep | `crates/sim/src/world/terrain/ground_tie.rs` |
+| Ground-tie flags of a unit | `entities/units/ground_tie.rs` |
 | Vehicle acceleration, braking, yaw, turn radii | `entities/units/warthog.rs` plus `physics.rs` |
 | Layered ground-vehicle physics chains | `gameplay/vehicle_physics.rs` |
 | Spawned Ghost rigid-body configuration | `entities/units/vehicle.rs` |
@@ -171,7 +247,7 @@ ID, flock velocity, position, and offset.
 | Warthog squad physics anchor | `entities/squads/warthog.rs` and `world.rs` |
 | Marine four-member Flock seed and local offsets | `entities/squads/marine.rs` and `entities/squads.rs` |
 | Scenario/database-to-sim expansion | `scenario.rs` |
-| Sim entity transforms to GPU presentation | `crates/render/src/ugx/scene.rs` |
+| Sim entity transforms (position, heading, up) to GPU presentation | `crates/render/src/ugx/scene.rs` |
 
 Marine formation offsets are stored squad-local and rotated by the squad's live
 facing. The stock database declares `Flock` but does not provide stable authored
@@ -191,9 +267,9 @@ the constant yaw limit, the 0.125/0.25/0.5/0.75 slowdown bands below
 5.625/11.25/22.5/45 degrees, the turn-duration distance clamp, the 0.1-unit
 Move4 completion epsilon, and the three-attempt Pathing retry guard. Ground
 squad completion uses XZ distance, and the world samples the authoritative
-scenario terrain for the moving squad center and each independently moving
-member. This prevents elevation differences from leaving ground squads circling
-a target they can never reach.
+scenario terrain for the moving squad center and each ground member. This
+prevents elevation differences from leaving ground squads circling a target
+they can never reach.
 
 The complete inspected function set, including Warthog physics and air-move
 comparison functions, is renamed and repeatably commented in the saved IDA
@@ -208,6 +284,9 @@ database beside `xgameFinal.exe`.
 - The sim has no obstruction manager. Obstructions are circles and boxes in
   `physics.rs`. Dynamic repathing, wait ownership, and unit-to-unit avoidance
   are not implemented.
+- The sim has no Havok rigid-body rotation. A physics vehicle takes its up axis from the
+  terrain plane under it and does not pitch or roll in the air. The Warthog move action's
+  terrain impulses (`BUnitActionMoveWarthog_collectTerrainImpulses`) are not modeled.
 - Formation reassignment, formation priorities, and movement-animation
   controller transitions are not implemented.
 - Renderer movement is a read-only projection of each unit's sim-owned action

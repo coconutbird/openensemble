@@ -122,12 +122,14 @@ impl World {
         }
         self.update_move_air(dt);
         self.prepare_squad_ground_moves();
+        self.sample_physics_ground();
         for (_, unit) in self.units.iter_mut() {
             unit.update(dt);
         }
-        self.snap_squad_ground_move_units_to_terrain();
+        self.tie_units_to_ground(false);
         self.resolve_collisions_and_attacks(gameplay);
         sync_squad_members(&mut self.squads, &mut self.units, &physics_anchors);
+        self.tie_units_to_ground(true);
         self.finalize_air_avoidance_positions();
         self.update_trained_air_births(dt);
         self.sync_associated_socket_transforms();

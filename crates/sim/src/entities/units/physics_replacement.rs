@@ -141,6 +141,7 @@ fn replacement_base(source: &Unit, id: EntityId) -> BaseEntity {
     let mut base = BaseEntity::new(id, source.base.player_id);
     base.position = source.base.position;
     base.set_forward(source.base.forward);
+    base.up = source.base.up;
     base.velocity = source.base.velocity;
     base
 }

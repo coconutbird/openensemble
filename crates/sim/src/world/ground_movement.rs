@@ -47,31 +47,6 @@ impl World {
         }
     }
 
-    pub(in crate::world) fn snap_squad_ground_move_units_to_terrain(&mut self) {
-        let heights = self
-            .units
-            .iter()
-            .filter_map(|(unit_id, unit)| {
-                if unit.ground_move_owns_squad_transform()
-                    && !unit.flying
-                    && !unit.is_physics_driven()
-                    && !unit.uses_move_air()
-                {
-                    self.terrain_height(unit.base.position, true)
-                        .map(|height| (unit_id, height))
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-        for (unit_id, height) in heights {
-            if let Some(unit) = self.units.get_mut(unit_id) {
-                unit.base.position.y = height;
-                unit.base.velocity.y = 0.0;
-            }
-        }
-    }
-
     fn prepare_squad_ground_move(&mut self, snapshot: &SquadGroundMoveSnapshot) {
         let action_forward =
             interim_forward(snapshot.position, snapshot.forward, snapshot.interim_target);

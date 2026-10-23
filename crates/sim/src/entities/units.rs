@@ -24,6 +24,7 @@ mod flight;
 mod garrison;
 mod gather;
 mod ground_movement;
+mod ground_tie;
 mod heal;
 mod idle;
 mod infect;
@@ -239,6 +240,8 @@ pub struct Unit {
     pub turn_rate_degrees: f32,
     /// Retail turn-in-place animation flag and its persistent left/right bit.
     turn_in_place: turn_in_place::UnitTurnInPlace,
+    /// Retail `TiesToGround`, `OrientUnitWithGround` and `FilterOrient` flags.
+    ground_tie: ground_tie::UnitGroundTie,
     /// Gameplay obstruction radii even when no live rigid body is active.
     pub obstruction_half_extents: Vec3,
     /// Whether this prototype blocks aircraft avoidance destinations.
@@ -395,6 +398,7 @@ impl Default for Unit {
             acceleration: 0.0,
             turn_rate_degrees: 0.0,
             turn_in_place: turn_in_place::UnitTurnInPlace::default(),
+            ground_tie: ground_tie::UnitGroundTie::default(),
             obstruction_half_extents: Vec3::ZERO,
             air_obstruction: air_avoidance::AirObstructionState::default(),
             physics: None,

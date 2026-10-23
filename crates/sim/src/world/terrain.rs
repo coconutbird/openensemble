@@ -1,5 +1,7 @@
 //! Retail XSD simulation-terrain height, surface and collision queries.
 
+mod ground_tie;
+
 use super::World;
 use crate::sync::SyncChecksum;
 use glam::Vec3;
@@ -314,6 +316,39 @@ pub(crate) fn flat_test_terrain(height_tile_scale: f32, height: f32) -> xsd::Ter
         heights: vec![height; xsd::HEIGHT_BLOCK_SIZE],
         tile_types: None,
     }
+}
+
+/// Build a square test terrain of `blocks` by `blocks` height blocks.
+///
+/// Each sample takes `height(x, z)` at its world position.
+#[cfg(test)]
+pub(crate) fn sampled_test_terrain(
+    blocks: usize,
+    height_tile_scale: f32,
+    height: impl Fn(f32, f32) -> f32,
+) -> xsd::Terrain {
+    let axis = blocks * xsd::HEIGHT_BLOCK_AXIS;
+    let mut terrain = xsd::Terrain {
+        byte_order: xsd::ByteOrder::Big,
+        data_axis: axis,
+        data_tile_scale: height_tile_scale,
+        height_axis: axis,
+        cache_axis: axis,
+        height_tile_scale,
+        heights: vec![0.0; axis * axis],
+        tile_types: None,
+    };
+    for z in 0..axis {
+        for x in 0..axis {
+            let index = terrain
+                .height_index(x, z)
+                .expect("the sample is inside the grid");
+            let world_x = x.to_f32().expect("the grid index fits f32") * height_tile_scale;
+            let world_z = z.to_f32().expect("the grid index fits f32") * height_tile_scale;
+            terrain.heights[index] = height(world_x, world_z);
+        }
+    }
+    terrain
 }
 
 impl World {
