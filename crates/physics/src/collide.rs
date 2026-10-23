@@ -30,6 +30,7 @@ mod primitive;
 mod sink;
 #[cfg(test)]
 mod tests;
+mod tim;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

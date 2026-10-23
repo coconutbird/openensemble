@@ -30,11 +30,12 @@ mod solver;
 #[cfg(test)]
 mod tests;
 
-use glam::{Mat3, Vec3};
+use glam::Vec3;
 
 use crate::collide::agent::{CdBody, CollisionInput};
 use crate::collide::convex::{ConvexRef, dot, rotate};
 use crate::collide::sink::ContactSink;
+use crate::collide::tim;
 use crate::contact::ContactPoint;
 use crate::math::Transform;
 use crate::shape::Shape;
@@ -110,7 +111,7 @@ impl GskAgent {
         });
         let estimate = self.separating.map(|(normal, distance)| {
             let motion = self.previous.map_or(0.0, |(old_a, old_b)| {
-                motion_bound(normal, a, &old_a, b, &old_b)
+                tim::motion_decrease(normal, a, &old_a, b, &old_b)
             });
             distance - motion
         });
@@ -244,38 +245,6 @@ fn write_points(
             }
         }
     }
-}
-
-/// Returns the decrease of the separating distance by the motion since the last step (the TIM
-/// of `0x1408A3A80`): `n · (ΔB - ΔA)` plus the rotation term of each body.
-///
-/// Retail uses the centre of mass motion and `|Δangle| · objectRadius` of the rigid motion.
-/// The collision world has no motion data, so this port uses the origin of each body and the
-/// bound `‖R1 - R0‖ · r`, where `r` is half the diagonal of the shape box.
-fn motion_bound(
-    normal: Vec3,
-    a: &CdBody<'_>,
-    old_a: &Transform,
-    b: &CdBody<'_>,
-    old_b: &Transform,
-) -> f32 {
-    let linear = (b.transform.translation - old_b.translation)
-        - (a.transform.translation - old_a.translation);
-    let angular = rotation_bound(a, old_a) + rotation_bound(b, old_b);
-    let product = normal * linear;
-    (product.z + angular) + (product.y + product.x)
-}
-
-fn rotation_bound(body: &CdBody<'_>, old: &Transform) -> f32 {
-    let change: Mat3 = body.transform.rotation - old.rotation;
-    let columns = [change.x_axis, change.y_axis, change.z_axis];
-    let norm = columns.iter().map(|c| dot(*c, *c)).sum::<f32>().sqrt();
-    if norm == 0.0 {
-        return 0.0;
-    }
-    let bounds = body.shape.aabb(&Transform::IDENTITY, 0.0);
-    let extent = bounds.max - bounds.min;
-    norm * (0.5 * dot(extent, extent).sqrt())
 }
 
 /// Returns the capsule that replaces cylinder `side` (0 for A, 1 for B), if its flag is set.

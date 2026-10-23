@@ -15,6 +15,10 @@
 //!
 //! The binary has no `m_attemptToFindAllEdges` branch: the completion uses only the face
 //! vertices and the edge count of `checkCompleteness` (`0x140DD2580`).
+//!
+//! The box–box agent3 has no separating normal function (`+80` of its agent3 functions is
+//! null, `0x140DC6BE0`). So `hkAgentNnMachine_createAgent` (`0x1408A35B0`) gives its entry the
+//! type 2, and the stream machine calls `calcManifold` on each step without a TIM.
 
 mod detect;
 #[cfg(test)]
