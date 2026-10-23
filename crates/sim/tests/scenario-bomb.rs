@@ -45,7 +45,10 @@ fn shipped_flood_bomb_loads_scenario_physics_and_executes_persistent_actions() {
         world.physics().world().motion_type(body),
         Some(physics::MotionType::BoxInertia)
     );
-    assert!(bomb.base.position.y < position.y);
+    // `BWorld_update` reads the body back in the unit update, before the physics step, so the
+    // unit keeps its spawn pose for this update while the body has already fallen.
+    assert_eq!(bomb.base.position, position);
+    assert!(world.unit_body_position(source).expect("the body").y < position.y);
     // Retail's `BUnitActionBomb::connect` draws `mRoll` from the synchronized
     // sim random stream, which skirmish setup and the skirmish scripts also
     // consume, so either branch is valid here; each must finish its own way.

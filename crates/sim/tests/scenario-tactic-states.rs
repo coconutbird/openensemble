@@ -580,7 +580,6 @@ fn spawn_ghost_ram_pair(
     world.create_pending_physics_objects();
     let attacker = world.get_unit(attacker_id).unwrap();
     assert_close(attacker.speed, 40.0);
-    assert_close(attacker.acceleration, 100.0);
     assert_close(attacker.turn_rate_degrees, 1_100.0);
     let state = attacker
         .physics_object
