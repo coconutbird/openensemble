@@ -6,7 +6,6 @@ use crate::entities::units::{UnitDetonateTriggerConfig, UnitDetonation};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::{AbilityRecoveryStart, DetonateActionProfile, GameplayCatalog};
-use crate::physics::UnitCollisionContact;
 use crate::player::{GAIA_PLAYER, PlayerId};
 use crate::world::combat::AttackDamage;
 use glam::Vec3;
@@ -347,23 +346,17 @@ impl World {
         self.detonate_explosion(unit_id, &detonation, gameplay)
     }
 
-    pub(in crate::world) fn activate_physics_detonation_contacts(
-        &mut self,
-        contacts: &[UnitCollisionContact],
-    ) {
-        for contact in contacts {
-            for unit_id in [contact.first, contact.second] {
-                if let Some(unit) = self.units.get_mut(unit_id) {
-                    unit.notify_detonate_physics_collision(contact.projected_velocity);
-                }
-            }
-        }
+    /// Gives each unit the approach speeds of the new contact points of its body in the last
+    /// physics step: the contacts with other bodies and with the terrain.
+    pub(in crate::world) fn activate_physics_detonation_contacts(&mut self) {
         for (_, unit) in self.units.iter_mut() {
-            let impact_speed = unit.physics.as_ref().map_or(
-                0.0,
-                crate::physics::PhysicsBody::ground_impact_speed_this_step,
-            );
-            unit.notify_detonate_physics_collision(impact_speed);
+            let Some(contacts) = unit.physics_object.as_ref().map(|state| state.contacts) else {
+                continue;
+            };
+            if contacts.body_contacts > 0 {
+                unit.notify_detonate_physics_collision(contacts.body_impact_speed);
+            }
+            unit.notify_detonate_physics_collision(contacts.terrain_impact_speed);
         }
     }
 
@@ -377,11 +370,8 @@ impl World {
             return false;
         };
         let source_radius = source.obstruction_radius();
-        let source_tied_to_ground = !source.flying
-            && source
-                .physics
-                .as_ref()
-                .is_none_or(crate::physics::PhysicsBody::is_grounded);
+        let source_tied_to_ground =
+            !source.flying && self.unit_body_touches_terrain(source_id) != Some(false);
         self.units.iter().any(|(target_id, target)| {
             target_id != source_id
                 && target.is_alive()
@@ -416,8 +406,9 @@ fn finite_nonnegative(value: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entities::UnitState;
-    use crate::physics::{BoxCollider, PhysicsBody, PhysicsMaterial};
+    use crate::physics::test_support::{
+        TERRAIN_HEIGHT, box_template, fixed_box_template, world_with_flat_terrain,
+    };
     use pipeline::database::hw1::tactics::{
         Action, ActionDuration, PhysicsDetonation, TacticData, Weapon,
     };
@@ -545,56 +536,50 @@ mod tests {
             ..detonate_action()
         };
         let gameplay = fixture(action, 0.0, 0.0, 0.0);
-        let mut world = configured_world();
-        let body_source = configured_unit(&mut world, 1, Vec3::ZERO, "bomb");
-        configure_dynamic_body(&mut world, body_source, 0.0);
-        let obstruction = configured_unit(&mut world, 2, Vec3::X * 1.5, "target");
-        world.get_unit_mut(obstruction).unwrap().physics = Some(PhysicsBody::static_obstruction(
-            BoxCollider::new(Vec3::splat(1.0), Vec3::ZERO),
-        ));
-        {
-            let source = world.get_unit_mut(body_source).unwrap();
-            source.state = UnitState::Moving;
-            source.move_target = Some(Vec3::X * 100.0);
-            source.base.velocity = Vec3::X * 5.0;
-        }
-        assert!(world.activate_unit_detonate_action(body_source, "Detonate", &gameplay));
-        world.update_entities_with_gameplay(0.05, &gameplay);
-        assert!(
-            world
-                .get_unit(body_source)
-                .unwrap()
-                .detonate_physics_trigger_activated()
-        );
-        world.get_unit_mut(body_source).unwrap().stop();
-        world.update_entities_with_gameplay(0.05, &gameplay);
-        assert!(
-            world.get_unit(body_source).is_none(),
-            "body source state: {:?}",
-            world.get_unit(body_source).map(|unit| (
-                unit.base.velocity,
-                unit.detonate_phase(),
-                unit.detonate_physics_trigger_activated()
-            ))
-        );
+        let mut world = world_with_flat_terrain();
+        world.get_player_mut(1).unwrap().team_id = 1;
+        world.get_player_mut(2).unwrap().team_id = 2;
+        world.configure_standard_team_relations();
 
-        let ground_source = configured_unit(&mut world, 1, Vec3::Y * 0.1, "bomb");
-        configure_dynamic_body(&mut world, ground_source, 0.0);
-        {
-            let source = world.get_unit_mut(ground_source).unwrap();
-            assert!(source.apply_impulse(Vec3::Y));
-            source.base.velocity = Vec3::NEG_Y * 5.0;
-        }
+        // A body slides on the terrain at 5 units/s into a fixed building body. Objects collide
+        // with Buildings, not with other Objects (`BPhysicsWorld_init`).
+        let ground = TERRAIN_HEIGHT + 1.0;
+        let body_source = configured_unit(&mut world, 1, Vec3::new(50.0, ground, 50.0), "bomb");
+        configure_dynamic_body(&mut world, body_source);
+        let obstruction = configured_unit(&mut world, 2, Vec3::new(52.2, ground, 50.0), "target");
+        let building = fixed_box_template("target", Vec3::ONE);
+        assert!(world.create_physics_object(obstruction, &building, false));
+        assert!(world.set_unit_body_linear_velocity(body_source, Vec3::X * 5.0));
+        assert!(world.activate_unit_detonate_action(body_source, "Detonate", &gameplay));
+        assert!(updates_until_detonated(&mut world, body_source, &gameplay) <= 4);
+
+        // A body that falls onto the terrain at 5 units/s.
+        let falling = Vec3::new(10.0, ground + 0.3, 25.0);
+        let ground_source = configured_unit(&mut world, 1, falling, "bomb");
+        configure_dynamic_body(&mut world, ground_source);
+        assert!(world.set_unit_body_linear_velocity(ground_source, Vec3::NEG_Y * 5.0));
         assert!(world.activate_unit_detonate_action(ground_source, "Detonate", &gameplay));
-        world.update_entities_with_gameplay(0.05, &gameplay);
-        assert!(
-            world
-                .get_unit(ground_source)
-                .unwrap()
-                .detonate_physics_trigger_activated()
-        );
-        world.update_entities_with_gameplay(0.05, &gameplay);
-        assert!(world.get_unit(ground_source).is_none());
+        assert!(updates_until_detonated(&mut world, ground_source, &gameplay) <= 4);
+    }
+
+    /// Updates the world until the physics trigger of `unit_id` fires, then until the unit
+    /// detonates and goes. Returns the updates until the trigger.
+    fn updates_until_detonated(
+        world: &mut World,
+        unit_id: EntityId,
+        gameplay: &GameplayCatalog,
+    ) -> u32 {
+        let mut triggered = None;
+        for update in 1..=60 {
+            world.update_entities_with_gameplay(0.05, gameplay);
+            let Some(unit) = world.get_unit(unit_id) else {
+                return triggered.expect("the unit went before its physics trigger fired");
+            };
+            if triggered.is_none() && unit.detonate_physics_trigger_activated() {
+                triggered = Some(update);
+            }
+        }
+        panic!("the unit did not detonate (trigger after {triggered:?} updates)");
     }
 
     #[test]
@@ -658,22 +643,10 @@ mod tests {
         unit_id
     }
 
-    fn configure_dynamic_body(world: &mut World, unit_id: EntityId, ground_height: f32) {
-        let unit = world.get_unit_mut(unit_id).unwrap();
-        unit.physics = Some(PhysicsBody::ground_vehicle(
-            PhysicsMaterial {
-                mass: 1.0,
-                friction: 0.0,
-                restitution: 0.0,
-                linear_damping: 0.0,
-                angular_damping: 0.0,
-            },
-            BoxCollider::new(Vec3::splat(1.0), Vec3::ZERO),
-            ground_height,
-            10.0,
-            100.0,
-            360.0,
-        ));
+    /// Gives a unit a dynamic box body of half size 1 and mass 1.
+    fn configure_dynamic_body(world: &mut World, unit_id: EntityId) {
+        let template = box_template("bomb", Vec3::ONE, 1.0, Vec3::ZERO);
+        assert!(world.create_physics_object(unit_id, &template, false));
     }
 
     fn fixture(action: Action, damage: f32, aoe_radius: f32, max_range: f32) -> GameplayCatalog {

@@ -43,7 +43,7 @@ impl World {
         self.prototype_object_types.clear();
         self.prototype_squads.clear();
         self.prototype_shield_coverages.clear();
-        self.prototype_ground_vehicle_physics.clear();
+        self.prototype_physics.clear();
         self.prototype_flight_controllers.clear();
         self.objects.clear();
         self.units.clear();
@@ -53,6 +53,7 @@ impl World {
         self.next_base_id = 0;
         self.triggers = super::triggers::WorldTriggers::default();
         self.game_end = super::game_end::GameEndState::default();
+        self.reset_physics();
     }
 
     /// Kill an entity, optionally removing it immediately.

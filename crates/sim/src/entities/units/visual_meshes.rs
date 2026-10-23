@@ -3,7 +3,6 @@
 use super::Unit;
 use crate::EntityId;
 use crate::gameplay::ThrownDamagePart;
-use crate::physics::PhysicsBody;
 use crate::player::PlayerId;
 use crate::sync::SyncChecksum;
 
@@ -158,12 +157,13 @@ impl Unit {
         self.visual_mesh_mask.set_section_visibility(1, cloaked);
     }
 
+    /// The unit of a thrown damage part, without its body: the world gives it the body of
+    /// [`ThrownDamagePart::template`].
     pub(crate) fn detached_damage_part(
         &self,
         id: EntityId,
         player_id: PlayerId,
         profile: &ThrownDamagePart,
-        ground_height: f32,
     ) -> Self {
         let mut part = Self::new(id, player_id);
         part.proto_object_id = self.proto_object_id;
@@ -183,12 +183,6 @@ impl Unit {
         part.speed = 0.0;
         part.acceleration = 0.0;
         part.obstruction_half_extents = glam::Vec3::ZERO;
-        part.physics = Some(PhysicsBody::dynamic_replacement(
-            profile.material(),
-            profile.collider(),
-            ground_height,
-            self.base.position.y,
-        ));
         part.visual_mesh_mask.show_only(profile.mesh_names());
         part.visual_opacity = 1.0;
         part
@@ -224,8 +218,10 @@ mod tests {
     use super::*;
     use crate::EntityClass;
     use crate::gameplay::ThrownDamagePart;
-    use crate::physics::{BoxCollider, PhysicsMaterial};
+    use crate::physics::{PhysicsBlueprintBody, PhysicsTemplate};
     use glam::Vec3;
+    use pipeline::database::hw1::physics::PhysicsBlueprint;
+    use std::sync::Arc;
 
     #[test]
     fn detached_part_copies_visual_identity_and_owns_exclusive_mesh_mask() {
@@ -237,14 +233,16 @@ mod tests {
         source.base.set_position(Vec3::new(1.0, 2.0, 3.0));
         let profile = ThrownDamagePart::new(
             vec!["Panel".to_owned()],
-            BoxCollider::new(Vec3::ONE, Vec3::Y),
-            PhysicsMaterial::default(),
+            Arc::new(PhysicsTemplate::simple(
+                "part",
+                PhysicsBlueprintBody::with_box("part", &PhysicsBlueprint::default(), Vec3::ONE),
+                Vec3::Y,
+            )),
             1.0,
         )
         .unwrap();
 
-        let part =
-            source.detached_damage_part(EntityId::new(EntityClass::Unit, 2), 1, &profile, 0.0);
+        let part = source.detached_damage_part(EntityId::new(EntityClass::Unit, 2), 1, &profile);
 
         assert_eq!(part.proto_object_name, "vehicle");
         assert_eq!(part.object_state.visual_variation_index(), Some(3));
@@ -256,7 +254,6 @@ mod tests {
         assert_eq!(part.visual_opacity().to_bits(), 1.0_f32.to_bits());
         assert!(!part.base.is_selectable());
         assert!(part.is_invulnerable());
-        assert!(part.physics.is_some());
     }
 
     #[test]

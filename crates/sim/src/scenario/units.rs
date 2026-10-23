@@ -6,16 +6,16 @@ use super::prototypes::{
 };
 use super::{population, valid_nonnegative};
 use crate::entities::squads::marine::MarineSquadSpec;
-use crate::entities::units::configure_ground_vehicle_physics;
 use crate::entities::units::marine::{MARINE_HITPOINTS, MarineUnitSpec, is_marine_unit};
 use crate::entities::units::warthog::{WarthogUnitSpec, is_warthog_unit};
 use crate::entities::{ShieldCoverage, SquadArchetype, UnitArchetype, UnitScalarModifiers};
-use crate::physics::{BoxCollider, PhysicsBody};
+use crate::physics::PhysicsTemplate;
 use crate::player::{GAIA_PLAYER, PlayerId};
 use crate::prototypes::proto_id;
 use crate::{EntityId, World};
 use glam::Vec3;
 use pipeline::database::hw1::{Database, ProtoObject};
+use std::sync::Arc;
 
 pub(crate) fn add_squad_member_from_prototype(
     world: &mut World,
@@ -265,9 +265,9 @@ pub(crate) fn configure_unit_from_player_proto(
     let adjusted_velocity = valid_nonnegative(proto.max_velocity.or(proto.velocity))
         .map(|base| technologies.map_or(base, |state| state.maximum_velocity(logical_name, base)));
     let ammunition_settings = ammunition_settings(technologies, logical_name, proto);
-    let ground_vehicle_physics = world
-        .prototype_ground_vehicle_physics(effective_name)
-        .cloned();
+    let physics_info: Option<Arc<PhysicsTemplate>> = world
+        .prototype_physics(effective_name)
+        .and_then(|templates| templates.info.clone());
     let flight_controller = world.prototype_flight_controller(effective_name);
     let object_types = world.prototype_declared_object_types(effective_name);
     let Some(unit) = world.get_unit_mut(unit_id) else {
@@ -300,13 +300,12 @@ pub(crate) fn configure_unit_from_player_proto(
         0.0
     };
     unit.configure_flight_controller(flight_controller, height_displacement);
-    configure_unit_movement(
-        unit,
-        proto,
-        effective_name,
-        adjusted_velocity,
-        ground_vehicle_physics.as_ref(),
-    );
+    configure_unit_movement(unit, proto, effective_name, adjusted_velocity);
+    // `BObject_initFromProto`: a proto object with a `PhysicsInfo` gets its body. The world
+    // makes it at the final spawn transform.
+    if let Some(template) = physics_info {
+        world.queue_physics_object(unit_id, template);
+    }
 }
 
 fn ammunition_settings(
@@ -406,7 +405,6 @@ fn configure_unit_movement(
     proto: &ProtoObject,
     effective_name: &str,
     adjusted_velocity: Option<f32>,
-    ground_vehicle_physics: Option<&crate::gameplay::GroundVehiclePhysicsProfile>,
 ) {
     if !unit.is_building()
         && let Some(speed) = adjusted_velocity
@@ -420,12 +418,6 @@ fn configure_unit_movement(
         configure_warthog(unit, warthog_spec_from_proto(proto, adjusted_velocity));
     } else if is_marine_unit(effective_name) {
         configure_marine(unit, marine_spec_from_proto(proto, adjusted_velocity));
-    } else if unit.is_building()
-        && let Some(collider) = obstruction_collider(proto)
-    {
-        unit.physics = Some(PhysicsBody::static_obstruction(collider));
-    } else if let Some(profile) = ground_vehicle_physics {
-        configure_ground_vehicle_physics(unit, profile);
     }
 }
 
@@ -459,7 +451,6 @@ fn configure_warthog(unit: &mut crate::entities::Unit, spec: WarthogUnitSpec) {
     unit.acceleration = spec.acceleration;
     unit.turn_rate_degrees = spec.turn_rate_degrees;
     unit.obstruction_half_extents = spec.half_extents;
-    unit.physics = Some(spec.physics_body(unit.base.position.y));
 }
 
 fn configure_marine(unit: &mut crate::entities::Unit, spec: MarineUnitSpec) {
@@ -468,7 +459,6 @@ fn configure_marine(unit: &mut crate::entities::Unit, spec: MarineUnitSpec) {
     unit.acceleration = spec.acceleration;
     unit.turn_rate_degrees = spec.turn_rate_degrees;
     unit.obstruction_half_extents = spec.half_extents;
-    unit.physics = None;
 }
 
 fn warthog_spec_from_proto(proto: &ProtoObject, max_speed: Option<f32>) -> WarthogUnitSpec {
@@ -496,13 +486,6 @@ fn obstruction_half_extents(proto: &ProtoObject) -> Option<Vec3> {
     let z = valid_positive(proto.obstruction_radius_z)?;
     let y = valid_positive(proto.obstruction_radius_y).unwrap_or(1.0);
     Some(Vec3::new(x, y, z))
-}
-
-fn obstruction_collider(proto: &ProtoObject) -> Option<BoxCollider> {
-    Some(BoxCollider::new(
-        obstruction_half_extents(proto)?,
-        Vec3::ZERO,
-    ))
 }
 
 fn valid_positive(value: Option<f32>) -> Option<f32> {

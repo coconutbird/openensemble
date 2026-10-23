@@ -389,7 +389,7 @@ impl<'a> ScenarioBuilder<'a> {
         world.set_scenario_allows_veterancy(options.allows_veterancy);
         world.configure_prototype_catalogs(database);
         world.configure_prototype_damage_profiles(&options.gameplay);
-        world.configure_prototype_vehicle_physics(&options.gameplay);
+        world.configure_prototype_physics(&options.gameplay);
         world.set_construction_damage_multiplier(
             database
                 .game_data
@@ -455,6 +455,7 @@ impl<'a> ScenarioBuilder<'a> {
         );
         set_sim_bounds(world, self.scenario);
         world.configure_unit_revivals(&self.loaded.gameplay);
+        world.create_pending_physics_objects();
         self.loaded
     }
 }
@@ -698,28 +699,7 @@ fn apply_squad_member_movement_settings(world: &mut World, squad_id: EntityId) {
 
 pub(crate) fn refresh_squad_member_settings(world: &mut World, squad_id: EntityId) {
     apply_squad_member_movement_settings(world, squad_id);
-    apply_squad_physics_settings(world, squad_id);
     world.refresh_squad_ai_membership(squad_id);
-}
-
-fn apply_squad_physics_settings(world: &mut World, squad_id: EntityId) {
-    let Some(squad) = world.get_squad(squad_id) else {
-        return;
-    };
-    let minimum = squad.min_turn_radius;
-    let maximum = squad.max_turn_radius;
-    let unit_ids = squad.unit_ids.clone();
-    for unit_id in unit_ids {
-        let Some(body) = world
-            .get_unit_mut(unit_id)
-            .and_then(|unit| unit.physics.as_mut())
-        else {
-            continue;
-        };
-        if maximum > 0.0 {
-            body.set_turn_radius_range(minimum, maximum);
-        }
-    }
 }
 
 fn valid_nonnegative(value: Option<f32>) -> Option<f32> {

@@ -605,21 +605,13 @@ impl World {
         if !obstructed {
             return;
         }
-        let Some(profile) = gameplay
+        let Some(template) = gameplay
             .physics_replacement(&source.proto_object_name)
             .cloned()
         else {
             return;
         };
-        let ground_height = self
-            .terrain_height(source.base.position, true)
-            .unwrap_or(source.base.position.y.min(0.0));
-        let replacement_id = self.units.allocate_id();
-        let replacement =
-            source.create_physics_replacement(replacement_id, &profile, ground_height);
-        if self.remove_unit(unit_id).is_some() {
-            self.units.insert(replacement_id, replacement);
-        }
+        let _replacement = self.spawn_physics_replacement(unit_id, &template);
     }
 }
 

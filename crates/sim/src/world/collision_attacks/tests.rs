@@ -4,7 +4,7 @@ use crate::commands::CommandPayload;
 use crate::commands::WorkCommand;
 use crate::entities::RecoveryType;
 use crate::executor::CommandExecutor;
-use crate::physics::{BoxCollider, PhysicsBody, PhysicsMaterial};
+use crate::physics::test_support::box_template;
 use pipeline::database::hw1::tactics::{Action, TacticData, TacticState, Weapon};
 use pipeline::database::hw1::weapontypes::DamageModifier;
 use pipeline::database::hw1::{Ability, Database, ProtoObject, WeaponType};
@@ -26,8 +26,9 @@ fn command_ram_consumes_juice_applies_reflection_impulses_and_recovery() {
     assert_close(target.hitpoints, 920.0);
     assert_close(attacker.hitpoints, 987.5);
     assert_close(attacker.ammunition.current(), 0.0);
-    assert!(target.base.velocity.y > 0.0);
-    assert!(attacker.base.velocity.y > 0.0);
+    // The impulses go into the bodies; the readback of the next update moves the units.
+    assert!(world.unit_body_linear_velocity(target_id).unwrap().y > 0.0);
+    assert!(world.unit_body_linear_velocity(attacker_id).unwrap().y > 0.0);
     let squad = world.get_squad(attacker_squad).unwrap();
     assert_eq!(squad.mode, SquadMode::Normal);
     assert_eq!(squad.attack_target, None);
@@ -149,21 +150,9 @@ fn physical_unit(
     unit.proto_object_name = proto.to_owned();
     unit.set_max_hitpoints(hitpoints);
     unit.obstruction_half_extents = Vec3::ONE;
-    unit.physics = Some(PhysicsBody::ground_vehicle(
-        PhysicsMaterial {
-            mass: 10.0,
-            friction: 0.0,
-            restitution: 0.0,
-            linear_damping: 0.0,
-            angular_damping: 0.0,
-        },
-        BoxCollider::new(Vec3::ONE, Vec3::ZERO),
-        0.0,
-        20.0,
-        1_000.0,
-        720.0,
-    ));
     unit.ammunition.configure(100.0, 0.0, true);
+    let template = box_template(proto, Vec3::ONE, 10.0, Vec3::ZERO);
+    assert!(world.create_physics_object(unit_id, &template, false));
     unit_id
 }
 

@@ -4,7 +4,8 @@ use crate::entities::squads::{formation_offset_to_local, formation_offset_to_wor
 use crate::entities::{Base, BaseId, Object, Projectile, ShieldCoverage, Squad, Unit};
 use crate::entity::EntityManager;
 use crate::entity_id::{EntityClass, EntityId};
-use crate::gameplay::{FlightControllerProfile, GroundVehiclePhysicsProfile};
+use crate::gameplay::FlightControllerProfile;
+use crate::physics::ObjectPhysicsTemplates;
 use crate::player::{GAIA_PLAYER, MAX_TEAMS, Player, PlayerId, TeamRelation};
 use crate::random::{Random, SimRandom};
 use glam::Vec3;
@@ -209,8 +210,8 @@ pub struct World {
     prototype_squads: BTreeMap<i32, (String, u32)>,
     /// Scenario-layered integral shield coverage keyed by proto-object name.
     prototype_shield_coverages: BTreeMap<String, ShieldCoverage>,
-    /// Scenario-layered supported vehicle bodies keyed by proto-object name.
-    prototype_ground_vehicle_physics: BTreeMap<String, GroundVehiclePhysicsProfile>,
+    /// Scenario-layered physics infos keyed by proto-object name.
+    prototype_physics: BTreeMap<String, ObjectPhysicsTemplates>,
     /// Scenario-layered retail flight-controller rules keyed by prototype name.
     prototype_flight_controllers: BTreeMap<String, FlightControllerProfile>,
     /// Class-0 invisible and world-control objects.
@@ -272,7 +273,7 @@ impl World {
             prototype_object_types: BTreeMap::new(),
             prototype_squads: BTreeMap::new(),
             prototype_shield_coverages: BTreeMap::new(),
-            prototype_ground_vehicle_physics: BTreeMap::new(),
+            prototype_physics: BTreeMap::new(),
             prototype_flight_controllers: BTreeMap::new(),
             objects: EntityManager::new(EntityClass::Object),
             units: EntityManager::new(EntityClass::Unit),
@@ -516,6 +517,8 @@ impl World {
         self.prepare_remove_unit_garrison(id);
         self.detach_unit_socket_refs(id);
         self.remove_unit_goto_base_references(id);
+        self.release_physics_object(id);
+        self.physics.cancel_pending_object(id);
         let unit = self.units.remove(id)?;
         self.release_removed_entity(id);
         self.refund_production_for_removed_unit(&unit);

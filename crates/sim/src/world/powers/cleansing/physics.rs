@@ -37,7 +37,7 @@ pub(super) fn impulse_air_units(world: &mut World, location: Vec3) {
 
 fn impulse_air_unit(world: &mut World, unit_id: EntityId, location: Vec3) {
     let Some((position, health_ratio)) = world.get_unit(unit_id).and_then(|unit| {
-        (unit.flying && unit.physics.is_some()).then(|| {
+        (unit.flying && unit.physics_object.is_some()).then(|| {
             let ratio = if unit.max_hitpoints > 0.0 {
                 (unit.hitpoints / unit.max_hitpoints).clamp(0.0, 1.0)
             } else {
@@ -61,11 +61,12 @@ fn impulse_air_unit(world: &mut World, unit_id: EntityId, location: Vec3) {
     };
     let falloff = MINIMUM_FALLOFF + (1.0 - MINIMUM_FALLOFF) * (1.0 - 0.5 * distance_ratio);
     let impulse = impulse_direction * MAXIMUM_IMPULSE * health_multiplier * falloff;
-    if let Some(unit) = world.get_unit_mut(unit_id) {
-        let _center = unit.apply_impulse(impulse);
-        let _point =
-            unit.apply_impulse_at_point(impulse * POINT_IMPULSE_MULTIPLIER, position + direction);
-    }
+    let _center = world.apply_unit_impulse(unit_id, impulse);
+    let _point = world.apply_unit_point_impulse(
+        unit_id,
+        impulse * POINT_IMPULSE_MULTIPLIER,
+        position + direction,
+    );
 }
 
 pub(super) fn update_air_impact(

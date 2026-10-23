@@ -37,6 +37,7 @@ mod infect;
 mod join;
 mod jump;
 mod mines;
+mod physics_data;
 pub(crate) mod projectiles;
 mod protection;
 mod reflect_damage;
@@ -49,7 +50,6 @@ mod spirit_bond;
 mod tactic_states;
 mod timing;
 mod unit_attacks;
-mod vehicle_physics;
 mod veterancy;
 mod wander;
 
@@ -74,6 +74,8 @@ pub use infect::InfectActionProfile;
 pub use join::{JoinActionProfile, JoinKind, JoinMergeType, MergedSquadProfile};
 pub use jump::JumpActionProfile;
 pub use mines::MineActionProfile;
+pub(crate) use physics_data::FlightControllerProfile;
+pub use physics_data::PhysicsLoadIssue;
 pub use projectiles::{
     ProjectileInitialPerturbance, ProjectilePerturbanceProfile, ProjectileProfile,
 };
@@ -96,11 +98,6 @@ pub use timing::{
     AttackSingleBonePose, ChargedAttackAnimation, PhysicsImpulseEvent, ProjectileReactionFlags,
     PullAttackProfile,
 };
-pub(crate) use vehicle_physics::FlightControllerProfile;
-pub use vehicle_physics::{
-    GroundVehicleKind, GroundVehiclePhysicsProfile, PhysicsReplacementLoadIssue,
-    PhysicsReplacementProfile, VehiclePhysicsLoadIssue,
-};
 pub use wander::WanderProfile;
 
 /// Gameplay definitions for every proto object with a resolvable tactic file.
@@ -119,8 +116,7 @@ pub struct GameplayCatalog {
     object_ability_commands: BTreeMap<String, u8>,
     target_traits: BTreeMap<String, selection::ObjectTargetTraits>,
     neutral_objects: BTreeSet<String>,
-    vehicle_physics: vehicle_physics::GroundVehiclePhysicsCatalog,
-    physics_replacements: vehicle_physics::PhysicsReplacementCatalog,
+    physics: physics_data::PhysicsCatalog,
     damage_parts: damage_parts::DamagePartCatalog,
     projectile_profiles: BTreeMap<String, ProjectileProfile>,
     projectile_defenses: BTreeMap<String, ProjectileDefenseProfile>,
@@ -229,6 +225,7 @@ impl GameplayCatalog {
             analysis::collect_damage_type_exemplars(database, &damage_type_profiles);
         let target_traits = selection::collect_target_traits(database, &damage_type_profiles);
         let shield_bubble_types = load_shield_bubble_types(database, source);
+        let physics_library = pipeline::hw1::physics::PhysicsLibrary::load(source);
         let mut catalog = Self {
             referenced_tactic_count,
             weapon_damage_modifiers: collect_weapon_damage_modifiers(database),
@@ -243,11 +240,8 @@ impl GameplayCatalog {
             change_modes: change_mode::ChangeModeCatalog::from_database(database),
             scn07_scarab: code_objects::named_proto(database, "Scn07Scarab"),
             neutral_objects: collect_neutral_objects(database),
-            vehicle_physics: vehicle_physics::GroundVehiclePhysicsCatalog::load(database, source),
-            physics_replacements: vehicle_physics::PhysicsReplacementCatalog::load(
-                database, source,
-            ),
-            damage_parts: damage_parts::DamagePartCatalog::load(database, source),
+            physics: physics_data::PhysicsCatalog::load(database, &physics_library),
+            damage_parts: damage_parts::DamagePartCatalog::load(database, source, &physics_library),
             projectile_profiles: projectiles::collect_projectile_profiles(database),
             projectile_gravity: database
                 .game_data
@@ -312,7 +306,7 @@ impl GameplayCatalog {
             }
         }
         collect_tactic_action_profiles(&mut catalog, database);
-        bomb::load_bomb_physics(&mut catalog.bomb_actions, source);
+        bomb::load_bomb_physics(&mut catalog.bomb_actions, &catalog.physics);
 
         catalog
     }

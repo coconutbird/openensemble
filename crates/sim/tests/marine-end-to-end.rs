@@ -125,7 +125,7 @@ fn scenario_builds_stock_marine_unit_and_squad_profiles() {
         assert_close(unit.acceleration, unit_spec.acceleration);
         assert_close(unit.turn_rate_degrees, unit_spec.turn_rate_degrees);
         assert_eq!(unit.obstruction_half_extents, unit_spec.half_extents);
-        assert!(unit.physics.is_none());
+        assert!(unit.physics_object.is_none());
         assert_eq!(
             unit.formation_offset,
             squad_spec.initial_formation_offset(slot).unwrap()

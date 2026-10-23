@@ -3,8 +3,7 @@
 use super::Unit;
 use crate::entities::BaseEntity;
 use crate::entity_id::EntityId;
-use crate::gameplay::PhysicsReplacementProfile;
-use crate::physics::PhysicsBody;
+use crate::physics::PhysicsTemplate;
 use crate::sync::SyncChecksum;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -55,11 +54,13 @@ impl UnitPhysicsReplacement {
 }
 
 impl Unit {
+    /// `BObject::createPhysicsReplacement` (2008 `object.cpp:6735-6769`): a new unit of the same
+    /// proto object at the same transform, flagged as a physics replacement. The world then
+    /// gives it the body of `template` (`World::spawn_physics_replacement`).
     pub(crate) fn create_physics_replacement(
         &self,
         id: EntityId,
-        profile: &PhysicsReplacementProfile,
-        ground_height: f32,
+        template: &PhysicsTemplate,
     ) -> Self {
         let mut replacement = Self::new(id, self.base.player_id);
         replacement.base = replacement_base(self, id);
@@ -90,13 +91,7 @@ impl Unit {
         replacement.line_of_sight_scalar = self.line_of_sight_scalar;
         replacement.velocity_scalar = self.velocity_scalar;
         replacement.weapon_range_scalar = self.weapon_range_scalar;
-        replacement.obstruction_half_extents = profile.collider().half_extents;
-        replacement.physics = Some(PhysicsBody::dynamic_replacement(
-            profile.material(),
-            profile.collider(),
-            ground_height,
-            replacement.base.position.y,
-        ));
+        replacement.obstruction_half_extents = template.half_extents();
         replacement.actions = self.actions.clone();
         replacement.base.set_selectable(false);
         replacement.set_auto_attackable(false);
@@ -124,11 +119,9 @@ impl Unit {
         )
     }
 
-    pub(crate) fn advance_physics_replacement_cleanup(&mut self) -> bool {
-        let resting = self
-            .physics
-            .as_ref()
-            .is_some_and(|body| body.is_grounded() && self.base.velocity.length() < 0.1);
+    /// Advances the cleanup of a detonated replacement. `resting` is `true` when its body
+    /// sleeps.
+    pub(crate) fn advance_physics_replacement_cleanup(&mut self, resting: bool) -> bool {
         self.physics_replacement.advance_cleanup(resting)
     }
 
@@ -150,8 +143,9 @@ fn replacement_base(source: &Unit, id: EntityId) -> BaseEntity {
 mod tests {
     use super::*;
     use crate::entity_id::EntityClass;
-    use crate::physics::{BoxCollider, PhysicsMaterial};
+    use crate::physics::{PhysicsBlueprintBody, PhysicsTemplate};
     use glam::Vec3;
+    use pipeline::database::hw1::physics::PhysicsBlueprint;
 
     #[test]
     fn replacement_copies_identity_without_squad_or_population_ownership() {
@@ -169,18 +163,19 @@ mod tests {
             population_type: 0,
             amount: 2.0,
         });
-        let profile = PhysicsReplacementProfile::new(
+        let template = PhysicsTemplate::simple(
             "wreck",
-            PhysicsMaterial::default(),
-            BoxCollider::new(Vec3::splat(0.5), Vec3::ZERO),
+            PhysicsBlueprintBody::with_box("wreck", &PhysicsBlueprint::default(), Vec3::splat(0.5)),
+            Vec3::ZERO,
         );
 
-        let replacement = source.create_physics_replacement(replacement_id, &profile, 0.0);
+        let replacement = source.create_physics_replacement(replacement_id, &template);
         assert_eq!(replacement.base.id, replacement_id);
         assert_eq!(replacement.proto_object_id, 42);
         assert_eq!(replacement.proto_object_name, "tank");
         assert_eq!(replacement.base.position, source.base.position);
         assert_eq!(replacement.base.velocity, source.base.velocity);
+        assert_eq!(replacement.obstruction_half_extents, Vec3::splat(0.5));
         assert_eq!(replacement.hitpoints.to_bits(), 250.0_f32.to_bits());
         assert_eq!(replacement.max_hitpoints.to_bits(), 250.0_f32.to_bits());
         assert!(replacement.squad_id.is_none());

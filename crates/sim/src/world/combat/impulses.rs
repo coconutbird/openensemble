@@ -40,20 +40,16 @@ impl World {
         }) else {
             return;
         };
-        let Some(unit) = self.units.get_mut(body_id) else {
+        let Some(mass) = self.unit_body_mass(body_id) else {
             return;
         };
-        let (base, physics) = (&mut unit.base, &mut unit.physics);
-        let Some(body) = physics else {
-            return;
+        let impulse = frame.transform_vector3(Vec3::from_array(event.force)) * mass;
+        let _applied = match event.impulse_type {
+            0 => self.apply_unit_angular_impulse(body_id, impulse),
+            1 => self.apply_unit_impulse(body_id, impulse),
+            2 => self.apply_unit_point_impulse(body_id, impulse, frame.w_axis.truncate()),
+            _ => false,
         };
-        let impulse = frame.transform_vector3(Vec3::from_array(event.force)) * body.material().mass;
-        match event.impulse_type {
-            0 => body.apply_angular_impulse(impulse),
-            1 => body.apply_impulse(base, impulse),
-            2 => body.apply_impulse_at_point(base, impulse, frame.w_axis.truncate()),
-            _ => {}
-        }
     }
 }
 
@@ -61,7 +57,7 @@ impl World {
 mod tests {
     use super::*;
     use crate::entities::Unit;
-    use crate::physics::{BoxCollider, PhysicsBody, PhysicsMaterial};
+    use crate::physics::test_support::box_template;
     use glam::Mat4;
 
     #[test]
@@ -85,12 +81,8 @@ mod tests {
             },
         );
 
-        let unit = world.units.get(unit_id).unwrap();
-        assert!(
-            unit.base
-                .velocity
-                .abs_diff_eq(Vec3::new(2.0, 0.0, 0.0), 1.0e-6)
-        );
+        let velocity = world.unit_body_linear_velocity(unit_id).unwrap();
+        assert!(velocity.abs_diff_eq(Vec3::new(2.0, 0.0, 0.0), 1.0e-6));
     }
 
     #[test]
@@ -113,34 +105,16 @@ mod tests {
             },
         );
 
-        assert_eq!(world.units.get(child_id).unwrap().base.velocity, Vec3::ZERO);
-        assert!(
-            world
-                .units
-                .get(parent_id)
-                .unwrap()
-                .base
-                .velocity
-                .abs_diff_eq(Vec3::X, 1.0e-6)
-        );
+        assert_eq!(world.unit_body(child_id), None);
+        let velocity = world.unit_body_linear_velocity(parent_id).unwrap();
+        assert!(velocity.abs_diff_eq(Vec3::X, 1.0e-6));
     }
 
     fn dynamic_unit(world: &mut World, forward: Vec3) -> EntityId {
-        let id = world.units.allocate_id();
-        let mut unit = Unit::new(id, 1);
-        unit.base.set_forward(forward);
-        unit.physics = Some(PhysicsBody::ground_vehicle(
-            PhysicsMaterial {
-                mass: 10.0,
-                ..PhysicsMaterial::default()
-            },
-            BoxCollider::new(Vec3::ONE, Vec3::ZERO),
-            0.0,
-            10.0,
-            10.0,
-            90.0,
-        ));
-        world.units.insert(id, unit);
+        let id = world.create_unit_at(1, Vec3::ZERO);
+        world.units.get_mut(id).unwrap().base.set_forward(forward);
+        let template = box_template("box", Vec3::ONE, 10.0, Vec3::ZERO);
+        assert!(world.create_physics_object(id, &template, false));
         id
     }
 }

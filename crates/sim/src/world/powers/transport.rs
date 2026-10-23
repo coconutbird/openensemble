@@ -687,9 +687,7 @@ fn launch_transport_group(
     if let Some(carrier) = world.get_squad_mut(carrier_id) {
         carrier.speed = execution.carrier_speed;
     }
-    if let Some(carrier) = world.get_unit_mut(carrier_unit_id) {
-        carrier.physics = None;
-    }
+    world.release_physics_object(carrier_unit_id);
     let started = world.start_power_transport_flight(
         carrier_id,
         SquadPowerTransportPlan {

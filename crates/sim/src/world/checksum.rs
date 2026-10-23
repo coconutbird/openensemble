@@ -34,6 +34,7 @@ impl World {
         } else {
             checksum.hash_u32(0);
         }
+        self.physics.hash_state(&mut checksum);
         hash_config_symbols(&mut checksum, self.config_symbols());
         checksum.hash_u32(u32::from(self.scenario_allows_veterancy()));
         checksum.hash_u32(u32::from(self.veterancy_enabled()));
@@ -222,9 +223,9 @@ fn hash_units(checksum: &mut SyncChecksum, units: &EntityManager<Unit>) {
             unit.obstruction_half_extents.y,
             unit.obstruction_half_extents.z,
         );
-        if let Some(body) = &unit.physics {
+        if let Some(state) = &unit.physics_object {
             checksum.hash_u32(1);
-            body.hash_state(checksum);
+            state.hash_state(checksum);
         } else {
             checksum.hash_u32(0);
         }

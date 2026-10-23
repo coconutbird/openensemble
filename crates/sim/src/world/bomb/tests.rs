@@ -1,6 +1,6 @@
 use super::*;
 use crate::entities::UnitDetonatePhase;
-use crate::physics::MotionType;
+use crate::world::flat_test_terrain;
 use pipeline::database::hw1::tactics::{Action, ActionDuration, TacticData, TacticRules, Weapon};
 use pipeline::database::hw1::{Database, ProtoObject};
 
@@ -8,14 +8,15 @@ use pipeline::database::hw1::{Database, ProtoObject};
 fn nonrolling_building_falls_and_detonates_on_terrain_contact() {
     let (database, gameplay) = fixture(-1.0, 10.0);
     let mut world = configured_world();
-    let source = configured_bomb(&mut world, Vec3::Y);
-    let target = configured_target(&mut world, Vec3::X * 2.0);
+    let source = configured_bomb(&mut world, Vec3::new(50.0, 1.0, 50.0));
+    let target = configured_target(&mut world, Vec3::new(52.0, 0.0, 50.0));
 
     update(&mut world, &database, &gameplay);
     let bomb = world.get_unit(source).expect("Bomb after first update");
     assert_eq!(bomb.bomb_phase(), BombPhase::Working);
     assert!(!bomb.bomb_rolls());
-    assert!(bomb.base.position.y < 1.0, "non-mobile body must fall");
+    let body_position = world.unit_body_position(source).expect("the Bomb body");
+    assert!(body_position.y < 1.0, "the body must fall");
     assert_eq!(bomb.detonate_phase(), UnitDetonatePhase::Working);
 
     for _ in 0..40 {
@@ -33,7 +34,7 @@ fn nonrolling_building_falls_and_detonates_on_terrain_contact() {
 fn rolling_branch_completes_bomb_but_keeps_primary_dynamic_body() {
     let (database, gameplay) = fixture(1.0, 10.0);
     let mut world = configured_world();
-    let source = configured_bomb(&mut world, Vec3::Y);
+    let source = configured_bomb(&mut world, Vec3::new(50.0, 1.0, 50.0));
 
     for _ in 0..40 {
         update(&mut world, &database, &gameplay);
@@ -51,9 +52,12 @@ fn rolling_branch_completes_bomb_but_keeps_primary_dynamic_body() {
     assert_eq!(bomb.bomb_phase(), BombPhase::Complete);
     assert!(bomb.bomb_rolls());
     assert!(bomb.bomb_has_collided());
+    let body = world
+        .unit_body(source)
+        .expect("the rolling Bomb keeps its body");
     assert_eq!(
-        bomb.physics.as_ref().unwrap().motion_type(),
-        MotionType::Dynamic
+        world.physics().world().motion_type(body),
+        Some(::physics::MotionType::BoxInertia)
     );
     assert_eq!(bomb.detonate_phase(), UnitDetonatePhase::Working);
 }
@@ -64,6 +68,7 @@ fn configured_world() -> World {
     world.get_player_mut(1).unwrap().team_id = 1;
     world.get_player_mut(2).unwrap().team_id = 2;
     world.configure_standard_team_relations();
+    world.configure_terrain_simulation(flat_test_terrain(4.0, 0.0));
     world
 }
 
@@ -73,10 +78,6 @@ fn configured_bomb(world: &mut World, position: Vec3) -> EntityId {
     unit.proto_object_name = "bomb".to_owned();
     unit.set_max_hitpoints(100.0);
     unit.obstruction_half_extents = Vec3::splat(0.5);
-    unit.physics = Some(PhysicsBody::static_obstruction(BoxCollider::new(
-        Vec3::splat(0.5),
-        Vec3::ZERO,
-    )));
     id
 }
 

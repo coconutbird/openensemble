@@ -1,14 +1,16 @@
 //! Scenario-layered damage-template parts used by retail throw-part actions.
 
-use super::{GameplayCatalog, vehicle_physics};
-use crate::physics::{BoxCollider, PhysicsMaterial};
+use super::GameplayCatalog;
+use crate::physics::{PhysicsBlueprintBody, PhysicsTemplate};
 use glam::Vec3;
 use pipeline::database::hw1::visual::{Asset, Visual};
 use pipeline::database::hw1::{Database, ProtoObject, visual};
+use pipeline::hw1::physics::PhysicsLibrary;
 use pipeline::source::{AssetSource, StdFileProvider};
 use pipeline::ugx::{GrannyMesh, Reader, UgxGeom};
 use pipeline::xmb::{Document, Node};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 const PART_BOUNDING_BOX_FACTOR: f32 = 0.75;
 
@@ -22,8 +24,7 @@ pub struct DamagePartProfile {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ThrownDamagePart {
     mesh_names: Vec<String>,
-    collider: BoxCollider,
-    material: PhysicsMaterial,
+    template: Arc<PhysicsTemplate>,
     force_multiplier: f32,
     throw_center_offset: Vec3,
     single_mesh: bool,
@@ -39,7 +40,6 @@ struct AssetCache {
     visuals: BTreeMap<String, Option<Visual>>,
     damage_templates: BTreeMap<String, Option<Document>>,
     geometry: BTreeMap<String, Option<UgxGeom>>,
-    materials: BTreeMap<String, Option<PhysicsMaterial>>,
 }
 
 struct ProfileAssets {
@@ -48,11 +48,15 @@ struct ProfileAssets {
 }
 
 impl DamagePartCatalog {
-    pub(super) fn load(database: &Database, source: &mut AssetSource<StdFileProvider>) -> Self {
+    pub(super) fn load(
+        database: &Database,
+        source: &mut AssetSource<StdFileProvider>,
+        library: &PhysicsLibrary,
+    ) -> Self {
         let mut profiles = BTreeMap::new();
         let mut cache = AssetCache::default();
         for object in &database.objects {
-            if let Some(profile) = load_object_profile(object, source, &mut cache) {
+            if let Some(profile) = load_object_profile(object, source, library, &mut cache) {
                 profiles.insert(object.name.to_ascii_lowercase(), profile);
             }
         }
@@ -106,12 +110,13 @@ impl DamagePartProfile {
 }
 
 impl ThrownDamagePart {
-    /// Construct a resolved throw-part action for deterministic fixtures.
+    /// Construct a resolved throw-part action for deterministic fixtures. `template` is the
+    /// body of the part (`BEntity::createPhysicsObjectDirect`): the part box from the blueprint,
+    /// with its centre as the `CenterOffset`.
     #[must_use]
     pub fn new(
         mesh_names: Vec<String>,
-        collider: BoxCollider,
-        material: PhysicsMaterial,
+        template: Arc<PhysicsTemplate>,
         force_multiplier: f32,
     ) -> Option<Self> {
         let mesh_names = normalized_mesh_names(mesh_names);
@@ -121,10 +126,9 @@ impl ThrownDamagePart {
         Some(Self {
             single_mesh: mesh_names.len() == 1,
             mesh_names,
-            collider,
-            material,
+            throw_center_offset: template.center_offset(),
+            template,
             force_multiplier,
-            throw_center_offset: collider.center_offset,
         })
     }
 
@@ -134,16 +138,11 @@ impl ThrownDamagePart {
         &self.mesh_names
     }
 
-    /// Return the deterministic approximation of retail's Havok part shape.
+    /// Return the body of the part: a box of 0.75 times the mesh bounds with the blueprint
+    /// material, centred on the meshes.
     #[must_use]
-    pub const fn collider(&self) -> BoxCollider {
-        self.collider
-    }
-
-    /// Return the scenario-layered physics blueprint material.
-    #[must_use]
-    pub const fn material(&self) -> PhysicsMaterial {
-        self.material
+    pub const fn template(&self) -> &Arc<PhysicsTemplate> {
+        &self.template
     }
 
     /// Return the authored impulse-force multiplier.
@@ -168,6 +167,7 @@ impl ThrownDamagePart {
 fn load_object_profile(
     object: &ProtoObject,
     source: &mut AssetSource<StdFileProvider>,
+    library: &PhysicsLibrary,
     cache: &mut AssetCache,
 ) -> Option<DamagePartProfile> {
     let visual = load_visual(object.visual.as_deref()?, source, cache)?;
@@ -181,7 +181,7 @@ fn load_object_profile(
     let impact_points = impact_nodes
         .into_iter()
         .filter(|impact| valid_impact_point(impact, &geometry))
-        .map(|impact| parse_final_throw_part(impact, &geometry, source, cache))
+        .map(|impact| parse_final_throw_part(impact, &geometry, library))
         .collect();
     Some(DamagePartProfile { impact_points })
 }
@@ -291,8 +291,7 @@ fn valid_impact_point(node: &Node, geometry: &UgxGeom) -> bool {
 fn parse_final_throw_part(
     impact: &Node,
     geometry: &UgxGeom,
-    source: &mut AssetSource<StdFileProvider>,
-    cache: &mut AssetCache,
+    library: &PhysicsLibrary,
 ) -> Option<ThrownDamagePart> {
     let event = impact
         .children
@@ -306,14 +305,13 @@ fn parse_final_throw_part(
                 && attribute(action, "type")
                     .is_some_and(|kind| kind.eq_ignore_ascii_case("throwpart"))
         })
-        .find_map(|action| parse_throw_part(action, geometry, source, cache))
+        .find_map(|action| parse_throw_part(action, geometry, library))
 }
 
 fn parse_throw_part(
     action: &Node,
     geometry: &UgxGeom,
-    source: &mut AssetSource<StdFileProvider>,
-    cache: &mut AssetCache,
+    library: &PhysicsLibrary,
 ) -> Option<ThrownDamagePart> {
     let mesh_names = action
         .text_string()
@@ -323,28 +321,24 @@ fn parse_throw_part(
     if mesh_names.is_empty() {
         return None;
     }
-    let blueprint = attribute(action, "blueprint").unwrap_or_else(|| "part".to_owned());
-    let material = load_material(&blueprint, source, cache)?;
+    let blueprint_name = attribute(action, "blueprint").unwrap_or_else(|| "part".to_owned());
+    let blueprint = library.blueprint(blueprint_name.trim())?;
     let force_multiplier = attribute(action, "forcemultiplier")
         .and_then(|value| value.parse::<f32>().ok())
         .unwrap_or(1.0);
-    let (collider, throw_center_offset) = action_geometry(geometry, &mesh_names)?;
-    let mut part = ThrownDamagePart::new(mesh_names, collider, material, force_multiplier)?;
+    let (part_box, throw_center_offset) = action_geometry(geometry, &mesh_names)?;
+    let body = PhysicsBlueprintBody::with_box(&blueprint_name, blueprint, part_box.half_extents);
+    let template = PhysicsTemplate::simple(&blueprint_name, body, part_box.center);
+    let mut part = ThrownDamagePart::new(mesh_names, Arc::new(template), force_multiplier)?;
     part.throw_center_offset = throw_center_offset;
     Some(part)
 }
 
-fn load_material(
-    reference: &str,
-    source: &mut AssetSource<StdFileProvider>,
-    cache: &mut AssetCache,
-) -> Option<PhysicsMaterial> {
-    let key = reference.trim().to_ascii_lowercase();
-    if !cache.materials.contains_key(&key) {
-        let material = vehicle_physics::load_blueprint_material(source, reference).ok();
-        cache.materials.insert(key.clone(), material);
-    }
-    cache.materials.get(&key).copied().flatten()
+/// The box of a thrown part in model space.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PartBox {
+    center: Vec3,
+    half_extents: Vec3,
 }
 
 fn resolve_mesh_name(geometry: &UgxGeom, authored: &str) -> Option<String> {
@@ -355,7 +349,7 @@ fn resolve_mesh_name(geometry: &UgxGeom, authored: &str) -> Option<String> {
         .map(|mesh| mesh.name.clone())
 }
 
-fn action_geometry(geometry: &UgxGeom, mesh_names: &[String]) -> Option<(BoxCollider, Vec3)> {
+fn action_geometry(geometry: &UgxGeom, mesh_names: &[String]) -> Option<(PartBox, Vec3)> {
     let mut minimum = Vec3::splat(f32::INFINITY);
     let mut maximum = Vec3::splat(f32::NEG_INFINITY);
     let mut throw_center = Vec3::ZERO;
@@ -375,8 +369,13 @@ fn action_geometry(geometry: &UgxGeom, mesh_names: &[String]) -> Option<(BoxColl
     let half_extents = (maximum - minimum) * 0.5;
     let count = u16::try_from(mesh_names.len()).ok()?;
     throw_center /= f32::from(count);
-    (center.is_finite() && throw_center.is_finite() && valid_extents(half_extents))
-        .then_some((BoxCollider::new(half_extents, center), throw_center))
+    (center.is_finite() && throw_center.is_finite() && valid_extents(half_extents)).then_some((
+        PartBox {
+            center,
+            half_extents,
+        },
+        throw_center,
+    ))
 }
 
 fn mesh_bounds(geometry: &UgxGeom, mesh: &GrannyMesh) -> Option<(Vec3, Vec3)> {
@@ -530,18 +529,18 @@ mod tests {
     #[test]
     fn granny_bone_obb_becomes_scaled_model_space_collider() {
         let geometry = geometry();
-        let (collider, throw_center) = action_geometry(&geometry, &["panel".to_owned()]).unwrap();
+        let (part_box, throw_center) = action_geometry(&geometry, &["panel".to_owned()]).unwrap();
         assert!(
-            collider
-                .center_offset
+            part_box
+                .center
                 .abs_diff_eq(Vec3::new(3.0, 2.0, 3.0), 0.000_1)
         );
         assert!(
-            collider
+            part_box
                 .half_extents
                 .abs_diff_eq(Vec3::splat(0.75), 0.000_1)
         );
-        assert!(throw_center.abs_diff_eq(collider.center_offset, 0.000_1));
+        assert!(throw_center.abs_diff_eq(part_box.center, 0.000_1));
     }
 
     #[test]

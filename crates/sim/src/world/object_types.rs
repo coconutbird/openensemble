@@ -37,15 +37,25 @@ impl World {
             .collect();
     }
 
-    pub(crate) fn configure_prototype_vehicle_physics(&mut self, gameplay: &GameplayCatalog) {
-        self.prototype_ground_vehicle_physics = gameplay
-            .ground_vehicle_physics_profiles()
-            .map(|(name, profile)| (name.to_owned(), profile.clone()))
+    pub(crate) fn configure_prototype_physics(&mut self, gameplay: &GameplayCatalog) {
+        self.prototype_physics = gameplay
+            .object_physics_entries()
+            .map(|(name, templates)| (name.to_owned(), templates.clone()))
             .collect();
         self.prototype_flight_controllers = gameplay
             .flight_controller_profiles()
             .map(|(name, profile)| (name.to_owned(), profile))
             .collect();
+    }
+
+    /// Sets the physics infos of a proto object for future spawns.
+    pub fn set_prototype_physics(
+        &mut self,
+        proto_object_name: &str,
+        templates: crate::physics::ObjectPhysicsTemplates,
+    ) {
+        self.prototype_physics
+            .insert(proto_object_name.to_ascii_lowercase(), templates);
     }
 
     /// Return the scenario-layered shield coverage used by future unit spawns.
@@ -59,11 +69,13 @@ impl World {
             .copied()
     }
 
-    pub(crate) fn prototype_ground_vehicle_physics(
+    /// The physics infos of a proto object (any case).
+    #[must_use]
+    pub fn prototype_physics(
         &self,
         proto_object_name: &str,
-    ) -> Option<&crate::gameplay::GroundVehiclePhysicsProfile> {
-        self.prototype_ground_vehicle_physics
+    ) -> Option<&crate::physics::ObjectPhysicsTemplates> {
+        self.prototype_physics
             .get(&proto_object_name.to_ascii_lowercase())
     }
 
@@ -212,12 +224,15 @@ impl World {
             checksum.hash_string(prototype_name);
             checksum.hash_u32(*coverage as u32);
         }
-        checksum.hash_u32(
-            u32::try_from(self.prototype_ground_vehicle_physics.len()).unwrap_or(u32::MAX),
-        );
-        for (prototype_name, profile) in &self.prototype_ground_vehicle_physics {
+        checksum.hash_u32(u32::try_from(self.prototype_physics.len()).unwrap_or(u32::MAX));
+        for (prototype_name, templates) in &self.prototype_physics {
             checksum.hash_string(prototype_name);
-            profile.hash_state(checksum);
+            for template in [&templates.info, &templates.replacement] {
+                match template {
+                    Some(template) => template.hash_state(checksum),
+                    None => checksum.hash_u32(0),
+                }
+            }
         }
         checksum
             .hash_u32(u32::try_from(self.prototype_flight_controllers.len()).unwrap_or(u32::MAX));

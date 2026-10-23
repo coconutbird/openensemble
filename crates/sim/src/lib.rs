@@ -69,18 +69,19 @@ pub use gameplay::{
     CaptureActionProfile, ChargeActionProfile, ChargeEffectProfile, ChargedAttackAnimation,
     CollisionAttackProfile, DamagePartProfile, DetonateActionProfile, DetonateDurationProfile,
     DetonateThrowProfile, EnergyShieldActionProfile, EnergyShieldVisualProfile, GameplayCatalog,
-    GameplayLoadIssue, GatherActionProfile, GroundVehicleKind, GroundVehiclePhysicsProfile,
-    HealActionProfile, HeroRevivalProfile, ImpactEffectProfile, ImpactEffectSize,
-    InfectActionProfile, JoinActionProfile, JoinKind, JoinMergeType, KamikazeWeaponProfile,
-    MergedSquadProfile, MineActionProfile, ObjectGameplay, PhysicsImpulseEvent,
-    PhysicsReplacementLoadIssue, PhysicsReplacementProfile, ProjectileInitialPerturbance,
+    GameplayLoadIssue, GatherActionProfile, HealActionProfile, HeroRevivalProfile,
+    ImpactEffectProfile, ImpactEffectSize, InfectActionProfile, JoinActionProfile, JoinKind,
+    JoinMergeType, KamikazeWeaponProfile, MergedSquadProfile, MineActionProfile, ObjectGameplay,
+    PhysicsImpulseEvent, PhysicsLoadIssue, ProjectileInitialPerturbance,
     ProjectilePerturbanceProfile, ProjectileProfile, PullAttackProfile, RangedAction,
     RepairOtherActionProfile, ReviveActionProfile, TacticRelation, TacticStateId,
-    TacticStateProfile, ThrownDamagePart, UnitRevivalProfile, VehiclePhysicsLoadIssue,
+    TacticStateProfile, ThrownDamagePart, UnitRevivalProfile,
 };
 pub use order::{JumpOrderRequest, JumpOrderType, OrderType};
 pub use packet::{ChannelPacketHeader, PacketError};
-pub use physics::{BoxCollider, MotionType, PhysicsBody, PhysicsMaterial, SimPhysics, UnitPhysics};
+pub use physics::{
+    ObjectPhysicsTemplates, PhysicsBlueprintBody, PhysicsTemplate, SimPhysics, UnitPhysics,
+};
 pub use player::{
     CivId, DEFAULT_PLAYER_DIFFICULTY, GAIA_PLAYER, LeaderId, MAX_POP_TYPES, MAX_RESOURCES,
     MAX_TEAMS, Player, PlayerId, PlayerResearchState, PlayerState, PlayerTechState, PlayerType,

@@ -6,7 +6,6 @@ use super::support::{
 };
 use super::{EffectOutcome, write_value};
 use crate::gameplay::GameplayCatalog;
-use crate::physics::{BoxCollider, PhysicsBody};
 use crate::scenario::placed::create_trigger_unit_squad;
 use crate::spawn::{MAX_SPAWN_BATCH, object_prototype_id, spawn_object_at, spawn_squad_at};
 use crate::trigger::{Effect, EffectType, TriggerScript, TriggerValue};
@@ -84,9 +83,10 @@ pub(super) fn create_object(
     let created = spawn_object_at(world, database, player_id, prototype_id, position, forward).ok();
     if effect.version == 6
         && bool_at(effect, script, 11).unwrap_or(false)
-        && let Some(unit) = created.and_then(|entity_id| world.get_unit_mut(entity_id))
+        && let Some(entity_id) = created
     {
-        unit.physics = None;
+        // `mNoPhysics`: the object gets no body.
+        world.release_physics_object(entity_id);
     }
     write_optional_entity(effect, script, 4, created, TriggerValue::Object);
     update_entity_list(effect, script, 8, created, clear, EntityListKind::Object);
@@ -324,13 +324,9 @@ fn create_obstruction_unit(
         )
         .ok()
     });
+    // The obstruction unit blocks through its sim obstruction, not through a Havok body.
     if let Some(unit) = created.and_then(|unit_id| world.get_unit_mut(unit_id)) {
-        let half_extents = Vec3::new(radius_x, radius_y, radius_z);
-        unit.obstruction_half_extents = half_extents;
-        unit.physics = Some(PhysicsBody::static_obstruction(BoxCollider::new(
-            half_extents,
-            Vec3::ZERO,
-        )));
+        unit.obstruction_half_extents = Vec3::new(radius_x, radius_y, radius_z);
         unit.base.configure_prototype_mobility(true);
     }
 

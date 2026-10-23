@@ -5,10 +5,11 @@ use crate::commands::{
     PowerCommand, PowerCommandType, PowerInputCommand, PowerInputCommandType, power_command_flags,
 };
 use crate::executor::CommandExecutor;
-use crate::gameplay::{DamagePartProfile, PhysicsReplacementProfile, ThrownDamagePart};
-use crate::physics::{BoxCollider, PhysicsBody, PhysicsMaterial};
+use crate::gameplay::{DamagePartProfile, ThrownDamagePart};
+use crate::physics::test_support::{box_template, clamshell_template};
 use crate::player::PowerGrant;
 use crate::spawn::{spawn_squad_at, squad_prototype_id};
+use crate::world::flat_test_terrain;
 use crate::world::powers::test_support::{data, execute_test_command, float_data, int_data};
 use pipeline::database::hw1::gamedata::{PopsWrapper, ResourceDef, ResourcesWrapper};
 use pipeline::database::hw1::powers::{DataLevel, PowerAttributes, PowerCost};
@@ -132,15 +133,20 @@ fn alive_unit_rips_scenario_profile_part_into_short_lived_fake_spring_object() {
     let mut database = database(0.0, 2);
     set_base_value(&mut database, "ThrowPartChancePulling", "100");
     let mut gameplay = gameplay(&database);
-    let part_material = PhysicsMaterial {
+    let part_blueprint = pipeline::database::hw1::physics::PhysicsBlueprint {
         mass: 150.0,
         angular_damping: 0.2,
-        ..PhysicsMaterial::default()
+        ..pipeline::database::hw1::physics::PhysicsBlueprint::default()
     };
+    let part_body =
+        crate::physics::PhysicsBlueprintBody::with_box("part", &part_blueprint, Vec3::splat(0.5));
     let part = ThrownDamagePart::new(
         vec!["Panel".to_owned()],
-        BoxCollider::new(Vec3::splat(0.5), Vec3::X),
-        part_material,
+        std::sync::Arc::new(crate::physics::PhysicsTemplate::simple(
+            "part",
+            part_body,
+            Vec3::X,
+        )),
         1.0,
     )
     .unwrap();
@@ -166,11 +172,8 @@ fn alive_unit_rips_scenario_profile_part_into_short_lived_fake_spring_object() {
     assert_eq!(part.proto_object_name, "target");
     assert_eq!(part.visual_mesh_mask().only(), &["panel"]);
     assert!(part.squad_id.is_none());
-    assert!(part.base.velocity.length() > 0.0);
-    assert_close(
-        part.physics.as_ref().unwrap().material().angular_damping,
-        0.8,
-    );
+    assert!(world.unit_body_linear_velocity(part_id).unwrap().length() > 0.0);
+    assert_close(world.unit_body_damping(part_id).unwrap().1, 0.8);
 
     super::update(&mut world, 0.15, &database, Some(&gameplay));
     assert_close(world.get_unit(part_id).unwrap().visual_opacity(), 2.0 / 3.0);
@@ -191,8 +194,11 @@ fn assert_captured_debris_source(
         "wave_pickup"
     );
     let captured_unit = world.get_unit(captured_unit_id).unwrap();
-    let body = captured_unit.physics.as_ref().unwrap();
-    let center_offset = body.collider().center_offset;
+    let center_offset = captured_unit
+        .physics_object
+        .as_ref()
+        .unwrap()
+        .center_offset();
     let captured_center = captured_unit.base.position + center_offset;
     let pickup = world.get_object(pickup_id).unwrap();
     assert!(pickup.base.position.abs_diff_eq(captured_center, 0.000_1));
@@ -207,34 +213,24 @@ fn assert_captured_debris_source(
     assert_eq!(captured_unit.base.player_id, 1);
     assert!(!captured_unit.is_auto_attackable());
     assert_eq!(captured_unit.obstruction_half_extents, Vec3::ZERO);
-    assert_close(body.material().angular_damping, 0.8);
-    assert_close(body.material().linear_damping, 0.1);
-    assert!(captured_unit.base.velocity.length() > 0.0);
+    let (linear_damping, angular_damping) = world.unit_body_damping(captured_unit_id).unwrap();
+    assert_close(angular_damping, 0.8);
+    assert_close(linear_damping, 0.1);
+    let velocity = world.unit_body_linear_velocity(captured_unit_id).unwrap();
+    assert!(velocity.length() > 0.0);
     world
         .get_unit_mut(captured_unit_id)
         .unwrap()
         .object_state
         .set_visual_variation_index(2);
     let captured_unit = world.get_unit(captured_unit_id).unwrap();
-    let position = captured_unit.base.position
-        + captured_unit
-            .physics
-            .as_ref()
-            .unwrap()
-            .collider()
-            .center_offset;
+    let position = world.unit_body_position(captured_unit_id).unwrap();
     let ball_id = world.active_wave_powers()[0].ball_object_id();
     let ball = world.get_unit(ball_id).unwrap().base.position;
     DebrisSourceSnapshot {
         position,
-        visual_center_offset: -captured_unit
-            .physics
-            .as_ref()
-            .unwrap()
-            .collider()
-            .center_offset,
-        expected_velocity: captured_unit.base.velocity
-            + (position - ball).normalize_or(Vec3::X) * 15.0,
+        visual_center_offset: -center_offset,
+        expected_velocity: velocity + (position - ball).normalize_or(Vec3::X) * 15.0,
         forward: captured_unit.base.forward,
     }
 }
@@ -320,12 +316,17 @@ fn explosion_throws_only_eligible_units_with_authored_action_velocity() {
     let expected = Vec3::new(launch_angle.cos(), launch_angle.sin(), 0.0) * expected_speed;
     let target = world.get_unit(target_unit_id).unwrap();
     assert!(target.base.velocity.abs_diff_eq(expected, 0.000_1));
-    assert!(target.physics.is_some());
+    assert!(target.physics_object.is_some());
     assert!(target.is_thrown());
     assert_eq!(target.thrown_by(), Some(ball_id));
-    assert_eq!(
-        world.get_unit(covered_unit_id).unwrap().base.velocity,
-        Vec3::ZERO
+    let covered = world.get_unit(covered_unit_id).unwrap();
+    assert!(!covered.is_thrown());
+    assert!(
+        world
+            .unit_body_linear_velocity(covered_unit_id)
+            .unwrap()
+            .length()
+            < 1.0
     );
 }
 
@@ -431,6 +432,7 @@ fn test_world(database: &Database) -> World {
     world.get_player_mut(2).unwrap().team_id = 2;
     world.configure_standard_team_relations();
     world.configure_prototype_catalogs(database);
+    world.configure_terrain_simulation(flat_test_terrain(4.0, 0.0));
     world
 }
 
@@ -454,20 +456,15 @@ fn gameplay(database: &Database) -> GameplayCatalog {
     );
     gameplay.insert_test_physics_replacement(
         "fragile",
-        PhysicsReplacementProfile::new(
+        clamshell_template(
             "fragile_replacement",
-            PhysicsMaterial::default(),
-            BoxCollider::new(Vec3::splat(0.5), Vec3::new(0.25, 1.0, -0.5)),
-        )
-        .with_clamshell(),
+            Vec3::splat(0.5),
+            Vec3::new(0.25, 1.0, -0.5),
+        ),
     );
     gameplay.insert_test_physics_replacement(
         "target",
-        PhysicsReplacementProfile::new(
-            "target_replacement",
-            PhysicsMaterial::default(),
-            BoxCollider::new(Vec3::splat(0.75), Vec3::ZERO),
-        ),
+        box_template("target_replacement", Vec3::splat(0.75), 1.0, Vec3::Y * 0.75),
     );
     gameplay
 }
@@ -489,14 +486,8 @@ fn squad_leader(world: &World, squad_id: EntityId) -> EntityId {
 
 fn make_physical(world: &mut World, squad_id: EntityId) {
     let unit_id = squad_leader(world, squad_id);
-    world.get_unit_mut(unit_id).unwrap().physics = Some(PhysicsBody::ground_vehicle(
-        PhysicsMaterial::default(),
-        BoxCollider::new(Vec3::splat(2.0), Vec3::ZERO),
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-    ));
+    let template = box_template("physical", Vec3::splat(2.0), 1.0, Vec3::Y * 2.0);
+    assert!(world.create_physics_object(unit_id, &template, false));
 }
 
 fn invocation(

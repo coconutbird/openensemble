@@ -1,7 +1,6 @@
 //! Checksummed state for retail's persistent `BUnitActionBomb`.
 
 use super::Unit;
-use crate::physics::PhysicsBody;
 use crate::sync::SyncChecksum;
 
 /// Observable phase of a unit's persistent `Bomb` action.
@@ -23,8 +22,8 @@ pub(super) struct UnitBomb {
     phase: BombPhase,
     rolls: bool,
     collided: bool,
+    /// The action made the body, and the body goes when the action completes.
     release_physics_on_completion: bool,
-    original_physics: Option<PhysicsBody>,
 }
 
 impl UnitBomb {
@@ -33,7 +32,6 @@ impl UnitBomb {
         action_name: &str,
         rolls: bool,
         release_physics_on_completion: bool,
-        original_physics: Option<PhysicsBody>,
     ) -> bool {
         if self.phase != BombPhase::Inactive {
             return false;
@@ -43,7 +41,6 @@ impl UnitBomb {
         self.rolls = rolls;
         self.collided = false;
         self.release_physics_on_completion = release_physics_on_completion;
-        self.original_physics = original_physics;
         true
     }
 
@@ -55,15 +52,12 @@ impl UnitBomb {
         true
     }
 
-    fn finish(&mut self) -> Option<(bool, Option<PhysicsBody>)> {
+    fn finish(&mut self) -> Option<bool> {
         if self.phase != BombPhase::Working || !self.collided {
             return None;
         }
         self.phase = BombPhase::Complete;
-        Some((
-            self.release_physics_on_completion,
-            self.original_physics.take(),
-        ))
+        Some(self.release_physics_on_completion)
     }
 
     pub(super) fn hash_state(&self, checksum: &mut SyncChecksum) {
@@ -72,12 +66,6 @@ impl UnitBomb {
         checksum.hash_u32(u32::from(self.rolls));
         checksum.hash_u32(u32::from(self.collided));
         checksum.hash_u32(u32::from(self.release_physics_on_completion));
-        if let Some(physics) = &self.original_physics {
-            checksum.hash_u32(1);
-            physics.hash_state(checksum);
-        } else {
-            checksum.hash_u32(0);
-        }
     }
 }
 
@@ -111,21 +99,18 @@ impl Unit {
         action_name: &str,
         rolls: bool,
         release_physics_on_completion: bool,
-        original_physics: Option<PhysicsBody>,
     ) -> bool {
-        self.detonate.bomb.begin(
-            action_name,
-            rolls,
-            release_physics_on_completion,
-            original_physics,
-        )
+        self.detonate
+            .bomb
+            .begin(action_name, rolls, release_physics_on_completion)
     }
 
     pub(crate) fn notify_bomb_ground_collision(&mut self) -> bool {
         self.detonate.bomb.collide()
     }
 
-    pub(crate) fn finish_bomb_action(&mut self) -> Option<(bool, Option<PhysicsBody>)> {
+    /// Completes the action after its terrain contact. Returns whether the body goes.
+    pub(crate) fn finish_bomb_action(&mut self) -> Option<bool> {
         self.detonate.bomb.finish()
     }
 }
@@ -145,20 +130,15 @@ mod tests {
     use crate::entity_id::{EntityClass, EntityId};
 
     #[test]
-    fn completion_is_sticky_and_returns_action_owned_physics() {
+    fn completion_is_sticky_and_returns_the_release_rule() {
         let mut unit = Unit::new(EntityId::new(EntityClass::Unit, 1), 1);
-        let original = PhysicsBody::static_obstruction(crate::physics::BoxCollider::new(
-            glam::Vec3::ONE,
-            glam::Vec3::ZERO,
-        ));
-        assert!(unit.begin_bomb_action("Bomb", true, true, Some(original.clone())));
+        assert!(unit.begin_bomb_action("Bomb", true, true));
         assert_eq!(unit.bomb_phase(), BombPhase::Working);
         assert!(unit.bomb_rolls());
+        assert_eq!(unit.finish_bomb_action(), None);
         assert!(unit.notify_bomb_ground_collision());
-        let completion = unit.finish_bomb_action().expect("completed Bomb action");
-        assert!(completion.0);
-        assert_eq!(completion.1, Some(original));
+        assert_eq!(unit.finish_bomb_action(), Some(true));
         assert_eq!(unit.bomb_phase(), BombPhase::Complete);
-        assert!(!unit.begin_bomb_action("Bomb", false, false, None));
+        assert!(!unit.begin_bomb_action("Bomb", false, false));
     }
 }

@@ -13,22 +13,14 @@ impl World {
         instigator_player_id: PlayerId,
         gameplay: &GameplayCatalog,
     ) -> Option<EntityId> {
-        let source = self.units.get(dead_unit_id)?.clone();
+        let source = self.units.get(dead_unit_id)?;
         if source.is_physics_replacement() {
             return None;
         }
-        let profile = gameplay
-            .physics_replacement(&source.proto_object_name)?
-            .clone();
-        let detonate = gameplay.first_detonate_action(&source.proto_object_name)?;
-        let ground_height = self
-            .terrain_height(source.base.position, true)
-            .unwrap_or(source.base.position.y.min(0.0));
-        let replacement_id = self.units.allocate_id();
-        let replacement =
-            source.create_physics_replacement(replacement_id, &profile, ground_height);
-        let _removed = self.remove_unit(dead_unit_id)?;
-        self.units.insert(replacement_id, replacement);
+        let proto_object_name = source.proto_object_name.clone();
+        let template = std::sync::Arc::clone(gameplay.physics_replacement(&proto_object_name)?);
+        let detonate = gameplay.first_detonate_action(&proto_object_name)?;
+        let replacement_id = self.spawn_physics_replacement(dead_unit_id, &template)?;
         if !self.begin_profile_detonate_action(
             replacement_id,
             &detonate,
@@ -55,9 +47,7 @@ impl World {
         }
         let current_velocity = unit.base.velocity;
         let impulse = self.sample_detonate_throw(current_velocity, tuning);
-        if let Some(unit) = self.units.get_mut(unit_id) {
-            let _applied = unit.apply_impulse(impulse);
-        }
+        let _applied = self.apply_unit_impulse(unit_id, impulse);
         true
     }
 
@@ -84,18 +74,25 @@ impl World {
         }
     }
 
+    /// Removes each detonated replacement at the second cleanup that finds its body asleep. A
+    /// unit without a body counts as asleep.
     pub(in crate::world) fn cleanup_physics_detonate_replacements(&mut self) {
-        let removable = self
+        let detonated = self
             .units
-            .iter_mut()
+            .iter()
             .filter_map(|(unit_id, unit)| {
-                (unit.physics_replacement_is_detonated()
-                    && unit.advance_physics_replacement_cleanup())
-                .then_some(unit_id)
+                unit.physics_replacement_is_detonated().then_some(unit_id)
             })
             .collect::<Vec<_>>();
-        for unit_id in removable {
-            let _removed = self.remove_unit(unit_id);
+        for unit_id in detonated {
+            let resting = self.unit_body_is_active(unit_id) != Some(true);
+            let removable = self
+                .units
+                .get_mut(unit_id)
+                .is_some_and(|unit| unit.advance_physics_replacement_cleanup(resting));
+            if removable {
+                let _removed = self.remove_unit(unit_id);
+            }
         }
     }
 }
@@ -103,8 +100,7 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gameplay::PhysicsReplacementProfile;
-    use crate::physics::{BoxCollider, PhysicsMaterial};
+    use crate::physics::test_support::{TERRAIN_HEIGHT, box_template, world_with_flat_terrain};
     use crate::player::GAIA_PLAYER;
     use pipeline::database::hw1::tactics::{Action, ActionDuration, TacticData, Weapon};
     use pipeline::database::hw1::{Database, ProtoObject};
@@ -112,13 +108,13 @@ mod tests {
     #[test]
     fn lethal_damage_replaces_counts_down_and_protects_instigator_team() {
         let gameplay = fixture();
-        let mut world = World::new();
-        world.init_players(2);
+        let mut world = world_with_flat_terrain();
         world.get_player_mut(1).unwrap().team_id = 1;
         world.get_player_mut(2).unwrap().team_id = 2;
         world.configure_standard_team_relations();
-        let barrel = configured_unit(&mut world, GAIA_PLAYER, Vec3::ZERO, "barrel", 10.0);
-        let ally = configured_unit(&mut world, 2, Vec3::X * 2.0, "target", 100.0);
+        let ground = Vec3::new(50.0, TERRAIN_HEIGHT, 50.0);
+        let barrel = configured_unit(&mut world, GAIA_PLAYER, ground, "barrel", 10.0);
+        let ally = configured_unit(&mut world, 2, ground + Vec3::X * 2.0, "target", 100.0);
 
         let dealt = world.apply_weapon_damage(2, barrel, 10.0, None, Some(&gameplay));
         assert_eq!(dealt.to_bits(), 10.0_f32.to_bits());
@@ -129,6 +125,7 @@ mod tests {
             .find_map(|(unit_id, unit)| unit.is_physics_replacement().then_some(unit_id))
             .expect("physics replacement");
         let replacement = world.get_unit(replacement_id).unwrap();
+        assert!(world.unit_body(replacement_id).is_some());
         assert_eq!(replacement.hitpoints.to_bits(), 10.0_f32.to_bits());
         assert_eq!(
             replacement.detonate_phase(),
@@ -147,8 +144,15 @@ mod tests {
             world.get_unit(ally).unwrap().hitpoints.to_bits(),
             100.0_f32.to_bits()
         );
-        world.update_entities_with_gameplay(0.05, &gameplay);
-        assert!(world.get_unit(replacement_id).is_none());
+        // The replacement goes once its body rests.
+        let removed_after = (1..=200).find(|_| {
+            world.update_entities_with_gameplay(0.05, &gameplay);
+            world.get_unit(replacement_id).is_none()
+        });
+        assert!(
+            removed_after.is_some(),
+            "the replacement body never came to rest"
+        );
     }
 
     fn configured_unit(
@@ -204,11 +208,7 @@ mod tests {
             GameplayCatalog::from_tactics(&database, [("barrel".to_owned(), tactics)]);
         gameplay.insert_test_physics_replacement(
             "barrel",
-            PhysicsReplacementProfile::new(
-                "barrel_wreck",
-                PhysicsMaterial::default(),
-                BoxCollider::new(Vec3::splat(0.5), Vec3::ZERO),
-            ),
+            box_template("barrel_wreck", Vec3::splat(0.5), 1.0, Vec3::Y * 0.5),
         );
         gameplay
     }

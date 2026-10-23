@@ -381,16 +381,10 @@ fn assert_obstruction_state(scenario: &str, loaded: &LoadedGameScenario) {
     assert_eq!(obstruction.base.player_id, 0);
     assert_eq!(
         obstruction.obstruction_half_extents,
-        sim::physics::BoxCollider::new(glam::Vec3::new(29.0, 3.0, 30.0), glam::Vec3::ZERO)
-            .half_extents
+        glam::Vec3::new(29.0, 3.0, 30.0)
     );
-    assert_eq!(
-        obstruction
-            .physics
-            .as_ref()
-            .map(sim::PhysicsBody::motion_type),
-        Some(sim::physics::MotionType::Static)
-    );
+    // `teCreateObstructionUnit` sets the sim obstruction only; it makes no Havok body.
+    assert!(obstruction.physics_object.is_none());
 }
 
 fn obstruction_prototype_name(loaded: &LoadedGameScenario) -> Option<&str> {

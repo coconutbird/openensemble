@@ -5,8 +5,9 @@ use crate::entities::BombPhase;
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::{BombActionProfile, GameplayCatalog};
-use crate::physics::{BoxCollider, PhysicsBody, PhysicsMaterial};
+use crate::physics::{PhysicsBlueprintBody, PhysicsTemplate};
 use glam::Vec3;
+use pipeline::database::hw1::physics::PhysicsBlueprint;
 
 impl World {
     pub(super) fn update_bombs(&mut self, gameplay: &GameplayCatalog) {
@@ -68,77 +69,54 @@ impl World {
             .is_enabled(profile.action_name(), !player_enabled)
     }
 
+    /// Connects the action: a unit without a body gets the body of the profile (or a box of
+    /// its obstruction with the default material). The body goes at the end of the action only
+    /// if the action made it from the `PhysicsReplacementInfo`.
     fn initialize_bomb_body(
         &mut self,
         unit_id: EntityId,
         profile: &BombActionProfile,
         rolls: bool,
     ) {
-        let Some((position, fallback_material, fallback_collider, original_physics)) =
-            self.units.get(unit_id).map(|unit| {
-                let fallback_collider = unit.physics.as_ref().map_or_else(
-                    || {
-                        BoxCollider::new(
-                            unit.obstruction_half_extents.max(Vec3::splat(0.01)),
-                            Vec3::ZERO,
-                        )
-                    },
-                    PhysicsBody::collider,
-                );
-                (
-                    unit.base.position,
-                    unit.physics
-                        .as_ref()
-                        .map_or_else(PhysicsMaterial::default, PhysicsBody::material),
-                    fallback_collider,
-                    profile
-                        .release_physics_on_completion()
-                        .then(|| unit.physics.clone())
-                        .flatten(),
-                )
-            })
-        else {
+        let Some((has_body, half_extents)) = self.units.get(unit_id).map(|unit| {
+            (
+                unit.physics_object.is_some(),
+                unit.obstruction_half_extents.max(Vec3::splat(0.01)),
+            )
+        }) else {
             return;
         };
-        let ground_height = self.terrain_height(position, true).unwrap_or_default();
-        let (material, collider) = profile
-            .physics_body()
-            .map_or((fallback_material, fallback_collider), |body| {
-                (body.material(), body.collider())
-            });
+        let release = !has_body && profile.release_physics_on_completion();
         let Some(unit) = self.units.get_mut(unit_id) else {
             return;
         };
-        if !unit.begin_bomb_action(
-            profile.action_name(),
-            rolls,
-            profile.release_physics_on_completion(),
-            original_physics,
-        ) {
+        if !unit.begin_bomb_action(profile.action_name(), rolls, release) {
             return;
         }
-        unit.physics = Some(PhysicsBody::dynamic_replacement(
-            material,
-            collider,
-            ground_height,
-            position.y,
-        ));
+        if !has_body {
+            let template = profile.physics_body().cloned().unwrap_or_else(|| {
+                let body = PhysicsBlueprintBody::with_box(
+                    "bomb",
+                    &PhysicsBlueprint::default(),
+                    half_extents,
+                );
+                std::sync::Arc::new(PhysicsTemplate::simple("bomb", body, Vec3::ZERO))
+            });
+            let _created = self.create_physics_object(unit_id, &template, false);
+        }
         if rolls {
             // Retail multiplies 20 by an uninitialized `mDir`. Keep the branch
             // deterministic without inventing a direction absent from source.
-            let (physics, base) = (&mut unit.physics, &mut unit.base);
-            let _set = physics
-                .as_mut()
-                .is_some_and(|body| body.set_linear_velocity(base, Vec3::ZERO));
+            let _set = self.set_unit_body_linear_velocity(unit_id, Vec3::ZERO);
         }
     }
 
     fn update_bomb_action(&mut self, unit_id: EntityId, gameplay: &GameplayCatalog) {
-        let Some((impact_speed, rolls, collided, position)) = self.units.get(unit_id).map(|unit| {
+        let Some((landed, rolls, collided, position)) = self.units.get(unit_id).map(|unit| {
             (
-                unit.physics
+                unit.physics_object
                     .as_ref()
-                    .map_or(0.0, PhysicsBody::ground_impact_speed_this_step),
+                    .is_some_and(|state| state.contacts.landed),
                 unit.bomb_rolls(),
                 unit.bomb_has_collided(),
                 unit.base.position,
@@ -146,14 +124,14 @@ impl World {
         }) else {
             return;
         };
-        let collided = if impact_speed > 0.0 {
+        let collided = if landed {
             self.units
                 .get_mut(unit_id)
                 .is_some_and(crate::entities::Unit::notify_bomb_ground_collision)
         } else {
             collided
         };
-        if impact_speed > 0.0 && !rolls {
+        if landed && !rolls {
             if !self.force_active_unit_detonation(unit_id, gameplay) {
                 let _killed = self.kill_unit(unit_id, false);
             }
@@ -166,15 +144,18 @@ impl World {
     }
 
     fn finish_bomb_physics(&mut self, unit_id: EntityId) {
-        let Some(unit) = self.units.get_mut(unit_id) else {
+        let Some(release) = self
+            .units
+            .get_mut(unit_id)
+            .and_then(crate::entities::Unit::finish_bomb_action)
+        else {
             return;
         };
-        let Some((restore_physics, original_physics)) = unit.finish_bomb_action() else {
-            return;
-        };
-        if restore_physics {
-            unit.physics = original_physics;
-            unit.base.velocity = Vec3::ZERO;
+        if release {
+            self.release_physics_object(unit_id);
+            if let Some(unit) = self.units.get_mut(unit_id) {
+                unit.base.velocity = Vec3::ZERO;
+            }
         }
     }
 }

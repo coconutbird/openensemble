@@ -103,9 +103,7 @@ impl World {
         ) else {
             return false;
         };
-        if let Some(carrier) = self.get_unit_mut(carrier_unit_id) {
-            carrier.physics = None;
-        }
+        self.release_physics_object(carrier_unit_id);
         let plan = SquadTransportPlan {
             passenger_squad_ids: vec![passenger_squad_id],
             start_position,

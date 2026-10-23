@@ -1,25 +1,46 @@
 //! Retail XSD simulation-terrain height, surface and collision queries.
 
+mod ground_sample;
 mod ground_tie;
 
 use super::World;
+use crate::physics::terrain_height_field;
 use crate::sync::SyncChecksum;
+use ::physics::HeightField;
 use glam::Vec3;
 use num_traits::ToPrimitive;
 use pipeline::xsd;
+use std::sync::Arc;
 
 /// Immutable simulation height grid decoded from a scenario XSD.
+///
+/// The heights live in one place: the heightfield that the terrain body of the physics world
+/// shares. The XSD keeps only the grid layout and the tile types.
 #[derive(Debug)]
 pub(super) struct TerrainSimulation {
     terrain: xsd::Terrain,
+    /// The sim heights, or `None` if they cannot make a heightfield. Then the XSD keeps them
+    /// and the world has no terrain body.
+    heights: Option<Arc<HeightField>>,
     fingerprint: u32,
 }
 
 impl TerrainSimulation {
-    fn new(terrain: xsd::Terrain) -> Self {
+    fn new(mut terrain: xsd::Terrain) -> Self {
         let fingerprint = terrain_fingerprint(&terrain);
+        let heights = match terrain_height_field(&terrain) {
+            Ok(field) => {
+                terrain.heights = Vec::new();
+                Some(Arc::new(field))
+            }
+            Err(error) => {
+                log::warn!("the sim terrain makes no physics heightfield: {error}");
+                None
+            }
+        };
         Self {
             terrain,
+            heights,
             fingerprint,
         }
     }
@@ -81,7 +102,10 @@ impl TerrainSimulation {
     fn height_sample(&self, x: i32, z: i32, clamp: bool) -> Option<f32> {
         let x = checked_grid_coordinate(x, self.terrain.height_axis, clamp)?;
         let z = checked_grid_coordinate(z, self.terrain.height_axis, clamp)?;
-        self.terrain.height_sample(x, z)
+        match &self.heights {
+            Some(field) => field.sim_height(x, z),
+            None => self.terrain.height_sample(x, z),
+        }
     }
 
     fn projectile_segment_intersection(&self, start: Vec3, end: Vec3) -> Option<Vec3> {
@@ -354,7 +378,24 @@ pub(crate) fn sampled_test_terrain(
 impl World {
     /// Use the decoded scenario XSD for synchronized terrain queries.
     pub fn configure_terrain_simulation(&mut self, terrain: xsd::Terrain) {
-        self.terrain_simulation = Some(TerrainSimulation::new(terrain));
+        let simulation = TerrainSimulation::new(terrain);
+        if let Some(heights) = &simulation.heights {
+            self.physics.set_terrain(heights);
+        }
+        self.terrain_simulation = Some(simulation);
+    }
+
+    /// Replaces the physics world with an empty one that has the terrain body of the current
+    /// terrain.
+    pub(super) fn reset_physics(&mut self) {
+        self.physics = crate::physics::SimPhysics::new();
+        if let Some(heights) = self
+            .terrain_simulation
+            .as_ref()
+            .and_then(|terrain| terrain.heights.as_ref())
+        {
+            self.physics.set_terrain(heights);
+        }
     }
 
     /// Return whether retail XSD simulation terrain is available.

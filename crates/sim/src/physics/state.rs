@@ -1,14 +1,15 @@
-#![expect(
-    dead_code,
-    reason = "the plumbing commit adds the state before the body creation uses it"
-)]
 //! The physics world of a sim `World` and the shared state that `BPhysicsWorld` keeps next to it.
 
 use std::sync::Arc;
 
+use glam::Vec3;
+
 use ::physics::{BodyId, FilterInfo, Layer, Shape, World as PhysicsWorld, WorldConfig};
 
+use super::template::PhysicsTemplate;
 use super::vehicle_hull::vehicle_hull_shape;
+use crate::entity_id::EntityId;
+use crate::sync::SyncChecksum;
 
 /// The shared collision filter infos of `BPhysicsWorld_init` (`0x1407BB390`).
 ///
@@ -32,6 +33,7 @@ pub(crate) struct SharedFilters {
 #[derive(Clone, Debug)]
 pub struct SimPhysics {
     world: PhysicsWorld,
+    gravity: Vec3,
     filters: SharedFilters,
     /// The fixed terrain heightfield body, after the world has a terrain.
     terrain_body: Option<BodyId>,
@@ -39,6 +41,8 @@ pub struct SimPhysics {
     vehicle_hull: Arc<Shape>,
     /// The creation index of the next vehicle action (the `hkpWorld::addAction` order).
     next_action_order: u32,
+    /// The units that wait for their body, in the order of their proto setup.
+    pending_objects: Vec<(EntityId, Arc<PhysicsTemplate>)>,
 }
 
 impl Default for SimPhysics {
@@ -52,7 +56,9 @@ impl SimPhysics {
     /// filter infos in retail order, then the vehicle hull.
     #[must_use]
     pub fn new() -> Self {
-        let mut world = PhysicsWorld::new(WorldConfig::default());
+        let config = WorldConfig::default();
+        let gravity = config.gravity;
+        let mut world = PhysicsWorld::new(config);
         let mut create = |layer| create_collision_filter_info(&mut world, layer);
         let filters = SharedFilters {
             vehicle: create(Layer::Vehicles),
@@ -63,10 +69,12 @@ impl SimPhysics {
         };
         Self {
             world,
+            gravity,
             filters,
             terrain_body: None,
             vehicle_hull: Arc::new(vehicle_hull_shape()),
             next_action_order: 0,
+            pending_objects: Vec::new(),
         }
     }
 
@@ -81,9 +89,33 @@ impl SimPhysics {
         &mut self.world
     }
 
+    /// The world gravity: (0, −21.7, 0).
+    #[must_use]
+    pub const fn gravity(&self) -> Vec3 {
+        self.gravity
+    }
+
     /// The shared filter infos.
     pub(crate) const fn filters(&self) -> SharedFilters {
         self.filters
+    }
+
+    /// The shared filter info of the vehicles (layer Vehicles).
+    #[must_use]
+    pub const fn vehicle_filter(&self) -> FilterInfo {
+        self.filters.vehicle
+    }
+
+    /// The shared filter info of the ground vehicles (layer `NoTerrainVehicles`).
+    #[must_use]
+    pub const fn no_terrain_vehicle_filter(&self) -> FilterInfo {
+        self.filters.no_terrain_vehicle
+    }
+
+    /// The shared filter info of the buildings (layer Buildings).
+    #[must_use]
+    pub const fn building_filter(&self) -> FilterInfo {
+        self.filters.building
     }
 
     /// `BPhysicsWorld::createCollisionFilterInfo(layer)`: the layer with a new system group.
@@ -102,7 +134,8 @@ impl SimPhysics {
     }
 
     /// The shared 22-vertex vehicle hull.
-    pub(crate) fn vehicle_hull(&self) -> &Arc<Shape> {
+    #[must_use]
+    pub fn vehicle_hull(&self) -> &Arc<Shape> {
         &self.vehicle_hull
     }
 
@@ -111,6 +144,56 @@ impl SimPhysics {
         let order = self.next_action_order;
         self.next_action_order += 1;
         order
+    }
+
+    /// Queues the body of a unit. A unit that is in the queue is not added again.
+    pub(crate) fn queue_object(&mut self, unit: EntityId, template: Arc<PhysicsTemplate>) {
+        if self
+            .pending_objects
+            .iter()
+            .all(|(queued, _)| *queued != unit)
+        {
+            self.pending_objects.push((unit, template));
+        }
+    }
+
+    /// Removes a unit from the body queue.
+    pub(crate) fn cancel_pending_object(&mut self, unit: EntityId) {
+        self.pending_objects.retain(|(queued, _)| *queued != unit);
+    }
+
+    /// Takes the body queue.
+    pub(crate) fn take_pending_objects(&mut self) -> Vec<(EntityId, Arc<PhysicsTemplate>)> {
+        std::mem::take(&mut self.pending_objects)
+    }
+
+    /// Adds the state of every body to a checksum, in body id order: the transform, the
+    /// velocities and whether the body is awake.
+    pub(crate) fn hash_state(&self, checksum: &mut SyncChecksum) {
+        let world = &self.world;
+        checksum.hash_u32(self.next_action_order);
+        for body in world.bodies() {
+            checksum.hash_u32(body.raw());
+            for vector in [
+                world.position(body),
+                world.linear_velocity(body),
+                world.angular_velocity(body),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                checksum.hash_vec3(vector.x, vector.y, vector.z);
+            }
+            if let Some(rotation) = world.rotation(body) {
+                checksum.hash_vec3(rotation.x, rotation.y, rotation.z);
+                checksum.hash_f32(rotation.w);
+            }
+            checksum.hash_u32(u32::from(world.is_active(body) == Some(true)));
+        }
+        for (unit, template) in &self.pending_objects {
+            checksum.hash_u32(unit.as_u32());
+            template.hash_state(checksum);
+        }
     }
 }
 

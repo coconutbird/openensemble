@@ -9,7 +9,6 @@ use crate::entities::{SquadMode, UnitDataScalar};
 use crate::entity::Entity;
 use crate::executor::CommandExecutor;
 use crate::gameplay::GameplayCatalog;
-use crate::physics::{BoxCollider, PhysicsBody, PhysicsMaterial};
 use crate::player::{PowerGrant, TeamRelation};
 use crate::spawn::{spawn_squad_at, squad_prototype_id};
 use crate::world::powers::test_support::{data, execute_test_command, float_data};
@@ -106,11 +105,10 @@ fn wire_input_targets_in_radius_charges_jump_lands_and_honors_no_cost() {
             < 100.0
     );
     assert_close(world.get_player(1).unwrap().get_resource(0), 850.0);
+    // The landing nudge goes into the body of the target.
     let velocity = world
-        .get_unit(squad_leader(&world, target_id))
-        .unwrap()
-        .base
-        .velocity;
+        .unit_body_linear_velocity(squad_leader(&world, target_id))
+        .unwrap();
     assert!(velocity.x > 0.0 && velocity.y > 0.0);
 
     let before = world.get_player(1).unwrap().get_resource(0);
@@ -335,6 +333,7 @@ fn test_world(database: &Database, players: u8) -> World {
     let mut world = World::with_seed(31);
     world.init_players(players);
     world.configure_prototype_catalogs(database);
+    world.configure_terrain_simulation(crate::world::flat_test_terrain(4.0, 0.0));
     world
 }
 
@@ -390,15 +389,9 @@ fn attached_names(world: &World, squad_id: EntityId) -> Vec<&str> {
 }
 
 fn make_target_physical(world: &mut World, squad_id: EntityId) {
-    let unit = world.get_unit_mut(squad_leader(world, squad_id)).unwrap();
-    unit.physics = Some(PhysicsBody::ground_vehicle(
-        PhysicsMaterial::default(),
-        BoxCollider::new(Vec3::ONE, Vec3::ZERO),
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-    ));
+    let unit_id = squad_leader(world, squad_id);
+    let template = crate::physics::test_support::box_template("target", Vec3::ONE, 1.0, Vec3::Y);
+    assert!(world.create_physics_object(unit_id, &template, false));
 }
 
 fn rage_invocation(squad_id: EntityId, ignore_requirements: bool) -> RagePowerInvocation {

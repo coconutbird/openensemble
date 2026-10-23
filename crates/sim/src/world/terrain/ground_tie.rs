@@ -1,41 +1,20 @@
-//! Terrain contact of ground units and physics bodies (`BEntity_tieToGround`).
+//! Terrain contact of ground units (`BEntity_tieToGround`).
 //!
 //! Retail ties each entity with `mFlagTiesToGround` to the terrain after it moves
 //! (`BEntity_tieToGround` @ `0x140202EB0`). A unit with `mFlagPhysicsControl` skips the tie: its
-//! Havok body collides with the terrain height field. The world does the same each substep:
-//!
-//! 1. [`World::sample_physics_ground`] gives each dynamic body the terrain plane under it.
-//! 2. [`World::tie_units_to_ground`] puts each other ground unit on the terrain. A unit with
-//!    `OrientUnitWithGround` also takes its up axis from the terrain normal.
+//! Havok body collides with the terrain heightfield of the physics world.
+//! [`World::tie_units_to_ground`] puts each other ground unit on the terrain. A unit with
+//! `OrientUnitWithGround` also takes its up axis from the terrain normal.
 
+use super::ground_sample::{filter_up, sample_ground};
 use crate::EntityId;
 use crate::entities::Unit;
 use crate::entity::Entity;
-use crate::physics::{filter_up, sample_ground};
 use crate::world::World;
 use glam::Vec3;
 use std::collections::BTreeSet;
 
 impl World {
-    /// Give each dynamic physics body the terrain plane under it for the next step.
-    pub(in crate::world) fn sample_physics_ground(&mut self) {
-        let Some(terrain) = self.terrain_simulation.as_ref() else {
-            return;
-        };
-        for (_, unit) in self.units.iter_mut() {
-            if !unit.is_physics_driven() {
-                continue;
-            }
-            let position = unit.base.position;
-            let sample = sample_ground(position, unit.base.forward, |point| {
-                terrain.height(point, true)
-            });
-            if let (Some(body), Some(sample)) = (unit.physics.as_mut(), sample) {
-                body.set_ground(position, sample);
-            }
-        }
-    }
-
     /// Put each ground unit that retail ties to the ground on the terrain.
     ///
     /// When `orient` is set, a unit with `OrientUnitWithGround` also takes its up axis from the

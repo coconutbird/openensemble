@@ -415,6 +415,13 @@ impl World {
         self.body(id).map(|body| body.motion)
     }
 
+    /// The linear and angular damping (1/s).
+    #[must_use]
+    pub fn damping(&self, id: BodyId) -> Option<(f32, f32)> {
+        self.body(id)
+            .map(|body| (body.linear_damping, body.angular_damping))
+    }
+
     /// The collision filter information.
     #[must_use]
     pub fn filter_info(&self, id: BodyId) -> Option<FilterInfo> {

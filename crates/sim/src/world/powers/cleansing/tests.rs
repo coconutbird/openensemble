@@ -5,7 +5,7 @@ use crate::commands::{
     PowerCommand, PowerCommandType, PowerInputCommand, PowerInputCommandType, power_command_flags,
 };
 use crate::executor::CommandExecutor;
-use crate::physics::{BoxCollider, PhysicsBody, PhysicsMaterial};
+use crate::physics::test_support::box_template;
 use crate::player::PowerGrant;
 use crate::spawn::{spawn_squad_at, squad_prototype_id};
 use crate::world::powers::test_support::{data, execute_test_command, float_data};
@@ -230,14 +230,8 @@ fn make_aircraft_physical(world: &mut World, squad_id: EntityId) {
     let unit = world.get_unit_mut(unit_id).unwrap();
     unit.flying = true;
     unit.base.set_position(Vec3::Y * 10.0);
-    unit.physics = Some(PhysicsBody::ground_vehicle(
-        PhysicsMaterial::default(),
-        BoxCollider::new(Vec3::new(2.0, 2.0, 2.0), Vec3::ZERO),
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-    ));
+    let template = box_template("aircraft", Vec3::splat(2.0), 1.0, Vec3::ZERO);
+    assert!(world.create_physics_object(unit_id, &template, false));
 }
 
 fn invocation(

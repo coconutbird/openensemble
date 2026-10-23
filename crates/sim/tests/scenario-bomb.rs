@@ -3,8 +3,7 @@
 use glam::Vec3;
 use num_traits::ToPrimitive;
 use sim::{
-    BombPhase, GameplayCatalog, MotionType, UnitDetonatePhase, World, object_prototype_id,
-    spawn_object_at,
+    BombPhase, GameplayCatalog, UnitDetonatePhase, World, object_prototype_id, spawn_object_at,
 };
 
 const FLOOD_BOMB: &str = "fx_proj_fldbomb_01";
@@ -41,9 +40,10 @@ fn shipped_flood_bomb_loads_scenario_physics_and_executes_persistent_actions() {
         .expect("Flood bomb after first update");
     assert_eq!(bomb.bomb_phase(), BombPhase::Working);
     assert_eq!(bomb.detonate_phase(), UnitDetonatePhase::Working);
+    let body = world.unit_body(source).expect("the Flood bomb body");
     assert_eq!(
-        bomb.physics.as_ref().unwrap().motion_type(),
-        MotionType::Dynamic
+        world.physics().world().motion_type(body),
+        Some(physics::MotionType::BoxInertia)
     );
     assert!(bomb.base.position.y < position.y);
     // Retail's `BUnitActionBomb::connect` draws `mRoll` from the synchronized
@@ -92,20 +92,13 @@ fn assert_shipped_profile(gameplay: &GameplayCatalog) {
     let body = profile
         .physics_body()
         .expect("scenario-layered egg physics chain");
-    assert_eq!(body.physics_info(), "egg");
-    assert_eq!(body.material().mass.to_bits(), 20.0_f32.to_bits());
-    assert_eq!(body.material().friction.to_bits(), 2.0_f32.to_bits());
-    assert_eq!(body.material().restitution.to_bits(), 1.0_f32.to_bits());
-    assert!(
-        body.collider()
-            .half_extents
-            .abs_diff_eq(Vec3::splat(0.5), 0.000_1)
-    );
-    assert!(
-        body.collider()
-            .center_offset
-            .abs_diff_eq(Vec3::ZERO, 0.000_1)
-    );
+    assert_eq!(body.name(), "egg");
+    let main = body.main_body();
+    assert_eq!(main.mass().to_bits(), 20.0_f32.to_bits());
+    assert_eq!(main.friction().to_bits(), 2.0_f32.to_bits());
+    assert_eq!(main.restitution().to_bits(), 1.0_f32.to_bits());
+    assert!(body.half_extents().abs_diff_eq(Vec3::splat(0.5), 0.000_1));
+    assert!(body.center_offset().abs_diff_eq(Vec3::ZERO, 0.000_1));
 }
 
 fn tick(

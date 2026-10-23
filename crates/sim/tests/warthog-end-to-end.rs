@@ -1,4 +1,4 @@
-//! Checks the stock Warthog from database profiles to movement and building collisions.
+//! Checks the stock Warthog from database profiles to movement.
 
 use glam::Vec3;
 use pipeline::database::hw1::squads::{TurnRadius, UnitEntry, UnitsWrapper};
@@ -7,7 +7,7 @@ use sim::entities::squads::warthog::{WARTHOG_SQUAD_NAME, WarthogSquadSpec};
 use sim::entities::units::warthog::{WARTHOG_HITPOINTS, WARTHOG_UNIT_NAME, WarthogUnitSpec};
 use sim::{
     Command, CommandEntry, CommandExecutor, CommandPayload, GameSettings, LoadedScenario,
-    MotionType, OrderType, PlayerSettings, ScenarioData, SquadArchetype, SquadState, UnitArchetype,
+    OrderType, PlayerSettings, ScenarioData, SquadArchetype, SquadState, UnitArchetype,
     WorkCommand, World,
 };
 
@@ -21,16 +21,6 @@ const MOVEMENT_SCENARIO: &str = r#"<Scenario>
         <Object IsSquad="true" Player="1" ID="10" Position="0,0,0" Forward="1,0,0">
             unsc_veh_warthog_01
         </Object>
-    </Objects>
-</Scenario>"#;
-
-const COLLISION_SCENARIO: &str = r#"<Scenario>
-    <Players><Player Name="Cutter" Team="1" /></Players>
-    <Objects>
-        <Object IsSquad="true" Player="1" ID="10" Position="-25,0,0" Forward="1,0,0">
-            unsc_veh_warthog_01
-        </Object>
-        <Object Player="0" ID="20" Position="0,0,0">test_blocker</Object>
     </Objects>
 </Scenario>"#;
 
@@ -61,16 +51,6 @@ fn warthog_database() -> Database {
         obstruction_radius_z: Some(unit_spec.half_extents.z),
         physics_info: Some("warthog".to_owned()),
         flags: vec!["DontRotateObstruction".to_owned()],
-        ..ProtoObject::default()
-    });
-    database.objects.push(ProtoObject {
-        name: "test_blocker".to_owned(),
-        dbid: Some(9_001),
-        object_class: Some("Building".to_owned()),
-        select_type: Some("Building".to_owned()),
-        obstruction_radius_x: Some(4.0),
-        obstruction_radius_y: Some(4.0),
-        obstruction_radius_z: Some(4.0),
         ..ProtoObject::default()
     });
     database.squads.push(ProtoSquad {
@@ -119,7 +99,6 @@ fn scenario_builds_stock_warthog_unit_and_squad_profiles() {
     let squad_id = loaded.get_entity_id(10).unwrap();
     let squad = loaded.world.get_squad(squad_id).unwrap();
     let unit = loaded.world.get_unit(squad.unit_ids[0]).unwrap();
-    let body = unit.physics.as_ref().unwrap();
 
     assert_eq!(squad.archetype, SquadArchetype::Warthog);
     assert_eq!(squad.proto_squad_id, WARTHOG_PROTO_SQUAD_ID);
@@ -130,16 +109,12 @@ fn scenario_builds_stock_warthog_unit_and_squad_profiles() {
     assert_eq!(unit.archetype, UnitArchetype::Warthog);
     assert_eq!(unit.proto_object_id, WARTHOG_PROTO_OBJECT_ID);
     assert_close(unit.hitpoints, WARTHOG_HITPOINTS);
-    assert_eq!(body.motion_type(), MotionType::Dynamic);
-    assert_close(body.material().mass, 150.0);
-    assert_close(body.material().friction, 2.0);
-    assert_close(body.material().restitution, 0.5);
-    assert_eq!(body.collider().half_extents, Vec3::new(5.0, 3.0, 5.0));
-    assert_eq!(body.collider().center_offset, Vec3::new(0.0, 2.28, 0.0));
+    // The synthetic database has no physics files, so the `warthog` info makes no body.
+    assert!(unit.physics_object.is_none());
 }
 
 #[test]
-fn move_command_drives_physical_member_and_squad_end_to_end() {
+fn move_command_drives_member_and_squad_end_to_end() {
     let scenario = ScenarioData::from_xml_str(MOVEMENT_SCENARIO).unwrap();
     let database = warthog_database();
     let mut first = load_scenario_into_world(&scenario, &database);
@@ -171,48 +146,5 @@ fn move_command_drives_physical_member_and_squad_end_to_end() {
     assert_eq!(squad.state, SquadState::Idle);
     assert_eq!(unit.base.position, target);
     assert_eq!(squad.position(), target);
-    assert_eq!(first.world.checksum(), second.world.checksum());
-}
-
-#[test]
-fn warthog_collides_with_static_building_deterministically() {
-    let scenario = ScenarioData::from_xml_str(COLLISION_SCENARIO).unwrap();
-    let database = warthog_database();
-    let mut first = load_scenario_into_world(&scenario, &database);
-    let mut second = load_scenario_into_world(&scenario, &database);
-    let first_squad_id = first.get_entity_id(10).unwrap();
-    let second_squad_id = second.get_entity_id(10).unwrap();
-    let first_building_squad_id = first.get_entity_id(20).unwrap();
-    let target = Vec3::new(25.0, 0.0, 0.0);
-    issue_move(&mut first.world, first_squad_id, target);
-    issue_move(&mut second.world, second_squad_id, target);
-    let mut saw_contact = false;
-
-    for _ in 0..120 {
-        first.world.update_entities(0.05);
-        second.world.update_entities(0.05);
-        let unit_id = first.world.get_squad(first_squad_id).unwrap().unit_ids[0];
-        let body = first
-            .world
-            .get_unit(unit_id)
-            .unwrap()
-            .physics
-            .as_ref()
-            .unwrap();
-        saw_contact |= body.contacts_this_step() > 0;
-    }
-
-    let squad = first.world.get_squad(first_squad_id).unwrap();
-    let unit = first.world.get_unit(squad.unit_ids[0]).unwrap();
-    let first_building_id = first
-        .world
-        .get_squad(first_building_squad_id)
-        .unwrap()
-        .unit_ids[0];
-    let building = first.world.get_building(first_building_id).unwrap();
-    assert!(saw_contact);
-    assert!(unit.base.position.x <= -9.0 + 0.001);
-    assert_eq!(building.base.position, Vec3::ZERO);
-    assert_eq!(squad.state, SquadState::Moving);
     assert_eq!(first.world.checksum(), second.world.checksum());
 }

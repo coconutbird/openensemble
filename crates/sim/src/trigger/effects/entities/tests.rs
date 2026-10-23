@@ -1,11 +1,10 @@
 use super::*;
-use crate::physics::MotionType;
 use crate::trigger::{TriggerVar, TriggerVec3, VarType};
 use pipeline::database::hw1::gamedata::{CodeProtoObject, CodeProtoObjectsWrapper};
 use pipeline::database::hw1::{GameData, ProtoObject};
 
 #[test]
-fn obstruction_unit_uses_code_mapping_static_collider_and_retail_outputs() {
+fn obstruction_unit_uses_code_mapping_obstruction_radii_and_retail_outputs() {
     assert_eq!(
         EffectType::from_u16(833),
         Some(EffectType::CreateObstructionUnit)
@@ -66,12 +65,9 @@ fn obstruction_unit_uses_code_mapping_static_collider_and_retail_outputs() {
         obstruction.obstruction_half_extents,
         Vec3::new(29.0, 3.0, 30.0)
     );
-    let body = obstruction.physics.as_ref().expect("static collider");
-    assert_eq!(body.motion_type(), MotionType::Static);
-    assert_eq!(
-        body.collider().half_extents,
-        obstruction.obstruction_half_extents
-    );
+    // `teCreateObstructionUnit` sets the obstruction radii only (2008
+    // `triggereffect.cpp:20944-20947`); the obstruction proto has no physics info.
+    assert!(obstruction.physics_object.is_none());
     assert!(!obstruction.base.is_mobile());
 
     let unit_count = world.units.len();

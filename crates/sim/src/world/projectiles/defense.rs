@@ -364,20 +364,21 @@ impl World {
         option: DodgeOption,
         physics_impulse: f32,
     ) -> bool {
+        if physics_impulse > 0.0 {
+            let Some(mass) = self.unit_body_mass(target_id) else {
+                return false;
+            };
+            return self.apply_unit_impulse(target_id, option.direction * physics_impulse * mass);
+        }
         let Some(unit) = self.units.get_mut(target_id) else {
             return false;
         };
-        if physics_impulse > 0.0 {
-            let Some(mass) = unit.physics.as_ref().map(|body| body.material().mass) else {
-                return false;
-            };
-            return unit.apply_impulse(option.direction * physics_impulse * mass);
-        }
         unit.base.position = option.position;
         if let Some(squad) = squad {
             unit.formation_offset =
                 formation_offset_to_local(squad.forward, option.position - squad.position);
         }
+        let _moved = self.move_unit_body_to_unit(target_id);
         true
     }
 }

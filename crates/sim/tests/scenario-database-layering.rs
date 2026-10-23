@@ -1,6 +1,7 @@
 //! Checks that scenario database tables replace base tables before the simulation is built.
 
 use era::{TeaKeys, Writer};
+use pipeline::database::hw1::physics::PhysicsVehicleType;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -595,50 +596,47 @@ fn start_layered_cryo_power(loaded: &mut sim::LoadedGameScenario) -> (sim::Entit
 }
 
 fn assert_layered_vehicle_physics(loaded: &mut sim::LoadedGameScenario) {
-    let issues = loaded.simulation.gameplay.vehicle_physics_issues();
+    let issues = loaded.simulation.gameplay.physics_issues();
     assert_eq!(issues.len(), 0, "{issues:?}");
-    let profile = loaded
-        .simulation
-        .gameplay
-        .ground_vehicle_physics("SCENARIO_VEHICLE")
-        .expect("scenario vehicle physics profile");
-    assert_eq!(profile.physics_info(), "layered_vehicle");
-    assert_eq!(profile.kind(), sim::GroundVehicleKind::Ghost);
-    assert_eq!(
-        profile.collider().half_extents,
-        glam::Vec3::new(4.0, 5.0, 6.0)
+    let profile = std::sync::Arc::clone(
+        loaded
+            .simulation
+            .gameplay
+            .object_physics("SCENARIO_VEHICLE")
+            .and_then(|templates| templates.info.as_ref())
+            .expect("scenario vehicle physics info"),
     );
-    assert_eq!(
-        profile.collider().center_offset,
-        glam::Vec3::new(1.0, 2.0, 3.0)
-    );
-    assert_close(profile.material().mass, 222.0);
-    assert_close(profile.material().friction, 1.25);
-    assert_close(profile.material().restitution, 0.4);
-    assert_close(profile.material().linear_damping, 0.05);
-    assert_close(profile.material().angular_damping, 0.15);
+    assert_eq!(profile.name(), "layered_vehicle");
+    assert_eq!(profile.vehicle_type(), PhysicsVehicleType::Ghost);
+    assert_eq!(profile.half_extents(), glam::Vec3::new(4.0, 5.0, 6.0));
+    assert_eq!(profile.center_offset(), glam::Vec3::new(1.0, 2.0, 3.0));
+    let main = profile.main_body();
+    assert_close(main.mass(), 222.0);
+    assert_close(main.friction(), 1.25);
+    assert_close(main.restitution(), 0.4);
+    assert_close(main.linear_damping(), 0.05);
+    assert_close(main.angular_damping(), 0.15);
 
     let replacement = loaded
         .simulation
         .gameplay
         .physics_replacement("SCENARIO_MINELAYER")
         .expect("scenario object should load replacement physics without a detonation flag");
-    let issues = loaded.simulation.gameplay.physics_replacement_issues();
-    assert_eq!(issues.len(), 0, "{issues:?}");
-    assert_eq!(replacement.physics_info(), "layered_clamshell");
-    assert_eq!(
-        replacement.collider().half_extents,
-        glam::Vec3::new(2.0, 3.5, 2.0)
-    );
-    assert_eq!(
-        replacement.collider().center_offset,
-        glam::Vec3::new(1.0, 10.5, 3.0)
-    );
-    assert_close(replacement.material().mass, 222.0);
+    assert_eq!(replacement.name(), "layered_clamshell");
     assert!(replacement.is_clamshell());
+    assert_eq!(replacement.center_offset(), glam::Vec3::new(1.0, 10.0, 3.0));
+    let [upper, lower, pelvis] = replacement
+        .clamshell_bodies()
+        .expect("upper, lower and pelvis bodies");
+    assert_close(upper.mass(), 222.0);
+    assert_close(lower.mass(), 333.0);
+    assert_close(pelvis.mass(), 444.0);
+    assert_close(replacement.info().upper_height_offset, 2.0);
+    assert_close(replacement.info().lower_height_offset, -2.0);
 
+    let world = &mut loaded.simulation.world;
     let vehicle_id = sim::spawn_object_at(
-        &mut loaded.simulation.world,
+        world,
         &loaded.content.database,
         1,
         sim::object_prototype_id(&loaded.content.database, "scenario_vehicle").unwrap(),
@@ -646,17 +644,31 @@ fn assert_layered_vehicle_physics(loaded: &mut sim::LoadedGameScenario) {
         glam::Vec3::Z,
     )
     .expect("scenario-layered vehicle prototype");
-    let vehicle = loaded.simulation.world.get_unit(vehicle_id).unwrap();
+    world.create_pending_physics_objects();
+    let vehicle = world.get_unit(vehicle_id).unwrap();
     assert_close(vehicle.speed, 20.0);
     assert_close(vehicle.acceleration, 50.0);
     assert_close(vehicle.turn_rate_degrees, 90.0);
-    let body = vehicle.physics.as_ref().expect("dynamic Ghost body");
-    assert_eq!(body.motion_type(), sim::MotionType::Dynamic);
-    assert_eq!(body.collider(), profile.collider());
-    assert_eq!(body.material(), profile.material());
-    assert_close(body.max_speed(), 20.0);
-    assert_close(body.acceleration(), 50.0);
-    assert_close(body.turn_rate_degrees(), 90.0);
+    let state = vehicle.physics_object.as_ref().expect("the Ghost body");
+    assert_eq!(state.info(), "layered_vehicle");
+    assert!(state.has_vehicle_action());
+    let body = state.body();
+    let physics = world.physics();
+    assert_eq!(
+        physics.world().motion_type(body),
+        Some(physics::MotionType::BoxInertia)
+    );
+    assert_eq!(physics.world().mass(body), Some(222.0));
+    // `BEntity_setupVehiclePhysics`: the shared Vehicle filter and the ghost inertia
+    // `diag(m, m, 0.4·m)`.
+    assert_eq!(
+        physics.world().filter_info(body),
+        Some(physics.vehicle_filter())
+    );
+    assert_eq!(
+        physics.world().inertia_local(body),
+        Some(glam::Vec3::new(222.0, 222.0, 0.4 * 222.0))
+    );
 }
 
 fn assert_layered_mines_execution(loaded: &mut sim::LoadedGameScenario) {

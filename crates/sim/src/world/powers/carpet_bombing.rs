@@ -736,29 +736,26 @@ fn nudge_damaged_units(
         if execution.nudged_unit_ids.contains(&unit_id) {
             continue;
         }
-        let Some((mass, point, impulse)) = world.get_unit(unit_id).and_then(|unit| {
-            let body = unit.physics.as_ref()?;
+        let (Some(mass), Some(body_position)) = (
+            world.unit_body_mass(unit_id),
+            world.unit_body_position(unit_id),
+        ) else {
+            continue;
+        };
+        let Some((point, impulse)) = world.get_unit(unit_id).map(|unit| {
             let mut radial = Vec3::new(
                 unit.base.position.x - origin.x,
                 0.0,
                 unit.base.position.z - origin.z,
             )
             .normalize_or(Vec3::Z);
-            let point = unit.base.position + body.collider().center_offset
-                - radial * unit.obstruction_radius();
+            let point = body_position - radial * unit.obstruction_radius();
             radial.y = 1.0;
-            Some((
-                body.material().mass.max(0.0),
-                point,
-                radial * execution.nudge_multiplier,
-            ))
+            (point, radial * execution.nudge_multiplier)
         }) else {
             continue;
         };
-        if world
-            .get_unit_mut(unit_id)
-            .is_some_and(|unit| unit.apply_impulse_at_point(impulse * mass, point))
-        {
+        if world.apply_unit_point_impulse(unit_id, impulse * mass, point) {
             execution.nudged_unit_ids.push(unit_id);
         }
     }

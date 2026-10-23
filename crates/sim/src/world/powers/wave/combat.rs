@@ -10,7 +10,6 @@ use crate::entities::SquadMode;
 use crate::entity::Entity;
 use crate::gameplay::GameplayCatalog;
 use crate::math;
-use crate::physics::PhysicsBody;
 use crate::player::GAIA_PLAYER;
 use crate::world::World;
 use glam::Vec3;
@@ -240,11 +239,13 @@ fn nudge_unit(
     strike_position: Vec3,
 ) {
     let ball = ball_position(world, execution);
-    let Some((position, mass, flying)) = world.get_unit(unit_id).and_then(|unit| {
-        unit.physics
-            .as_ref()
-            .map(|body| (unit.base.position, body.material().mass, unit.flying))
-    }) else {
+    let Some(flying) = world.get_unit(unit_id).map(|unit| unit.flying) else {
+        return;
+    };
+    let (Some(position), Some(mass)) = (
+        world.get_unit(unit_id).map(|unit| unit.base.position),
+        world.unit_body_mass(unit_id),
+    ) else {
         return;
     };
     let mut impulse =
@@ -252,9 +253,7 @@ fn nudge_unit(
     if flying {
         impulse *= NUDGE_SCALAR_AIR;
     }
-    if let Some(unit) = world.get_unit_mut(unit_id) {
-        let _applied = unit.apply_impulse_at_point(impulse, strike_position);
-    }
+    let _applied = world.apply_unit_point_impulse(unit_id, impulse, strike_position);
 }
 
 pub(super) fn explode(
@@ -372,13 +371,17 @@ fn captured_debris_source(
 ) -> Option<CapturedDebrisSource> {
     let unit = world.get_unit(unit_id)?;
     let center_offset = unit
-        .physics
+        .physics_object
         .as_ref()
-        .map_or(Vec3::ZERO, |body| body.collider().center_offset);
+        .map_or(Vec3::ZERO, crate::physics::UnitPhysics::center_offset);
     Some(CapturedDebrisSource {
-        position: unit.base.position + center_offset,
+        position: world
+            .unit_body_position(unit_id)
+            .unwrap_or(unit.base.position),
         center_offset,
-        velocity: unit.base.velocity,
+        velocity: world
+            .unit_body_linear_velocity(unit_id)
+            .unwrap_or(unit.base.velocity),
         forward: unit.base.forward,
         proto_object_name: unit.proto_object_name.clone(),
         visual_variation_index: unit.object_state.visual_variation_index(),
@@ -457,33 +460,27 @@ fn throw_nearby_units(
         let Some(release_physics) = ensure_throw_physics(world, gameplay, unit_id) else {
             continue;
         };
-        if let Some(unit) = world.get_unit_mut(unit_id) {
-            let _started = unit.begin_throw(execution.ball_object_id, velocity, release_physics);
-        }
+        let _started =
+            world.begin_unit_throw(unit_id, execution.ball_object_id, velocity, release_physics);
     }
 }
 
+/// `BUnitActionThrown`: a unit without a body gets the body of its `PhysicsReplacementInfo`
+/// for the throw. Returns `Some(true)` for such a temporary body, `Some(false)` for a unit that
+/// has a body, and `None` for a unit that cannot get one.
 fn ensure_throw_physics(
     world: &mut World,
     gameplay: Option<&GameplayCatalog>,
     unit_id: EntityId,
 ) -> Option<bool> {
     let unit = world.get_unit(unit_id)?;
-    if unit.physics.is_some() {
+    if unit.physics_object.is_some() {
         return Some(false);
     }
-    let position = unit.base.position;
-    let profile = gameplay?.physics_replacement(&unit.proto_object_name)?;
-    let material = profile.material();
-    let collider = profile.collider();
-    let ground_height = world.terrain_height(position, true).unwrap_or(position.y);
-    world.get_unit_mut(unit_id)?.physics = Some(PhysicsBody::dynamic_replacement(
-        material,
-        collider,
-        ground_height,
-        position.y,
-    ));
-    Some(true)
+    let template = std::sync::Arc::clone(gameplay?.physics_replacement(&unit.proto_object_name)?);
+    world
+        .create_physics_object(unit_id, &template, false)
+        .then_some(true)
 }
 
 fn wave_throw_profile(

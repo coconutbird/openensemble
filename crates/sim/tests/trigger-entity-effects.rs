@@ -58,7 +58,7 @@ fn create_object_writes_retail_outputs_and_honors_no_physics() {
     assert_eq!(unit.base.position, glam::Vec3::new(10.0, 2.0, 20.0));
     assert_eq!(unit.base.forward, glam::Vec3::X);
     assert!(
-        unit.physics.is_none(),
+        unit.physics_object.is_none() && world.unit_body(created).is_none(),
         "NoPhysics removes the configured body"
     );
     assert_eq!(script_entities(&world, script_id, 4), vec![created]);

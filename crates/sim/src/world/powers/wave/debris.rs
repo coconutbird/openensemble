@@ -1,6 +1,6 @@
 //! Damage-part ripping and short-lived gravity-ball spring ownership.
 
-use super::pulling::{PullBody, PullSpring, gravity_ball_impulse};
+use super::pulling::{PullSpring, gravity_ball_impulse, pull_body};
 use super::{WavePowerExecution, ball_position};
 use crate::EntityId;
 use crate::entities::squads::formation_offset_to_world;
@@ -73,21 +73,18 @@ fn spawn_fake_part(
     let impulse = randomized_impulse(world, direction, THROW_FORCE * profile.force_multiplier());
     let impulse_point = impulse_point(world, &source, profile, direction);
     let final_impulse = impulse + source.base.velocity * SOURCE_VELOCITY_FACTOR;
-    let ground_height = world
-        .terrain_height(source.base.position, true)
-        .unwrap_or(source.base.position.y.min(0.0));
     let part_id = world.units.allocate_id();
-    let mut part =
-        source.detached_damage_part(part_id, execution.player_id, profile, ground_height);
-    if let Some(body) = &mut part.physics {
-        body.set_angular_damping(execution.profile.debris_angular_damping);
-    }
+    let mut part = source.detached_damage_part(part_id, execution.player_id, profile);
     part.set_visual_opacity(1.0);
-    let _applied = part.apply_impulse_at_point(final_impulse, impulse_point);
     if let Some(source) = world.get_unit_mut(source_id) {
         source.hide_visual_meshes(profile.mesh_names());
     }
     world.units.insert(part_id, part);
+    // `BEntity::createPhysicsObjectDirect`: the part body with the debris angular damping.
+    let _created = world.create_physics_object(part_id, profile.template(), false);
+    let _damping =
+        world.set_unit_body_angular_damping(part_id, execution.profile.debris_angular_damping);
+    let _applied = world.apply_unit_point_impulse(part_id, final_impulse, impulse_point);
     let rest_length = execution.profile.captured_spring_rest_length
         + execution
             .captured_objects
@@ -162,7 +159,7 @@ fn update_opacity(world: &mut World, execution: &WavePowerExecution, fake: WaveF
 }
 
 fn apply_spring(world: &mut World, execution: &WavePowerExecution, fake: WaveFakeObject, dt: f32) {
-    let Some(body) = world.get_unit(fake.unit_id).and_then(pull_body) else {
+    let Some(body) = pull_body(world, fake.unit_id) else {
         return;
     };
     let impulse = gravity_ball_impulse(
@@ -176,17 +173,7 @@ fn apply_spring(world: &mut World, execution: &WavePowerExecution, fake: WaveFak
             dt,
         },
     );
-    if let Some(part) = world.get_unit_mut(fake.unit_id) {
-        let _applied = part.apply_impulse(impulse);
-    }
-}
-
-fn pull_body(unit: &crate::Unit) -> Option<PullBody> {
-    unit.physics.as_ref().map(|body| PullBody {
-        center: unit.base.position + body.collider().center_offset,
-        velocity: unit.base.velocity,
-        mass: body.material().mass,
-    })
+    let _applied = world.apply_unit_impulse(fake.unit_id, impulse);
 }
 
 pub(super) fn hash_fake_objects(checksum: &mut SyncChecksum, values: &[WaveFakeObject]) {

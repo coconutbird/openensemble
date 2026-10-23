@@ -5,8 +5,9 @@ use crate::commands::{
     PowerCommand, PowerCommandType, PowerInputCommand, PowerInputCommandType, power_command_flags,
 };
 use crate::executor::CommandExecutor;
-use crate::physics::{BoxCollider, PhysicsBody, PhysicsMaterial};
+use crate::physics::test_support::box_template;
 use crate::player::PowerGrant;
+use crate::world::flat_test_terrain;
 use crate::world::powers::test_support::{data, execute_test_command, float_data, int_data};
 use pipeline::database::hw1::gamedata::{PopsWrapper, ResourceDef, ResourcesWrapper};
 use pipeline::database::hw1::powers::{DataLevel, PowerAttributes, PowerCost};
@@ -243,6 +244,7 @@ fn test_world(database: &Database) -> World {
     world.get_player_mut(2).unwrap().team_id = 2;
     world.configure_standard_team_relations();
     world.configure_prototype_catalogs(database);
+    world.configure_terrain_simulation(flat_test_terrain(4.0, 0.0));
     world
 }
 
@@ -252,17 +254,8 @@ fn add_physical_target(world: &mut World, position: Vec3) -> EntityId {
     unit.proto_object_id = 6;
     unit.proto_object_name = "target".to_owned();
     unit.set_max_hitpoints(5_000.0);
-    unit.physics = Some(PhysicsBody::ground_vehicle(
-        PhysicsMaterial {
-            mass: 10.0,
-            ..PhysicsMaterial::default()
-        },
-        BoxCollider::new(Vec3::splat(1.0), Vec3::Y),
-        0.0,
-        20.0,
-        10.0,
-        360.0,
-    ));
+    let template = box_template("target", Vec3::splat(1.0), 10.0, Vec3::Y);
+    assert!(world.create_physics_object(unit_id, &template, false));
     unit_id
 }
 

@@ -45,7 +45,6 @@ mod tower_wall;
 mod turn_in_place;
 mod turret_combat;
 mod unique_technologies;
-mod vehicle;
 mod visual_meshes;
 pub mod warthog;
 
@@ -94,14 +93,12 @@ pub use tower_wall::TowerWallAction;
 pub use turn_in_place::TurnInPlaceDirection;
 pub(crate) use turret_combat::TurretAttackPhase;
 pub use turret_combat::{TurretAttackKind, TurretAttackState, UnitTurretCombat};
-pub(crate) use vehicle::configure_ground_vehicle_physics;
 pub use visual_meshes::UnitVisualMeshMask;
 
 use super::{BaseEntity, BaseId, EntityIdle, ObjectState};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::UnitRevivalProfile;
-use crate::physics::PhysicsBody;
 use crate::player::{PlayerId, PopulationCost};
 use glam::Vec3;
 use revival::{DamageDisposition, UnitRevival};
@@ -246,8 +243,6 @@ pub struct Unit {
     pub obstruction_half_extents: Vec3,
     /// Whether this prototype blocks aircraft avoidance destinations.
     air_obstruction: air_avoidance::AirObstructionState,
-    /// Deterministic rigid body, when this object participates in physics.
-    pub physics: Option<PhysicsBody>,
     /// The Havok body and its `BUnitActionPhysics` state (`BEntity::mpPhysicsObject`).
     pub physics_object: Option<crate::physics::UnitPhysics>,
     /// Standalone movement target.
@@ -403,7 +398,6 @@ impl Default for Unit {
             ground_tie: ground_tie::UnitGroundTie::default(),
             obstruction_half_extents: Vec3::ZERO,
             air_obstruction: air_avoidance::AirObstructionState::default(),
-            physics: None,
             physics_object: None,
             move_target: None,
             attack_target: None,
@@ -554,12 +548,12 @@ impl Unit {
         self.socket_plug_id
     }
 
-    /// Check whether movement is controlled by a dynamic physics body.
+    /// Check whether a dynamic physics body controls the movement: the readback moves the unit.
     #[must_use]
     pub fn is_physics_driven(&self) -> bool {
-        self.physics
+        self.physics_object
             .as_ref()
-            .is_some_and(|body| body.motion_type() == crate::physics::MotionType::Dynamic)
+            .is_some_and(|state| !state.is_fixed())
     }
 
     /// Set both current and maximum hit points.
@@ -575,9 +569,6 @@ impl Unit {
             return;
         }
         self.speed = speed;
-        if let Some(body) = self.physics.as_mut() {
-            body.set_max_speed(speed);
-        }
     }
 
     /// Apply positive finite damage through shields, then hit points.
@@ -802,40 +793,6 @@ impl Unit {
         }
     }
 
-    /// Accumulate a force on this unit's physics body.
-    pub fn apply_force(&mut self, force: Vec3) -> bool {
-        let Some(body) = &mut self.physics else {
-            return false;
-        };
-        body.apply_force(force);
-        true
-    }
-
-    /// Apply an immediate impulse to this unit's physics body.
-    pub fn apply_impulse(&mut self, impulse: Vec3) -> bool {
-        let Some(body) = &mut self.physics else {
-            return false;
-        };
-        body.apply_impulse(&mut self.base, impulse);
-        true
-    }
-
-    /// Apply an immediate impulse at a world-space point.
-    pub fn apply_impulse_at_point(&mut self, impulse: Vec3, point: Vec3) -> bool {
-        let Some(body) = &mut self.physics else {
-            return false;
-        };
-        body.apply_impulse_at_point(&mut self.base, impulse, point);
-        true
-    }
-
-    pub(crate) fn set_physics_velocity(&mut self, velocity: Vec3) -> bool {
-        let Some(body) = &mut self.physics else {
-            return false;
-        };
-        body.set_linear_velocity(&mut self.base, velocity)
-    }
-
     /// Stop standalone movement.
     pub fn stop(&mut self) {
         let interrupted_movement = self.state == UnitState::Moving
@@ -855,21 +812,6 @@ impl Unit {
     fn update_movement(&mut self, dt: f32) {
         let reverse_move = self.is_reverse_moving();
         let velocity_scalar = self.effective_velocity_scalar();
-        let physics_replacement = self.is_physics_replacement();
-        if let Some(body) = &mut self.physics {
-            let arrived = body.update(
-                &mut self.base,
-                self.move_target,
-                dt,
-                velocity_scalar,
-                reverse_move,
-            );
-            if arrived || (!physics_replacement && self.move_target.is_none() && body.is_grounded())
-            {
-                self.stop();
-            }
-            return;
-        }
         let Some(target) = self.move_target else {
             return;
         };
@@ -890,14 +832,6 @@ impl Unit {
         self.base.velocity = direction * speed;
         self.base.position += self.base.velocity * dt;
         self.base.set_forward(desired_facing);
-    }
-
-    pub(crate) fn move_as_squad_member(&mut self, target: Vec3) {
-        if !self.is_building() && self.base.is_mobile() && self.is_operational() {
-            self.cancel_idle_action();
-            self.move_target = Some(target);
-            self.state = UnitState::Moving;
-        }
     }
 
     /// Return whether the prototype has the `UngarrisonToGaia` flag (`BProtoObject` `+1067 & 4`).
@@ -928,24 +862,18 @@ impl Entity for Unit {
         {
             self.advance_squad_ground_move(dt);
         }
-        let airborne = self
-            .physics
-            .as_ref()
-            .is_some_and(|body| !body.is_grounded());
         if !squad_ground_move
             && !squad_jump
+            && !self.is_physics_driven()
             && !self.is_incapacitated()
             && !self.is_garrisoned()
             && !self.is_undergoing_infection()
-            && (airborne
-                || (self.base.is_mobile()
-                    && (self.is_physics_replacement()
-                        || self.state == UnitState::Moving
-                        || (self.state == UnitState::Attacking && self.move_target.is_some()))))
+            && self.base.is_mobile()
+            && (self.state == UnitState::Moving
+                || (self.state == UnitState::Attacking && self.move_target.is_some()))
         {
             self.update_movement(dt);
         }
-        self.finish_throw_if_grounded();
     }
 
     fn is_alive(&self) -> bool {

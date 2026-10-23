@@ -112,29 +112,20 @@ fn nudge_units(world: &mut World, ids: &[EntityId], origin: Vec3, multiplier: f3
         return;
     }
     for id in ids {
-        let Some((mass, point, direction)) = world.get_unit(*id).and_then(|unit| {
-            let body = unit.physics.as_ref()?;
-            let mut direction = Vec3::new(
-                unit.base.position.x - origin.x,
-                0.0,
-                unit.base.position.z - origin.z,
-            )
-            .normalize_or_zero();
-            if direction == Vec3::ZERO {
-                direction = Vec3::Z;
-            }
-            direction.y = 1.0;
-            Some((
-                body.material().mass.max(0.0),
-                unit.base.position + body.collider().center_offset,
-                direction,
-            ))
-        }) else {
+        let (Some(mass), Some(point), Some(position)) = (
+            world.unit_body_mass(*id),
+            world.unit_body_position(*id),
+            world.get_unit(*id).map(|unit| unit.base.position),
+        ) else {
             continue;
         };
-        if let Some(unit) = world.get_unit_mut(*id) {
-            let _applied = unit.apply_impulse_at_point(direction * mass * multiplier, point);
+        let mut direction =
+            Vec3::new(position.x - origin.x, 0.0, position.z - origin.z).normalize_or_zero();
+        if direction == Vec3::ZERO {
+            direction = Vec3::Z;
         }
+        direction.y = 1.0;
+        let _applied = world.apply_unit_point_impulse(*id, direction * mass * multiplier, point);
     }
 }
 

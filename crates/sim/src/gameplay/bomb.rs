@@ -1,10 +1,12 @@
 //! Persistent unit `Bomb` profiles resolved from scenario-layered tactics and physics.
 
-use super::{GameplayCatalog, ObjectGameplay, PhysicsReplacementProfile, vehicle_physics};
+use super::physics_data::PhysicsCatalog;
+use super::{GameplayCatalog, ObjectGameplay};
+use crate::physics::PhysicsTemplate;
 use pipeline::database::hw1::tactics::Action;
 use pipeline::database::hw1::{Database, ProtoObject};
-use pipeline::source::{AssetSource, StdFileProvider};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 const DEFAULT_ROLL_CHANCE: f32 = 0.1;
 
@@ -15,7 +17,7 @@ pub struct BombActionProfile {
     roll_chance: f32,
     starts_disabled: bool,
     physics_info: Option<String>,
-    physics_body: Option<PhysicsReplacementProfile>,
+    physics_body: Option<Arc<PhysicsTemplate>>,
     physics_load_issue: Option<String>,
     release_physics_on_completion: bool,
 }
@@ -45,9 +47,9 @@ impl BombActionProfile {
         self.physics_info.as_deref()
     }
 
-    /// Return the body resolved through the active scenario asset stack.
+    /// Return the body template of the referenced physics info.
     #[must_use]
-    pub const fn physics_body(&self) -> Option<&PhysicsReplacementProfile> {
+    pub const fn physics_body(&self) -> Option<&Arc<PhysicsTemplate>> {
         self.physics_body.as_ref()
     }
 
@@ -107,24 +109,19 @@ pub(super) fn collect_bomb_actions(
 
 pub(super) fn load_bomb_physics(
     profiles: &mut BTreeMap<String, Vec<BombActionProfile>>,
-    source: &mut AssetSource<StdFileProvider>,
+    physics: &PhysicsCatalog,
 ) {
-    let mut cache = BTreeMap::<String, Result<PhysicsReplacementProfile, String>>::new();
     for actions in profiles.values_mut() {
         for profile in actions {
             let Some(reference) = profile.physics_info.as_deref() else {
                 continue;
             };
-            let key = reference.to_ascii_lowercase();
-            if !cache.contains_key(&key) {
-                cache.insert(
-                    key.clone(),
-                    vehicle_physics::load_dynamic_body_profile(reference, source),
-                );
-            }
-            match cache.get(&key).expect("bomb physics cache entry") {
-                Ok(body) => profile.physics_body = Some(body.clone()),
-                Err(reason) => profile.physics_load_issue = Some(reason.clone()),
+            match physics.info(reference) {
+                Some(body) => profile.physics_body = Some(Arc::clone(body)),
+                None => {
+                    profile.physics_load_issue =
+                        Some(format!("the physics info {reference} makes no body"));
+                }
             }
         }
     }

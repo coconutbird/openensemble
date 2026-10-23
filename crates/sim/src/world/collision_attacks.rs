@@ -1,14 +1,18 @@
 //! Deterministic contact-driven vehicle Ram resolution.
 
+mod obstruction;
+
+pub(crate) use obstruction::UnitCollisionContact;
+
 use super::{GeneralEvent, GeneralEventType, World, combat::AttackDamage};
 use crate::entities::{Squad, SquadMode};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::{AbilityRecoveryStart, CollisionAttackProfile, GameplayCatalog};
 use crate::math;
-use crate::physics::{UnitCollisionContact, resolve_unit_collisions};
 use crate::player::{GAIA_PLAYER, PlayerId};
 use glam::Vec3;
+use obstruction::obstruction_contacts;
 
 const RAMMER_IMPULSE_ANGLE: f32 = std::f32::consts::FRAC_PI_4;
 const RAMMER_IMPULSE_FORCE: f32 = 10.0;
@@ -67,8 +71,8 @@ impl World {
             .iter()
             .filter_map(|(id, squad)| (squad.is_being_pulled() || squad.is_jumping()).then_some(id))
             .collect();
-        let contacts = resolve_unit_collisions(&mut self.units, &excluded_squads);
-        self.activate_physics_detonation_contacts(&contacts);
+        let contacts = obstruction_contacts(&self.units, &excluded_squads);
+        self.activate_physics_detonation_contacts();
         let Some(gameplay) = gameplay else {
             self.finish_all_collision_attacks();
             return;
@@ -394,16 +398,9 @@ impl World {
         direction: Vec3,
         disposition: CollisionDisposition,
     ) {
-        let mass = self
-            .units
-            .get(target.id)
-            .and_then(|unit| unit.physics.as_ref())
-            .map(|body| body.material().mass);
-        if let Some(mass) = mass {
+        if let Some(mass) = self.unit_body_mass(target.id) {
             let impulse = rammed_impulse(direction, mass, target.velocity.y);
-            if let Some(unit) = self.units.get_mut(target.id) {
-                let _applied = unit.apply_impulse(impulse);
-            }
+            let _applied = self.apply_unit_impulse(target.id, impulse);
             return;
         }
         if disposition == CollisionDisposition::Bowlable {
@@ -489,16 +486,11 @@ impl World {
             squad.clear_attack_order();
             squad.mode = SquadMode::Normal;
         }
-        let mass = self
-            .units
-            .get(attacker.id)
-            .and_then(|unit| unit.physics.as_ref())
-            .map_or(1.0, |body| body.material().mass);
+        let mass = self.unit_body_mass(attacker.id).unwrap_or(1.0);
+        let impulse = angled_impulse(-direction, RAMMER_IMPULSE_ANGLE, RAMMER_IMPULSE_FORCE, mass);
+        let _applied = self.apply_unit_impulse(attacker.id, impulse);
         if let Some(unit) = self.units.get_mut(attacker.id) {
             unit.stop();
-            let impulse =
-                angled_impulse(-direction, RAMMER_IMPULSE_ANGLE, RAMMER_IMPULSE_FORCE, mass);
-            let _applied = unit.apply_impulse(impulse);
             unit.collision_attack.finish();
         }
     }

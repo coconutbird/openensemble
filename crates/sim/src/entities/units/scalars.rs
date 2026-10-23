@@ -228,7 +228,6 @@ mod tests {
     use super::*;
     use crate::entity::Entity;
     use crate::entity_id::{EntityClass, EntityId};
-    use crate::physics::{BoxCollider, PhysicsBody, PhysicsMaterial};
     use glam::Vec3;
 
     #[test]
@@ -257,7 +256,7 @@ mod tests {
     }
 
     #[test]
-    fn velocity_scalar_controls_kinematic_and_physics_driven_units() {
+    fn velocity_scalar_controls_kinematic_units() {
         let id = EntityId::new(EntityClass::Unit, 0);
         let mut kinematic = Unit::new(id, 1);
         kinematic.speed = 10.0;
@@ -265,20 +264,5 @@ mod tests {
         assert!(kinematic.move_to(Vec3::new(100.0, 0.0, 0.0)));
         kinematic.update(1.0);
         assert!((kinematic.base.position.x - 5.0).abs() < f32::EPSILON);
-
-        let mut physical = Unit::new(id, 1);
-        physical.velocity_scalar = 0.5;
-        physical.physics = Some(PhysicsBody::ground_vehicle(
-            PhysicsMaterial::default(),
-            BoxCollider::new(Vec3::ONE, Vec3::ZERO),
-            0.0,
-            10.0,
-            100.0,
-            360.0,
-        ));
-        assert!(physical.move_to(Vec3::new(100.0, 0.0, 0.0)));
-        physical.update(0.05);
-        assert!(physical.base.velocity.x > 0.0);
-        assert!(physical.base.velocity.length() <= 5.0 + f32::EPSILON);
     }
 }

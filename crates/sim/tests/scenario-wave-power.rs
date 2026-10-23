@@ -42,8 +42,8 @@ fn shipped_damage_part_catalog_uses_layered_visual_damage_and_model_assets() {
     assert_ne!(parts.len(), 0);
     for part in parts {
         assert_ne!(part.mesh_names(), [] as [String; 0]);
-        assert!(part.collider().half_extents.cmpgt(Vec3::ZERO).all());
-        assert!(part.material().mass > 0.0);
+        assert!(part.template().half_extents().cmpgt(Vec3::ZERO).all());
+        assert!(part.template().main_body().mass() > 0.0);
         assert!(part.force_multiplier().is_finite());
     }
 }
@@ -198,7 +198,7 @@ fn shipped_wave_throws_live_marines_with_layered_action_and_clamshell_data() {
         .world
         .get_unit(setup.target_unit_id)
         .unwrap();
-    assert!(marine.physics.is_none());
+    assert!(marine.physics_object.is_none());
     let planar = Vec3::new(
         marine.base.position.x - ball.x,
         0.0,
@@ -220,7 +220,9 @@ fn shipped_wave_throws_live_marines_with_layered_action_and_clamshell_data() {
         .unwrap();
     assert!(marine.is_thrown());
     assert_eq!(marine.thrown_by(), Some(ball_id));
-    assert!(marine.physics.as_ref().unwrap().collider().half_extents.y > 1.5);
+    // The thrown Marine takes the clamshell body of its `PhysicsReplacementInfo`.
+    let state = marine.physics_object.as_ref().unwrap();
+    assert!(state.clamshell_bodies().is_some());
     let expected_horizontal = expected_speed * 30.0_f32.to_radians().cos();
     let horizontal = Vec3::new(marine.base.velocity.x, 0.0, marine.base.velocity.z);
     assert!(horizontal.normalize().abs_diff_eq(planar, 0.000_1));
@@ -423,32 +425,20 @@ fn capture_marine_replacement(
     assert!(captured_unit.is_physics_replacement());
     assert_eq!(captured_unit.base.player_id, 1);
     assert_eq!(captured_unit.obstruction_half_extents, Vec3::ZERO);
-    assert_close(
-        captured_unit
-            .physics
-            .as_ref()
-            .unwrap()
-            .material()
-            .angular_damping,
-        0.8,
-    );
-    assert_close(
-        captured_unit
-            .physics
-            .as_ref()
-            .unwrap()
-            .material()
-            .linear_damping,
-        0.1,
-    );
+    let (linear_damping, angular_damping) = loaded
+        .simulation
+        .world
+        .unit_body_damping(captured_unit_id)
+        .unwrap();
+    assert_close(angular_damping, 0.8);
+    assert_close(linear_damping, 0.1);
     assert_proto_object(&loaded.simulation.world, pickup_id, "fx_pow_wave_pickup_01");
     let captured_variation = captured_unit.object_state.visual_variation_index();
     let center_offset = captured_unit
-        .physics
+        .physics_object
         .as_ref()
         .unwrap()
-        .collider()
-        .center_offset;
+        .center_offset();
     let captured_center = captured_unit.base.position + center_offset;
     let pickup = loaded.simulation.world.get_object(pickup_id).unwrap();
     assert!(pickup.base.position.abs_diff_eq(captured_center, 0.000_1));
@@ -543,25 +533,30 @@ fn assert_launched_marine_debris(
 }
 
 fn assert_marine_replacement_catalog(loaded: &sim::LoadedGameScenario, unit_id: EntityId) {
-    let Some(replacement) = loaded.simulation.gameplay.physics_replacement(MARINES) else {
-        panic!(
-            "scenario-layered marine PhysicsReplacementInfo; issues: {:?}",
-            loaded.simulation.gameplay.physics_replacement_issues()
-        );
-    };
-    assert!(
-        replacement.collider().half_extents.y > 1.5,
-        "Marine replacement should merge upper, lower, and pelvis bounds"
-    );
-    assert!(replacement.is_clamshell());
-    assert!(
+    let marine_issues = || {
         loaded
             .simulation
             .gameplay
-            .physics_replacement_issues()
-            .is_empty(),
+            .physics_issues()
+            .iter()
+            .filter(|issue| issue.proto_object_name().eq_ignore_ascii_case(MARINES))
+            .collect::<Vec<_>>()
+    };
+    let Some(replacement) = loaded.simulation.gameplay.physics_replacement(MARINES) else {
+        panic!(
+            "scenario-layered marine PhysicsReplacementInfo; issues: {:?}",
+            marine_issues()
+        );
+    };
+    assert!(replacement.is_clamshell());
+    assert!(
+        replacement.clamshell_bodies().is_some(),
+        "the Marine replacement has upper, lower and pelvis bodies"
+    );
+    assert!(
+        marine_issues().is_empty(),
         "shipped replacement chains should resolve: {:#?}",
-        loaded.simulation.gameplay.physics_replacement_issues()
+        marine_issues()
     );
     assert!(
         !loaded

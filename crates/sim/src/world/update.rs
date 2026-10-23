@@ -1,11 +1,35 @@
 //! Fixed-substep orchestration for authoritative world systems.
+//!
+//! One world update follows `BWorld_update` (`0x1405C5690`): the queued vehicle terrain
+//! penetrations, then the entity updates (the physics readback included), then the Havok
+//! substeps of the physics world with the full update length.
 
 use super::World;
+use crate::entities::squads::formation_offset_to_world;
 use crate::entity::Entity;
 use crate::gameplay::GameplayCatalog;
-use crate::physics::{prepare_squad_movement, substeps, sync_squad_members};
+use num_traits::ToPrimitive;
 use pipeline::database::hw1::Database;
 use std::collections::BTreeMap;
+
+/// The longest entity update step. A longer update runs several entity steps.
+const MAX_ENTITY_STEP_SECONDS: f32 = 0.05;
+/// The most entity steps of one update.
+const MAX_ENTITY_STEPS: f32 = 1_000.0;
+
+/// Splits an update into equal entity steps of at most [`MAX_ENTITY_STEP_SECONDS`]. Returns
+/// `None` for a time that is not positive and finite.
+fn entity_steps(dt: f32) -> Option<(u32, f32)> {
+    if !(dt.is_finite() && dt > 0.0) {
+        return None;
+    }
+    let count = (dt / MAX_ENTITY_STEP_SECONDS)
+        .ceil()
+        .clamp(1.0, MAX_ENTITY_STEPS)
+        .to_u32()
+        .unwrap_or(1);
+    Some((count, dt / count.to_f32().unwrap_or(1.0)))
+}
 
 impl World {
     /// Update all entities for one tick.
@@ -43,9 +67,10 @@ impl World {
         self.update_camera_shakes();
         self.update_rumbles();
         self.update_screen_fade();
-        let Some((step_count, step_duration)) = substeps(dt) else {
+        let Some((step_count, step_duration)) = entity_steps(dt) else {
             return;
         };
+        self.create_pending_physics_objects();
         self.resolve_vehicle_terrain_penetrations();
         self.update_power_visual_lifetimes();
         if let Some(gameplay) = gameplay {
@@ -112,25 +137,24 @@ impl World {
         self.update_squad_pulls(dt);
         let hardpoint_yaw_targets = self.capture_hardpoint_yaw_targets();
         self.update_transport_fly_ins(dt);
-        let physics_anchors = prepare_squad_movement(&self.squads, &mut self.units);
         for (_, squad) in self.squads.iter_mut() {
             squad.update_recovery(dt);
-            if !physics_anchors.contains_key(&squad.base.id) {
-                squad.update_with_speed_limit(dt, air_speed_limits.get(&squad.base.id).copied());
-            }
+            squad.update_with_speed_limit(dt, air_speed_limits.get(&squad.base.id).copied());
         }
+        self.update_physics_vehicle_squads();
         if let Some(gameplay) = gameplay {
             self.advance_air_avoidance(dt, gameplay);
         }
         self.update_move_air(dt);
         self.prepare_squad_ground_moves();
-        self.sample_physics_ground();
+        self.read_back_physics();
+        self.finish_unit_throws();
         for (_, unit) in self.units.iter_mut() {
             unit.update(dt);
         }
         self.tie_units_to_ground(false);
         self.resolve_collisions_and_attacks(gameplay);
-        sync_squad_members(&mut self.squads, &mut self.units, &physics_anchors);
+        sync_formation_members(self);
         self.tie_units_to_ground(true);
         self.finalize_air_avoidance_positions();
         self.update_trained_air_births(dt);
@@ -167,6 +191,37 @@ impl World {
             .collect::<Vec<_>>();
         for id in dead_squads {
             let _removed = self.remove_squad(id);
+        }
+    }
+}
+
+/// Puts each formation member that no other system moves at its formation slot around the
+/// squad, with the squad heading and velocity. A unit with a dynamic body takes its transform
+/// from the readback instead.
+fn sync_formation_members(world: &mut World) {
+    for (squad_id, squad) in world.squads.iter() {
+        if squad.is_being_pulled() || squad.is_jumping() {
+            continue;
+        }
+        let position = squad.base.position;
+        let forward = squad.base.forward;
+        let velocity = squad.base.velocity;
+        for &unit_id in &squad.unit_ids {
+            let Some(unit) = world.units.get_mut(unit_id) else {
+                continue;
+            };
+            if unit.squad_id != Some(squad_id)
+                || unit.is_physics_driven()
+                || unit.uses_move_air()
+                || unit.ground_move_owns_squad_transform()
+                || unit.is_jumping()
+            {
+                continue;
+            }
+            unit.base.position =
+                position + formation_offset_to_world(forward, unit.formation_offset);
+            unit.base.forward = forward;
+            unit.base.velocity = velocity;
         }
     }
 }

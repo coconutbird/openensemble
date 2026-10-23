@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 
 use glam::Vec3;
+use pipeline::database::hw1::physics::PhysicsVehicleType;
 use sim::{
     CommandEntry, CommandExecutor, CommandPayload, LoadedGameScenario, SquadMode, WorkCommand,
     object_prototype_id, spawn_object_at, spawn_squad_at, squad_prototype_id,
@@ -75,16 +76,16 @@ fn shipped_methane_tank_exposes_physics_death_detonation() {
         let Some(replacement) = gameplay.physics_replacement(METHANE_TANK) else {
             diagnostics.extend(
                 gameplay
-                    .physics_replacement_issues()
+                    .physics_issues()
                     .iter()
                     .filter(|issue| issue.proto_object_name().eq_ignore_ascii_case(METHANE_TANK))
-                    .map(|issue| format!("{scenario}: {}: {}", issue.asset_path(), issue.reason())),
+                    .map(|issue| format!("{scenario}: {}: {}", issue.reference(), issue.reason())),
             );
             continue;
         };
-        assert_eq!(replacement.physics_info(), "env_harvest_methanetank");
-        assert!(replacement.material().mass > 0.0);
-        assert!(replacement.collider().half_extents.min_element() > 0.0);
+        assert_eq!(replacement.name(), "env_harvest_methanetank");
+        assert!(replacement.main_body().mass() > 0.0);
+        assert!(replacement.half_extents().min_element() > 0.0);
         let detonate = gameplay
             .first_detonate_action(METHANE_TANK)
             .expect("shipped methane-tank Detonate action");
@@ -220,10 +221,8 @@ fn assert_ghost_ram_state_transition(mut loaded: LoadedGameScenario) {
     let database = &loaded.content.database;
     let gameplay = &loaded.simulation.gameplay;
     let ram_state = assert_ghost_catalog(gameplay);
-    let physics_profile = gameplay
-        .ground_vehicle_physics(GHOST)
-        .expect("shipped Ghost physics chain");
-    let pair = spawn_ghost_ram_pair(&mut loaded.simulation.world, database, physics_profile);
+    let physics_profile = std::sync::Arc::clone(ghost_physics(gameplay));
+    let pair = spawn_ghost_ram_pair(&mut loaded.simulation.world, database, &physics_profile);
     issue_ghost_ram(
         database,
         gameplay,
@@ -267,20 +266,25 @@ fn assert_ghost_catalog(gameplay: &sim::GameplayCatalog) -> sim::TacticStateId {
         .expect("Ghost RamState profile");
     assert_eq!(state.name(), "RamState");
     assert_eq!(state.run_animation(), Some("Run"));
-    let physics_profile = gameplay
-        .ground_vehicle_physics(GHOST)
-        .expect("shipped Ghost physics chain");
-    assert_eq!(physics_profile.kind(), sim::GroundVehicleKind::Ghost);
-    assert_eq!(
-        physics_profile.collider().half_extents,
-        Vec3::new(1.5, 1.0, 3.0)
-    );
-    assert_close(physics_profile.collider().center_offset.y, 2.28);
-    assert_close(physics_profile.material().mass, 150.0);
-    assert_close(physics_profile.material().friction, 2.0);
-    assert_close(physics_profile.material().restitution, 0.5);
-    assert_close(physics_profile.material().angular_damping, 0.01);
+    let physics_profile = ghost_physics(gameplay);
+    assert_eq!(physics_profile.vehicle_type(), PhysicsVehicleType::Ghost);
+    assert_eq!(physics_profile.half_extents(), Vec3::new(1.5, 1.0, 3.0));
+    assert_close(physics_profile.center_offset().y, 2.28);
+    let main = physics_profile.main_body();
+    assert_close(main.mass(), 150.0);
+    assert_close(main.friction(), 2.0);
+    assert_close(main.restitution(), 0.5);
+    assert_close(main.angular_damping(), 0.01);
     ram_state
+}
+
+fn ghost_physics(
+    gameplay: &sim::GameplayCatalog,
+) -> &std::sync::Arc<sim::physics::PhysicsTemplate> {
+    gameplay
+        .object_physics(GHOST)
+        .and_then(|templates| templates.info.as_ref())
+        .expect("shipped Ghost physics chain")
 }
 
 #[derive(Clone, Copy)]
@@ -561,7 +565,7 @@ fn unit_hitpoints(world: &sim::World, unit_ids: &[sim::EntityId]) -> f32 {
 fn spawn_ghost_ram_pair(
     world: &mut sim::World,
     database: &pipeline::database::hw1::Database,
-    physics_profile: &sim::GroundVehiclePhysicsProfile,
+    physics_profile: &sim::physics::PhysicsTemplate,
 ) -> GhostRamPair {
     world.get_player_mut(1).unwrap().team_id = 1;
     world.get_player_mut(2).unwrap().team_id = 2;
@@ -573,13 +577,21 @@ fn spawn_ghost_ram_pair(
         .expect("target Ghost");
     let attacker_id = world.get_squad(attacker_squad).unwrap().unit_ids[0];
     let target_id = world.get_squad(target_squad).unwrap().unit_ids[0];
+    world.create_pending_physics_objects();
     let attacker = world.get_unit(attacker_id).unwrap();
-    let body = attacker.physics.as_ref().expect("spawned Ghost body");
-    assert_eq!(body.collider(), physics_profile.collider());
-    assert_eq!(body.material(), physics_profile.material());
-    assert_close(body.max_speed(), 40.0);
-    assert_close(body.acceleration(), 100.0);
-    assert_close(body.turn_rate_degrees(), 1_100.0);
+    assert_close(attacker.speed, 40.0);
+    assert_close(attacker.acceleration, 100.0);
+    assert_close(attacker.turn_rate_degrees, 1_100.0);
+    let state = attacker
+        .physics_object
+        .as_ref()
+        .expect("spawned Ghost body");
+    assert_eq!(state.info(), physics_profile.name());
+    assert!(state.has_vehicle_action());
+    assert_eq!(
+        world.physics().world().mass(state.body()),
+        Some(physics_profile.main_body().mass())
+    );
     GhostRamPair {
         attacker_squad,
         target_squad,

@@ -78,9 +78,7 @@ pub(super) fn trigger_fly_in(
             destroy_carriers(world, &carrier_ids);
             return false;
         };
-        if let Some(unit) = world.get_unit_mut(carrier_unit_id) {
-            unit.physics = None;
-        }
+        world.release_physics_object(carrier_unit_id);
         carrier_ids.push(carrier_id);
         flights.push((
             carrier_id,

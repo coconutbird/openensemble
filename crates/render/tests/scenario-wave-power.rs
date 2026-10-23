@@ -134,11 +134,10 @@ fn renderer_projects_captured_marine_visual_from_debris_sim_state() {
     let captured_unit = simulation.world.get_unit(captured_id).unwrap();
     assert_eq!(captured_unit.proto_object_name, MARINES);
     let source_center_offset = captured_unit
-        .physics
+        .physics_object
         .as_ref()
         .unwrap()
-        .collider()
-        .center_offset;
+        .center_offset();
     assert!(source_center_offset.length_squared() > 0.0);
     assert!(simulation.world.submit_wave_power_input(
         &content.database,
