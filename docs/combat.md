@@ -598,6 +598,28 @@ example `unitactionrangedattack.cpp`, `damagehelper.cpp`, `projectile.cpp`,
   root transform follows the target in the sim, while GPU presentation merely
   refreshes that transform by entity ID. The renderer contains no duplicate
   movement, targeting, firing, damage, Join, or attachment lifecycle logic.
+- Weapon effect families (`world/weapon_effects/`). Damage over time: a hit
+  with a positive `DOTrate` adds a stack (attacker, team, end time
+  `(int)((float)gametime + DOTduration * 1000)`) to the receiving unit; a hit of
+  the same attacker refreshes its stack, a hit of the same effect, rate and
+  weapon-type multiplier joins that action, else a new `BUnitActionDOT` starts.
+  The first update attaches the `DOTEffect` object chosen by the obstruction
+  radius and the game data `Dot` sizes; each later update deals
+  `DOTrate * elapsed * multiplier` per stack and removes the stacks that ended.
+  Daze: before the damage, a hit on a unit of the `TargetType` dazes its squad
+  for `Daze * 1000 * DazeResist` ms unless the projectile already dazed; a
+  dazed squad only gets its time reset. The daze blocks attacks, immobilizes
+  the squad (modifier under `1e-6`) or scales the member velocity, and attaches
+  the `Stun` (infantry) or `EMP` code object. Without `AOEDaze` the projectile
+  and every projectile at the same squad stop dazing. Stasis: a fired attack of
+  a `Stasis` (with `SmartTargeting`), `StasisDrain` or `StasisBomb` weapon adds
+  one stasis field to the target squad (not a `Transporter`) and holds it until
+  the attack ends or changes target. `BUnitActionStasis` sets the squad speed
+  multiplier to `1 - n / NumStasisFieldsToStop` and, at a full stop, blocks
+  attacks, stops the squad and removes its orders. Squad movement and the
+  vehicle action input read the multiplier. A stasis beam heals its squad by
+  `DamagePerSecond * StasisHealToDrainRatio` per attack, and a `StasisBomb` hold
+  deals the area damage of the `LinkedAction` at a target with 1 HP or less.
 
 ## Known gaps
 
@@ -607,11 +629,10 @@ features are missing:
 - Actions: `PointBlankAttack` (shipped Hawk and Hornet), `AreaAttack`,
   `UnderAttack`, and the full thrown-unit and leash action. `BUnitActionThrown`
   runs only for Wave debris and bowled Ram targets (`entities/units/thrown.rs`).
-- Weapon effect families: damage over time (`DOTrate`, `DOTduration`,
-  `DOTEffect`, `BUnitActionDOT`), `Stasis`, `StasisDrain`, `StasisBomb`,
-  `Daze` (`BSquadActionDaze`), `ThrowUnits`, `CausePhysicsExplosion`,
-  `Bounces`, and `AirBurst`. The `database` crate parses these fields, but
-  `sim` does not read them.
+- Weapon effect families `CausePhysicsExplosion`, `Bounces` and `AirBurst`. The
+  `database` crate parses these fields, but `sim` does not read them.
+- Smart targeting of stasis and daze weapons (`BSquad::chooseSmartTarget`), the
+  stasis and stunned animations, and the stasis crash-delay and Dodge gates.
 - Unsupported technology effect families and non-attack recovery start events.
 - Tactic-state transitions for action families other than CollisionAttack and
   Detonate.

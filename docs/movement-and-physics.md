@@ -611,8 +611,8 @@ database beside `xgameFinal.exe`.
 - The visual parts of the ground family (treads, wheels) are not modeled. The derived ground
   actions differ only in these parts.
 - The vehicle action input has approximations (`vehicle_actions/world_input.rs`):
-  - The sim has no fatality, stasis, move-action Wait state or flight-height mesh. The input uses
-    false, 1.0, never and terrain + 16.
+  - The sim has no fatality, move-action Wait state or flight-height mesh. The input uses false,
+    never and terrain + 16. The stasis multiplier is `Squad::stasis_speed_multiplier`.
   - The move-action target is the squad `move_target`. The future positions follow a straight
     line to it.
   - `mDesiredPos` starts at the body position, not at the unit position.

@@ -83,8 +83,8 @@ gaps are in the execution.
 | `BUnitActionCollisionAttack` | Implemented | `world/collision_attacks.rs` | |
 | `BUnitActionPointBlankAttack` | Missing | — | Used by the shipped Hawk and Hornet tactics. |
 | `BUnitActionAreaAttack`, `BUnitActionUnderAttack` | Missing | — | |
-| `BUnitActionDOT` | Missing | — | The weapon `DOTrate`, `DOTduration` and `DOTEffect` fields are not read. |
-| `BUnitActionStasis`, `BSquadActionDaze` | Missing | — | The weapon `Stasis`, `StasisDrain`, `StasisBomb` and `Daze` fields are not read. |
+| `BUnitActionDOT` | Implemented | `world/weapon_effects/dot.rs` | `BUnit_applyDamageOverTimeEffect` `0x1404D7170`, `BUnitActionDOT_update` `0x1404EC550`. The effect object attaches at the unit root; the retail center offset is not modeled. |
+| `BUnitActionStasis`, `BSquadActionDaze` | Partial | `world/weapon_effects/stasis.rs`, `world/weapon_effects/daze.rs` | Stasis counters, speed multiplier, attack block, full stop, release, `StasisDrain` self heal and `StasisBomb` area damage, and the daze with its projectile `TargetAlreadyDazed` rule are implemented. Smart targeting (`chooseSmartTarget`, counter increments), the stasis and stunned animations and the controller grabs are not modeled. The self heal is applied at the next step with a database. |
 | `BUnitActionThrown` | Partial | `entities/units/thrown.rs` | The body takes the throw velocity and the throw ends on landing. Only Wave debris and bowled Ram targets are thrown. A weapon kill reads `ThrowUnits` and `PhysicsForce*`/`PhysicsLaunch*` to throw the physics replacement (`world/death_throw.rs`); a weapon does not throw a live unit. `ApplyKnockback` is in `world/combat/knockback.rs`. |
 | `BUnitActionBuilding` | Implemented | `world/production/`, `world/research.rs`, `world/construction.rs` | See `production.md` and `research.md`. |
 | `BUnitActionCapture` | Implemented | `world/capture.rs` | |
@@ -183,5 +183,5 @@ These engine systems have no code in `sim`:
 - the Reinforce, Unload, Unpack and unit-power commands;
 - the PointBlankAttack, ChangeOwner, AoeHeal, Roar, TentacleDormant, CoreSlide, Dome, AreaAttack,
   UnderAttack, RevealToTeam and AirStrike actions;
-- the weapon effect families: damage over time, stasis and daze;
+- smart targeting (`BSquad::chooseSmartTarget`) of stasis and daze weapons;
 - skulls, fatalities, corpse handling and save games.
