@@ -113,7 +113,7 @@ pub fn blended_local_transform(action: Mat4, movement: Mat4, weight: f32) -> Mat
         movement.to_scale_rotation_translation();
     Mat4::from_scale_rotation_translation(
         movement_scale.lerp(action_scale, weight),
-        movement_rotation.slerp(action_rotation, weight),
+        crate::math::quat_slerp(movement_rotation, action_rotation, weight),
         movement_translation.lerp(action_translation, weight),
     )
 }
