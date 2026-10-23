@@ -25,6 +25,20 @@ const SAMPLE_SCENARIO: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 </Scenario>"#;
 
 #[test]
+fn load_into_world_applies_allow_veterancy() {
+    let allowed = SAMPLE_SCENARIO.replace("<Positions>", "<AllowVeterancy/><Positions>");
+    let checksum = |xml: &str| {
+        let scenario = ScenarioData::from_xml_str(xml).unwrap();
+        load_scenario_into_world(&scenario, &Database::default())
+            .world
+            .checksum()
+    };
+    assert!(ScenarioData::from_xml_str(&allowed).unwrap().allow_veterancy);
+    assert!(!ScenarioData::from_xml_str(SAMPLE_SCENARIO).unwrap().allow_veterancy);
+    assert_ne!(checksum(&allowed), checksum(SAMPLE_SCENARIO));
+}
+
+#[test]
 fn test_load_into_world() {
     let scenario = ScenarioData::from_xml_str(SAMPLE_SCENARIO).unwrap();
     let db = Database {

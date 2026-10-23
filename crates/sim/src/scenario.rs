@@ -325,6 +325,8 @@ pub fn load_scenario_from_game_dir(
 ///
 /// The load runs the `Players` and `Objects` steps of [`load_scenario_from_game_dir`] and
 /// the starting units, without trigger scripts, terrain or `.sc2` and `.sc3` objects.
+/// It applies the scenario `AllowVeterancy` flag, and a missing `VisualVariationIndex`
+/// requests the visual-logic selection (`-1`), as in the installed-scenario load.
 ///
 /// # Errors
 ///
@@ -340,7 +342,7 @@ pub fn load_scenario_into_world(
         settings,
         WorldSetup {
             gameplay: GameplayCatalog::default(),
-            allows_veterancy: true,
+            allows_veterancy: scenario.allow_veterancy,
             config_symbols: None,
         },
     );

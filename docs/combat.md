@@ -556,8 +556,8 @@ example `unitactionrangedattack.cpp`, `damagehelper.cpp`, `projectile.cpp`,
   A disabled effective gate suppresses
   prototype starting levels and their unit scalars, combat and trigger XP,
   Board level inheritance, and later Spartan-to-vehicle propagation. The
-  `ScenarioData`-only helper `load_scenario_into_world` still defaults the
-  gate on and does not read `ScenarioData::allow_veterancy`.
+  `ScenarioData`-only helper `load_scenario_into_world` also applies
+  `ScenarioData::allow_veterancy`.
 - When an AOE primary target resolves through a proxy to an external shield,
   other candidate centers within the shield's authored X/Y volume are removed
   before damage-pool normalization. The original primary remains eligible for
