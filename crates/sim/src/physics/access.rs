@@ -277,3 +277,61 @@ impl World {
         true
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use glam::Vec3;
+
+    use crate::physics::test_support::{
+        TERRAIN_HEIGHT, clamshell_template, spawn_body_unit, world_with_flat_terrain,
+    };
+
+    /// The clamshell overrides of `applyImpulse`, `applyAngularImpulse`, `setLinearVelocity`,
+    /// `setAngularVelocity`, `setLinearDamping` and `setAngularDamping` reach the pelvis and
+    /// the upper and lower bodies; `applyPointImpulse` reaches only the pelvis.
+    #[test]
+    fn the_clamshell_overrides_act_on_all_three_bodies() {
+        let mut world = world_with_flat_terrain();
+        let template = clamshell_template("marine_wreck", Vec3::splat(0.3), Vec3::Y);
+        let unit = spawn_body_unit(
+            &mut world,
+            Vec3::new(50.0, TERRAIN_HEIGHT + 5.0, 50.0),
+            &template,
+        );
+        let state = world
+            .get_unit(unit)
+            .unwrap()
+            .physics_object
+            .as_ref()
+            .unwrap();
+        let [upper, lower] = state.clamshell_bodies().unwrap();
+        let bodies = [state.body, upper, lower];
+        let linear = |world: &crate::world::World| {
+            bodies.map(|body| world.physics.world().linear_velocity(body).unwrap())
+        };
+        let angular = |world: &crate::world::World| {
+            bodies.map(|body| world.physics.world().angular_velocity(body).unwrap())
+        };
+        let damping = |world: &crate::world::World| {
+            bodies.map(|body| world.physics.world().damping(body).unwrap())
+        };
+
+        assert!(world.apply_unit_impulse(unit, Vec3::X * 20.0));
+        assert_eq!(linear(&world), [Vec3::X * 2.0; 3]);
+        assert!(world.set_unit_body_linear_velocity(unit, Vec3::Z * 3.0));
+        assert_eq!(linear(&world), [Vec3::Z * 3.0; 3]);
+        assert!(world.set_unit_body_angular_velocity(unit, Vec3::Y * 0.5));
+        assert_eq!(angular(&world), [Vec3::Y * 0.5; 3]);
+        assert!(world.set_unit_body_angular_velocity(unit, Vec3::ZERO));
+        assert!(world.apply_unit_angular_impulse(unit, Vec3::Y));
+        assert!(angular(&world).iter().all(|velocity| velocity.y > 0.0));
+        assert!(world.set_unit_body_linear_damping(unit, 0.1));
+        assert!(world.set_unit_body_angular_damping(unit, 7.0));
+        assert_eq!(damping(&world), [(0.1, 7.0); 3]);
+
+        assert!(world.set_unit_body_linear_velocity(unit, Vec3::ZERO));
+        let pelvis = world.unit_body_position(unit).unwrap();
+        assert!(world.apply_unit_point_impulse(unit, Vec3::X * 20.0, pelvis));
+        assert_eq!(linear(&world), [Vec3::X * 2.0, Vec3::ZERO, Vec3::ZERO]);
+    }
+}

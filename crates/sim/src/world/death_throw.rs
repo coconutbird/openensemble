@@ -383,36 +383,4 @@ fn normalized(value: Vec3) -> Vec3 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::World;
-    use crate::gameplay::{DeathChance, GameplayCatalog};
-    use pipeline::database::hw1::Database;
-
-    #[test]
-    fn the_rocket_death_chance_resets_to_the_minimum_and_grows_after_a_failure() {
-        let mut gameplay = GameplayCatalog::from_tactics(&Database::new(), []);
-        gameplay.set_test_rocket_death(
-            "grunt",
-            Some(DeathChance {
-                max_chance: 1.5,
-                min_chance: -0.06,
-                chance_growth: 0.06,
-            }),
-        );
-        assert!(gameplay.rocket_on_death("Grunt"));
-        let mut world = World::new();
-        assert!(world.check_rocket_death_chance(&gameplay));
-        assert_eq!(world.rocket_death_chance, Some(-0.06));
-        assert!(!world.check_rocket_death_chance(&gameplay));
-        assert!(world.rocket_death_chance.unwrap().abs() < 1.0e-6);
-    }
-
-    #[test]
-    fn without_death_manager_data_there_is_no_roll() {
-        let gameplay = GameplayCatalog::from_tactics(&Database::new(), []);
-        let mut world = World::new();
-        let before = world.sim_rng;
-        assert!(!world.check_rocket_death_chance(&gameplay));
-        assert_eq!(world.sim_rng, before);
-    }
-}
+mod tests;
