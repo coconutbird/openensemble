@@ -819,14 +819,11 @@ impl Squad {
             target.z - self.base.position.z,
         );
         let distance = to_target.length();
-        // `BSquadActionMove::calcMovement` moves the squad on the X/Z plane only (2008
-        // `squadactionmove.cpp:2693-2731`), so the arrival keeps the squad height. The ground
-        // snap and the hover flight action own that height.
-        let arrival = Vec3::new(target.x, self.base.position.y, target.z);
+
         if distance < ARRIVAL_THRESHOLD {
             // Arrived at destination
-            self.base.position = arrival;
-            self.set_leash_position(arrival, true);
+            self.base.position = target;
+            self.set_leash_position(target, true);
             self.finish_current_movement();
             return true;
         }
@@ -855,8 +852,8 @@ impl Squad {
 
         if move_distance >= distance && movement_direction.dot(direction) > 0.999 {
             // Would overshoot, just arrive
-            self.base.position = arrival;
-            self.set_leash_position(arrival, true);
+            self.base.position = target;
+            self.set_leash_position(target, true);
             self.finish_current_movement();
             return true;
         }
