@@ -410,3 +410,79 @@ fn scenario_configures_player_rates_from_layered_game_data() {
         assert!(player.get_rate(0).abs() <= f32::EPSILON);
     }
 }
+
+#[test]
+fn class_zero_objects_keep_their_authored_height_and_squads_take_the_terrain() {
+    // `BSquad::settle` ties a new squad to the ground. A class-zero object ties only after
+    // it moves (`BEntity_update`), so it keeps the authored height.
+    let scenario = ScenarioData::from_xml_str(
+        r#"<Scenario><Players>
+            <Player Name="P1" Civ="UNSC" Leader1="Cutter" Team="1" />
+        </Players><Objects>
+            <Object IsSquad="true" Player="1" ID="0" Position="20,7,30">marine_squad</Object>
+            <Object IsSquad="false" Player="1" ID="1" Position="40,7,30">rock</Object>
+        </Objects></Scenario>"#,
+    )
+    .unwrap();
+    let database = Database {
+        objects: vec![
+            ProtoObject {
+                name: "marine".to_owned(),
+                object_class: Some("Unit".to_owned()),
+                ..ProtoObject::default()
+            },
+            ProtoObject {
+                name: "rock".to_owned(),
+                object_class: Some("Object".to_owned()),
+                ..ProtoObject::default()
+            },
+        ],
+        squads: vec![ProtoSquad {
+            name: "marine_squad".to_owned(),
+            units: Some(pipeline::database::hw1::squads::UnitsWrapper {
+                entries: vec![pipeline::database::hw1::squads::UnitEntry {
+                    proto_object: "marine".to_owned(),
+                    count: 1,
+                    role: None,
+                }],
+            }),
+            ..ProtoSquad::default()
+        }],
+        ..Database::default()
+    };
+    let settings = GameSettings::skirmish(vec![PlayerSettings::default(); 8], 0);
+    let mut builder = ScenarioBuilder::new(
+        &scenario,
+        &database,
+        &settings,
+        WorldSetup {
+            gameplay: GameplayCatalog::default(),
+            allows_veterancy: false,
+            config_symbols: None,
+        },
+    );
+    builder
+        .loaded
+        .world
+        .configure_terrain_simulation(crate::world::sampled_test_terrain(8, 1.0, |x, _| 0.25 * x));
+    builder.players().unwrap();
+    builder.objects(scenario.objects(), VisualVariations::Authored);
+    let loaded = builder.finish();
+    let position = |id| {
+        loaded
+            .world
+            .entity_position(loaded.scenario_id_to_entity_id[&id])
+            .unwrap()
+    };
+
+    assert!(
+        (position(0).y - 5.0).abs() < 1.0e-4,
+        "squad {}",
+        position(0)
+    );
+    assert!(
+        (position(1).y - 7.0).abs() < 1.0e-4,
+        "object {}",
+        position(1)
+    );
+}

@@ -140,7 +140,8 @@ fn blood_gulch_objects_and_starts_sit_at_their_authored_positions() {
                     && (position.z - authored.z).abs() < 1.0e-3,
                 "{label} sits at {position}, authored at {authored}"
             );
-            if object.no_tie_to_ground() {
+            // A class-zero object ties to the ground only after it moves (`BEntity_update`).
+            if object.no_tie_to_ground() || entity_id.class() == Some(sim::EntityClass::Object) {
                 test_support::assert_close(position.y, authored.y);
                 continue;
             }

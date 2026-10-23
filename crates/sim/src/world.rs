@@ -89,6 +89,8 @@ mod squad_carpet_bomb;
 mod team;
 mod technology;
 mod terrain;
+#[cfg(test)]
+pub(crate) use terrain::sampled_test_terrain;
 mod time;
 mod timers;
 mod tower_walls;

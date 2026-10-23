@@ -6,7 +6,7 @@ use glam::Vec3;
 use pipeline::database::hw1::Database;
 
 use super::player_setup::PlayerSetup;
-use super::prototypes::code_proto_object_index;
+use super::prototypes::{code_proto_object_index, is_class_zero_object};
 use super::{
     LoadedScenario, ScenarioObject, apply_scenario_visual_variation, placed, representative_unit_id,
 };
@@ -83,7 +83,7 @@ pub(super) fn load_objects(
             }
         }
         let mut position = Vec3::from_array(authored_position);
-        if !object.no_tie_to_ground() {
+        if !object.no_tie_to_ground() && !is_class_zero(&proto) {
             position.y = ground_height(&scenario.world, position);
         }
         let forward = Vec3::from_array(object.forward_vec3());
@@ -115,6 +115,17 @@ pub(super) fn load_objects(
             .scenario_id_to_entity_id
             .insert(object.id, entity_id);
     }
+}
+
+/// Return whether a scenario proto creates a class-zero object.
+///
+/// Retail ties only squads to the ground at creation (`BSquad::settle`). `BObject_initFromProto`
+/// @ `0x14029C300` sets `mFlagTiesToGround`, but a class-zero object calls `BEntity_tieToGround`
+/// only after it moves (`BEntity_update`), so it keeps its authored height. The
+/// `IncludeInSimRep` flag only sets the `appearsBelowDecals` create parameter of
+/// `BWorld_createEntity` (`0x14037DE9F`), which changes the decal order of the render.
+fn is_class_zero(proto: &ScenarioProto<'_>) -> bool {
+    matches!(proto, ScenarioProto::Object(_, prototype) if is_class_zero_object(prototype))
 }
 
 /// Terrain height below a world position, or the position height without terrain.
