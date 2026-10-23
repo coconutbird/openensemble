@@ -216,6 +216,22 @@ fn assert_captured_debris_source(
     let (linear_damping, angular_damping) = world.unit_body_damping(captured_unit_id).unwrap();
     assert_close(angular_damping, 0.8);
     assert_close(linear_damping, 0.1);
+    let execution = &world.active_wave_powers()[0];
+    let pull = world.unit_gravity_ball_pull(captured_unit_id).unwrap();
+    assert_eq!(pull.ball(), execution.ball_object_id());
+    let profile = &execution.profile;
+    assert_eq!(
+        pull.spring(),
+        crate::physics::GravityBallSpring {
+            rest_length: profile.captured_spring_rest_length,
+            strength: profile.captured_spring_strength,
+            damping: profile.captured_spring_dampening,
+            minimum_lateral_speed: profile.captured_minimum_lateral_speed,
+        }
+    );
+    let physics = captured_unit.physics_object.as_ref().unwrap();
+    assert!(!physics.flags.complete_on_inactive);
+    assert!(!physics.flags.waiting);
     let velocity = world.unit_body_linear_velocity(captured_unit_id).unwrap();
     assert!(velocity.length() > 0.0);
     world

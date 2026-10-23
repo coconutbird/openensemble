@@ -517,7 +517,7 @@ fn process_damage_ticks(
             return false;
         }
         let target = beam_position(world, execution);
-        physics::impulse_air_units(world, target);
+        physics::impulse_air_units(world, gameplay, target);
         let source_id = owner_leader_id(world, execution.owner_squad_id);
         let projectile_id = launch_power_projectile(
             world,

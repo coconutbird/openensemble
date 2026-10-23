@@ -144,7 +144,13 @@ fn frozen_kill_budget_is_strict_but_transporters_always_die() {
 
     world.game_time_ms = 150;
     world.update_entities_with_database(0.05, &database);
-    assert!(world.get_squad(transporter).is_none());
+    // The power update runs after the unit updates, so the killed transporter goes in the
+    // next update.
+    assert!(
+        world
+            .get_squad(transporter)
+            .is_none_or(|squad| !squad.is_alive())
+    );
     assert_eq!(
         world.active_cryo_powers()[0]
             .killable_hitpoints_left()

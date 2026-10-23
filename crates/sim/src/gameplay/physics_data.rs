@@ -186,6 +186,19 @@ impl GameplayCatalog {
             .replacement = Some(template);
     }
 
+    #[cfg(test)]
+    pub(crate) fn insert_test_physics_info(
+        &mut self,
+        proto_object_name: &str,
+        template: Arc<PhysicsTemplate>,
+    ) {
+        self.physics
+            .objects
+            .entry(proto_object_name.to_ascii_lowercase())
+            .or_default()
+            .info = Some(template);
+    }
+
     /// The body of a blueprint (any case), for code-built bodies such as debris parts.
     #[must_use]
     pub fn physics_blueprint(&self, name: &str) -> Option<&PhysicsBlueprintBody> {

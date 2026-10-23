@@ -77,10 +77,6 @@ impl World {
         if let Some(gameplay) = gameplay {
             self.grant_secondary_turret_scan_tokens(gameplay);
         }
-        if let Some(database) = database {
-            self.update_active_powers(dt, database, gameplay);
-            self.resolve_pending_rage_kills(Some(database));
-        }
         for _ in 0..step_count {
             self.update_entity_substep(step_duration, database, gameplay);
         }
@@ -91,6 +87,12 @@ impl World {
         }
         self.read_back_object_physics();
         self.update_object_states();
+        // `BWorld::updatePostAsync` (2008 `world.cpp:3331-3368`): the power manager runs after
+        // the units (and so after their physics readback) and right before the physics step.
+        if let Some(database) = database {
+            self.update_active_powers(dt, database, gameplay);
+            self.resolve_pending_rage_kills(Some(database));
+        }
         self.step_physics(dt);
     }
 
@@ -100,7 +102,7 @@ impl World {
         database: Option<&Database>,
         gameplay: Option<&GameplayCatalog>,
     ) {
-        self.update_cryo(dt);
+        self.update_cryo(dt, gameplay);
         let air_speed_limits = gameplay.map_or_else(BTreeMap::new, |gameplay| {
             self.prepare_air_avoidance(dt, gameplay)
         });

@@ -8,8 +8,8 @@ use ::physics::{
 use crate::entity_id::EntityId;
 use crate::world::World;
 
+use super::gravity_ball::apply_physics_actions;
 use super::unit::{CollisionRecord, UnitPhysicsContacts};
-use super::vehicle_actions::apply_vehicle_actions;
 
 impl World {
     /// `BWorld_resolvePhysicsVehicleTerrainCollisions` (`0x1405D4090`): fixes each vehicle whose
@@ -32,26 +32,9 @@ impl World {
         }
     }
 
-    /// The units whose vehicle action runs this substep: an active body with an action, in
-    /// action creation order.
-    pub(crate) fn active_vehicle_actions(&self) -> Vec<EntityId> {
-        let world = self.physics.world();
-        let mut actions: Vec<(u32, EntityId)> = self
-            .units
-            .iter()
-            .filter_map(|(id, unit)| {
-                let state = unit.physics_object.as_ref()?;
-                (state.action.is_some() && world.is_active(state.body) == Some(true))
-                    .then_some((state.action_order, id))
-            })
-            .collect();
-        actions.sort_unstable();
-        actions.into_iter().map(|(_, id)| id).collect()
-    }
-
     /// `BPhysicsWorld_update` (`0x1407BBB40`): splits the elapsed time into substeps. Each
-    /// substep applies the vehicle actions, then steps the Havok world. The listener reports
-    /// the new contact points of each step to their units.
+    /// substep applies the Havok actions (vehicle and gravity ball), then steps the Havok world.
+    /// The listener reports the new contact points of each step to their units.
     pub(crate) fn step_physics(&mut self, elapsed: f32) {
         for (_, unit) in self.units.iter_mut() {
             if let Some(state) = unit.physics_object.as_mut() {
@@ -63,7 +46,7 @@ impl World {
         }
         let (count, dt) = PhysicsWorld::substeps(elapsed);
         for _ in 0..count {
-            apply_vehicle_actions(self, dt);
+            apply_physics_actions(self, dt);
             let mut listener = StepListener::new(self);
             self.physics.world_mut().step_delta_time(dt, &mut listener);
             for (unit_id, record) in listener.records {

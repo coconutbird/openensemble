@@ -532,7 +532,7 @@ fn update_execution(
     execution: &mut WavePowerExecution,
 ) -> bool {
     execution.elapsed_seconds += dt;
-    debris::update_fake_objects(world, execution, dt);
+    debris::update_fake_objects(world, execution);
     if execution.state == WaveGravityBallState::Exploding {
         execution.explode_cooldown_left -= dt;
         return execution.explode_cooldown_left > 0.0;
@@ -546,7 +546,7 @@ fn update_execution(
     }
     move_ball(world, execution, dt);
     update_revealed_teams(world, execution);
-    pulling::update(world, database, gameplay, execution, dt);
+    pulling::update(world, database, gameplay, execution);
     execution
         .active_projectile_ids
         .retain(|projectile_id| world.get_projectile(*projectile_id).is_some());
@@ -716,10 +716,15 @@ fn activate_owner(world: &mut World, execution: &WavePowerExecution) {
     }
 }
 
+/// Ends the execution. The captured objects drop as in `BPowerWave::failPulling` (2008
+/// `powerwave.cpp:1461-1499`): no gravity-ball action, complete-on-inactive, no pickup
+/// attachment.
 fn cleanup_execution(world: &mut World, execution: &mut WavePowerExecution) {
     let _ball = world.remove_unit(execution.ball_object_id);
     execution.ball_object_id = EntityId::INVALID;
     for captured in &execution.captured_objects {
+        let _pull = world.remove_gravity_ball_pull(captured.unit_id);
+        let _complete = world.set_unit_physics_complete_on_inactive(captured.unit_id, true);
         let _attachment = world.remove_object(captured.pickup_attachment_id);
         if let Some(unit) = world.get_unit_mut(captured.unit_id) {
             unit.set_auto_attackable(captured.was_auto_attackable);

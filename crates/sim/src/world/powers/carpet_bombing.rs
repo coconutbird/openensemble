@@ -4,6 +4,7 @@ use super::common::{
     Bomber, BomberProfile, PowerPayment, consume_power, create_power_visual, validate_power_type,
     validate_requirements,
 };
+use super::physics_helper::nudge_direction;
 use super::projectile::{PowerProjectileLaunch, launch_power_projectile};
 use super::{
     NativePowerError, NativePowerInput, NativePowerInvocation, PowerExecutionId, power_by_id,
@@ -723,41 +724,36 @@ pub(super) fn notify_projectile_impact(
         .insert(index, execution);
 }
 
+/// `BPowerCarpetBombing_projectileImpact` (`0x140304CC0`, 2008 `powercarpetbombing.cpp:993-1030`):
+/// each damaged unit with a body that this power has not nudged yet gets
+/// `applyPointImpulse(NudgeMultiplier · m · (normalize(dir.xz), 1), com − radius · dir)` with
+/// `dir = normalize(unit − impact)`. A unit at the impact gives a NaN impulse, which the DE
+/// wrapper replaces with zero.
 fn nudge_damaged_units(
     world: &mut World,
     execution: &mut CarpetBombingPowerExecution,
     origin: Vec3,
     damaged_unit_ids: &[EntityId],
 ) {
-    if execution.nudge_multiplier <= 0.0 {
-        return;
-    }
     for &unit_id in damaged_unit_ids {
         if execution.nudged_unit_ids.contains(&unit_id) {
             continue;
         }
-        let (Some(mass), Some(body_position)) = (
+        let (Some(mass), Some(center), Some((position, radius))) = (
             world.unit_body_mass(unit_id),
-            world.unit_body_position(unit_id),
+            world.unit_body_center_of_mass(unit_id),
+            world
+                .get_unit(unit_id)
+                .map(|unit| (unit.base.position, unit.obstruction_radius())),
         ) else {
             continue;
         };
-        let Some((point, impulse)) = world.get_unit(unit_id).map(|unit| {
-            let mut radial = Vec3::new(
-                unit.base.position.x - origin.x,
-                0.0,
-                unit.base.position.z - origin.z,
-            )
-            .normalize_or(Vec3::Z);
-            let point = body_position - radial * unit.obstruction_radius();
-            radial.y = 1.0;
-            (point, radial * execution.nudge_multiplier)
-        }) else {
-            continue;
-        };
-        if world.apply_unit_point_impulse(unit_id, impulse * mass, point) {
-            execution.nudged_unit_ids.push(unit_id);
-        }
+        let away = position - origin;
+        let direction = away / away.length();
+        let point = center - radius * direction;
+        let impulse = execution.nudge_multiplier * (mass * nudge_direction(direction));
+        let _applied = world.apply_unit_point_impulse(unit_id, impulse, point);
+        execution.nudged_unit_ids.push(unit_id);
     }
 }
 

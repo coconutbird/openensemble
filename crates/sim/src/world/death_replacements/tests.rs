@@ -132,7 +132,7 @@ fn frozen_shatter_replacement_transforms_but_continues_normal_death_cleanup() {
     assert!(world.get_unit(source_id).unwrap().is_shatter_on_death());
 
     assert!(world.kill_unit(source_id, false));
-    world.update_cryo(10.0);
+    world.update_cryo(10.0, None);
     assert!(
         world.get_unit(source_id).unwrap().is_shatter_on_death(),
         "death captures the frozen flag before the owning squad thaws"

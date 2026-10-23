@@ -8,6 +8,7 @@ use glam::Vec3;
 use ::physics::{BodyId, ConstraintId};
 
 use super::death::{ClamshellAnimation, DeathPhysics};
+use super::gravity_ball::GravityBallPull;
 use super::vehicle_actions::VehicleAction;
 use crate::sync::SyncChecksum;
 
@@ -34,6 +35,8 @@ pub struct UnitPhysics {
     pub(crate) action: Option<VehicleAction>,
     /// The creation index of the action: the actions run in this order.
     pub(crate) action_order: u32,
+    /// The gravity ball pull action of the Wave power on the body.
+    pub(crate) gravity_ball: Option<GravityBallPull>,
     /// The state of the `BUnitActionPhysics` and of the vehicle action that the sim reads.
     pub(crate) flags: UnitPhysicsFlags,
     /// What the contact listener saw since the last readback.
@@ -120,6 +123,7 @@ impl UnitPhysics {
             clamshell: None,
             action: None,
             action_order: 0,
+            gravity_ball: None,
             flags: UnitPhysicsFlags::default(),
             contacts: UnitPhysicsContacts::default(),
             death: DeathPhysics::default(),
@@ -205,6 +209,9 @@ impl UnitPhysics {
         if let Some(action) = &self.action {
             checksum.hash_u32(self.action_order);
             action.hash_state(checksum);
+        }
+        if let Some(pull) = &self.gravity_ball {
+            pull.hash_state(checksum);
         }
         let flags = self.flags;
         for flag in [

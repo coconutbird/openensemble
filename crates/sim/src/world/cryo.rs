@@ -1,10 +1,20 @@
 //! Authoritative application and ticking of retail squad cryo actions.
 
 use super::World;
-use crate::entities::squads::{SquadCryoConfig, SquadCryoEffect};
+use super::powers::physics_helper::{AirImpulse, impulse_physics_air_unit};
+use crate::entities::squads::{SquadCryoConfig, SquadCryoEffect, SquadCryoState};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
+use crate::gameplay::GameplayCatalog;
+use num_traits::ToPrimitive;
 use pipeline::database::hw1::{Database, GameData, Squad as ProtoSquad};
+
+/// The chance in percent per second of the cryo aircraft impulse while freezing or thawing.
+const AIR_IMPULSE_PERCENT: f32 = 100.0;
+/// The chance in percent per second of the cryo aircraft impulse while frozen.
+const FROZEN_AIR_IMPULSE_PERCENT: f32 = 150.0;
+/// `dword_1411F3D10`: the impulse scale of the cryo aircraft impulse.
+const CRYO_AIR_IMPULSE_SCALE: f32 = 0.5;
 
 impl World {
     /// Apply cryo depletion to a squad using the active layered database.
@@ -96,7 +106,18 @@ impl World {
         true
     }
 
-    pub(super) fn update_cryo(&mut self, dt: f32) {
+    /// Runs the `SquadCryo` action of each squad: the aircraft impulses, then the cryo state.
+    pub(super) fn update_cryo(&mut self, dt: f32, gameplay: Option<&GameplayCatalog>) {
+        let squad_ids = self
+            .squads
+            .iter()
+            .filter_map(|(squad_id, squad)| {
+                (squad.cryo_state() != SquadCryoState::None).then_some(squad_id)
+            })
+            .collect::<Vec<_>>();
+        for squad_id in squad_ids {
+            self.impulse_cryo_air_units(squad_id, dt, gameplay);
+        }
         let changed = self
             .squads
             .iter_mut()
@@ -104,6 +125,44 @@ impl World {
             .collect::<Vec<_>>();
         for squad_id in changed {
             self.sync_squad_cryo_effect(squad_id);
+        }
+    }
+
+    /// `BSquadActionCryo_impulseAirUnits` (`0x1403B9900`, 2008 `squadactioncryo.cpp:574-591`):
+    /// with a chance of `pct · elapsed` percent (`pct` 150 when frozen, else 100, truncated),
+    /// each unit gets `impulsePhysicsAirUnit(unit, 0.5)` toward a random point below it.
+    fn impulse_cryo_air_units(
+        &mut self,
+        squad_id: EntityId,
+        dt: f32,
+        gameplay: Option<&GameplayCatalog>,
+    ) {
+        let Some(squad) = self.squads.get(squad_id) else {
+            return;
+        };
+        let percent = if squad.cryo_state() == SquadCryoState::Frozen {
+            FROZEN_AIR_IMPULSE_PERCENT
+        } else {
+            AIR_IMPULSE_PERCENT
+        };
+        let unit_ids = squad.unit_ids.clone();
+        // `cvttss2si`: the chance truncates toward zero.
+        let chance = (percent * dt).to_i32().unwrap_or(i32::MAX);
+        let roll = i32::try_from(self.trigger_random_index(100)).unwrap_or(i32::MAX);
+        if roll > chance {
+            return;
+        }
+        for unit_id in unit_ids {
+            let _impulsed = impulse_physics_air_unit(
+                self,
+                gameplay,
+                unit_id,
+                AirImpulse {
+                    scale: CRYO_AIR_IMPULSE_SCALE,
+                    target: None,
+                    radius: 0.0,
+                },
+            );
         }
     }
 

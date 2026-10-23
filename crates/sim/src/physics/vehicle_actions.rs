@@ -6,7 +6,7 @@
 //! Each Havok substep applies the actions of the active bodies before the step.
 //!
 //! The actions read their unit and squad through [`VehicleActionInput`], which
-//! [`apply_vehicle_actions`] builds from the sim `World` for each substep.
+//! [`apply_vehicle_action`] builds from the sim `World` for each substep.
 
 mod frame;
 mod ghost;
@@ -238,16 +238,8 @@ impl VehicleAction {
     }
 }
 
-/// Applies the action of each active vehicle body for one Havok substep of `dt` seconds, in
-/// action creation order.
-pub(crate) fn apply_vehicle_actions(world: &mut World, dt: f32) {
-    for unit in world.active_vehicle_actions() {
-        apply_vehicle_action(world, unit, dt);
-    }
-}
-
-/// Applies the action of one unit for one substep.
-fn apply_vehicle_action(world: &mut World, unit_id: EntityId, dt: f32) {
+/// Applies the vehicle action of one unit for one substep.
+pub(crate) fn apply_vehicle_action(world: &mut World, unit_id: EntityId, dt: f32) {
     let Some(mut action) = world
         .units
         .get_mut(unit_id)

@@ -24,12 +24,12 @@ fn layered_resistance_and_globals_drive_freeze_then_thaw() {
     );
     assert!(!unit.is_shatter_on_death());
 
-    world.update_cryo(3.0);
+    world.update_cryo(3.0, None);
     assert_eq!(
         world.get_squad(squad_id).unwrap().cryo_state(),
         SquadCryoState::Thawing
     );
-    world.update_cryo(1.0);
+    world.update_cryo(1.0, None);
     assert_eq!(
         world.get_squad(squad_id).unwrap().cryo_state(),
         SquadCryoState::None

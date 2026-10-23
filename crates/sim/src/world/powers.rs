@@ -18,6 +18,7 @@ mod invocation;
 mod manager;
 mod odst;
 mod orbital;
+pub(super) mod physics_helper;
 mod projectile;
 mod rage;
 mod repair;

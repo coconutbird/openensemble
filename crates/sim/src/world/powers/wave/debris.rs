@@ -1,14 +1,13 @@
-//! Damage-part ripping and short-lived gravity-ball spring ownership.
+//! Damage-part ripping and the short-lived gravity-ball pull of the ripped parts.
 
-use super::pulling::{PullSpring, gravity_ball_impulse, pull_body};
-use super::{WavePowerExecution, ball_position};
+use super::WavePowerExecution;
+use super::pulling::capture_spring;
 use crate::EntityId;
 use crate::entities::squads::formation_offset_to_world;
 use crate::gameplay::{GameplayCatalog, ThrownDamagePart};
 use crate::sync::SyncChecksum;
 use crate::world::World;
 use glam::Vec3;
-use num_traits::ToPrimitive;
 
 const FAKE_OBJECT_LIFESPAN: f32 = 0.3;
 const FAKE_OBJECT_ALPHA_FADE: f32 = 0.45;
@@ -18,12 +17,11 @@ const IMPULSE_SCALE_MINIMUM: f32 = 0.6;
 const IMPULSE_SCALE_MAXIMUM: f32 = 1.4;
 const MAXIMUM_POINT_OFFSET: f32 = 0.1;
 
-/// A Wave-ripped part pulled briefly by a spring without becoming captured debris.
+/// A Wave-ripped part pulled briefly by the ball without becoming captured debris.
 #[derive(Debug, Clone, Copy)]
 pub struct WaveFakeObject {
     unit_id: EntityId,
     expires_at_seconds: f32,
-    rest_length: f32,
 }
 
 impl WaveFakeObject {
@@ -45,7 +43,6 @@ pub(super) fn rip_part_off_unit(
     gameplay: Option<&GameplayCatalog>,
     execution: &mut WavePowerExecution,
     source_id: EntityId,
-    dt: f32,
 ) -> Option<EntityId> {
     let source_name = world.get_unit(source_id)?.proto_object_name.clone();
     let damage_parts = gameplay?.damage_parts(&source_name)?;
@@ -58,7 +55,7 @@ pub(super) fn rip_part_off_unit(
     let part = damage_parts
         .impact_point((impact_roll % impact_count) as usize)?
         .clone();
-    spawn_fake_part(world, execution, source_id, &part, dt)
+    spawn_fake_part(world, execution, source_id, &part)
 }
 
 fn spawn_fake_part(
@@ -66,7 +63,6 @@ fn spawn_fake_part(
     execution: &mut WavePowerExecution,
     source_id: EntityId,
     profile: &ThrownDamagePart,
-    dt: f32,
 ) -> Option<EntityId> {
     let source = world.get_unit(source_id)?.clone();
     let direction = formation_offset_to_world(source.base.forward, profile.throw_center_offset());
@@ -85,21 +81,21 @@ fn spawn_fake_part(
     let _damping =
         world.set_unit_body_angular_damping(part_id, execution.profile.debris_angular_damping);
     let _applied = world.apply_unit_point_impulse(part_id, final_impulse, impulse_point);
-    let rest_length = execution.profile.captured_spring_rest_length
-        + execution
-            .captured_objects
-            .len()
-            .to_f32()
-            .unwrap_or(f32::MAX)
-            * execution.profile.captured_radial_spacing;
-    let fake = WaveFakeObject {
+    grab_fake_object(world, execution, part_id);
+    execution.fake_objects.push(WaveFakeObject {
         unit_id: part_id,
         expires_at_seconds: execution.elapsed_seconds + FAKE_OBJECT_LIFESPAN,
-        rest_length,
-    };
-    apply_spring(world, execution, fake, dt);
-    execution.fake_objects.push(fake);
+    });
     Some(part_id)
+}
+
+/// `BPowerWave_grabFakeObject` (`0x1403324B0`, 2008 `powerwave.cpp:2090-2147`): the physics
+/// action back to its update state with complete-on-inactive, and a gravity-ball pull action
+/// without extra bodies. The rest length counts the captured objects.
+fn grab_fake_object(world: &mut World, execution: &WavePowerExecution, part_id: EntityId) {
+    let _restarted = world.restart_unit_physics_action(part_id, true);
+    let _pull =
+        world.add_gravity_ball_pull(part_id, execution.ball_object_id, capture_spring(execution));
 }
 
 fn randomized_impulse(world: &mut World, direction: Vec3, force: f32) -> Vec3 {
@@ -134,7 +130,7 @@ fn impulse_point(
     point
 }
 
-pub(super) fn update_fake_objects(world: &mut World, execution: &mut WavePowerExecution, dt: f32) {
+pub(super) fn update_fake_objects(world: &mut World, execution: &mut WavePowerExecution) {
     let active = std::mem::take(&mut execution.fake_objects);
     for fake in active {
         if execution.elapsed_seconds >= fake.expires_at_seconds {
@@ -143,7 +139,6 @@ pub(super) fn update_fake_objects(world: &mut World, execution: &mut WavePowerEx
         }
         if world.get_unit(fake.unit_id).is_some() {
             update_opacity(world, execution, fake);
-            apply_spring(world, execution, fake, dt);
             execution.fake_objects.push(fake);
         }
     }
@@ -158,30 +153,11 @@ fn update_opacity(world: &mut World, execution: &WavePowerExecution, fake: WaveF
     }
 }
 
-fn apply_spring(world: &mut World, execution: &WavePowerExecution, fake: WaveFakeObject, dt: f32) {
-    let Some(body) = pull_body(world, fake.unit_id) else {
-        return;
-    };
-    let impulse = gravity_ball_impulse(
-        body,
-        ball_position(world, execution),
-        PullSpring {
-            rest_length: fake.rest_length,
-            strength: execution.profile.captured_spring_strength,
-            damping: execution.profile.captured_spring_dampening,
-            minimum_lateral_speed: execution.profile.captured_minimum_lateral_speed,
-            dt,
-        },
-    );
-    let _applied = world.apply_unit_impulse(fake.unit_id, impulse);
-}
-
 pub(super) fn hash_fake_objects(checksum: &mut SyncChecksum, values: &[WaveFakeObject]) {
     checksum.hash_u32(u32::try_from(values.len()).unwrap_or(u32::MAX));
     for value in values {
         checksum.hash_u32(value.unit_id.as_u32());
         checksum.hash_f32(value.expires_at_seconds);
-        checksum.hash_f32(value.rest_length);
     }
 }
 

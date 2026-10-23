@@ -1,6 +1,7 @@
 //! Wave lightning selection, damage-bank growth, and terminal explosion.
 
 use super::super::common::create_power_visual;
+use super::super::physics_helper::is_physics_aircraft;
 use super::super::projectile::{
     PowerProjectileLaunch, first_power_attack, launch_power_projectile,
 };
@@ -17,6 +18,7 @@ use num_traits::ToPrimitive;
 use pipeline::database::hw1::Database;
 
 const LIGHTNING_DISTANCE_WEIGHT_SCALAR: f32 = 3.0;
+/// `xmmword_1411F4D20`: the nudge scale of a physics aircraft.
 const NUDGE_SCALAR_AIR: f32 = 0.25;
 const DEBRIS_THROW_DISTANCE: f32 = 65.0;
 
@@ -206,7 +208,7 @@ fn hit_lightning(
     create_lightning_beam(world, database, execution, ball, strike_position);
     let random = world.trigger_random_index(32_767);
     if random % 255 < u32::from(execution.profile.nudge_chance_pulling) {
-        nudge_unit(world, execution, target_id, strike_position);
+        nudge_unit(world, gameplay, execution, target_id, strike_position);
     }
     !projectile_id.is_invalid()
 }
@@ -232,25 +234,26 @@ fn create_lightning_beam(
     );
 }
 
+/// `BPowerWave_nudgeUnit` (`0x140331720`, 2008 `powerwave.cpp:1883-1912`): a point impulse at
+/// the strike location toward the ball, `normalize(ball − unit) · NudgeStrength · mass`, a
+/// quarter of that on a physics aircraft. DE drops the unused 2008 nudge location.
 fn nudge_unit(
     world: &mut World,
+    gameplay: Option<&GameplayCatalog>,
     execution: &WavePowerExecution,
     unit_id: EntityId,
     strike_position: Vec3,
 ) {
     let ball = ball_position(world, execution);
-    let Some(flying) = world.get_unit(unit_id).map(|unit| unit.flying) else {
-        return;
-    };
     let (Some(position), Some(mass)) = (
         world.get_unit(unit_id).map(|unit| unit.base.position),
         world.unit_body_mass(unit_id),
     ) else {
         return;
     };
-    let mut impulse =
-        (ball - position).normalize_or_zero() * execution.profile.nudge_strength * mass;
-    if flying {
+    let away = position - ball;
+    let mut impulse = -(away / away.length()) * execution.profile.nudge_strength * mass;
+    if is_physics_aircraft(world, gameplay, unit_id) {
         impulse *= NUDGE_SCALAR_AIR;
     }
     let _applied = world.apply_unit_point_impulse(unit_id, impulse, strike_position);
@@ -375,8 +378,9 @@ fn captured_debris_source(
         .as_ref()
         .map_or(Vec3::ZERO, crate::physics::UnitPhysics::center_offset);
     Some(CapturedDebrisSource {
+        // 2008 `powerwave.cpp:1643`: the debris starts at the centre of mass of the body.
         position: world
-            .unit_body_position(unit_id)
+            .unit_body_center_of_mass(unit_id)
             .unwrap_or(unit.base.position),
         center_offset,
         velocity: world

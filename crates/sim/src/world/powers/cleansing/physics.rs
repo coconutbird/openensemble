@@ -1,72 +1,28 @@
 //! Cleansing's synchronized aircraft impulse and air-intersection visual.
 
 use super::super::common::create_power_visual;
+use super::super::physics_helper::impulse_physics_air_units;
 use crate::EntityId;
+use crate::gameplay::GameplayCatalog;
 use crate::player::PlayerId;
 use crate::world::World;
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 
+/// The radius of the aircraft impulse around the beam (2008 `powercleansing.cpp:958`).
 const IMPULSE_RADIUS: f32 = 10.0;
-const IMPULSE_CHANCE_MAXIMUM: u32 = 100;
+/// The chance in percent that one aircraft gets the impulse.
 const IMPULSE_CHANCE: u32 = 20;
-const MAXIMUM_IMPULSE: f32 = 150.0;
-const MINIMUM_FALLOFF: f32 = 0.75;
-const HEALTH_IMPULSE_MULTIPLIER: f32 = 2.0;
-const POINT_IMPULSE_MULTIPLIER: f32 = 2.5;
 const AIR_IMPACT_RADIUS: f32 = 3.0;
 const SHRUNK_BOUNDS_SCALE: f32 = 0.8;
 
-pub(super) fn impulse_air_units(world: &mut World, location: Vec3) {
-    let unit_ids = world
-        .find_live_squads(None, None, None, Some((location, IMPULSE_RADIUS)))
-        .into_iter()
-        .flat_map(|squad_id| {
-            world
-                .get_squad(squad_id)
-                .map_or_else(Vec::new, |squad| squad.unit_ids.clone())
-        })
-        .collect::<Vec<_>>();
-    for unit_id in unit_ids {
-        if world.trigger_random_index(IMPULSE_CHANCE_MAXIMUM) > IMPULSE_CHANCE {
-            continue;
-        }
-        impulse_air_unit(world, unit_id, location);
-    }
-}
-
-fn impulse_air_unit(world: &mut World, unit_id: EntityId, location: Vec3) {
-    let Some((position, health_ratio)) = world.get_unit(unit_id).and_then(|unit| {
-        (unit.flying && unit.physics_object.is_some()).then(|| {
-            let ratio = if unit.max_hitpoints > 0.0 {
-                (unit.hitpoints / unit.max_hitpoints).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            (unit.base.position, ratio)
-        })
-    }) else {
-        return;
-    };
-    let mut difference = location - position;
-    difference.y = 0.0;
-    let direction = difference.normalize_or_zero();
-    let impulse_direction = direction - Vec3::Y;
-    let health_multiplier =
-        HEALTH_IMPULSE_MULTIPLIER + (1.0 - HEALTH_IMPULSE_MULTIPLIER) * health_ratio;
-    let distance_ratio = if IMPULSE_RADIUS > f32::EPSILON {
-        difference.length() / IMPULSE_RADIUS
-    } else {
-        0.0
-    };
-    let falloff = MINIMUM_FALLOFF + (1.0 - MINIMUM_FALLOFF) * (1.0 - 0.5 * distance_ratio);
-    let impulse = impulse_direction * MAXIMUM_IMPULSE * health_multiplier * falloff;
-    let _center = world.apply_unit_impulse(unit_id, impulse);
-    let _point = world.apply_unit_point_impulse(
-        unit_id,
-        impulse * POINT_IMPULSE_MULTIPLIER,
-        position + direction,
-    );
+/// `impulsePhysicsAirUnits(beam position, 10, 20)` on each damage tick.
+pub(super) fn impulse_air_units(
+    world: &mut World,
+    gameplay: Option<&GameplayCatalog>,
+    location: Vec3,
+) {
+    impulse_physics_air_units(world, gameplay, location, IMPULSE_RADIUS, IMPULSE_CHANCE);
 }
 
 pub(super) fn update_air_impact(

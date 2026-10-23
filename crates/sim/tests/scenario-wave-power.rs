@@ -445,6 +445,25 @@ fn capture_marine_replacement(
         .center_offset();
     let captured_center = captured_unit.base.position + center_offset;
     let pickup = loaded.simulation.world.get_object(pickup_id).unwrap();
+    eprintln!(
+        "DBG unit {:?} fwd {:?} up {:?} body {:?} rot {:?} com {:?} pickup {:?} local {:?} off {:?} vel {:?}",
+        captured_unit.base.position,
+        captured_unit.base.forward,
+        captured_unit.base.up,
+        loaded.simulation.world.unit_body_position(captured_unit_id),
+        loaded.simulation.world.unit_body_rotation(captured_unit_id),
+        loaded
+            .simulation
+            .world
+            .unit_body_center_of_mass(captured_unit_id),
+        pickup.base.position,
+        pickup.object_state.attachment_local_offset(),
+        center_offset,
+        loaded
+            .simulation
+            .world
+            .unit_body_linear_velocity(captured_unit_id),
+    );
     assert!(pickup.base.position.abs_diff_eq(captured_center, 0.000_1));
     let local_offset = pickup.object_state.attachment_local_offset();
     let forward = Vec3::new(

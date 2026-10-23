@@ -1,6 +1,7 @@
 //! Rage landing impact, physics nudge, and heal-on-kill behavior.
 
 use super::super::common::prototype_lifetime_ms;
+use super::super::physics_helper::nudge_direction;
 use super::execution::{PendingRageKill, RagePowerExecution};
 use crate::EntityId;
 use crate::gameplay::{AreaDamageProfile, GameplayCatalog};
@@ -9,6 +10,9 @@ use crate::world::combat::AttackDamage;
 use glam::Vec3;
 use pipeline::database::hw1::Database;
 use pipeline::database::hw1::tactics::Weapon;
+
+/// `xmmword_1411F4FD0`: the nudge point lies `10 / obstruction radius` behind the centre of mass.
+const NUDGE_POINT_DISTANCE: f32 = 10.0;
 
 #[derive(Debug, Clone)]
 struct ImpactProfile {
@@ -107,25 +111,26 @@ fn impact_profile(weapon: &Weapon) -> Option<ImpactProfile> {
     })
 }
 
+/// `BPowerRage_projectileImpact` (`0x140321C80`, 2008 `powerrage.cpp:1429-1468`): each unit
+/// with a body gets `applyPointImpulse(NudgeMultiplier · m · (normalize(dir.xz), 1), point)`
+/// with `dir = normalize(unit − origin)` and `point = com − (1 / obstruction radius) · 10·dir`.
+/// A unit at the origin gives a NaN impulse, which the DE wrapper replaces with zero.
 fn nudge_units(world: &mut World, ids: &[EntityId], origin: Vec3, multiplier: f32) {
-    if multiplier <= 0.0 {
-        return;
-    }
     for id in ids {
-        let (Some(mass), Some(point), Some(position)) = (
+        let (Some(mass), Some(center), Some((position, radius))) = (
             world.unit_body_mass(*id),
-            world.unit_body_position(*id),
-            world.get_unit(*id).map(|unit| unit.base.position),
+            world.unit_body_center_of_mass(*id),
+            world
+                .get_unit(*id)
+                .map(|unit| (unit.base.position, unit.obstruction_radius())),
         ) else {
             continue;
         };
-        let mut direction =
-            Vec3::new(position.x - origin.x, 0.0, position.z - origin.z).normalize_or_zero();
-        if direction == Vec3::ZERO {
-            direction = Vec3::Z;
-        }
-        direction.y = 1.0;
-        let _applied = world.apply_unit_point_impulse(*id, direction * mass * multiplier, point);
+        let away = position - origin;
+        let direction = away / away.length();
+        let point = center - (1.0 / radius) * (NUDGE_POINT_DISTANCE * direction);
+        let impulse = multiplier * (mass * nudge_direction(direction));
+        let _applied = world.apply_unit_point_impulse(*id, impulse, point);
     }
 }
 

@@ -1,4 +1,4 @@
-//! Gravity-ball scan, pickup queue, and deterministic spring action.
+//! Gravity-ball scan, pickup queue, and the capture of objects by the gravity-ball pull action.
 
 use super::super::common::create_power_visual;
 use super::{
@@ -9,6 +9,7 @@ use crate::EntityId;
 use crate::entities::squads::formation_offset_to_local;
 use crate::entity::Entity;
 use crate::gameplay::GameplayCatalog;
+use crate::physics::GravityBallSpring;
 use crate::world::World;
 use glam::Vec3;
 use num_traits::ToPrimitive;
@@ -26,11 +27,9 @@ pub(super) fn update(
     database: &Database,
     gameplay: Option<&GameplayCatalog>,
     execution: &mut WavePowerExecution,
-    dt: f32,
 ) {
     update_queued_objects(world, database, execution);
     validate_captured_objects(world, execution);
-    pull_captured_objects(world, execution, dt);
     execution.state = if execution.captured_objects.len()
         >= execution.profile.maximum_captured_objects
         && execution.current_explosion_damage_bank
@@ -43,7 +42,7 @@ pub(super) fn update(
     if execution.elapsed_seconds <= execution.next_tick_time {
         return;
     }
-    process_ticks(world, database, gameplay, execution, dt);
+    process_ticks(world, database, gameplay, execution);
 }
 
 fn process_ticks(
@@ -51,7 +50,6 @@ fn process_ticks(
     database: &Database,
     gameplay: Option<&GameplayCatalog>,
     execution: &mut WavePowerExecution,
-    dt: f32,
 ) {
     let ball = ball_position(world, execution);
     let leader_id = owner_leader_id(world, execution.owner_squad_id);
@@ -68,8 +66,7 @@ fn process_ticks(
     let mut first_tick = true;
     while execution.elapsed_seconds > execution.next_tick_time {
         for unit_id in &units_in_area {
-            let result =
-                attempt_pull_unit(world, gameplay, execution, *unit_id, leader_id, ball, dt);
+            let result = attempt_pull_unit(world, gameplay, execution, *unit_id, leader_id, ball);
             if first_tick && matches!(result, PullResult::Pending) {
                 units_to_pull_next.push(*unit_id);
             }
@@ -98,7 +95,6 @@ fn attempt_pull_unit(
     unit_id: EntityId,
     leader_id: EntityId,
     ball: Vec3,
-    dt: f32,
 ) -> PullResult {
     if unit_id == leader_id
         || unit_id == execution.ball_object_id
@@ -130,7 +126,7 @@ fn attempt_pull_unit(
     }
     let random = world.trigger_random_index(32_767);
     if random % 255 < u32::from(execution.profile.throw_part_chance_pulling) {
-        let _part = debris::rip_part_off_unit(world, gameplay, execution, unit_id, dt);
+        let _part = debris::rip_part_off_unit(world, gameplay, execution, unit_id);
     }
     PullResult::Pending
 }
@@ -241,6 +237,11 @@ fn update_queued_objects(
     }
 }
 
+/// `BPowerWave_addObjectToBall` (`0x140331D40`, 2008 `powerwave.cpp:1996-2086`): the pickup
+/// attachment at the centre of mass, the physics action back to its update state without
+/// complete-on-inactive, the debris angular damping, the gravity-ball pull action with the rest
+/// length `CapturedSpringRestLength + captured · CapturedRadialSpacing` and the random lateral
+/// point impulse.
 fn add_object_to_ball(
     world: &mut World,
     database: &Database,
@@ -303,8 +304,11 @@ fn add_object_to_ball(
         unit.obstruction_half_extents = Vec3::ZERO;
         unit.stop();
     }
+    let _restarted = world.restart_unit_physics_action(unit_id, false);
     let _damping =
         world.set_unit_body_angular_damping(unit_id, execution.profile.debris_angular_damping);
+    let _pull =
+        world.add_gravity_ball_pull(unit_id, execution.ball_object_id, capture_spring(execution));
     let _applied = world.apply_unit_point_impulse(unit_id, lateral, position + ball_direction);
     let _changed_owner = world.change_unit_owner(unit_id, execution.player_id);
     let _reset_dopples = world.reset_entity_dopples(unit_id, false, false);
@@ -314,6 +318,23 @@ fn add_object_to_ball(
         color_player_id,
         was_auto_attackable,
     });
+}
+
+/// The spring of a new gravity-ball action. The rest length grows with the number of captured
+/// objects when the action is made.
+pub(super) fn capture_spring(execution: &WavePowerExecution) -> GravityBallSpring {
+    GravityBallSpring {
+        rest_length: execution.profile.captured_spring_rest_length
+            + execution
+                .captured_objects
+                .len()
+                .to_f32()
+                .unwrap_or(f32::MAX)
+                * execution.profile.captured_radial_spacing,
+        strength: execution.profile.captured_spring_strength,
+        damping: execution.profile.captured_spring_dampening,
+        minimum_lateral_speed: execution.profile.captured_minimum_lateral_speed,
+    }
 }
 
 fn attach_visual_to_unit(
@@ -349,80 +370,6 @@ fn validate_captured_objects(world: &mut World, execution: &mut WavePowerExecuti
     }
 }
 
-fn pull_captured_objects(world: &mut World, execution: &WavePowerExecution, dt: f32) {
-    let ball = ball_position(world, execution);
-    for (index, captured) in execution.captured_objects.iter().enumerate() {
-        let Some(body) = pull_body(world, captured.unit_id) else {
-            continue;
-        };
-        let rest_length = execution.profile.captured_spring_rest_length
-            + index.to_f32().unwrap_or(f32::MAX) * execution.profile.captured_radial_spacing;
-        let impulse = gravity_ball_impulse(
-            body,
-            ball,
-            PullSpring {
-                rest_length,
-                strength: execution.profile.captured_spring_strength,
-                damping: execution.profile.captured_spring_dampening,
-                minimum_lateral_speed: execution.profile.captured_minimum_lateral_speed,
-                dt,
-            },
-        );
-        let _applied = world.apply_unit_impulse(captured.unit_id, impulse);
-    }
-}
-
-/// The body of a pulled unit: its centre of mass, velocity, mass and the world gravity.
-pub(super) fn pull_body(world: &World, unit_id: EntityId) -> Option<PullBody> {
-    Some(PullBody {
-        center: world.unit_body_center_of_mass(unit_id)?,
-        velocity: world.unit_body_linear_velocity(unit_id)?,
-        mass: world.unit_body_mass(unit_id)?,
-        gravity: world.physics().gravity(),
-    })
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) struct PullBody {
-    pub center: Vec3,
-    pub velocity: Vec3,
-    pub mass: f32,
-    /// The gravity of the physics world, which the pull cancels.
-    pub gravity: Vec3,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) struct PullSpring {
-    pub rest_length: f32,
-    pub strength: f32,
-    pub damping: f32,
-    pub minimum_lateral_speed: f32,
-    pub dt: f32,
-}
-
-pub(super) fn gravity_ball_impulse(body: PullBody, ball: Vec3, spring: PullSpring) -> Vec3 {
-    let anti_gravity = -body.gravity * body.mass * spring.dt;
-    let outward_offset = body.center - ball;
-    let distance = outward_offset.length();
-    if distance < 0.001 || distance < spring.rest_length {
-        return anti_gravity;
-    }
-    let outward = outward_offset / distance;
-    let relative_radial_velocity = body.velocity.dot(outward);
-    let force = relative_radial_velocity.mul_add(
-        spring.damping,
-        (distance - spring.rest_length) * spring.strength,
-    );
-    let spring_impulse = -outward * force * spring.dt;
-    let lateral_velocity = body.velocity - outward * relative_radial_velocity;
-    let lateral = if lateral_velocity.length() < spring.minimum_lateral_speed {
-        lateral_velocity * body.mass
-    } else {
-        Vec3::ZERO
-    };
-    anti_gravity + spring_impulse + lateral
-}
-
 fn increase_damage_bank(execution: &mut WavePowerExecution) {
     execution.current_explosion_damage_bank = (execution.current_explosion_damage_bank
         + execution.profile.explosion_damage_bank_per_tick)
@@ -443,44 +390,4 @@ fn pay_upkeep(world: &mut World, execution: &WavePowerExecution) -> bool {
         execution.profile.supplies_per_tick,
     );
     true
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pull_impulse_matches_retail_spring_antigravity_and_lateral_terms() {
-        let gravity = Vec3::new(0.0, -21.7, 0.0);
-        let spring = PullSpring {
-            rest_length: 1.0,
-            strength: 100.0,
-            damping: 0.5,
-            minimum_lateral_speed: 2.0,
-            dt: 0.1,
-        };
-        let impulse = gravity_ball_impulse(
-            PullBody {
-                center: Vec3::X * 3.0,
-                velocity: Vec3::new(2.0, 0.0, 1.0),
-                mass: 10.0,
-                gravity,
-            },
-            Vec3::ZERO,
-            spring,
-        );
-        assert!(impulse.abs_diff_eq(Vec3::new(-20.1, 21.7, 10.0), 0.000_1));
-
-        let compressed = gravity_ball_impulse(
-            PullBody {
-                center: Vec3::X * 0.5,
-                velocity: Vec3::Z,
-                mass: 10.0,
-                gravity,
-            },
-            Vec3::ZERO,
-            spring,
-        );
-        assert!(compressed.abs_diff_eq(Vec3::Y * 21.7, 0.000_1));
-    }
 }
