@@ -367,6 +367,113 @@ fn a_point_that_a_listener_removed_comes_back_with_a_new_key() {
     assert!(!manifold.points[0].properties.is_new);
 }
 
+/// The key, the geometry bits and the new flag of one point.
+type PointBits = (u32, [u32; 7], bool);
+
+/// The id, the two bodies and the points of one manifold.
+type ManifoldBits = (u64, u32, u32, Vec<PointBits>);
+
+/// Runs a scene with every agent kind for 40 steps and returns the bits of all manifolds.
+fn run_scene() -> Vec<ManifoldBits> {
+    let heights = (0..64u16)
+        .map(|index| f32::from(index % 8) * 0.25 + f32::from(index / 8 % 3) * 0.5)
+        .collect();
+    let mut world = terrain_world(HeightField::new(8, 2.0, heights).expect("grid"));
+    let block = Arc::new(Shape::Box {
+        half_extents: Vec3::new(0.8, 0.4, 0.6),
+        radius: DEFAULT_CONVEX_RADIUS,
+    });
+    let shapes = [
+        unit_box(),
+        Arc::clone(&block),
+        Arc::new(Shape::Sphere { radius: 0.5 }),
+        Arc::new(Shape::Capsule {
+            a: Vec3::new(0.0, -0.5, 0.0),
+            b: Vec3::new(0.0, 0.5, 0.0),
+            radius: 0.3,
+        }),
+        Arc::new(Shape::Cylinder {
+            a: Vec3::new(-0.5, 0.0, 0.0),
+            b: Vec3::new(0.5, 0.0, 0.0),
+            radius: 0.4,
+            convex_radius: DEFAULT_CONVEX_RADIUS,
+        }),
+        Arc::new(Shape::List {
+            children: vec![
+                Arc::new(Shape::Transform {
+                    transform: Transform::from_rotation_translation(
+                        Quat::from_rotation_y(0.4),
+                        Vec3::new(0.0, 0.5, 0.0),
+                    ),
+                    child: Arc::clone(&block),
+                }),
+                Arc::new(Shape::Sphere { radius: 0.6 }),
+            ],
+        }),
+    ];
+    let bodies: Vec<BodyId> = (1..=6).map(BodyId::from_raw).collect();
+    for (body, shape) in bodies.iter().zip(&shapes) {
+        let filter = object_filter(&mut world);
+        let filter = FilterInfo::for_layer(Layer::Zero, filter.system_group());
+        world.insert(*body, Arc::clone(shape), filter, false);
+    }
+    let terrain = terrain_pose(&world);
+    let mut frames = Vec::new();
+    for step in 0..40u16 {
+        let time = f32::from(step) * 0.05;
+        let mut poses = vec![terrain];
+        for (index, body) in (0..6u16).zip(&bodies) {
+            let phase = f32::from(index);
+            let center = Vec3::new(
+                4.0 + phase * 0.9 + time * 0.3,
+                1.4 - time * 0.2 + (phase * 0.7).sin() * 0.3,
+                5.0 + (time + phase).cos() * 0.8,
+            );
+            let rotation = Quat::from_euler(glam::EulerRot::YXZ, time + phase, 0.2 * phase, 0.1);
+            poses.push(CollidablePose {
+                body: *body,
+                transform: Transform::from_rotation_translation(rotation, center),
+                active: true,
+            });
+        }
+        world.collide(&poses);
+        frames.extend(world.manifolds().iter().map(|manifold| {
+            let points = manifold
+                .points
+                .iter()
+                .map(|point| {
+                    let contact = point.contact;
+                    let bits = [
+                        contact.position.x.to_bits(),
+                        contact.position.y.to_bits(),
+                        contact.position.z.to_bits(),
+                        contact.normal.x.to_bits(),
+                        contact.normal.y.to_bits(),
+                        contact.normal.z.to_bits(),
+                        contact.distance.to_bits(),
+                    ];
+                    (point.key, bits, point.properties.is_new)
+                })
+                .collect();
+            (
+                manifold.id.raw(),
+                manifold.body_a.raw(),
+                manifold.body_b.raw(),
+                points,
+            )
+        }));
+    }
+    frames
+}
+
+#[test]
+fn the_same_scene_gives_bit_identical_manifolds() {
+    let first = run_scene();
+    let second = run_scene();
+    assert!(first.iter().any(|(_, _, _, points)| !points.is_empty()));
+    assert_eq!(first, second);
+}
+
 #[test]
 fn the_ray_hits_the_flipped_diagonal_triangle_at_its_height() {
     // Cell (0, 0) has h00 = 0, h10 = 2, h01 = 6 and h11 = 4. With the diagonal from (0, 0) to
