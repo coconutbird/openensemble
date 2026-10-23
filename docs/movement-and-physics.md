@@ -162,6 +162,7 @@ game rules around it. `SimPhysics` (`physics/state.rs`) is the physics of one si
 | Longest substep (`MAX_SUBSTEP_SECONDS`) | 0.0125 s |
 | Default convex radius (`DEFAULT_CONVEX_RADIUS`) | 0.05 |
 | Velocity limit of a body | `hkUFloat8` of 200, which is 202.8 |
+| Broadphase world | cube of edge 2850 about the origin (`setBroadPhaseWorldSize`, `0x1407BB414`) |
 
 `SimPhysics::new` follows `BPhysicsWorld_init` (`0x1407BB390`):
 
@@ -177,6 +178,12 @@ Vehicles–Buildings, Vehicles–Objects, `NoTerrainVehicles` with Buildings, Ob
 Vehicles, and Uncollidables with Objects, Vehicles, `NoTerrainVehicles` and Buildings. Thus a
 vehicle never touches a building, and body-to-body contacts occur mainly between objects and
 buildings.
+
+The world keeps the default `BROADPHASE_BORDER_ASSERT` border. A body whose broadphase box
+reaches a face of the broadphase world becomes fixed: it loses its velocity and sleeps
+(`hkpBroadPhaseBorder_maxPositionExceededCallback`, `0x14088AFD0`). The physics world does
+this when it adds the body and at the end of each step. Thus a physics replacement that is
+outside the world, or that falls out of it, counts as asleep, and its cleanup removes it.
 
 ### Step rule and update order
 

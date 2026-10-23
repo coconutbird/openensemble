@@ -38,6 +38,9 @@ pub struct WorldConfig {
     pub enable_deactivation: bool,
     /// The collision filter: the retail layer table.
     pub filter: GroupFilter,
+    /// Half the edge of the cubic broadphase world about the origin: 1425
+    /// (`BPhysicsWorld_init` calls `setBroadPhaseWorldSize(2850)` at `0x1407BB414`).
+    pub broad_phase_half_size: f32,
 }
 
 impl Default for WorldConfig {
@@ -51,6 +54,7 @@ impl Default for WorldConfig {
             deactivation_reference_distance: 0.02,
             enable_deactivation: true,
             filter: GroupFilter::retail(),
+            broad_phase_half_size: 1425.0,
         }
     }
 }
@@ -148,6 +152,7 @@ pub struct World {
     hinges: Vec<Hinge>,
     hinge_ids: Vec<ConstraintId>,
     next_constraint: u32,
+    broad_phase_half_size: f32,
 }
 
 impl World {
@@ -169,6 +174,7 @@ impl World {
             hinges: Vec::new(),
             hinge_ids: Vec::new(),
             next_constraint: 0,
+            broad_phase_half_size: config.broad_phase_half_size,
         }
     }
 
@@ -223,6 +229,7 @@ impl World {
             desc.motion == MotionType::Fixed,
         );
         self.bodies.insert(id, body);
+        self.fix_at_broad_phase_border(id);
         id
     }
 
@@ -280,7 +287,8 @@ impl World {
     }
 
     /// Runs one Havok step of `dt` seconds (`hkpWorld_stepDeltaTime`): solve and integrate
-    /// the active islands, collide, then report the new contact points to the listener.
+    /// the active islands, collide, then report the new contact points to the listener. The
+    /// broadphase border runs last, as the locked world postpones its motion type changes.
     pub fn step_delta_time(&mut self, dt: f32, listener: &mut dyn ContactListener) {
         let step = self.config.step_info(dt);
         dynamics::step_islands(
@@ -301,6 +309,33 @@ impl World {
             .collect();
         self.collision.collide(&poses);
         dynamics::process_new_points(&self.bodies, self.collision.manifolds_mut(), listener);
+        let moving: Vec<BodyId> = self
+            .bodies
+            .iter()
+            .filter_map(|(&id, body)| (body.motion != MotionType::Fixed).then_some(id))
+            .collect();
+        for id in moving {
+            self.fix_at_broad_phase_border(id);
+        }
+    }
+
+    /// `hkpBroadPhaseBorder` (`hkpBroadPhaseBorder_ctor`, `0x14088AB00`) with the default
+    /// `BROADPHASE_BORDER_ASSERT`: a body whose broadphase box reaches a face of the broadphase
+    /// world becomes fixed (`hkpBroadPhaseBorder_maxPositionExceededCallback`, `0x14088AFD0`).
+    fn fix_at_broad_phase_border(&mut self, id: BodyId) {
+        let Some(body) = self.bodies.get(&id) else {
+            return;
+        };
+        if body.motion == MotionType::Fixed {
+            return;
+        }
+        let aabb = self
+            .collision
+            .broad_phase_box(&body.shape, &body.transform());
+        let half = self.broad_phase_half_size;
+        if aabb.min.min_element() <= -half || aabb.max.max_element() >= half {
+            self.set_motion_type(id, MotionType::Fixed);
+        }
     }
 
     /// The bodies in id order.

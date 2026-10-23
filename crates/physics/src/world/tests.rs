@@ -288,6 +288,27 @@ fn impulses_skip_keyframed_bodies_and_zero_bad_input() {
     assert_eq!(world.linear_velocity(body), Some(Vec3::new(0.0, 1.0, 0.0)));
 }
 
+#[test]
+fn the_broadphase_border_fixes_bodies_that_reach_it() {
+    let mut world = World::new(WorldConfig::default());
+    let outside = dynamic(&mut world, crate_box(), Vec3::new(10_000.0, 0.0, 0.0), 10.0);
+    let outside = world.add_body(outside);
+    assert_eq!(world.motion_type(outside), Some(MotionType::Fixed));
+    assert_eq!(world.is_active(outside), Some(false));
+
+    let falling = dynamic(&mut world, crate_box(), Vec3::new(0.0, -1_400.0, 0.0), 10.0);
+    let falling = world.add_body(falling);
+    world.set_linear_velocity(falling, Vec3::new(0.0, -100.0, 0.0));
+    world.step_delta_time(DT, &mut ());
+    assert_eq!(world.motion_type(falling), Some(MotionType::BoxInertia));
+    for _ in 0..40 {
+        world.step_delta_time(DT, &mut ());
+    }
+    assert_eq!(world.motion_type(falling), Some(MotionType::Fixed));
+    assert_eq!(world.linear_velocity(falling), Some(Vec3::ZERO));
+    assert_eq!(world.is_active(falling), Some(false));
+}
+
 /// Builds a busy scene: bumpy terrain, mixed shapes, a hinge and a restitution body.
 fn busy_scene() -> (World, Vec<BodyId>) {
     let mut world = World::new(WorldConfig::default());

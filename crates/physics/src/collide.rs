@@ -211,6 +211,12 @@ impl CollisionWorld {
         }
     }
 
+    /// Returns the broadphase box of a shape at a transform, expanded by half the collision
+    /// tolerance as in [`CollisionWorld::collide`].
+    pub(crate) fn broad_phase_box(&self, shape: &Shape, transform: &Transform) -> Aabb {
+        shape.aabb(transform, 0.5 * self.input.tolerance)
+    }
+
     /// Runs the broadphase and the agents.
     ///
     /// `poses` has every inserted body once, sorted by id: the world transform of its shape
