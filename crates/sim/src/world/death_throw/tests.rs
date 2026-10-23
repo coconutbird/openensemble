@@ -115,7 +115,7 @@ fn the_area_primary_target_throw_uses_the_primary_target_factor() {
 #[test]
 fn a_thrown_replacement_stays_until_its_physics_action_waits() {
     // A heavy body lands near the throw point: 300 / 100 = 3 units per second.
-    let (mut world, gameplay, marine, attacker) = fixture(box_template(
+    let (mut world, gameplay, marine, attacker) = fixture(&box_template(
         "marine_wreck",
         Vec3::splat(0.5),
         100.0,
@@ -186,7 +186,7 @@ fn a_clamshell_throw_gives_the_pelvis_one_and_a_half_times_the_impulse() {
 /// `MethaneExplosion` effect plays at its position.
 #[test]
 fn a_rocket_death_ends_at_its_timer_with_the_methane_explosion() {
-    let (mut world, gameplay, marine, _attacker) = fixture(box_template(
+    let (mut world, gameplay, marine, _attacker) = fixture(&box_template(
         "marine_wreck",
         Vec3::splat(0.5),
         200.0,
@@ -283,7 +283,7 @@ fn thrown_replacement(world: &World) -> EntityId {
 }
 
 fn box_fixture() -> (World, GameplayCatalog, EntityId, EntityId) {
-    fixture(box_template(
+    fixture(&box_template(
         "marine_wreck",
         Vec3::splat(0.5),
         MASS,
@@ -292,7 +292,7 @@ fn box_fixture() -> (World, GameplayCatalog, EntityId, EntityId) {
 }
 
 fn clamshell_fixture() -> (World, GameplayCatalog, EntityId, EntityId) {
-    fixture(clamshell_template(
+    fixture(&clamshell_template(
         "marine_wreck",
         Vec3::splat(0.3),
         Vec3::Y,
@@ -301,7 +301,7 @@ fn clamshell_fixture() -> (World, GameplayCatalog, EntityId, EntityId) {
 
 /// A Marine of player 2 at [`POSITION`] with the thrown replacement `template`, and an
 /// attacker of player 1 at the attacker offset.
-fn fixture(template: Arc<PhysicsTemplate>) -> (World, GameplayCatalog, EntityId, EntityId) {
+fn fixture(template: &PhysicsTemplate) -> (World, GameplayCatalog, EntityId, EntityId) {
     let mut database = Database::new();
     database.objects.push(ProtoObject {
         name: MARINE.to_owned(),
@@ -309,7 +309,7 @@ fn fixture(template: Arc<PhysicsTemplate>) -> (World, GameplayCatalog, EntityId,
         ..ProtoObject::default()
     });
     let mut gameplay = GameplayCatalog::from_tactics(&database, []);
-    gameplay.insert_test_physics_replacement(MARINE, thrown(&template));
+    gameplay.insert_test_physics_replacement(MARINE, thrown(template));
     let mut world = world_with_flat_terrain();
     world.get_player_mut(1).unwrap().team_id = 1;
     world.get_player_mut(2).unwrap().team_id = 2;
