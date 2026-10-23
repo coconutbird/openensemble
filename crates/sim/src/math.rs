@@ -4,18 +4,17 @@
 //! functions on different machines. The glam rotation builders call the platform libm too. The
 //! functions in this module use `floaty`, which rounds each result correctly. Use these functions
 //! in all simulation code. Do not call the `f32` methods or the glam builders directly.
+//!
+//! `motion::math` holds the functions that `motion` also uses. This module makes them available
+//! with their names, so that each call site uses this module.
 
 use floaty::F32;
 use glam::{Quat, Vec3};
+pub(crate) use motion::math::{acos, quat_slerp, sin};
 
 /// Returns `function(value)`, calculated by `floaty`.
 fn unary(value: f32, function: fn(F32) -> F32) -> f32 {
     f32::from(function(F32::from(value)))
-}
-
-/// Returns the sine of `angle` (radians), correctly rounded.
-pub(crate) fn sin(angle: f32) -> f32 {
-    unary(angle, F32::sin)
 }
 
 /// Returns the cosine of `angle` (radians), correctly rounded.
@@ -31,11 +30,6 @@ pub(crate) fn sin_cos(angle: f32) -> (f32, f32) {
 /// Returns the tangent of `angle` (radians), correctly rounded.
 pub(crate) fn tan(angle: f32) -> f32 {
     unary(angle, F32::tan)
-}
-
-/// Returns the arc cosine of `value` in radians, correctly rounded.
-pub(crate) fn acos(value: f32) -> f32 {
-    unary(value, F32::acos)
 }
 
 /// Returns the arc tangent of `value` in radians, correctly rounded.
@@ -95,28 +89,6 @@ pub(crate) fn quat_from_rotation_arc(from: Vec3, to: Vec3) -> Quat {
     }
 }
 
-/// Returns the spherical linear interpolation from `start` to `end` at `s`.
-///
-/// The formula is that of the scalar `Quat::slerp` in glam 0.29. The angle between the two
-/// rotations uses the correctly rounded `acos` in place of the polynomial of glam.
-pub(crate) fn quat_slerp(start: Quat, end: Quat, s: f32) -> Quat {
-    const DOT_THRESHOLD: f32 = 1.0 - f32::EPSILON;
-    let mut end = end;
-    let mut dot = start.dot(end);
-    if dot < 0.0 {
-        end = -end;
-        dot = -dot;
-    }
-    if dot > DOT_THRESHOLD {
-        return (start * (1.0 - s) + end * s).normalize();
-    }
-    let theta = acos(dot);
-    let start_scale = sin(theta * (1.0 - s));
-    let end_scale = sin(theta * s);
-    let theta_sin = sin(theta);
-    (start * start_scale + end * end_scale) * (1.0 / theta_sin)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,22 +96,19 @@ mod tests {
     #[test]
     fn functions_give_correctly_rounded_bits() {
         // The expected bits come from `floaty`. `f64` results of the same inputs round to the
-        // same bits.
-        assert_eq!(sin(1.0).to_bits(), 0x3F57_6AA4);
+        // same bits. `motion::math` tests `sin` and `acos`.
         assert_eq!(cos(1.0).to_bits(), 0x3F0A_5140);
         assert_eq!(
             sin_cos(1.0),
             (f32::from_bits(0x3F57_6AA4), f32::from_bits(0x3F0A_5140))
         );
         assert_eq!(tan(0.5).to_bits(), 0x3F0B_DA7B);
-        assert_eq!(acos(0.5).to_bits(), 0x3F86_0A92);
         assert_eq!(atan(0.5).to_bits(), 0x3EED_6338);
         assert_eq!(atan2(1.0, 2.0).to_bits(), 0x3EED_6338);
         assert_eq!(atan2(1.0, -1.0).to_bits(), 0x4016_CBE4);
         assert_eq!(hypot(3.0, 4.0).to_bits(), 5.0_f32.to_bits());
         assert_eq!(hypot(1.0, 1.0).to_bits(), 0x3FB5_04F3);
-        // The Windows MSVC libm gives the adjacent value for these three inputs.
-        assert_eq!(sin(f32::from_bits(0x3EF8_3D69)).to_bits(), 0x3EEE_A0B7);
+        // The Windows MSVC libm gives the adjacent value for these two inputs.
         assert_eq!(cos(f32::from_bits(0x3F21_FFE6)).to_bits(), 0x3F4E_6E27);
         assert_eq!(atan(f32::from_bits(0x3ED6_D120)).to_bits(), 0x3ECB_6556);
     }
@@ -161,20 +130,6 @@ mod tests {
                 quat_from_rotation_arc(from, to),
                 Quat::from_rotation_arc(from, to),
             );
-        }
-    }
-
-    #[test]
-    fn slerp_matches_glam() {
-        let start = Quat::from_rotation_y(0.4);
-        for end in [
-            Quat::from_rotation_x(1.2),
-            -Quat::from_rotation_x(1.2),
-            start,
-        ] {
-            for s in [0.0_f32, 0.25, 0.5, 1.0] {
-                assert_close(quat_slerp(start, end, s), start.slerp(end, s));
-            }
         }
     }
 

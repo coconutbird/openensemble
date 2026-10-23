@@ -2,7 +2,7 @@
 
 mod animation;
 mod attachment;
-mod math;
+pub mod math;
 mod single_bone;
 mod skeleton;
 

@@ -2,27 +2,36 @@
 //!
 //! The platform libm gives different bits for `sin`, `acos` and the other elementary functions on
 //! different machines. `Quat::slerp` of glam calls them too. The simulation uses the sampled
-//! poses, so the functions in this module use `floaty`, which rounds each result correctly. Do
-//! not call the `f32` methods or the glam helpers that use the platform libm.
+//! poses, so the functions in this module use `floaty`, which rounds each result correctly.
+//!
+//! This module holds the functions that `motion` and `sim` both use. `sim::math` uses these
+//! functions and adds the functions that only `sim` uses. Do not call the `f32` methods or the
+//! glam helpers that use the platform libm.
 
 use floaty::F32;
 use glam::Quat;
 
 /// Returns the sine of `angle` (radians), correctly rounded.
-fn sin(angle: f32) -> f32 {
+#[must_use]
+pub fn sin(angle: f32) -> f32 {
     f32::from(F32::from(angle).sin())
 }
 
 /// Returns the arc cosine of `value` in radians, correctly rounded.
-fn acos(value: f32) -> f32 {
+///
+/// A `value` outside `-1.0..=1.0` gives NaN.
+#[must_use]
+pub fn acos(value: f32) -> f32 {
     f32::from(F32::from(value).acos())
 }
 
 /// Returns the spherical linear interpolation from `start` to `end` at `s`.
 ///
 /// The formula is that of the scalar `Quat::slerp` in glam 0.29. The angle between the two
-/// rotations uses the correctly rounded `acos` in place of the polynomial of glam.
-pub(crate) fn quat_slerp(start: Quat, end: Quat, s: f32) -> Quat {
+/// rotations uses the correctly rounded `acos` in place of the polynomial of glam. `start` and
+/// `end` must be unit quaternions.
+#[must_use]
+pub fn quat_slerp(start: Quat, end: Quat, s: f32) -> Quat {
     const DOT_THRESHOLD: f32 = 1.0 - f32::EPSILON;
     let mut end = end;
     let mut dot = start.dot(end);
