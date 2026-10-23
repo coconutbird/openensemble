@@ -398,6 +398,7 @@ mod tests {
                 ignores_y_axis: false,
                 friendly_fire: false,
             }),
+            knockback: None,
             pull: None,
             hardpoint: None,
             orientation: crate::gameplay::AttackOrientationProfile::default(),

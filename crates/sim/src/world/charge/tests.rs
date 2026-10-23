@@ -201,6 +201,7 @@ fn pull_attack_profile() -> AttackProfile {
         projectile: None,
         impact_effect: None,
         area_damage: None,
+        knockback: None,
         pull: Some(PullAttackProfile {
             max_range: 55.0,
             invalid_targets: vec!["scarab".to_owned()],

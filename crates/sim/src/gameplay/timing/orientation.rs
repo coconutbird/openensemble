@@ -259,6 +259,7 @@ mod tests {
             projectile: projectile.map(str::to_owned),
             impact_effect: None,
             area_damage: None,
+            knockback: None,
             pull: None,
             hardpoint,
             orientation: AttackOrientationProfile::default(),

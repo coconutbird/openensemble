@@ -280,6 +280,7 @@ mod tests {
             projectile: None,
             impact_effect: None,
             area_damage: None,
+            knockback: None,
             pull: None,
             hardpoint: None,
             orientation: crate::gameplay::AttackOrientationProfile::default(),

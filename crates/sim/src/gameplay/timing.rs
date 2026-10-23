@@ -205,6 +205,8 @@ pub struct AttackProfile {
     pub area_damage: Option<AreaDamageProfile>,
     /// Authored charged squad-pull contract, present only for `PullUnits` weapons.
     pub pull: Option<PullAttackProfile>,
+    /// Knockback of an `ApplyKnockback` weapon, applied to the target body at each attack.
+    pub knockback: Option<super::KnockbackProfile>,
     /// Hardpoint selected by the weapon, including retail angle and rate rules.
     pub hardpoint: Option<AttackHardpointProfile>,
     /// Action and owner flags controlling retail's orientation update.
@@ -490,6 +492,7 @@ fn build_attack_profile(
         impact_effect: super::ImpactEffectProfile::from_weapon(ranged.weapon),
         area_damage: area_damage_profile(ranged.weapon),
         pull: pull_attack_profile(ranged.action, ranged.weapon),
+        knockback: super::KnockbackProfile::from_weapon(ranged.weapon),
         hardpoint: AttackHardpointProfile::from_weapon(object, ranged.weapon),
         orientation: AttackOrientationProfile::from_action(object, ranged.action),
         charged_animation: None,

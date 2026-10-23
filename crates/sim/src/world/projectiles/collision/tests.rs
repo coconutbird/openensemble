@@ -74,6 +74,7 @@ fn collision_catalog(
         projectile: Some("bullet".to_owned()),
         impact_effect: None,
         area_damage,
+        knockback: None,
         pull: None,
         hardpoint: None,
         orientation: crate::gameplay::AttackOrientationProfile::default(),

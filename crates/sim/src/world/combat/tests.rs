@@ -93,6 +93,7 @@ fn combat_catalog(options: CombatCatalogOptions) -> GameplayCatalog {
         projectile: Some("test_bullet".to_owned()),
         impact_effect: None,
         area_damage,
+        knockback: None,
         pull: None,
         hardpoint: None,
         orientation: crate::gameplay::AttackOrientationProfile::default(),

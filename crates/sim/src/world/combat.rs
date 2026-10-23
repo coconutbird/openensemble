@@ -9,6 +9,7 @@ mod fire;
 mod hardpoints;
 mod helpers;
 mod impulses;
+mod knockback;
 mod orders;
 mod position;
 mod pull;
@@ -659,7 +660,14 @@ impl World {
 
     fn resolve_fire_events(&mut self, fire_events: Vec<FireEvent>, gameplay: &GameplayCatalog) {
         for event in fire_events {
+            // `BUnitActionRangedAttack::doAttack`: the knockback follows the attack.
+            let knockback = event
+                .knockback
+                .map(|profile| (event.source_id, event.target.id, profile));
             self.resolve_fire_event(event, gameplay);
+            if let Some((source_id, target_id, profile)) = knockback {
+                self.do_knockback_attack(source_id, target_id, profile);
+            }
         }
     }
 

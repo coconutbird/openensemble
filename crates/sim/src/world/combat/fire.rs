@@ -4,8 +4,8 @@ use super::deviation::LaunchAccuracy;
 use super::{AttackerSnapshot, ConcreteTargetSnapshot};
 use crate::EntityId;
 use crate::gameplay::{
-    AreaDamageProfile, AttackProfile, ImpactEffectProfile, ProjectileReactionFlags,
-    PullAttackProfile,
+    AreaDamageProfile, AttackProfile, ImpactEffectProfile, KnockbackProfile,
+    ProjectileReactionFlags, PullAttackProfile,
 };
 use crate::player::PlayerId;
 use glam::Vec3;
@@ -24,6 +24,7 @@ pub(super) struct FireEvent {
     pub(super) area_damage: Option<AreaDamageProfile>,
     pub(super) action_name: String,
     pub(super) pull: Option<PullAttackProfile>,
+    pub(super) knockback: Option<KnockbackProfile>,
     pub(super) normal_range: f32,
     pub(super) max_range: f32,
     pub(super) max_velocity_lead: f32,
@@ -57,6 +58,7 @@ impl FireEvent {
             area_damage,
             action_name: profile.action_name.clone(),
             pull: profile.pull.clone(),
+            knockback: profile.knockback,
             normal_range,
             max_range: profile.max_range,
             max_velocity_lead: profile.max_velocity_lead,

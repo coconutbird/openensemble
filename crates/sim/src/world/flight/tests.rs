@@ -278,6 +278,7 @@ fn move_air_attack_profile() -> AttackProfile {
         projectile: None,
         impact_effect: None,
         area_damage: None,
+        knockback: None,
         pull: None,
         hardpoint: None,
         orientation: crate::gameplay::AttackOrientationProfile::default(),
