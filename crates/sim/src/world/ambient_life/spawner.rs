@@ -4,6 +4,7 @@ use super::{elapsed_milliseconds, inside_square};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::{AmbientLifeSpawnerProfile, GameplayCatalog};
+use crate::math;
 use crate::player::PlayerId;
 use crate::spawn::{spawn_squad_at, squad_prototype_id};
 use crate::world::World;
@@ -145,7 +146,8 @@ impl World {
             })
             .map_or(0.0, object_radius);
         let angle = self.trigger_random_float(0.0, std::f32::consts::TAU);
-        let direction = Vec3::new(angle.sin(), 0.0, angle.cos()).normalize_or(Vec3::Z);
+        let (sin, cos) = math::sin_cos(angle);
+        let direction = Vec3::new(sin, 0.0, cos).normalize_or(Vec3::Z);
         let distance_scalar = self.trigger_random_float(2.0, 4.0);
         let position =
             owner.position + direction * (owner_radius + spec.obstruction_radius * distance_scalar);

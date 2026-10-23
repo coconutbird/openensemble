@@ -6,6 +6,7 @@ use crate::entities::{RepairOtherPhase, SquadState, UnitState};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::{GameplayCatalog, RepairOtherActionProfile};
+use crate::math;
 use crate::player::PlayerId;
 use glam::Vec3;
 use pipeline::database::hw1::Database;
@@ -152,7 +153,7 @@ impl World {
             return false;
         };
         let delta = context.target.position - source.base.position;
-        let center_distance = delta.x.hypot(delta.z);
+        let center_distance = math::hypot(delta.x, delta.z);
         let surface_distance = (center_distance
             - self.squad_obstruction_radius(source_squad_id)
             - self.squad_obstruction_radius(context.target.squad_id))

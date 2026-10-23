@@ -42,6 +42,7 @@ egui-winit = "0.31"
 glam = "0.29"
 half = "2.4"
 num-traits = "0.2"
+floaty = { git = "https://github.com/napbat/floaty", rev = "9161f7e597a17685cfc563e9b6c6533a652eeb2e" }
 
 # Error handling
 thiserror = "2.0"

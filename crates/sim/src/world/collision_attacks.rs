@@ -5,6 +5,7 @@ use crate::entities::{Squad, SquadMode};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::{AbilityRecoveryStart, CollisionAttackProfile, GameplayCatalog};
+use crate::math;
 use crate::physics::{UnitCollisionContact, resolve_unit_collisions};
 use crate::player::{GAIA_PLAYER, PlayerId};
 use glam::Vec3;
@@ -534,8 +535,9 @@ fn rammed_impulse(direction: Vec3, mass: f32, upward_velocity: f32) -> Vec3 {
 }
 
 fn angled_impulse(direction: Vec3, angle: f32, force: f32, mass: f32) -> Vec3 {
-    let mut impulse = direction * angle.cos();
-    impulse.y = angle.sin();
+    let (sin, cos) = math::sin_cos(angle);
+    let mut impulse = direction * cos;
+    impulse.y = sin;
     impulse * (force * mass.max(0.0))
 }
 

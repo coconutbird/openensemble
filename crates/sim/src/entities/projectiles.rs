@@ -11,6 +11,7 @@ use crate::entities::{BaseEntity, ObjectState};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::{AreaDamageProfile, ProjectileProfile};
+use crate::math;
 use crate::player::PlayerId;
 use crate::random::SimRandom;
 use crate::sync::SyncChecksum;
@@ -568,7 +569,7 @@ impl Projectile {
             return false;
         }
         let offset = self.target_position - self.base.position;
-        let xz_distance = offset.x.hypot(offset.z);
+        let xz_distance = math::hypot(offset.x, offset.z);
         let turn_scale = self.turn_rate_radians.to_degrees().clamp(90.0, 360.0) / 360.0;
         let fixed_height_distance = self.base.velocity.length() * turn_scale;
         if fixed_height_distance > xz_distance {

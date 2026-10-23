@@ -8,6 +8,7 @@ use crate::entities::{RecoveryType, SquadState, Unit, UnitState};
 use crate::entity::Entity;
 use crate::entity_id::{EntityClass, EntityId};
 use crate::gameplay::{GameplayCatalog, JumpActionProfile};
+use crate::math;
 use crate::order::{JumpOrderRequest, JumpOrderType};
 use crate::player::PlayerId;
 use glam::Vec3;
@@ -624,7 +625,7 @@ impl World {
 
 fn planar_distance(left: Vec3, right: Vec3) -> f32 {
     let delta = left - right;
-    delta.x.hypot(delta.z)
+    math::hypot(delta.x, delta.z)
 }
 
 #[cfg(test)]

@@ -2,7 +2,8 @@
 
 use super::ProjectileLaunch;
 use crate::gameplay::ProjectileProfile;
-use glam::{Quat, Vec3};
+use crate::math;
+use glam::Vec3;
 
 const MOTION_EPSILON: f32 = 0.000_001;
 
@@ -178,7 +179,7 @@ pub(super) fn tracking_target(
             intercepting: false,
         };
     }
-    let weight = ((distance / intercept_distance) * std::f32::consts::FRAC_PI_2).cos();
+    let weight = math::cos((distance / intercept_distance) * std::f32::consts::FRAC_PI_2);
     let lead = target_velocity * (distance / projectile_speed);
     let led_target = target_position + lead;
     TrackingTarget {
@@ -253,7 +254,7 @@ pub(super) fn tracking_motion(
         };
         current.cross(fallback).normalize_or(Vec3::Z)
     });
-    let direction = (Quat::from_axis_angle(axis, angle) * current).normalize_or(current);
+    let direction = (math::quat_from_axis_angle(axis, angle) * current).normalize_or(current);
     TrackingMotion {
         velocity: direction * speed,
         step: direction * (perturbed_speed * dt),

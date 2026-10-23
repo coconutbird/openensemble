@@ -964,6 +964,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "floaty"
+version = "0.1.0"
+source = "git+https://github.com/napbat/floaty?rev=9161f7e597a17685cfc563e9b6c6533a652eeb2e#9161f7e597a17685cfc563e9b6c6533a652eeb2e"
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1833,6 +1838,7 @@ dependencies = [
 name = "motion"
 version = "0.1.0"
 dependencies = [
+ "floaty",
  "glam",
  "log",
  "num-traits",
@@ -2896,6 +2902,7 @@ version = "0.1.0"
 dependencies = [
  "byteorder",
  "era",
+ "floaty",
  "glam",
  "log",
  "motion",

@@ -5,6 +5,7 @@ use crate::EntityId;
 use crate::entities::SquadMode;
 use crate::entity::Entity;
 use crate::gameplay::GameplayCatalog;
+use crate::math;
 use crate::player::PlayerId;
 use glam::Vec3;
 use num_traits::ToPrimitive;
@@ -118,7 +119,7 @@ impl World {
         let behind = -forward * DEFAULT_RALLY_DISTANCE;
         (0..RALLY_CANDIDATE_COUNT).find_map(|index| {
             let angle = FRAC_PI_8 * index.to_f32()?;
-            let (sin, cos) = angle.sin_cos();
+            let (sin, cos) = math::sin_cos(angle);
             let offset = Vec3::new(
                 behind.x * cos - behind.z * sin,
                 0.0,

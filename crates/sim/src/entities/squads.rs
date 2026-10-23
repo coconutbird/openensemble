@@ -66,6 +66,7 @@ pub(crate) use wander::{SquadWander, WanderPhase};
 use super::{BaseEntity, EntityIdle};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
+use crate::math;
 use crate::player::{PlayerId, PopulationCost};
 use glam::Vec3;
 
@@ -909,9 +910,9 @@ fn turn_toward(current: Vec3, desired: Vec3, degrees_per_second: f32, dt: f32) -
     let desired = Vec3::new(desired.x, 0.0, desired.z).normalize_or_zero();
     let dot = current.dot(desired).clamp(-1.0, 1.0);
     let cross_y = current.z.mul_add(desired.x, -current.x * desired.z);
-    let angle = cross_y.atan2(dot);
+    let angle = math::atan2(cross_y, dot);
     let limit = degrees_per_second.to_radians() * dt;
-    let (sin, cos) = angle.clamp(-limit, limit).sin_cos();
+    let (sin, cos) = math::sin_cos(angle.clamp(-limit, limit));
     Vec3::new(
         current.x.mul_add(cos, current.z * sin),
         0.0,

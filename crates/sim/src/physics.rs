@@ -16,6 +16,7 @@ use crate::entities::squads::formation_offset_to_world;
 use crate::entities::{BaseEntity, Squad, SquadState, Unit, UnitState};
 use crate::entity::{Entity, EntityManager};
 use crate::entity_id::EntityId;
+use crate::math;
 use crate::sync::SyncChecksum;
 use glam::Vec3;
 use num_traits::ToPrimitive;
@@ -882,12 +883,12 @@ fn turn_toward(current: Vec3, desired: Vec3, maximum_angle: f32) -> Vec3 {
     let desired = normalized_planar_or(desired, current);
     let dot = current.dot(desired).clamp(-1.0, 1.0);
     let cross_y = current.z.mul_add(desired.x, -current.x * desired.z);
-    let angle = cross_y.atan2(dot);
+    let angle = math::atan2(cross_y, dot);
     rotate_planar(current, angle.clamp(-maximum_angle, maximum_angle))
 }
 
 fn rotate_planar(vector: Vec3, angle: f32) -> Vec3 {
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = math::sin_cos(angle);
     Vec3::new(
         vector.x.mul_add(cos, vector.z * sin),
         0.0,

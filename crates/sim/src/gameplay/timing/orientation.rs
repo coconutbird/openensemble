@@ -6,6 +6,7 @@ use pipeline::database::hw1::tactics::Action;
 use pipeline::database::hw1::{Database, ProtoObject};
 
 use super::AttackProfile;
+use crate::math;
 
 /// Authored switches controlling hardpoint and owner orientation for one action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,7 +123,7 @@ impl AttackOrientationTolerances {
         ability_target: bool,
     ) -> f32 {
         if ability_target {
-            return FRAC_PI_3.cos();
+            return math::cos(FRAC_PI_3);
         }
         let has_projectile = profile.projectile.is_some();
         if profile
@@ -135,17 +136,17 @@ impl AttackOrientationTolerances {
             } else {
                 self.moving * 0.5
             };
-            return degrees.to_radians().cos();
+            return math::cos(degrees.to_radians());
         }
         if !has_projectile {
-            return FRAC_PI_2.cos();
+            return math::cos(FRAC_PI_2);
         }
         let degrees = if target_is_moving {
             self.tracking_moving
         } else {
             self.stationary
         };
-        (degrees * 0.5).to_radians().cos()
+        math::cos((degrees * 0.5).to_radians())
     }
 }
 

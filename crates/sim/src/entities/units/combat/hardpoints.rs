@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use glam::{Mat3, Mat4, Quat, Vec3};
 
 use crate::gameplay::{AttackAnimationAnchor, AttackHardpointProfile};
+use crate::math;
 use crate::sync::SyncChecksum;
 
 const AUTO_CENTER_DELAY_SECONDS: f32 = 5.0;
@@ -525,10 +526,10 @@ impl UnitHardpointState {
         let Some(actual_direction) = target.try_normalize() else {
             return HardpointAim::HANDLED;
         };
-        let desired_angle = actual_direction.x.atan2(actual_direction.z);
+        let desired_angle = math::atan2(actual_direction.x, actual_direction.z);
         let clamped_angle = desired_angle.clamp(profile.yaw_left, profile.yaw_right);
         let capped = (desired_angle - clamped_angle).abs() > ROTATION_EPSILON;
-        let goal = Quat::from_rotation_y(clamped_angle);
+        let goal = math::quat_from_rotation_y(clamped_angle);
         let current = self.attachment_rotation(component);
         if (current * Vec3::Z).dot(actual_direction) >= DIRECTION_TOLERANCE {
             return HardpointAim::HANDLED;
@@ -557,14 +558,14 @@ impl UnitHardpointState {
         let Some(target) = target_in_base(unit_world * base, target_world) else {
             return HardpointAim::HANDLED;
         };
-        let planar = target.x.hypot(target.z);
-        let desired_angle = target.y.atan2(planar);
+        let planar = math::hypot(target.x, target.z);
+        let desired_angle = math::atan2(target.y, planar);
         let clamped_angle = desired_angle.clamp(profile.pitch_min, profile.pitch_max);
         let capped = (desired_angle - clamped_angle).abs() > ROTATION_EPSILON;
         let actual_direction = Vec3::new(0.0, target.y, planar)
             .try_normalize()
             .unwrap_or(Vec3::Z);
-        let goal = Quat::from_rotation_x(-clamped_angle);
+        let goal = math::quat_from_rotation_x(-clamped_angle);
         let current = self.attachment_rotation(component);
         if (current * Vec3::Z).dot(actual_direction) >= DIRECTION_TOLERANCE {
             return HardpointAim::HANDLED;
@@ -637,10 +638,10 @@ impl UnitHardpointState {
         let Some(actual_direction) = target.try_normalize() else {
             return HardpointAim::HANDLED;
         };
-        let desired_angle = actual_direction.x.atan2(actual_direction.z);
+        let desired_angle = math::atan2(actual_direction.x, actual_direction.z);
         let clamped_angle = desired_angle.clamp(profile.yaw_left, profile.yaw_right);
         let capped = (desired_angle - clamped_angle).abs() > ROTATION_EPSILON;
-        let goal = Quat::from_rotation_y(clamped_angle);
+        let goal = math::quat_from_rotation_y(clamped_angle);
         let current = self.bone_rotation(bone);
         if (current * Vec3::Z).dot(actual_direction) >= DIRECTION_TOLERANCE {
             return HardpointAim::HANDLED;
@@ -773,46 +774,47 @@ fn combined_target(profile: &AttackHardpointProfile, direction: Vec3) -> (Vec3, 
             .is_some_and(|pitch| yaw.eq_ignore_ascii_case(pitch))
     });
     if same_component {
-        let yaw = direction.x.atan2(direction.z);
-        let pitch = direction.y.atan2(direction.x.hypot(direction.z));
+        let yaw = math::atan2(direction.x, direction.z);
+        let pitch = math::atan2(direction.y, math::hypot(direction.x, direction.z));
         let limited_yaw = yaw.clamp(profile.yaw_left, profile.yaw_right);
         let limited_pitch = pitch.clamp(profile.pitch_min, profile.pitch_max);
         let yaw_capped = (yaw - limited_yaw).abs() > ROTATION_EPSILON;
         let pitch_capped = (pitch - limited_pitch).abs() > ROTATION_EPSILON;
-        let rotation = Quat::from_rotation_y(limited_yaw) * Quat::from_rotation_x(-limited_pitch);
+        let rotation =
+            math::quat_from_rotation_y(limited_yaw) * math::quat_from_rotation_x(-limited_pitch);
         return (
             rotation * Vec3::Z,
             yaw_capped || pitch_capped && profile.has_hard_pitch_limits(),
         );
     }
     let maximum = profile.yaw_right.max(0.0);
-    let angle = direction.dot(Vec3::Z).clamp(-1.0, 1.0).acos();
+    let angle = math::acos(direction.dot(Vec3::Z).clamp(-1.0, 1.0));
     if maximum >= std::f32::consts::PI || angle <= maximum {
         return (direction, false);
     }
     let factor = (maximum / angle).clamp(0.0, 1.0);
-    let full_rotation = Quat::from_rotation_arc(Vec3::Z, direction);
-    let capped = Quat::IDENTITY.slerp(full_rotation, factor) * Vec3::Z;
+    let full_rotation = math::quat_from_rotation_arc(Vec3::Z, direction);
+    let capped = math::quat_slerp(Quat::IDENTITY, full_rotation, factor) * Vec3::Z;
     (capped, true)
 }
 
 fn yaw_is_covered(profile: &AttackHardpointProfile, mut direction: Vec3) -> bool {
     direction.y = 0.0;
     direction.try_normalize().is_none_or(|direction| {
-        let angle = direction.x.atan2(direction.z);
+        let angle = math::atan2(direction.x, direction.z);
         angle >= profile.yaw_left && angle <= profile.yaw_right
     })
 }
 
 fn pitch_is_covered(profile: &AttackHardpointProfile, direction: Vec3) -> bool {
-    let angle = direction.y.atan2(direction.x.hypot(direction.z));
+    let angle = math::atan2(direction.y, math::hypot(direction.x, direction.z));
     angle >= profile.pitch_min && angle <= profile.pitch_max
 }
 
 fn direction_orientation(direction: Vec3) -> Quat {
     let forward = direction.normalize_or_zero();
     let Some(right) = Vec3::Y.cross(forward).try_normalize() else {
-        return Quat::from_rotation_arc(Vec3::Z, forward);
+        return math::quat_from_rotation_arc(Vec3::Z, forward);
     };
     let up = forward.cross(right).normalize_or_zero();
     normalized_or_identity(Quat::from_mat3(&Mat3::from_cols(right, up, forward)))
@@ -828,15 +830,16 @@ fn turn_toward(
     let current = normalized_or_identity(current);
     let goal = normalized_or_identity(goal);
     let current_direction = (current * Vec3::Z).normalize_or_zero();
-    let angle = current_direction
-        .dot(desired_direction.normalize_or_zero())
-        .clamp(-1.0, 1.0)
-        .acos();
+    let angle = math::acos(
+        current_direction
+            .dot(desired_direction.normalize_or_zero())
+            .clamp(-1.0, 1.0),
+    );
     if !angle.is_finite() || angle <= ROTATION_EPSILON {
         return goal;
     }
     let maximum = (rate.max(0.0) * elapsed.max(0.0)).max(0.0);
-    current.slerp(goal, (maximum / angle).clamp(0.0, 1.0))
+    math::quat_slerp(current, goal, (maximum / angle).clamp(0.0, 1.0))
 }
 
 fn center_named_rotation(

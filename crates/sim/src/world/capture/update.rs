@@ -5,6 +5,7 @@ use crate::entities::{CapturePhase, SquadMode, SquadState, Unit};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::{CaptureActionProfile, GameplayCatalog};
+use crate::math;
 use crate::player::PlayerId;
 use glam::Vec3;
 use pipeline::database::hw1::Database;
@@ -508,7 +509,7 @@ impl World {
 
 fn capture_in_range(participant: &CaptureParticipant, target: &CaptureTarget) -> bool {
     let delta = participant.position - target.position;
-    let surface_distance = delta.x.hypot(delta.z) - participant.radius - target.radius;
+    let surface_distance = math::hypot(delta.x, delta.z) - participant.radius - target.radius;
     surface_distance.max(0.0) <= participant.work_range
 }
 

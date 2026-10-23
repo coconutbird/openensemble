@@ -5,6 +5,7 @@ use crate::entities::{GatherPhase, SquadState, Unit, UnitState};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::{GameplayCatalog, GatherActionProfile};
+use crate::math;
 use crate::player::{GAIA_PLAYER, PlayerId};
 use glam::Vec3;
 use std::collections::{BTreeMap, BTreeSet};
@@ -552,7 +553,7 @@ fn gather_capacity(limit: i32, reserved: usize) -> usize {
 
 fn gather_in_range(participant: &GatherParticipant, target: &GatherTarget) -> bool {
     let delta = participant.position - target.position;
-    let surface_distance = delta.x.hypot(delta.z) - participant.radius - target.radius;
+    let surface_distance = math::hypot(delta.x, delta.z) - participant.radius - target.radius;
     surface_distance.max(0.0) <= participant.work_range
 }
 

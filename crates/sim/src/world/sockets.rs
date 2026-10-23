@@ -3,7 +3,8 @@
 use super::World;
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
-use glam::{Quat, Vec3};
+use crate::math;
+use glam::Vec3;
 use pipeline::database::hw1::Vector3;
 
 impl World {
@@ -267,8 +268,9 @@ pub(crate) fn socket_transform(
         + right * local_offset.x
         + Vec3::Y * local_offset.y
         + parent_forward * local_offset.z;
-    let forward =
-        normalized_forward(Quat::from_rotation_y(local_yaw_degrees.to_radians()) * parent_forward);
+    let forward = normalized_forward(
+        math::quat_from_rotation_y(local_yaw_degrees.to_radians()) * parent_forward,
+    );
     (position, forward)
 }
 
@@ -281,10 +283,11 @@ fn relative_yaw_degrees(parent_forward: Vec3, socket_forward: Vec3) -> f32 {
     let parent_forward = normalized_forward(parent_forward);
     let socket_forward = normalized_forward(socket_forward);
     let right = Vec3::Y.cross(parent_forward).normalize_or(Vec3::X);
-    socket_forward
-        .dot(right)
-        .atan2(socket_forward.dot(parent_forward))
-        .to_degrees()
+    math::atan2(
+        socket_forward.dot(right),
+        socket_forward.dot(parent_forward),
+    )
+    .to_degrees()
 }
 
 fn normalized_forward(forward: Vec3) -> Vec3 {

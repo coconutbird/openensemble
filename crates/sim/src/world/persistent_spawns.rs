@@ -4,6 +4,7 @@ use super::World;
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::{GameplayCatalog, PersistentSpawnSquadProfile};
+use crate::math;
 use crate::player::{GAIA_PLAYER, PlayerId};
 use crate::prototypes::{object_by_name_trim_query, squad_by_name_trim_query};
 use crate::spawn::{spawn_squad_at, squad_prototype_id};
@@ -308,14 +309,14 @@ impl World {
         }
         let angle = self.sim_rng.range_float(0.0, TAU);
         let distance_scale = self.sim_rng.range_float(2.0, 4.0);
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = math::sin_cos(angle);
         let direction = Vec3::new(sin, 0.0, cos);
         let distance = owner.obstruction_radius + spec.obstruction_radius * distance_scale;
         let desired = owner.position + direction * distance;
         let position = (0_u16..4)
             .filter_map(|step| {
                 let rotation = angle + FRAC_PI_2 * f32::from(step);
-                let (sin, cos) = rotation.sin_cos();
+                let (sin, cos) = math::sin_cos(rotation);
                 let candidate = owner.position + Vec3::new(sin, 0.0, cos) * distance;
                 self.clear_persistent_spawn_position(
                     candidate,
@@ -420,7 +421,8 @@ fn circle_overlaps_unit(center: Vec3, radius: f32, unit: Vec3, half_extents: Vec
     let nearest_z = center.z.clamp(unit.z - extents.z, unit.z + extents.z);
     let delta_x = center.x - nearest_x;
     let delta_z = center.z - nearest_z;
-    delta_x * delta_x + delta_z * delta_z <= radius.max(0.0).powi(2)
+    let radius = radius.max(0.0);
+    delta_x * delta_x + delta_z * delta_z <= radius * radius
 }
 
 fn planar_forward(forward: Vec3) -> Vec3 {

@@ -6,6 +6,7 @@ use crate::entities::{SquadMode, Unit};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::{DeflectActionProfile, DodgeActionProfile, GameplayCatalog};
+use crate::math;
 use glam::Vec3;
 use num_traits::ToPrimitive;
 
@@ -351,7 +352,8 @@ impl World {
             }
             let other_radius = unit.obstruction_radius().max(0.25);
             let offset = horizontal(unit.base.position - position);
-            offset.length_squared() < (radius + other_radius).powi(2)
+            let separation = radius + other_radius;
+            offset.length_squared() < separation * separation
         })
     }
 
@@ -393,7 +395,7 @@ fn reaction_succeeds(
     }
     let incoming = -horizontal(trajectory).normalize_or(Vec3::Z);
     let facing = horizontal(forward).normalize_or(Vec3::Z);
-    let angle = facing.dot(incoming).clamp(-1.0, 1.0).acos();
+    let angle = math::acos(facing.dot(incoming).clamp(-1.0, 1.0));
     if angle >= maximum_angle {
         return false;
     }

@@ -4,6 +4,7 @@ use super::{RepairTarget, World};
 use crate::entities::{RepairOtherPhase, SquadState};
 use crate::entity_id::EntityId;
 use crate::gameplay::{GameplayCatalog, RepairOtherActionProfile};
+use crate::math;
 use pipeline::database::hw1::Database;
 
 #[derive(Debug, Clone)]
@@ -132,7 +133,7 @@ impl World {
             return f32::MAX;
         };
         let delta = target.position - source.base.position;
-        (delta.x.hypot(delta.z)
+        (math::hypot(delta.x, delta.z)
             - self.squad_obstruction_radius(source_squad_id)
             - self.squad_obstruction_radius(target.squad_id))
         .max(0.0)

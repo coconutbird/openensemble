@@ -4,6 +4,7 @@ use super::World;
 use crate::entities::squads::formation_offset_to_local;
 use crate::entity::Entity;
 use crate::entity_id::{EntityClass, EntityId};
+use crate::math;
 use crate::player::PlayerId;
 use glam::Vec3;
 
@@ -19,9 +20,9 @@ impl World {
         let radius = distribution.sqrt() * (outer_radius - inner_radius) + inner_radius;
         let theta = self.trigger_random_float(0.0, std::f32::consts::TAU);
         Vec3::new(
-            center.x + theta.cos() * radius,
+            center.x + math::cos(theta) * radius,
             center.y,
-            center.z - theta.sin() * radius,
+            center.z - math::sin(theta) * radius,
         )
     }
 

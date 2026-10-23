@@ -9,10 +9,11 @@ use crate::EntityId;
 use crate::entities::SquadMode;
 use crate::entity::Entity;
 use crate::gameplay::GameplayCatalog;
+use crate::math;
 use crate::physics::PhysicsBody;
 use crate::player::GAIA_PLAYER;
 use crate::world::World;
-use glam::{Quat, Vec3};
+use glam::Vec3;
 use num_traits::ToPrimitive;
 use pipeline::database::hw1::Database;
 
@@ -513,13 +514,9 @@ fn can_be_thrown(world: &World, unit_id: EntityId) -> bool {
 
 fn thrown_velocity(ball: Vec3, unit: Vec3, offset_radians: f32, speed: f32) -> Vec3 {
     let planar = Vec3::new(unit.x - ball.x, 0.0, unit.z - ball.z).normalize_or(Vec3::X);
-    let planar = Quat::from_rotation_y(offset_radians) * planar;
-    let launch_angle = 30.0_f32.to_radians();
-    Vec3::new(
-        planar.x * launch_angle.cos(),
-        launch_angle.sin(),
-        planar.z * launch_angle.cos(),
-    ) * speed
+    let planar = math::quat_from_rotation_y(offset_radians) * planar;
+    let (launch_sin, launch_cos) = math::sin_cos(30.0_f32.to_radians());
+    Vec3::new(planar.x * launch_cos, launch_sin, planar.z * launch_cos) * speed
 }
 
 fn finite_nonnegative(value: Option<f32>) -> f32 {

@@ -5,6 +5,7 @@ use crate::entities::squads::formation_offset_to_world;
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::GameplayCatalog;
+use crate::math;
 use crate::player::TeamId;
 use glam::Vec3;
 
@@ -244,9 +245,9 @@ impl World {
         );
         let xz_distance = planar.length().max(f32::EPSILON);
         let y_distance = (context.position.y - target.y).abs();
-        let angle = (y_distance / xz_distance).atan().to_degrees();
+        let angle = math::atan(y_distance / xz_distance).to_degrees();
         if context.max_depression_angle < 89.0 && angle > context.max_depression_angle {
-            let tangent = context.max_depression_angle.to_radians().tan();
+            let tangent = math::tan(context.max_depression_angle.to_radians());
             let desired = if tangent.abs() > f32::EPSILON {
                 1.2 * y_distance / tangent
             } else {
@@ -269,7 +270,7 @@ impl World {
                 target.z - context.anchor_position.z,
             );
             let anchor_xz_distance = anchor_planar.length().max(f32::EPSILON);
-            let anchor_angle = (y_distance / anchor_xz_distance).atan().to_degrees();
+            let anchor_angle = math::atan(y_distance / anchor_xz_distance).to_degrees();
             if context.max_depression_angle < 89.0 && anchor_angle > context.max_depression_angle {
                 result.flags.insert(SteeringFlags::BLOCK_ANCHOR_RETURN);
             }

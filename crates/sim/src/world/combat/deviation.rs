@@ -1,8 +1,9 @@
 //! Retail synchronized projectile hit and miss distribution.
 
 use crate::gameplay::AttackAccuracyProfile;
+use crate::math;
 use crate::random::SimRandom;
-use glam::{Quat, Vec3};
+use glam::Vec3;
 
 const DEVIATION_EPSILON: f32 = 0.000_001;
 
@@ -76,7 +77,7 @@ pub(super) fn projectile_deviation(
     } else {
         trajectory.cross(Vec3::Y)
     };
-    let rotation = Quat::from_axis_angle(trajectory, rotation_roll * std::f32::consts::TAU);
+    let rotation = math::quat_from_axis_angle(trajectory, rotation_roll * std::f32::consts::TAU);
     let result = rotation * deviation_axis * deviation;
     if result.is_finite() {
         result

@@ -4,6 +4,7 @@ use super::super::common::prototype_lifetime_ms;
 use super::execution::{RagePowerExecution, RagePowerPhase, RageSpline};
 use crate::EntityId;
 use crate::entity::Entity;
+use crate::math;
 use crate::world::World;
 use glam::Vec3;
 use pipeline::database::hw1::Database;
@@ -140,7 +141,7 @@ fn select_directional(
             if distance >= scan_radius || distance <= f32::EPSILON {
                 return None;
             }
-            let angle = direction.dot(delta / distance).clamp(-1.0, 1.0).acos();
+            let angle = math::acos(direction.dot(delta / distance).clamp(-1.0, 1.0));
             if angle >= FRAC_PI_2 {
                 return None;
             }

@@ -3,8 +3,9 @@
 use super::World;
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
+use crate::math;
 use crate::prototypes::object_by_name_untrimmed;
-use glam::{Quat, Vec3};
+use glam::Vec3;
 use num_traits::ToPrimitive;
 use pipeline::database::hw1::{Database, ProtoObject, Squad as ProtoSquad};
 use std::collections::BTreeSet;
@@ -43,7 +44,7 @@ pub(super) fn trained_squad_placement(
         .and_then(|prototype| prototype.exit_from_direction)
         .unwrap_or_default();
     let exit_degrees = 90.0 * exit_direction.to_f32().unwrap_or_default();
-    forward = planar_forward(Quat::from_rotation_y(exit_degrees.to_radians()) * forward);
+    forward = planar_forward(math::quat_from_rotation_y(exit_degrees.to_radians()) * forward);
     let birth_on_top = building_proto.is_some_and(|prototype| has_type(prototype, "BirthOnTop"));
     let offset = if birth_on_top {
         0.0
@@ -285,7 +286,8 @@ fn circle_overlaps_unit(center: Vec3, radius: f32, unit: Vec3, half_extents: Vec
     let closest_z = center.z.clamp(unit.z - extents.z, unit.z + extents.z);
     let dx = center.x - closest_x;
     let dz = center.z - closest_z;
-    dx * dx + dz * dz <= radius.max(0.0).powi(2)
+    let radius = radius.max(0.0);
+    dx * dx + dz * dz <= radius * radius
 }
 
 fn object_radius(prototype: &ProtoObject) -> f32 {

@@ -3,6 +3,7 @@
 use super::super::World;
 use crate::entities::units::{MoveAirActionState, MoveAirState, Unit};
 use crate::entity_id::EntityId;
+use crate::math;
 use glam::Vec3;
 
 const ALTITUDE_CHANGE_SECONDS: f32 = 4.0;
@@ -271,7 +272,7 @@ fn move_air_heading(context: MoveAirContext, state: &mut MoveAirState, dt: f32) 
 }
 
 fn rotate_planar(vector: Vec3, angle: f32) -> Vec3 {
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = math::sin_cos(angle);
     Vec3::new(
         vector.x.mul_add(cos, vector.z * sin),
         0.0,

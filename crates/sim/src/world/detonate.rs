@@ -12,6 +12,7 @@ use crate::gameplay::{
     AttackQuery, AttackQueryFlags, DetonateActionProfile, GameplayCatalog, TacticRelation,
     TacticStateId,
 };
+use crate::math;
 use crate::player::{PlayerId, TeamRelation};
 use glam::Vec3;
 
@@ -511,7 +512,7 @@ fn planar_distance(left: Vec3, right: Vec3) -> f32 {
 }
 
 fn planar_length(vector: Vec3) -> f32 {
-    vector.x.hypot(vector.z)
+    math::hypot(vector.x, vector.z)
 }
 
 #[cfg(test)]

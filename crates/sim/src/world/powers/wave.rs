@@ -16,6 +16,7 @@ use crate::commands::PowerUserId;
 use crate::entities::{SquadMode, SquadState};
 use crate::entity::Entity;
 use crate::gameplay::GameplayCatalog;
+use crate::math;
 use crate::player::{PlayerId, ProtoPowerId, TeamId};
 use crate::spawn::{object_prototype_id, spawn_object_at};
 use crate::sync::SyncChecksum;
@@ -615,8 +616,9 @@ fn clamp_ball_position(world: &World, mut position: Vec3) -> Vec3 {
         .to_f32()
         .unwrap_or_default()
         / 3_000.0;
-    position.y =
-        terrain + BALL_CENTER_HEIGHT + (phase * std::f32::consts::TAU).sin() * BALL_HEIGHT_VARIANCE;
+    position.y = terrain
+        + BALL_CENTER_HEIGHT
+        + math::sin(phase * std::f32::consts::TAU) * BALL_HEIGHT_VARIANCE;
     position
 }
 

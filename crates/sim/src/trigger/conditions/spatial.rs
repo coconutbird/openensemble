@@ -2,6 +2,7 @@
 
 use super::queries::unit_xz_surface_distance;
 use super::{compare_partial, operator_at, used_variable_id, value_at, write_trigger_value};
+use crate::math;
 use crate::trigger::{Condition, TriggerScript, TriggerValue, TriggerVec3};
 use crate::{EntityId, World};
 use glam::Vec3;
@@ -30,7 +31,7 @@ pub(super) fn squad_location_distance(
     };
     let dx = squad.base.position.x - location.x;
     let dz = squad.base.position.z - location.z;
-    compare_partial(&dx.hypot(dz), operator, &distance)
+    compare_partial(&math::hypot(dx, dz), operator, &distance)
 }
 
 /// `MarkerSquadsInArea` (980, `BTriggerCondition_tcMarkerSquadsInArea` @ `0x140431110`).
@@ -96,7 +97,7 @@ fn squad_xz_surface_distance(world: &World, squad_id: EntityId, point: Vec3) -> 
     }
     let dx = squad.base.position.x - point.x;
     let dz = squad.base.position.z - point.z;
-    (dx.hypot(dz) - world.squad_obstruction_radius(squad_id)).max(0.0)
+    (math::hypot(dx, dz) - world.squad_obstruction_radius(squad_id)).max(0.0)
 }
 
 pub(super) fn compare_vector(condition: &Condition, script: &TriggerScript) -> bool {

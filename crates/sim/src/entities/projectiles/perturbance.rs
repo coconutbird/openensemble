@@ -1,6 +1,7 @@
 //! Retail synchronized projectile-velocity perturbation state.
 
 use crate::gameplay::{ProjectileInitialPerturbance, ProjectilePerturbanceProfile};
+use crate::math;
 use crate::random::SimRandom;
 use crate::sync::SyncChecksum;
 use glam::Vec3;
@@ -48,7 +49,7 @@ impl ProjectilePerturbance {
             self.timer = self.duration;
         }
         let perturbance = if self.duration > VECTOR_EPSILON {
-            self.vector * (std::f32::consts::PI * self.timer / self.duration).sin()
+            self.vector * math::sin(std::f32::consts::PI * self.timer / self.duration)
         } else {
             Vec3::ZERO
         };

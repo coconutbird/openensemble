@@ -686,7 +686,8 @@ impl Squad {
             0.0,
             target.z - self.base.position.z,
         );
-        if delta.length_squared() <= work_range.max(0.0).powi(2) {
+        let range = work_range.max(0.0);
+        if delta.length_squared() <= range * range {
             self.move_target = None;
             self.base.velocity = Vec3::ZERO;
             if self.state == SquadState::Moving {

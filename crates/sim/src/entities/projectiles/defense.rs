@@ -2,6 +2,7 @@
 
 use super::{Projectile, ProjectileRuntimeFlags};
 use crate::gameplay::ProjectileReactionFlags;
+use crate::math;
 use crate::random::SimRandom;
 use glam::Vec3;
 
@@ -74,7 +75,7 @@ impl Projectile {
         let fallback = -horizontal(self.base.velocity).normalize_or(Vec3::Z);
         let away = horizontal(impact_position - unit_center).normalize_or(fallback);
         let yaw = rng.range_float(-DEFLECT_YAW_LIMIT, DEFLECT_YAW_LIMIT);
-        let (sin, cos) = yaw.sin_cos();
+        let (sin, cos) = math::sin_cos(yaw);
         let mut direction = Vec3::new(
             away.x.mul_add(cos, away.z * sin),
             rng.range_float(-1.0, 1.0),

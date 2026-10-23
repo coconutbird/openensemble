@@ -2,6 +2,7 @@
 
 use super::Unit;
 use crate::entities::BaseEntity;
+use crate::math;
 use crate::sync::SyncChecksum;
 use glam::Vec3;
 
@@ -286,7 +287,7 @@ fn turn_speed_factor(absolute_angle: f32) -> f32 {
 fn signed_angle(current: Vec3, desired: Vec3) -> f32 {
     let dot = current.dot(desired).clamp(-1.0, 1.0);
     let cross_y = current.z.mul_add(desired.x, -current.x * desired.z);
-    cross_y.atan2(dot)
+    math::atan2(cross_y, dot)
 }
 
 pub(super) fn source_turning_flag(current: Vec3, desired: Vec3) -> bool {
@@ -296,9 +297,9 @@ pub(super) fn source_turning_flag(current: Vec3, desired: Vec3) -> bool {
 fn angle_around_y(vector: Vec3) -> f32 {
     let vector = normalized_planar_or(vector, Vec3::Z);
     if vector.x > ANGLE_EPSILON {
-        vector.z.clamp(-1.0, 1.0).acos()
+        math::acos(vector.z.clamp(-1.0, 1.0))
     } else if vector.x < -ANGLE_EPSILON {
-        std::f32::consts::TAU - vector.z.clamp(-1.0, 1.0).acos()
+        std::f32::consts::TAU - math::acos(vector.z.clamp(-1.0, 1.0))
     } else if vector.z < 0.0 {
         std::f32::consts::PI
     } else {
@@ -307,7 +308,7 @@ fn angle_around_y(vector: Vec3) -> f32 {
 }
 
 fn rotate_planar(vector: Vec3, angle: f32) -> Vec3 {
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = math::sin_cos(angle);
     Vec3::new(
         vector.x.mul_add(cos, vector.z * sin),
         0.0,

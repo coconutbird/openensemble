@@ -6,6 +6,7 @@ use crate::entities::{SquadContainmentState, SquadState, Unit, UnitState};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::GameplayCatalog;
+use crate::math;
 use crate::player::PlayerId;
 use glam::Vec3;
 use std::collections::BTreeSet;
@@ -750,7 +751,7 @@ impl World {
         let distance = (destination.radius + squad_radius) * PLACEMENT_SPACING;
         if consume_teleporter_random {
             let angle = self.rng.f_rand(0.0, TAU);
-            let (sin, cos) = angle.sin_cos();
+            let (sin, cos) = math::sin_cos(angle);
             let _retail_unused_start = destination.position + Vec3::new(sin, 0.0, cos) * distance;
         }
         let right = Vec3::Y.cross(destination.forward).normalize_or_zero();
@@ -759,7 +760,7 @@ impl World {
 
     fn random_rally_position(&mut self, origin: Vec3, distance: f32) -> Vec3 {
         let angle = self.rng.f_rand(0.0, TAU);
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = math::sin_cos(angle);
         origin + Vec3::new(sin, 0.0, cos) * distance.max(0.0)
     }
 

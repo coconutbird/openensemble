@@ -2,6 +2,7 @@
 
 use super::World;
 use crate::entity::Entity;
+use crate::math;
 use crate::{EntityId, PlayerId};
 use glam::Vec3;
 
@@ -187,10 +188,10 @@ fn entity_is_in_area(
     );
     let distance = if uses_box_obstruction {
         let outside = (delta - half_extents.abs()).max(Vec3::ZERO);
-        outside.x.hypot(outside.z)
+        math::hypot(outside.x, outside.z)
     } else {
         let obstruction_radius = half_extents.x.abs().max(half_extents.z.abs());
-        (delta.x.hypot(delta.z) - obstruction_radius).max(0.0)
+        (math::hypot(delta.x, delta.z) - obstruction_radius).max(0.0)
     };
     distance <= radius
 }

@@ -3,7 +3,8 @@
 use crate::entities::Unit;
 use crate::entity_id::EntityId;
 use crate::gameplay::AttackProfile;
-use glam::{Quat, Vec3};
+use crate::math;
+use glam::Vec3;
 
 use super::helpers::unit_world_transform;
 use super::{ConcreteTargetSnapshot, World};
@@ -150,7 +151,7 @@ fn turn_body_toward(unit: &mut Unit, target_world: Vec3, elapsed: f32) -> bool {
         unit.base.set_forward(desired);
         return true;
     }
-    let angle = current.dot(desired).clamp(-1.0, 1.0).acos();
+    let angle = math::acos(current.dot(desired).clamp(-1.0, 1.0));
     if angle <= BODY_FACING_EPSILON {
         unit.base.set_forward(desired);
         return true;
@@ -165,7 +166,7 @@ fn turn_body_toward(unit: &mut Unit, target_world: Vec3, elapsed: f32) -> bool {
     }
     let signed = maximum.min(angle).copysign(current.cross(desired).y);
     unit.base
-        .set_forward(Quat::from_rotation_y(signed) * current);
+        .set_forward(math::quat_from_rotation_y(signed) * current);
     false
 }
 

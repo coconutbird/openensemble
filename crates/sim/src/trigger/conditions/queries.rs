@@ -6,6 +6,7 @@ use super::{
 };
 use crate::entities::Unit;
 use crate::entity::Entity;
+use crate::math;
 use crate::{EntityId, World};
 use glam::Vec3;
 
@@ -344,14 +345,14 @@ pub(super) fn unit_xz_surface_distance(unit: &Unit, point: Vec3) -> f32 {
     );
     if unit.is_building() {
         let outside = (delta - unit.obstruction_half_extents.abs()).max(Vec3::ZERO);
-        outside.x.hypot(outside.z)
+        math::hypot(outside.x, outside.z)
     } else {
         let obstruction_radius = unit
             .obstruction_half_extents
             .x
             .abs()
             .max(unit.obstruction_half_extents.z.abs());
-        (delta.x.hypot(delta.z) - obstruction_radius).max(0.0)
+        (math::hypot(delta.x, delta.z) - obstruction_radius).max(0.0)
     }
 }
 

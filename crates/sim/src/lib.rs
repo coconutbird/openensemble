@@ -13,6 +13,7 @@ pub mod entity;
 pub mod entity_id;
 pub mod executor;
 pub mod gameplay;
+pub(crate) mod math;
 pub mod order;
 pub mod packet;
 pub mod physics;
