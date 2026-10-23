@@ -74,8 +74,9 @@ pub use gameplay::{
     JoinMergeType, KamikazeWeaponProfile, MergedSquadProfile, MineActionProfile, ObjectGameplay,
     PhysicsImpulseEvent, PhysicsLoadIssue, ProjectileInitialPerturbance,
     ProjectilePerturbanceProfile, ProjectileProfile, PullAttackProfile, RangedAction,
-    RepairOtherActionProfile, ReviveActionProfile, TacticRelation, TacticStateId,
-    TacticStateProfile, ThrownDamagePart, UnitRevivalProfile,
+    RepairOtherActionProfile, ReviveActionProfile, SmartTargetType, StasisBombProfile,
+    TacticRelation, TacticStateId, TacticStateProfile, ThrownDamagePart, UnitRevivalProfile,
+    WeaponEffectProfile,
 };
 pub use order::{JumpOrderRequest, JumpOrderType, OrderType};
 pub use packet::{ChannelPacketHeader, PacketError};

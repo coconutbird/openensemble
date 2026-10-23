@@ -614,7 +614,8 @@ example `unitactionrangedattack.cpp`, `damagehelper.cpp`, `projectile.cpp`,
   and every projectile at the same squad stop dazing. Stasis: a fired attack of
   a `Stasis` (with `SmartTargeting`), `StasisDrain` or `StasisBomb` weapon adds
   one stasis field to the target squad (not a `Transporter`) and holds it until
-  the attack ends or changes target. `BUnitActionStasis` sets the squad speed
+  the attack ends or changes target; the attack also ends when the squad of the
+  attacker stops attacking. `BUnitActionStasis` sets the squad speed
   multiplier to `1 - n / NumStasisFieldsToStop` and, at a full stop, blocks
   attacks, stops the squad and removes its orders. Squad movement and the
   vehicle action input read the multiplier. A stasis beam heals its squad by
@@ -799,6 +800,16 @@ Flood egg from above terrain, observes both persistent actions, and proves the
 resulting death creates `fld_inf_InfectionForm_03` through the database-backed
 death-spawn path.
 
+The opt-in `scenario-weapon-effects` regression runs three shipped weapons on
+Blood Gulch. The Flame Marine `Flamethrower1` adds damage over time stacks to
+Marines, and the stacks end after the attacker goes. With the upgrade action
+swap and the `Command` ability, the Brute Chief `stunHammer` dazes the Marines
+for at most 3 s and blocks their attacks until the daze ends. The Vampire
+`StasisDrainBeam` puts the Marines in stasis, lowers their speed multiplier,
+holds one smart-target reference and adds the stasis action. When the Vampire
+attack ends, the field, the reference and the multiplier return. The test also
+reads the shipped `StasisBombAction` area damage.
+
 The opt-in `scenario-hand-attacks` integration test loads the shipped Brute
 Chief tactic and its weighted `MeleeAttack` UAX tags through Blood Gulch's
 already-layered source. It verifies the authored `HandAttack`, 3-unit range,
@@ -927,4 +938,5 @@ cargo test -p sim --test scenario-repair-power -- --ignored
 cargo test -p render --test scenario-repair-power -- --ignored
 cargo test -p sim --test scenario-tactic-states -- --ignored
 cargo test -p sim --test scenario-bomb -- --ignored
+cargo test -p sim --test scenario-weapon-effects -- --ignored
 ```

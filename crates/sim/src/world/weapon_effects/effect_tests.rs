@@ -1,6 +1,7 @@
 //! Damage over time stacking, the projectile daze flag, the stasis bomb and smart targeting.
 
 use super::dot::add_stack;
+use crate::entities::SquadState;
 use crate::entities::units::weapon_effects::{DotStack, StasisHold};
 use crate::gameplay::{
     DazeProfile, GameplayCatalog, SmartTargetType, StasisProfile, WeaponEffectProfile,
@@ -377,5 +378,46 @@ fn an_attack_blocked_squad_finds_no_attack_move_target() {
         squad
             .attack_target
             .is_some_and(|id| id == target || id == leader(&world, target))
+    );
+}
+
+#[test]
+fn a_stasis_hold_ends_with_the_squad_attack_even_with_a_kept_engagement() {
+    let gameplay = stasis_bomb_catalog();
+    let mut world = two_player_world();
+    let attacker = spawn_squad(&mut world, 1, ATTACKER, Vec3::new(0.0, 0.0, -20.0));
+    let target = spawn_squad(&mut world, 2, TARGET, Vec3::ZERO);
+    let (attacker_unit, target_unit) = (leader(&world, attacker), leader(&world, target));
+    let profile = instant_profile("StasisBombBeamAttackAction", 30.0);
+    {
+        let unit = world.units.get_mut(attacker_unit).unwrap();
+        unit.combat.prepare_target(&profile, target_unit);
+        unit.weapon_effects.stasis_hold = Some(StasisHold {
+            target_id: target_unit,
+            action_name: "StasisBombBeamAttackAction".to_owned(),
+            drain: true,
+            bomb: false,
+        });
+    }
+    world
+        .squads
+        .get_mut(target)
+        .unwrap()
+        .weapon_effects
+        .stasis_effects = 1;
+    world.squads.get_mut(attacker).unwrap().state = SquadState::Attacking;
+    world.update_stasis_holds(&gameplay);
+    assert_eq!(world.get_squad(target).unwrap().stasis_effect_count(), 1);
+
+    world.squads.get_mut(attacker).unwrap().state = SquadState::Idle;
+    world.update_stasis_holds(&gameplay);
+    assert_eq!(world.get_squad(target).unwrap().stasis_effect_count(), 0);
+    assert!(
+        world
+            .get_unit(attacker_unit)
+            .unwrap()
+            .weapon_effects
+            .stasis_hold
+            .is_none()
     );
 }

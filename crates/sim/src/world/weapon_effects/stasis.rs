@@ -111,6 +111,8 @@ impl World {
             if hold.bomb {
                 self.detonate_stasis_bomb(attacker_id, &hold, gameplay);
             }
+            // The ranged attack ends with the squad attack, also while the unit still keeps
+            // its last engagement.
             let attacking = self.units.get(attacker_id).is_some_and(|unit| {
                 unit.is_alive()
                     && unit.combat.engaged_target() == Some(hold.target_id)
@@ -118,6 +120,10 @@ impl World {
                         .combat
                         .action_name()
                         .is_some_and(|name| name.eq_ignore_ascii_case(&hold.action_name))
+                    && unit
+                        .squad_id
+                        .and_then(|id| self.squads.get(id))
+                        .is_none_or(|squad| squad.state == SquadState::Attacking)
             });
             let target_alive = self.units.get(hold.target_id).is_some_and(Entity::is_alive);
             if !attacking || !target_alive {

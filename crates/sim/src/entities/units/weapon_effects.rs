@@ -108,6 +108,24 @@ impl UnitWeaponEffects {
     }
 }
 
+impl super::Unit {
+    /// The damage over time stacks on the unit, over every `BUnitActionDOT`.
+    #[must_use]
+    pub fn damage_over_time_stack_count(&self) -> usize {
+        self.weapon_effects
+            .dot_actions
+            .iter()
+            .map(|action| action.stacks.len())
+            .sum()
+    }
+
+    /// Whether the unit has a `BUnitActionStasis`.
+    #[must_use]
+    pub const fn has_stasis_action(&self) -> bool {
+        self.weapon_effects.stasis_action
+    }
+}
+
 fn hash_optional_entity(checksum: &mut SyncChecksum, value: Option<EntityId>) {
     checksum.hash_u32(value.map_or(u32::MAX, EntityId::as_u32));
 }
