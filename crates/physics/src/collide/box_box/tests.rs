@@ -174,10 +174,12 @@ fn tumble(pair: &mut Pair, frames: u16) -> Vec<Vec<(u32, [u32; 7])>> {
     let mut history = Vec::new();
     for frame in 0..frames {
         let time = f32::from(frame) * 0.05;
-        let rotation = Quat::from_euler(glam::EulerRot::YXZ, time * 0.7, time * 0.3, time * 0.5);
+        // The inputs use no trigonometry, so the bits are the same on every platform.
+        let rotation = Quat::from_xyzw(time * 0.35, time * 0.15, time * 0.25, 1.0).normalize();
+        let sweep = |offset: f32| 2.0 * (time * 0.16 + offset).fract() - 1.0;
         let a = at(
             rotation,
-            Vec3::new(time.sin() * 0.3, 0.95, time.cos() * 0.2),
+            Vec3::new(sweep(0.0) * 0.3, 0.95, sweep(0.25) * 0.2),
         );
         pair.step(a, Transform::IDENTITY);
         assert!(pair.agent.slots.len() <= 8);

@@ -405,7 +405,7 @@ fn run_scene() -> Vec<ManifoldBits> {
             children: vec![
                 Arc::new(Shape::Transform {
                     transform: Transform::from_rotation_translation(
-                        Quat::from_rotation_y(0.4),
+                        Quat::from_xyzw(0.0, 0.2, 0.0, 1.0).normalize(),
                         Vec3::new(0.0, 0.5, 0.0),
                     ),
                     child: Arc::clone(&block),
@@ -423,16 +423,18 @@ fn run_scene() -> Vec<ManifoldBits> {
     let terrain = terrain_pose(&world);
     let mut frames = Vec::new();
     for step in 0..40u16 {
+        // The inputs use no trigonometry, so the bits are the same on every platform.
         let time = f32::from(step) * 0.05;
         let mut poses = vec![terrain];
         for (index, body) in (0..6u16).zip(&bodies) {
             let phase = f32::from(index);
+            let wave = 2.0 * (time * 0.5 + phase * 0.3).fract() - 1.0;
             let center = Vec3::new(
                 4.0 + phase * 0.9 + time * 0.3,
-                1.4 - time * 0.2 + (phase * 0.7).sin() * 0.3,
-                5.0 + (time + phase).cos() * 0.8,
+                1.4 - time * 0.2 + (phase * 0.7).fract() * 0.3,
+                5.0 + wave * 0.8,
             );
-            let rotation = Quat::from_euler(glam::EulerRot::YXZ, time + phase, 0.2 * phase, 0.1);
+            let rotation = Quat::from_xyzw(0.1 * phase, time + phase * 0.5, 0.05, 1.0).normalize();
             poses.push(CollidablePose {
                 body: *body,
                 transform: Transform::from_rotation_translation(rotation, center),
