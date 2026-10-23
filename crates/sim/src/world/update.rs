@@ -89,6 +89,7 @@ impl World {
         if let (Some(database), Some(gameplay)) = (database, gameplay) {
             self.update_auto_repairs(database, gameplay);
         }
+        self.read_back_object_physics();
         self.update_object_states();
         self.step_physics(dt);
     }

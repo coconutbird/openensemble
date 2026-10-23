@@ -326,6 +326,7 @@ fn materialize_associated_object(
         )
     };
     world.objects.insert(object_id, object);
+    world.queue_proto_object_physics(object_id);
     if !world.associate_authored_child(parent.id, object_id, AuthoredUnitChildKind::Object) {
         let _removed = world.remove_object(object_id);
     }

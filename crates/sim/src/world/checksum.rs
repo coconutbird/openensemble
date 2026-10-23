@@ -91,6 +91,12 @@ fn hash_objects(checksum: &mut SyncChecksum, objects: &EntityManager<Object>) {
         checksum.hash_string(&object.proto_object_name);
         hash_optional_entity_id(checksum, object.built_by);
         hash_optional_vec3(checksum, object.visual_secondary_position());
+        if let Some(state) = &object.physics_object {
+            checksum.hash_u32(1);
+            state.hash_state(checksum);
+        } else {
+            checksum.hash_u32(0);
+        }
         object.ambient_life_spawner.hash_state(checksum);
         match &object.kind {
             ObjectKind::Visual => checksum.hash_u32(0),

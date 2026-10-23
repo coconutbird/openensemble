@@ -113,6 +113,7 @@ impl World {
         self.prepare_remove_object_authored_relationships(id);
         self.remove_owned_attachments(id);
         self.detach_attachment_from_parent(id);
+        self.release_physics_object(id);
         let removed = self.objects.remove(id);
         if removed.is_some() {
             self.power_manager.forget_visual(id);

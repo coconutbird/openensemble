@@ -138,6 +138,42 @@ impl World {
             }
         }
     }
+
+    /// Runs the `BUnitActionPhysics` update of each class-0 object with a dynamic body, in
+    /// entity id order. Retail gives the action to any entity with a dynamic body
+    /// (`BEntity_createPhysicsObject`) and runs it in `BObject::update` after the unit updates,
+    /// before the physics step.
+    ///
+    /// - An active body moves its object and gives it its axes and velocity.
+    /// - An inactive body moves a `CompleteOnInactivePhysics` action to its wait state.
+    pub(crate) fn read_back_object_physics(&mut self) {
+        let world = self.physics.world();
+        for (_, object) in self.objects.iter_mut() {
+            let Some(state) = object.physics_object.as_mut() else {
+                continue;
+            };
+            if state.fixed || state.flags.waiting {
+                continue;
+            }
+            let body = state.body;
+            if world.is_active(body) != Some(true) {
+                state.flags.waiting |= state.flags.complete_on_inactive;
+                continue;
+            }
+            let (Some(position), Some(rotation), Some(velocity)) = (
+                world.position(body),
+                world.rotation(body),
+                world.linear_velocity(body),
+            ) else {
+                continue;
+            };
+            let pose = unit_pose(position, rotation, velocity, state.center_offset);
+            object.base.position = pose.position;
+            object.base.forward = pose.forward;
+            object.base.up = pose.up;
+            object.base.velocity = pose.velocity;
+        }
+    }
 }
 
 #[cfg(test)]

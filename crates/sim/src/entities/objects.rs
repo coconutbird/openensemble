@@ -51,6 +51,9 @@ pub struct Object {
     pub(crate) ambient_life_spawner: ObjectAmbientLifeSpawner,
     /// Specialized object behavior.
     pub kind: ObjectKind,
+    /// The body of a proto object with a `PhysicsInfo` (`BEntity::mpPhysicsObject`) and the
+    /// state of its `BUnitActionPhysics`.
+    pub physics_object: Option<crate::physics::UnitPhysics>,
 }
 
 impl Object {
@@ -78,6 +81,7 @@ impl Object {
             visual_secondary_position: None,
             ambient_life_spawner: ObjectAmbientLifeSpawner::default(),
             kind: ObjectKind::Visual,
+            physics_object: None,
         }
     }
 
@@ -106,6 +110,7 @@ impl Object {
             visual_secondary_position: None,
             ambient_life_spawner: ObjectAmbientLifeSpawner::default(),
             kind: ObjectKind::Icon(icon),
+            physics_object: None,
         }
     }
 
@@ -132,6 +137,7 @@ impl Object {
             visual_secondary_position: None,
             ambient_life_spawner: ObjectAmbientLifeSpawner::default(),
             kind: ObjectKind::Revealer(revealer),
+            physics_object: None,
         }
     }
 

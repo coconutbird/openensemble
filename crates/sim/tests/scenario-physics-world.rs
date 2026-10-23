@@ -6,8 +6,8 @@ use physics::{BodyId, DEFAULT_CONVEX_RADIUS, MotionType, Shape};
 use sim::{EntityId, GameplayCatalog, World, object_prototype_id, spawn_object_at};
 
 const WARTHOG: &str = "unsc_veh_warthog_01";
-/// A shipped proto object with the `rock` physics info (a 1 × 1 × 1 box of mass 20). The
-/// macblast rocks are `ObjectClass Object`, and the sim gives those objects no body yet.
+/// A shipped unit proto object with the `rock` physics info (a 1 × 1 × 1 box of mass 20).
+/// `scenario-object-physics.rs` checks the class-0 macblast rocks.
 const ROCK: &str = "fld_egg_stalkEgg_01";
 const TICK_SECONDS: f32 = 0.05;
 /// The rock falls from this height above the terrain.

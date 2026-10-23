@@ -1,12 +1,17 @@
 //! The body creation rule of retail (`BObject_initFromProto` and `BEntity_createPhysicsObject`,
 //! `0x140204EF0`, 2008 `entity.cpp:2129-2301`).
 //!
+//! - `BObject_initFromProto` (`0x14029C300`, 2008 `object.cpp:3656-3669`) checks no object
+//!   class: every unit and class-0 object with a `PhysicsInfo` gets its body, unless the create
+//!   parameters set `mNoPhysics`.
 //! - A `MotionType fixed` info makes a fixed body with the building filter and no readback.
 //! - Any other info makes a `BoxInertia` body with `max(mass, 1)`, the blueprint material and
 //!   damping, a new Objects filter and zero velocities.
 //! - A clamshell info makes the pelvis body and the upper and lower bodies, joined by two
 //!   limited hinges.
-//! - A unit with a vehicle type then gets its vehicle action, filter, inertia and hull.
+//! - A unit with a vehicle type then gets its vehicle action, filter, inertia and hull. A
+//!   class-0 object gets none (`BEntity_setupVehiclePhysics`, `0x1402055D0`, returns for any
+//!   class other than Unit).
 
 use std::sync::Arc;
 
@@ -18,7 +23,7 @@ use super::template::{PhysicsBlueprintBody, PhysicsTemplate};
 use super::unit::{ClamshellBodies, UnitPhysics};
 use super::vehicle_actions::{VehicleAction, VehicleFilter};
 use crate::entities::BaseEntity;
-use crate::entity_id::EntityId;
+use crate::entity_id::{EntityClass, EntityId};
 use crate::world::World;
 
 /// The hinge friction of the clamshell (`BClamshellPhysicsObject::setupHingeConstraints`).
@@ -39,39 +44,90 @@ pub(crate) fn entity_rotation(entity: &BaseEntity) -> Quat {
 }
 
 impl World {
-    /// Queues the body of a unit for the start of the next world update, or for
-    /// [`World::create_pending_physics_objects`]. The unit then has its final spawn transform.
+    /// Queues the body of a unit or class-0 object for the start of the next world update, or
+    /// for [`World::create_pending_physics_objects`]. The entity then has its final spawn
+    /// transform.
     pub(crate) fn queue_physics_object(
         &mut self,
-        unit_id: EntityId,
+        entity_id: EntityId,
         template: Arc<PhysicsTemplate>,
     ) {
-        self.physics.queue_object(unit_id, template);
+        self.physics.queue_object(entity_id, template);
     }
 
-    /// Makes the queued bodies in queue order. A unit that has a body or is gone gets none.
+    /// `BObject_initFromProto`: queues the `PhysicsInfo` body of a new class-0 object of a proto
+    /// object. A proto object without a `PhysicsInfo` gives no body.
+    pub(crate) fn queue_proto_object_physics(&mut self, object_id: EntityId) {
+        let Some(template) = self
+            .objects
+            .get(object_id)
+            .and_then(|object| self.prototype_physics(&object.proto_object_name))
+            .and_then(|templates| templates.info.clone())
+        else {
+            return;
+        };
+        self.queue_physics_object(object_id, template);
+    }
+
+    /// Makes the queued bodies in queue order. An entity that has a body or is gone gets none.
     pub fn create_pending_physics_objects(&mut self) {
-        for (unit_id, template) in self.physics.take_pending_objects() {
-            let _created = self.create_physics_object(unit_id, &template, false);
+        for (entity_id, template) in self.physics.take_pending_objects() {
+            let _created = self.create_physics_object(entity_id, &template, false);
         }
     }
 
-    /// `BEntity_createPhysicsObject`: makes the body of a unit at its transform. Returns `false`
-    /// if the unit is gone or has a body.
+    /// The physics state of a unit or class-0 object.
+    #[must_use]
+    pub fn physics_state(&self, entity_id: EntityId) -> Option<&UnitPhysics> {
+        self.physics_owner(entity_id)?.1
+    }
+
+    /// The entity and the physics state of a unit or class-0 object.
+    fn physics_owner(&self, entity_id: EntityId) -> Option<(&BaseEntity, Option<&UnitPhysics>)> {
+        match entity_id.class()? {
+            EntityClass::Unit => self
+                .units
+                .get(entity_id)
+                .map(|unit| (&unit.base, unit.physics_object.as_ref())),
+            EntityClass::Object => self
+                .objects
+                .get(entity_id)
+                .map(|object| (&object.base, object.physics_object.as_ref())),
+            _ => None,
+        }
+    }
+
+    /// The physics slot of a unit or class-0 object.
+    pub(crate) fn physics_slot_mut(
+        &mut self,
+        entity_id: EntityId,
+    ) -> Option<&mut Option<UnitPhysics>> {
+        match entity_id.class()? {
+            EntityClass::Unit => self
+                .units
+                .get_mut(entity_id)
+                .map(|unit| &mut unit.physics_object),
+            EntityClass::Object => self
+                .objects
+                .get_mut(entity_id)
+                .map(|object| &mut object.physics_object),
+            _ => None,
+        }
+    }
+
+    /// `BEntity_createPhysicsObject`: makes the body of a unit or class-0 object at its
+    /// transform. Returns `false` if the entity is gone or has a body.
     pub(crate) fn create_physics_object(
         &mut self,
-        unit_id: EntityId,
+        entity_id: EntityId,
         template: &PhysicsTemplate,
         complete_on_inactive: bool,
     ) -> bool {
-        let Some(unit) = self.units.get(unit_id) else {
+        let Some((base, None)) = self.physics_owner(entity_id) else {
             return false;
         };
-        if unit.physics_object.is_some() {
-            return false;
-        }
-        let rotation = entity_rotation(&unit.base);
-        let position = unit.base.position;
+        let rotation = entity_rotation(base);
+        let position = base.position;
         let fixed = template.is_fixed();
         let center_offset = template.center_offset();
         let main = template.main_body();
@@ -102,13 +158,15 @@ impl World {
             world.set_linear_velocity(body, Vec3::ZERO);
             world.set_angular_velocity(body, Vec3::ZERO);
         }
-        self.setup_vehicle_physics(&mut state, template);
+        if entity_id.class() == Some(EntityClass::Unit) {
+            self.setup_vehicle_physics(&mut state, template);
+        }
         if fixed {
             let building = self.physics.filters().building;
             self.physics.world_mut().set_filter_info(body, building);
         }
-        if let Some(unit) = self.units.get_mut(unit_id) {
-            unit.physics_object = Some(state);
+        if let Some(slot) = self.physics_slot_mut(entity_id) {
+            *slot = Some(state);
         }
         true
     }
@@ -235,15 +293,11 @@ impl World {
         }
     }
 
-    /// Removes the body of a unit with its clamshell parts and hinges
+    /// Removes the body of a unit or class-0 object with its clamshell parts and hinges
     /// (`BEntity::releasePhysicsObject`), or cancels its queued body.
-    pub(crate) fn release_physics_object(&mut self, unit_id: EntityId) {
-        self.physics.cancel_pending_object(unit_id);
-        let Some(state) = self
-            .units
-            .get_mut(unit_id)
-            .and_then(|unit| unit.physics_object.take())
-        else {
+    pub(crate) fn release_physics_object(&mut self, entity_id: EntityId) {
+        self.physics.cancel_pending_object(entity_id);
+        let Some(state) = self.physics_slot_mut(entity_id).and_then(Option::take) else {
             return;
         };
         let world = self.physics.world_mut();
@@ -257,3 +311,6 @@ impl World {
         world.remove_body(state.body);
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -148,6 +148,8 @@ pub(crate) fn create_class_zero_object_at(
         )
     };
     world.objects.insert(id, object);
+    // `BObject_initFromProto`: a proto object with a `PhysicsInfo` gets its body.
+    world.queue_proto_object_physics(id);
     id
 }
 
