@@ -29,6 +29,8 @@ mod work_orders;
 
 #[cfg(test)]
 mod recipient_tests;
+#[cfg(test)]
+mod work_order_tests;
 
 #[cfg(test)]
 use crate::commands::work_command_flags;

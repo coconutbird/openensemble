@@ -177,3 +177,6 @@ impl World {
         (pct < 1.0).then_some(action)
     }
 }
+
+#[cfg(test)]
+mod tests;
