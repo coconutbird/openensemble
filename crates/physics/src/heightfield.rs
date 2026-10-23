@@ -4,6 +4,9 @@
 //! The shape reads the XSD sim heights (chunk `0x2222`) and adds a skirt of
 //! [`HeightField::SKIRT_VERTICES`] vertices on each side that repeats the edge heights.
 
+mod query;
+mod ray;
+
 use glam::Vec3;
 use half::f16;
 use thiserror::Error;
