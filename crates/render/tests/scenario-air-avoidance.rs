@@ -14,6 +14,8 @@ const BANSHEE_UPGRADES: [&str; 3] = [
     "cov_banshee_upgrade2",
     "cov_banshee_upgrade3",
 ];
+/// The updates that the Banshee gets to pitch into its dive.
+const DIVE_TICKS: usize = 40;
 
 /// Run with:
 /// `OPENENSEMBLE_GAME_DIR=<HaloWarsDE> cargo test -p render --test scenario-air-avoidance -- --ignored`
@@ -90,6 +92,30 @@ fn renderer_projects_kamikaze_clip_and_dive_pitch_from_sim_state() {
             .kamikaze_target()
             .is_some_and(|id| marine_ids.contains(&id))
     );
+    // Retail pitches the crashing aircraft only through its body: the hover flight action
+    // (`BPhysicsHoverFlightAction_calcMovement`, `0x1402D1BD0`) springs the pitch toward the
+    // dive and ramps it in over `mTimeSinceStopped`, and the readback of the next update gives
+    // the unit the body axes. The dive pitch therefore shows some updates after the crash
+    // starts.
+    let dived = (0..DIVE_TICKS).any(|_| {
+        tick(&mut loaded);
+        loaded
+            .simulation
+            .world
+            .get_unit(banshee_id)
+            .expect("Banshee remains present during its dive")
+            .base
+            .forward
+            .y
+            < 0.0
+    });
+    assert!(dived, "the Banshee did not pitch into its dive");
+    let banshee = loaded
+        .simulation
+        .world
+        .get_unit(banshee_id)
+        .expect("Banshee remains present during its dive");
+    assert_eq!(banshee.aircraft_crash_phase(), AircraftCrashPhase::Crashing);
     assert!(
         !scene.roster_matches_with_gameplay(&loaded.simulation.world, &loaded.simulation.gameplay,)
     );
