@@ -51,6 +51,7 @@ The root library (`src/lib.rs`) also holds the code that the executables share:
 | Crate | Purpose |
 |---|---|
 | `crates/motion` | Skeletal animation sampling and attachment transforms, shared by `sim` and `render`. |
+| `crates/physics` | Deterministic rigid-body world that follows the Havok 5.1 world of Halo Wars DE: terrain heightfield, shapes, collision filter, contact solver, hinges and deactivation. It has no game rules. `sim` creates the bodies and runs the vehicle actions. |
 | `crates/sim` | Deterministic lockstep simulation: commands, entities, orders, powers and triggers. |
 | `crates/render` | `wgpu` renderer: UGX models, terrain, particles, lights, shadows, terrain effects and the window loop. `render::world_view::WorldView` draws a loaded scenario. |
 | `crates/net` | UDP host and client transport. No executable uses it yet. |

@@ -72,10 +72,10 @@ gaps are in the execution.
 | Action | Status | Code | Notes |
 | --- | --- | --- | --- |
 | `BUnitActionMove` | Partial | `entities/units/ground_movement.rs`, `world/ground_movement.rs` | No pather. See [Pathing](#world-and-player-systems). |
-| `BUnitActionMoveAir` | Implemented | `world/flight/`, `entities/units/flight.rs` | No flight-height mesh. See `aircraft-avoidance.md`. |
-| `BUnitActionMoveWarthog` | Implemented | `entities/units/warthog.rs` | |
-| `BUnitActionMoveGhost` | Partial | `entities/units/vehicle.rs` | Forward response only. |
-| `BUnitActionPhysics` | Partial | `physics.rs` | Deterministic boxes, no Havok shapes or springs. |
+| `BUnitActionMoveAir` | Implemented | `world/flight/`, `entities/units/flight.rs` | No flight-height mesh. See `aircraft-avoidance.md`. A unit with a physics hover info flies with `BPhysicsHoverFlightAction` (`physics/vehicle_actions/hover.rs`). |
+| `BUnitActionMoveWarthog` | Partial | `physics/readback.rs`, `physics/vehicle_actions/warthog.rs` | The Warthog squad is a physics vehicle squad: the squad moves, and `BPhysicsWarthogAction` drives the body. The timed terrain impulses of the move action and the jump lines are not modeled. |
+| `BUnitActionMoveGhost` | Implemented | `physics/vehicle_actions/ghost.rs` | `BPhysicsGhostAction` drives the Ghost body toward its squad. |
+| `BUnitActionPhysics` | Implemented | `physics/readback.rs`, `physics/death.rs` | Readback of the Havok bodies of units and class-0 objects, early terminate, `CompleteOnInactivePhysics`, `EndMoveOnInactivePhysics`, clamshell and rocket on death. See `movement-and-physics.md`. Jump lines are missing. |
 | `BUnitActionRangedAttack` (`RangedAttack`, `HandAttack`) | Implemented | `world/combat/` | |
 | `BUnitActionChargedRangedAttack` | Implemented | `world/charge.rs` | |
 | `BUnitActionSecondaryTurretAttack`, `BUnitActionSlaveTurretAttack` | Implemented | `world/combat/turrets.rs` | |
@@ -84,7 +84,7 @@ gaps are in the execution.
 | `BUnitActionAreaAttack`, `BUnitActionUnderAttack` | Missing | — | |
 | `BUnitActionDOT` | Missing | — | The weapon `DOTrate`, `DOTduration` and `DOTEffect` fields are not read. |
 | `BUnitActionStasis`, `BSquadActionDaze` | Missing | — | The weapon `Stasis`, `StasisDrain`, `StasisBomb` and `Daze` fields are not read. |
-| `BUnitActionThrown` | Partial | `entities/units/thrown.rs` | Wave debris only. Weapon `ThrowUnits`, `PhysicsLaunch*` and `ApplyKnockback` are not read. |
+| `BUnitActionThrown` | Partial | `entities/units/thrown.rs` | The body takes the throw velocity and the throw ends on landing. Only the Wave throws units. Weapon `ThrowUnits`, `PhysicsLaunch*` and `ApplyKnockback` are not read. |
 | `BUnitActionBuilding` | Implemented | `world/production/`, `world/research.rs`, `world/construction.rs` | See `production.md` and `research.md`. |
 | `BUnitActionCapture` | Implemented | `world/capture.rs` | |
 | `BUnitActionChangeOwner` | Missing | — | Used by the Covenant supply depots and `rsrc_power_capturepoint_01`. |
@@ -97,7 +97,7 @@ gaps are in the execution.
 | `BUnitActionDetonate` | Implemented | `world/detonate.rs` | |
 | `BUnitActionMines` | Implemented | `world/mines.rs` | |
 | `BUnitActionBomb` | Implemented | `world/bomb.rs` | |
-| `BUnitActionDeath` | Partial | `world/lifecycle.rs`, `world/death_spawns.rs`, `world/death_replacements.rs` | No fatalities. |
+| `BUnitActionDeath` | Partial | `world/lifecycle.rs`, `world/death_spawns.rs`, `world/death_replacements.rs`, `world/death_throw.rs` | No fatalities. `world/death_throw.rs` has the weapon death throw, but no weapon damage gives it throw data yet. |
 | `BUnitActionHeroDeath`, `BUnitActionRevive` | Implemented | `world/revival.rs` | |
 | `BUnitActionInfect`, `BUnitActionInfectDeath` | Implemented | `world/infect.rs` | |
 | `BUnitActionHeal` | Implemented | `world/heal.rs` | |
@@ -153,7 +153,9 @@ gaps are in the execution.
 | System | Engine evidence | Status | Notes |
 | --- | --- | --- | --- |
 | Scenario player setup and player colours | `BScenario_setupPlayers` @ `0x140381cf0`, `BDatabase_setupPlayerColors` @ `0x1401f9560`, `BPlayer_ctor` @ `0x1402ed960` | Implemented | `scenario/player_setup.rs` creates the players, sets the teams, relations, start positions, civs and leaders, and sets `Player::color`. `Player::color` is the index into the `playercolors.xml` colour set. A player with `UsePlayerSettings="false"` and a `Color` other than `-1` gets that `Color`. Each other player gets an entry from the `<civ>` row of its civ in `playercolors.xml`. The entry number is 1 plus the number of earlier world players (IDs from 1) with the same civ. A civ outside `0..=4` gives `-1`. `Player::color` keeps the low byte, so `-1` is `255`. Gaia and the game-mode NPC player keep the constructor value `-1`. The world checksum does not include the colour. |
-| Pathing and obstruction manager | `BUnitActionMove_requestPath` @ `0x14053f060`, `BUnitActionMove_refreshPath` @ `0x14053f280` | Missing | Squads steer in a straight line (`Squad::update_movement_with_speed_limit`). Obstructions are circles and boxes in `physics.rs`. |
+| Pathing and obstruction manager | `BUnitActionMove_requestPath` @ `0x14053f060`, `BUnitActionMove_refreshPath` @ `0x14053f280` | Missing | Squads steer in a straight line (`Squad::update_movement_with_speed_limit`). The collision attacks test unit obstruction boxes (`world/collision_attacks/obstruction.rs`). |
+| Havok physics world | `BPhysicsWorld_init` @ `0x1407BB390`, `BPhysicsWorld_update` @ `0x1407BBB40`, `BTerrainPhysics_createHeightFieldBody` @ `0x14041B500`, `BEntity_createPhysicsObject` @ `0x140204EF0`, `BEntity_setupVehiclePhysics` @ `0x1402055D0` | Implemented | `crates/physics` and `physics/`: gravity (0, −21.7, 0), substeps of at most 0.0125 s, the terrain heightfield body, bodies for units and class-0 objects with a `PhysicsInfo`, the retail filter, the vehicle hull and actions, physics replacements and the gravity ball action. See `movement-and-physics.md` for the gaps. |
+| Physics replacements | `BObject_initFromProto` @ `0x14029C300`, `BUnit_createAndThrowPhysicsReplacement` @ `0x1404DEA30` | Partial | `World::spawn_physics_replacement` (`physics/bodies.rs`) for Detonate, jump and Wave. The weapon death throw is not wired to the damage path. No corpse manager. |
 | Formations | `BFormation2_writeSavegame` @ `0x14003d040` | Partial | Fixed squad-local offsets. No formation reassignment or priorities. |
 | Fog of war and visibility | `BWorldVisibility_loadConfig` @ `0x1406d4d10`, `fogOfWar.xml` `0x1411daa68` | Partial | `world/visibility.rs` tests unit sight circles and revealers on each query. No visibility grid, explored map or terrain occlusion. |
 | Resources, population, technology | `BTechTree_save` @ `0x140417190` | Implemented | `world/resources.rs`, `world/technology.rs`, `player/` |

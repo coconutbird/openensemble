@@ -57,7 +57,8 @@ see [hwde-shader-comparison.md](hwde-shader-comparison.md).
 | User camera (`BUser`) | `BUser_resetCameraDefaults` @ `0x140598C00`, `BUser_updateCameraControls` @ `0x140580220`, `BUser_updateScrolling` @ `0x14057D9A0`, `BUser_handleInput` @ `0x14058F250`, `BUser_syncCameraState` @ `0x140598D20` | Partial | `src/client/camera.rs` uses the `startup\game.cfg` yaw, pitch, zoom, field of view, turn, zoom and scroll values, and the pitch from the zoom. `src/client/controls.rs` has the retail `Keyboard` bindings: edge scroll border and corner rules, `Insert`/`Delete` turn input ±0.5, `Alt` + mouse turn input `0.2 · 1920 / width · dx`, `Alt` + wheel and `Page Down`/`Page Up` zoom input ±1, `Home` reset of yaw, pitch and zoom. Missing: auto zoom (`CameraAutoZoom*`), `CameraLimits` and `LockCameraToWorld` height limits, and the analog stick ramp (`ScrollRampPoint`, `ScrollRampSpeed`, `ScrollExp`). |
 
 The engine strings show no water or ocean renderer; the only match is the sky material string.
-Havok physics and ragdolls belong to the simulation, not to this document.
+Havok physics belongs to the simulation (`crates/physics` and `crates/sim/src/physics/`), not to
+this document. The renderer draws the transforms that the physics readback gives the units.
 
 ## Known defects
 

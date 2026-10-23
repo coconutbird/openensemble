@@ -249,17 +249,15 @@ example `unitactionrangedattack.cpp`, `damagehelper.cpp`, `projectile.cpp`,
   action-scoped. A collision action's authored `NewTacticState` is set while
   its squad remains in HitAndRun and cleared outside that mode. Collision
   lifecycle, impacted IDs, and tactic-state transitions are checksummed.
-- Dynamic vehicle bodies also test contacts against non-rigid authored
-  obstruction boxes, allowing Warthogs to hit Marine-style formation units.
-  Live rigid targets and rammer bounce use the recovered mass-scaled launch
-  impulses; non-rigid bowlable squads receive a deterministic displacement
-  that remains authoritative and renderer-visible.
-- Supported ground-vehicle bodies resolve each proto object's `PhysicsInfo`
-  through the scenario-layered `.physics`, primary `.blueprint`, and Havok
-  `.shp` records. Material, box half extents, and center offset are retained in
-  the checksummed world prototype catalog before initial placements and future
-  spawns. Ghosts use the loaded body and the named recovered controller's 2.5
-  forward response, so their RamState leads to real sim-owned contacts.
+- Ram damage does not come from Havok contacts. The collision attack tests
+  overlapping unit obstruction boxes where at least one unit has a dynamic
+  body (`world/collision_attacks/obstruction.rs`, `0x1400F1FB0`). A live
+  rigid target and the rammer get mass-scaled impulses on their bodies. A
+  non-rigid bowlable squad gets a displacement of its position.
+- Each unit with a `PhysicsInfo` gets a Havok body from the scenario-layered
+  `.physics`, `.blueprint`, and `.shp` records (`physics/bodies.rs`).
+  `BPhysicsGhostAction` (`physics/vehicle_actions/ghost.rs`) drives the Ghost
+  body. See `movement-and-physics.md`.
 - Squad and standalone attack orders retain generational entity targets,
   canonicalize clicked squad members to their parent squad, chase to authored
   range, and deterministically select a live concrete member when firing. Both
@@ -597,7 +595,7 @@ features are missing:
 
 - Actions: `PointBlankAttack` (shipped Hawk and Hornet), `AreaAttack`,
   `UnderAttack`, and the full thrown-unit and leash action. `BUnitActionThrown`
-  runs only for Wave debris (`entities/units/thrown.rs`).
+  runs only for the Wave (`entities/units/thrown.rs`).
 - Weapon effect families: damage over time (`DOTrate`, `DOTduration`,
   `DOTEffect`, `BUnitActionDOT`), `Stasis`, `StasisDrain`, `StasisBomb`,
   `Daze` (`BSquadActionDaze`), `ThrowUnits`, `PhysicsLaunch*`,
@@ -707,10 +705,10 @@ The opt-in `scenario-tactic-states` integration tests load Blood Gulch and all
 catalog contains exactly Suicide Grunt's unrestricted `SuicideRun` state and
 Ghost's unrestricted `RamState`, plus Ghost's
 `PersistentCollisionAttack -> RamState` transition. A real spawned Ghost then
-resolves generic `Command` to `CovGhostRam`, receives the shipped Ghost physics
-material and Havok box, enters the checksummed state while HitAndRun is active,
-physically contacts another Ghost, spends Ram juice, applies damage, and clears
-the state when that authoritative squad mode ends.
+resolves generic `Command` to `CovGhostRam`, gets its Havok body from the
+shipped Ghost physics info, enters the checksummed state while HitAndRun is
+active, touches the obstruction of another Ghost, spends Ram juice, applies
+damage, and clears the state when that authoritative squad mode ends.
 The same installed test selects the shipped Suicide Grunt's `SuicideBomb`,
 `Bomb`, Basic weapon type, grenade projectile, 1,400 DPS, 12-unit AOE, 50-unit
 glowing range, state-zero `SuicideRun`, and `CovGruntSuicideExplode` recovery
@@ -844,9 +842,9 @@ world. Scenario-local civilization, leader, and technology tables also
 bootstrap the player in retail order, cascade a dependent Shadow technology,
 and modify a subsequently spawned unit.
 The same archive overrides a synthetic Ghost `.physics`, `.blueprint`, and
-`.shp` chain over conflicting base copies; the gameplay catalog and a later
-authoritative spawn both expose only the scenario material, collider, center
-offset, and movement configuration.
+`.shp` chain over conflicting base copies. A later spawn gets only the
+scenario body: its material, shape, center offset, Vehicles filter and inertia
+`(m, m, 0.4m)`.
 It also proves that startup config is parsed before scenario mounting,
 configuration names compare case-insensitively, and a scenario archive cannot
 retroactively define the `Veterancy` gate.

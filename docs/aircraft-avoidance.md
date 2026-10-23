@@ -17,10 +17,15 @@ spawn the scenario. An `AirAvoidanceActionProfile` retains:
 
 The same layered pass resolves every referenced `.physics` file once and records the retail
 movement-action selection. Hawk, Hornet, Vulture, Banshee, Vampire, and Sentinel physics types use
-physics hover; a prototype with no `PhysicsInfo` uses `MoveAir` for `AirMovement`, or for `Flying`
+physics hover. A prototype with no `PhysicsInfo` uses `MoveAir` for `AirMovement`, or for `Flying`
 when the synchronized `EnableFlight` config is defined. A prototype that has `PhysicsInfo` never
 falls back to either flag. This immutable rule is copied into checksummed world prototype state and
 applied by the shared scenario, trigger, training, and runtime spawn path.
+
+A unit with a physics hover info gets a Havok body and a `BPhysicsHoverFlightAction`
+(`crates/sim/src/physics/vehicle_actions/hover.rs`, `0x1402D0E20`). The action flies the body,
+writes the squad height and dives a crashing aircraft. The readback moves the unit. See
+`movement-and-physics.md`.
 
 The installed-data test pins both shipped Banshee profiles and its squad's 45-unit leash,
 15-unit deadzone, and 2,500 ms recall delay. Its normal profile is enabled without a weapon;
@@ -39,11 +44,14 @@ The installed-data test pins both shipped Banshee profiles and its squad's 45-un
   `birth_timer > 1.5` transition. Attack steering honors the profile's maximum target-depression
   angle. Units with an authored zero reverse speed, including the shipped Banshee, strafe laterally
   when too steep; absent reverse speed uses retail's `-1` maximum-speed fallback and backs away.
-- Hover flight samples the three retail 4-unit chassis probes and a rotating 0.2-to-1.0-second
-  future probe. Its checksummed five-height ring, vertical velocity, authored hover offset,
-  16-unit terrain fallback, 13-unit minimum clearance, slower descent, and collision-avoidance
-  altitude offset produce the authoritative squad height. Ground-space order Y never competes with
-  that controller.
+- The kinematic hover controller (`world/air_avoidance/hover.rs`) runs only for a physics hover
+  unit that has no hover action. It samples the three retail 4-unit chassis probes and a rotating
+  0.2-to-1.0-second future probe. Its checksummed five-height ring, vertical velocity, authored
+  hover offset, 16-unit terrain fallback, 13-unit minimum clearance, slower descent, and
+  collision-avoidance altitude offset produce the squad height.
+- A crashing aircraft with a hover action does not use the crash movement. Its impact test uses
+  the segment from its previous position to the read-back position. The ground test is
+  `y − 1.2·obstruction Y ≤ terrain` (`BUnitActionAvoidCollisionAir_update`, `0x1404EEBB0`).
 - Non-physics `MoveAir` units retain independent checksummed action state instead of being snapped
   back onto generic formation transforms. They turn toward the moving squad center with retail's
   turn-rate acceleration, ease toward 60 percent of maximum speed, and select terrain-relative
@@ -123,9 +131,9 @@ cargo test -p render --test scenario-air-avoidance -- --ignored
 
 ## Remaining parity boundaries
 
-The terrain fallback and vertical controller are authoritative, but the sim does not yet load the
-retail flight-height mesh or reproduce Havok's mass/inertia impulses, chassis yaw/pitch/roll springs,
-pivoting engines, or physics-shape refinement used for building impacts. Squad stasis counters are
+The hover action uses the terrain height plus 16 as its flight height, because the sim does not
+load the retail flight-height mesh. The pivoting engines and the physics-shape refinement used
+for building impacts are not modeled. Squad stasis counters are
 not yet modeled, so stasis cannot force the fallback deadline to zero. Death audio,
 selection-manager notification, shockwave instances, rumble, and camera shake also await their
 shared authoritative presentation systems. The named source's return-to-base landing block is

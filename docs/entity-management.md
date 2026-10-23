@@ -89,7 +89,7 @@ save/load ordering; they are not original debug symbols.
 | Separate generational typed pools | `entity.rs`: `EntityManager<T>` |
 | Class-1 mobile units and buildings | `entities/units.rs`: `Unit` and `UnitKind` |
 | Stock Warthog and Marine unit profiles | `entities/units/warthog.rs` and `entities/units/marine.rs` |
-| Scenario-layered Ghost body configuration | `gameplay/vehicle_physics.rs` and `entities/units/vehicle.rs` |
+| Body templates of the layered physics infos | `gameplay/physics_data.rs` and `physics/template.rs` |
 | Persistent per-unit ammunition, tactic state, Ram, Detonate, and death-replacement lifecycle | `entities/units/ammunition.rs`: `UnitAmmunition`; `entities/units/tactic_state.rs`: checksummed current state/revision; `entities/units/collision_attack.rs`: checksummed collision state; `entities/units/detonate.rs`: checksummed action triggers/phases; `entities/units/physics_replacement.rs` and `entities/units/death_replacement.rs`: replacement lifetimes |
 | Class-2 squads and unit membership | `entities/squads.rs`: `Squad::unit_ids` |
 | Stock Warthog and Marine squad profiles | `entities/squads/warthog.rs` and `entities/squads/marine.rs` |
@@ -104,7 +104,8 @@ save/load ordering; they are not original debug symbols.
 | World ownership and cleanup | `world.rs`: unit, squad, and base lifecycle APIs |
 | Layered scenario/database loading and entity expansion | `scenario.rs`, `scenario/coordinates.rs`, `scenario/starts.rs`, and `scenario/technology.rs` |
 | Target pursuit, firing, ammunition, Mines, Detonate, collision attacks, and damage | `world/combat.rs`, `world/mines.rs`, `world/detonate.rs`, `world/collision_attacks.rs`, `world/ammunition.rs`, `entities/units/combat.rs`, and `gameplay.rs` |
-| Ground/vehicle integration, layered prototype bodies, and obstruction contacts | `physics.rs`, `gameplay/vehicle_physics.rs`, and `entities/units/vehicle.rs` |
+| Havok physics world, bodies, vehicle actions, and readback | `crates/physics`, `physics.rs` and `physics/` (see `movement-and-physics.md`) |
+| Obstruction contacts of the collision attacks | `world/collision_attacks/obstruction.rs` |
 | Deterministic state comparison | `world/checksum.rs`: unit/squad/projectile/base state |
 
 Class-0 visual, icon, and control objects use their own generational pool.
@@ -127,10 +128,12 @@ death notification, AOE damage, physical replacement, self-death, recovery,
 and cleanup are authoritative and checksummed; renderer/UI clients do not
 repeat any of those decisions.
 
-Supported `PhysicsInfo` chains are likewise resolved from the already-mounted
-scenario source and copied into the checksummed world prototype catalog before
-spawn. Unit runtime configuration stays under `entities/units/`; neither the
-renderer nor scenario presentation content owns a duplicate vehicle body.
+`gameplay/physics_data.rs` makes a body template for each physics info of the
+scenario-layered database. Each proto object gets its `PhysicsInfo` and
+`PhysicsReplacementInfo` templates. The world queues the body of each new unit
+or class-0 object with a `PhysicsInfo` and makes it at the start of the next
+update (`physics/bodies.rs`). The `physics` field of `World` owns all bodies.
+The renderer has no body.
 
 The ordinary unit-death path resolves `<DeathSpawnSquad>` from that same
 scenario-layered database immediately before the dead unit leaves the class-1
