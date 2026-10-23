@@ -11,24 +11,23 @@
 //! and pairs in a sorted order and never iterates a hash map.
 
 mod body;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the dynamics slice wires `CollisionWorld` into `World::step_delta_time`"
-    )
-)]
 mod collide;
 mod contact;
+mod dynamics;
 mod filter;
 mod heightfield;
 mod math;
 mod shape;
+mod world;
 
-pub use body::BodyId;
+pub use body::{BodyDesc, BodyId, MotionType};
 pub use collide::RayHit;
 pub use contact::{ContactPoint, ContactProperties, Manifold, ManifoldId, ManifoldPoint};
 pub use filter::{FilterInfo, GroupFilter, Layer};
 pub use heightfield::{HeightField, HeightFieldError};
 pub use math::Transform;
 pub use shape::{DEFAULT_CONVEX_RADIUS, Shape};
+pub use world::{
+    ConstraintId, ContactAdded, ContactListener, ContactResponse, LimitedHingeDesc,
+    MAX_SUBSTEP_SECONDS, World, WorldConfig,
+};

@@ -13,7 +13,7 @@
 //! sees that the key is gone and adds the point again on the next step, like retail does for a
 //! rejected point.
 
-use crate::contact::{ContactPoint, ContactProperties, Manifold, ManifoldPoint};
+use crate::contact::{ContactPoint, Manifold};
 
 /// The largest number of points in one manifold. Retail maps the contact point ids to point
 /// indices through a byte table in which `0xFF` marks a free id.
@@ -74,14 +74,7 @@ impl<'a> ContactSink<'a> {
         let key = *self.next_key;
         *self.next_key = key.wrapping_add(1);
         let contact = self.orient(contact);
-        self.manifold.points.push(ManifoldPoint {
-            key,
-            contact,
-            properties: ContactProperties {
-                is_new: true,
-                ..ContactProperties::default()
-            },
-        });
+        self.manifold.push_point(key, contact);
         Some(key)
     }
 
@@ -113,9 +106,10 @@ impl<'a> ContactSink<'a> {
             .iter()
             .position(|point| point.key == key)
         {
-            self.manifold.points.remove(index);
+            self.manifold.remove_point(index);
         }
     }
+
 }
 
 #[cfg(test)]
