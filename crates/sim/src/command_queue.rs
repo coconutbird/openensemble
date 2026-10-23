@@ -87,11 +87,15 @@ impl CommandQueue {
     }
 
     /// Get all commands ready to execute at or before the given time.
+    ///
+    /// Retail `BCommandManager::processCommands` (2008 `commandmanager.cpp`)
+    /// runs only the commands that are due on the current update and stamps
+    /// them with the current game time. A command for a later time stays in
+    /// the queue.
     pub fn drain_ready(&mut self, up_to_time: u32) -> Vec<CommandEntry> {
-        let end = (up_to_time + 1, u64::MAX);
         let mut ready = Vec::new();
         while let Some(entry) = self.queue.first_entry() {
-            if *entry.key() >= end {
+            if entry.key().0 > up_to_time {
                 break;
             }
             ready.push(entry.remove());
@@ -170,16 +174,23 @@ mod tests {
         queue.enqueue_game(GameCommand::default(), 100, 2);
         queue.enqueue_game(GameCommand::default(), 200, 3);
 
-        // The end bound is `(up_to_time + 1, u64::MAX)`, so the drain also includes
-        // entries at `up_to_time + 1`.
+        // Only entries at or before `up_to_time` are drained.
         let ready = queue.drain_ready(200);
         let keys: Vec<_> = ready
             .iter()
             .map(|entry| (entry.exec_time, entry.sequence, entry.source_client))
             .collect();
-        assert_eq!(keys, [(100, 3, 2), (200, 0, 1), (200, 4, 3), (201, 2, 1)]);
-        assert_eq!(queue.len(), 1);
-        assert_eq!(queue.next_exec_time(), Some(202));
+        assert_eq!(keys, [(100, 3, 2), (200, 0, 1), (200, 4, 3)]);
+        assert_eq!(queue.len(), 2);
+        assert_eq!(queue.next_exec_time(), Some(201));
         assert!(queue.drain_ready(200).is_empty());
+    }
+
+    #[test]
+    fn drain_ready_accepts_max_time() {
+        let mut queue = CommandQueue::new();
+        queue.enqueue_game(GameCommand::default(), u32::MAX, 1);
+        assert_eq!(queue.drain_ready(u32::MAX - 1).len(), 0);
+        assert_eq!(queue.drain_ready(u32::MAX).len(), 1);
     }
 }
