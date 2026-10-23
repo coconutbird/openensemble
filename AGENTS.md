@@ -116,6 +116,12 @@ code.
 - Do not let wall-clock time, thread timing or hash map iteration order change the simulation
   state. Use `BTreeMap` or sorted data where the order is important.
 - Use `Random` (`crates/sim/src/random.rs`) for all random values in the simulation.
+- In `sim`, `motion` and `physics`, use the `floaty` wrappers of the crate (for example
+  `sim::math`) for all elementary functions: `sin`, `cos`, `tan`, `asin`, `acos`, `atan`,
+  `atan2`, `hypot`, `exp`, `ln`, `powf` and the other libm functions. Also use them in place of
+  the glam helpers that call these functions, for example `Quat::from_rotation_y` and
+  `Quat::slerp`. The platform libm gives different bits on different machines. `+`, `-`, `*`,
+  `/`, `sqrt`, `abs`, `min`, `max`, `floor`, `round` and casts are exact on all machines.
 - Keep the command wire format byte-for-byte identical to vanilla Halo Wars.
 - When a change alters a mechanic that a file in `docs/` describes, update that file.
 
