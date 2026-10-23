@@ -30,7 +30,10 @@ impl World {
             .units
             .iter()
             .filter_map(|(id, unit)| {
-                (!unit.is_alive() && !unit.is_static_death_replacement()).then_some(id)
+                (!unit.is_alive()
+                    && !unit.is_static_death_replacement()
+                    && !unit.is_physics_replacement())
+                .then_some(id)
             })
             .collect::<Vec<_>>();
         for unit_id in dead_units {

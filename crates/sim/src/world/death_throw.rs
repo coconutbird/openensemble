@@ -4,6 +4,7 @@
 //! animation kill (`BUnit_killAndThrowPhysicsReplacement`, `0x1404E01B0`).
 
 use super::World;
+use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::{DeathThrowProfile, GameplayCatalog};
 use crate::math;
@@ -262,6 +263,31 @@ impl World {
             .physics_object
             .as_ref()?
             .clamshell_bodies()
+    }
+
+    /// Removes each dead physics replacement whose physics action waits: the action has
+    /// `CompleteOnInactivePhysics` and its body sleeps. A dead replacement without a body goes
+    /// at once. Retail then gives the corpse to the corpse manager, which fades it out; the sim
+    /// does not model the fade, so the unit goes when its action waits. A detonated
+    /// replacement has its own cleanup.
+    pub(in crate::world) fn cleanup_dead_physics_replacements(&mut self) {
+        let removable: Vec<EntityId> = self
+            .units
+            .iter()
+            .filter(|(_, unit)| {
+                !unit.is_alive()
+                    && unit.is_physics_replacement()
+                    && !unit.physics_replacement_is_detonated()
+                    && unit
+                        .physics_object
+                        .as_ref()
+                        .is_none_or(|state| state.flags.waiting)
+            })
+            .map(|(unit_id, _)| unit_id)
+            .collect();
+        for unit_id in removable {
+            let _removed = self.remove_unit(unit_id);
+        }
     }
 }
 

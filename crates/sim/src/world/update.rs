@@ -195,14 +195,20 @@ impl World {
             self.resolve_dead_unit_detonations(gameplay);
         }
         self.cleanup_physics_detonate_replacements();
+        self.cleanup_dead_physics_replacements();
         if let Some(database) = database {
             self.resolve_dead_unit_death_spawns(database, gameplay);
         }
+        // A dead physics replacement is a corpse: `cleanup_dead_physics_replacements` removes
+        // it once its physics action waits.
         let dead_units = self
             .units
             .iter()
             .filter_map(|(id, unit)| {
-                (!unit.is_alive() && !unit.is_static_death_replacement()).then_some(id)
+                (!unit.is_alive()
+                    && !unit.is_static_death_replacement()
+                    && !unit.is_physics_replacement())
+                .then_some(id)
             })
             .collect::<Vec<_>>();
         for id in dead_units {

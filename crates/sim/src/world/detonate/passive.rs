@@ -321,6 +321,7 @@ impl World {
                 .filter_map(|(unit_id, unit)| {
                     (unit.hitpoints <= 0.0
                         && !unit.is_static_death_replacement()
+                        && !unit.is_physics_replacement()
                         && unit.detonate_phase() != UnitDetonatePhase::Inactive)
                         .then_some(unit_id)
                 })
