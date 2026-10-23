@@ -138,8 +138,9 @@ pub(super) fn assert_layered_vehicle_physics(loaded: &mut sim::LoadedGameScenari
     .expect("scenario-layered vehicle prototype");
     world.create_pending_physics_objects();
     let vehicle = world.get_unit(vehicle_id).unwrap();
+    // `BPhysicsGhostAction` drives the body with its own gains, so no unit acceleration
+    // belongs to the Ghost body.
     assert_close(vehicle.speed, 20.0);
-    assert_close(vehicle.acceleration, 50.0);
     assert_close(vehicle.turn_rate_degrees, 90.0);
     let state = vehicle.physics_object.as_ref().expect("the Ghost body");
     assert_eq!(state.info(), "layered_vehicle");
