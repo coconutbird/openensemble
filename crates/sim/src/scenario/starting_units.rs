@@ -159,9 +159,7 @@ fn create_player_units(
         }
         let position = ground_tied(world, point);
         let forward = frame.forward;
-        // A `FlyIn` squad uses the civ transport in retail unless `NoBirthAnims` is defined.
-        // No retail leader sets `FlyIn`, so the squad spawns in place.
-        let _squad_id = create_squad_from_prototype(
+        let squad_id = create_squad_from_prototype(
             world,
             active.player_id,
             position,
@@ -169,6 +167,19 @@ fn create_player_units(
             squad.proto_squad.trim(),
             database,
         );
+        // `BScenario_createStartingUnits` @ `0x140384760`: a `FlyIn` squad flies in through
+        // the civ transport (`BSquadActionTransport::flyInSquad`, `sub_1403D9900`) unless the
+        // `NoBirthAnims` config is defined. No retail leader sets `FlyIn`.
+        if squad.fly_in == Some(true) && !world.is_config_defined("NoBirthAnims") {
+            let _flies_in = world.start_trained_ground_birth(
+                database,
+                active.player_id,
+                squad_id,
+                position,
+                forward,
+                None,
+            );
+        }
     }
     true
 }

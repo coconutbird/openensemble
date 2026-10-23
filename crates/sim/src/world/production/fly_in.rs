@@ -73,7 +73,8 @@ impl World {
         true
     }
 
-    pub(super) fn start_trained_ground_birth(
+    /// Fly a squad in through the civ transport of its player (`BSquadActionTransport::flyInSquad`).
+    pub(crate) fn start_trained_ground_birth(
         &mut self,
         database: &Database,
         player_id: PlayerId,

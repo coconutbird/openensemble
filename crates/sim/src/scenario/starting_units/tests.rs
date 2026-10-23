@@ -165,3 +165,47 @@ fn unit_start_and_rally_start_markers_are_consumed_and_used() {
     // Every start position is used, so no empty base appears.
     assert_eq!(units(world, "empty_socket"), []);
 }
+
+#[test]
+fn fly_in_starting_squad_arrives_in_the_civ_transport() {
+    // `BScenario_createStartingUnits` @ 0x140384760 sends a `FlyIn` starting squad through
+    // `BSquadActionTransport::flyInSquad` with the civ transport when `NoBirthAnims` is not
+    // defined.
+    let mut database = database();
+    database.civs[1].transport = Some("pelican".to_owned());
+    database.objects.push(proto("pelican", "Unit"));
+    database.leaders[0].starting_squads[0].fly_in = Some(true);
+    let scenario = ScenarioData::from_xml_str(
+        r#"<Scenario><Positions>
+            <Position Number="1" Position="100,0,200" Forward="1,0,0" />
+        </Positions><Players>
+            <Player Name="P1" UseStartingUnits="true" Civ="UNSC" Leader1="Cutter" Team="1" />
+        </Players></Scenario>"#,
+    )
+    .unwrap();
+    let settings = GameSettings::skirmish(vec![PlayerSettings::default()], 0);
+    let loaded = load_scenario_into_world(&scenario, &database, &settings).unwrap();
+    let world = &loaded.world;
+
+    assert_eq!(units(world, "pelican").len(), 1);
+    let carrier = world
+        .squads
+        .iter()
+        .find(|(_, squad)| squad.transport_fly_in.is_some())
+        .map(|(_, squad)| squad)
+        .expect("the transport flies in");
+    let jeep_squad = world
+        .units
+        .iter()
+        .find(|(_, unit)| unit.proto_object_name == "jeep")
+        .and_then(|(_, unit)| unit.squad_id)
+        .unwrap();
+    assert_eq!(
+        carrier
+            .transport_fly_in
+            .as_ref()
+            .unwrap()
+            .passenger_squad_ids(),
+        [jeep_squad]
+    );
+}
