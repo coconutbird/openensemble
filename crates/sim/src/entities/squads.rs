@@ -31,6 +31,7 @@ mod transport;
 mod turn_radius;
 mod wander;
 pub mod warthog;
+pub(crate) mod weapon_effects;
 
 pub use ambient_life::AmbientLifeBehavior;
 pub(crate) use ambient_life::{
@@ -146,6 +147,8 @@ pub struct Squad {
     pub shields: SquadShields,
     /// Persistent retail freezing, frozen, and thawing action state.
     pub(crate) cryo: SquadCryo,
+    /// Daze and stasis state set by weapon effects.
+    pub(crate) weapon_effects: weapon_effects::SquadWeaponEffects,
     /// Shared regen reference count owned by active repair actions.
     pub(crate) repair: repair::SquadRepair,
     /// Active targeted `RepairOther` order and renderer-facing effect entities.
@@ -266,6 +269,7 @@ impl Default for Squad {
             recovery: SquadRecovery::default(),
             shields: SquadShields::default(),
             cryo: SquadCryo::default(),
+            weapon_effects: weapon_effects::SquadWeaponEffects::default(),
             repair: repair::SquadRepair::default(),
             repair_other: repair_other::SquadRepairOther::default(),
             rage: rage::SquadRage::default(),
@@ -850,6 +854,7 @@ impl Squad {
         let maximum_speed = self.speed
             * self.mode_movement_modifier
             * self.cryo_movement_modifier()
+            * self.stasis_speed_multiplier()
             * self.ambient_life_movement_modifier();
         let maximum_speed = speed_limit.map_or(maximum_speed, |limit| maximum_speed.min(limit));
         let desired_speed = desired_speed(maximum_speed, self.acceleration, distance);
@@ -878,7 +883,7 @@ impl Squad {
         speed_limit: Option<f32>,
         keeps_height: bool,
     ) {
-        if self.is_cryo_frozen() {
+        if self.is_cryo_frozen() || self.is_held_by_weapon_effect() {
             self.base.velocity = Vec3::ZERO;
             return;
         }

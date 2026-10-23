@@ -270,6 +270,8 @@ fn direct_attack(attacker: EntityId, target: EntityId) -> AttackDamage {
         death_throw: Some(AttackThrow {
             profile: profile(),
             force_origin: POSITION + ATTACKER_OFFSET,
+            weapon_effects: None,
+            projectile: None,
         }),
     }
 }

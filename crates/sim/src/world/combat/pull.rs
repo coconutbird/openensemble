@@ -117,6 +117,8 @@ impl World {
                 death_throw: Some(super::AttackThrow {
                     profile: event.death_throw,
                     force_origin: event.source_position,
+                    weapon_effects: event.weapon_effects.clone(),
+                    projectile: None,
                 }),
             },
             gameplay,

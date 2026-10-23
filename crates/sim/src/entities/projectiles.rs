@@ -172,6 +172,8 @@ pub struct Projectile {
     impact_effect: Option<crate::gameplay::ImpactEffectProfile>,
     /// The weapon throw values, or `None` without weapon damage info.
     death_throw: Option<DeathThrowProfile>,
+    /// The weapon effects of the launching weapon and `mFlagTargetAlreadyDazed`.
+    weapon_effects: impact_effect::ProjectileWeaponEffects,
     /// Desired flight speed.
     pub desired_speed: f32,
     /// Current scalar speed before gravity is applied.
@@ -239,6 +241,7 @@ impl Projectile {
             area_damage: launch.area_damage,
             impact_effect: launch.impact_effect,
             death_throw: None,
+            weapon_effects: impact_effect::ProjectileWeaponEffects::default(),
             desired_speed: profile.speed,
             current_speed,
             acceleration: profile.acceleration,

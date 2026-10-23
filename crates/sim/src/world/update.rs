@@ -104,6 +104,7 @@ impl World {
         gameplay: Option<&GameplayCatalog>,
     ) {
         self.update_cryo(dt, gameplay);
+        self.update_weapon_effects(dt, database, gameplay);
         let air_speed_limits = gameplay.map_or_else(BTreeMap::new, |gameplay| {
             self.prepare_air_avoidance(dt, gameplay)
         });

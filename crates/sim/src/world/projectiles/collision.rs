@@ -6,7 +6,7 @@ use crate::entities::{Projectile, Unit};
 use crate::entity_id::EntityId;
 use crate::gameplay::{GameplayCatalog, ProjectileCollisionTraits};
 use crate::player::{GAIA_PLAYER, PlayerId};
-use crate::world::combat::{AttackDamage, AttackThrow};
+use crate::world::combat::{AttackDamage, AttackThrow, ProjectileHit};
 use crate::world::events::ImpactEffectRequestData;
 use crate::{ImpactEffectRequest, ImpactSurface};
 use glam::Vec3;
@@ -549,6 +549,11 @@ fn projectile_impact(
         death_throw: projectile.death_throw().map(|profile| AttackThrow {
             profile,
             force_origin: projectile.initial_position(),
+            weapon_effects: projectile.weapon_effects().cloned(),
+            projectile: Some(ProjectileHit {
+                target_id: projectile.target_id,
+                target_already_dazed: std::cell::Cell::new(projectile.target_already_dazed()),
+            }),
         }),
     }
 }

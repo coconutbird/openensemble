@@ -116,7 +116,7 @@ fn squad_input(world: &World, squad: &Squad) -> SquadInput {
         turn_radius_position,
         turn_radius_forward,
         desired_velocity,
-        stasis_speed_multiplier: 1.0,
+        stasis_speed_multiplier: squad.stasis_speed_multiplier(),
         move_action,
     }
 }

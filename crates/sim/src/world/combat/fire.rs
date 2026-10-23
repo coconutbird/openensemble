@@ -5,10 +5,11 @@ use super::{AttackerSnapshot, ConcreteTargetSnapshot};
 use crate::EntityId;
 use crate::gameplay::{
     AreaDamageProfile, AttackProfile, DeathThrowProfile, ImpactEffectProfile, KnockbackProfile,
-    ProjectileReactionFlags, PullAttackProfile,
+    ProjectileReactionFlags, PullAttackProfile, WeaponEffectProfile,
 };
 use crate::player::PlayerId;
 use glam::Vec3;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub(super) struct FireEvent {
@@ -23,6 +24,7 @@ pub(super) struct FireEvent {
     pub(super) impact_effect: Option<ImpactEffectProfile>,
     pub(super) area_damage: Option<AreaDamageProfile>,
     pub(super) death_throw: DeathThrowProfile,
+    pub(super) weapon_effects: Option<Arc<WeaponEffectProfile>>,
     pub(super) action_name: String,
     pub(super) pull: Option<PullAttackProfile>,
     pub(super) knockback: Option<KnockbackProfile>,
@@ -58,6 +60,7 @@ impl FireEvent {
             impact_effect: profile.impact_effect.clone(),
             area_damage,
             death_throw: profile.death_throw,
+            weapon_effects: profile.weapon_effects.clone(),
             action_name: profile.action_name.clone(),
             pull: profile.pull.clone(),
             knockback: profile.knockback,

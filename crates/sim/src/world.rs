@@ -102,6 +102,7 @@ mod update;
 mod veterancy;
 mod visibility;
 mod wander;
+mod weapon_effects;
 
 pub use bounds::WorldBounds;
 pub(crate) use combat::SquadAttackContext;

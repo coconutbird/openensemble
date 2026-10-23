@@ -47,6 +47,7 @@ mod turret_combat;
 mod unique_technologies;
 mod visual_meshes;
 pub mod warthog;
+pub(crate) mod weapon_effects;
 
 pub use actions::UnitActions;
 pub use air_avoidance::AircraftCrashPhase;
@@ -286,6 +287,8 @@ pub struct Unit {
     pub ammunition: UnitAmmunition,
     /// Per-unit effects projected from the owning squad's cryo action.
     pub(crate) cryo: UnitCryo,
+    /// Damage over time actions, the stasis action and the stasis hold of the ranged attack.
+    pub(crate) weapon_effects: weapon_effects::UnitWeaponEffects,
     /// Persistent collision-attack lifecycle and targets hit by this action.
     pub(crate) collision_attack: UnitCollisionAttack,
     /// Persistent arming and immediate Detonate child-action state.
@@ -423,6 +426,7 @@ impl Default for Unit {
             turret_combat: UnitTurretCombat::default(),
             ammunition: UnitAmmunition::default(),
             cryo: UnitCryo::default(),
+            weapon_effects: weapon_effects::UnitWeaponEffects::default(),
             collision_attack: UnitCollisionAttack::default(),
             detonate: detonate::UnitDetonate::default(),
             physics_replacement: UnitPhysicsReplacement::default(),

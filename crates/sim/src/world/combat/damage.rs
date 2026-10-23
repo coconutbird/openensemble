@@ -5,26 +5,41 @@ use crate::entities::units::UnitDeathState;
 use crate::entities::{SquadMode, Unit};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
-use crate::gameplay::GameplayCatalog;
+use crate::gameplay::{GameplayCatalog, WeaponEffectProfile};
 use crate::player::PlayerId;
 use crate::world::death_throw::DeathThrowContext;
 use glam::Vec3;
 
+/// The weapon effect families of one weapon hit (`BDamage::mpDamageInfo`) and the projectile
+/// that carries the hit (`projectileID` of `doDamageWithWeaponType`).
 #[derive(Debug, Clone, Copy)]
-pub(super) struct DamageAttribution {
+pub(in crate::world) struct WeaponEffectHit<'a> {
+    pub profile: &'a WeaponEffectProfile,
+    pub projectile: Option<&'a super::ProjectileHit>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct DamageAttribution<'a> {
     unit_id: Option<EntityId>,
     player_id: PlayerId,
     /// The weapon throw values of a weapon damage (`BDamage::mpDamageInfo` and the force
     /// origin, direction and distance factor).
     death_throw: Option<DeathThrowContext>,
+    /// The daze and damage over time of a weapon damage.
+    weapon_effects: Option<WeaponEffectHit<'a>>,
 }
 
-impl DamageAttribution {
+impl<'a> DamageAttribution<'a> {
     pub(super) const fn combat(unit_id: EntityId, player_id: PlayerId) -> Self {
+        Self::attributed(Some(unit_id), player_id)
+    }
+
+    const fn attributed(unit_id: Option<EntityId>, player_id: PlayerId) -> Self {
         Self {
-            unit_id: Some(unit_id),
+            unit_id,
             player_id,
             death_throw: None,
+            weapon_effects: None,
         }
     }
 
@@ -34,21 +49,22 @@ impl DamageAttribution {
         self
     }
 
+    /// The attribution with the weapon effect families of a weapon damage.
+    pub(super) const fn with_weapon_effects(
+        mut self,
+        weapon_effects: Option<WeaponEffectHit<'a>>,
+    ) -> Self {
+        self.weapon_effects = weapon_effects;
+        self
+    }
+
     const fn reflected(player_id: PlayerId) -> Self {
-        Self {
-            unit_id: None,
-            player_id,
-            death_throw: None,
-        }
+        Self::attributed(None, player_id)
     }
 
     #[cfg(test)]
     const fn scripted(player_id: PlayerId) -> Self {
-        Self {
-            unit_id: None,
-            player_id,
-            death_throw: None,
-        }
+        Self::attributed(None, player_id)
     }
 }
 
@@ -94,7 +110,7 @@ impl World {
 
     pub(super) fn apply_attributed_weapon_damage(
         &mut self,
-        attribution: DamageAttribution,
+        attribution: DamageAttribution<'_>,
         target_id: EntityId,
         damage: f32,
         weapon_type: Option<&str>,
@@ -127,9 +143,27 @@ impl World {
         )
     }
 
+    /// One damage over time tick: `BUnit::damage` with the stored multiplier, without a weapon
+    /// type and without weapon effects (`BUnitActionDOT_update`, `0x1404EC550`).
+    pub(in crate::world) fn apply_damage_over_time_tick(
+        &mut self,
+        source: (Option<EntityId>, PlayerId),
+        target_id: EntityId,
+        damage: f32,
+        gameplay: Option<&GameplayCatalog>,
+    ) -> f32 {
+        self.apply_attributed_weapon_damage(
+            DamageAttribution::attributed(source.0, source.1),
+            target_id,
+            damage,
+            None,
+            gameplay,
+        )
+    }
+
     pub(super) fn apply_attributed_directional_weapon_damage(
         &mut self,
-        attribution: DamageAttribution,
+        attribution: DamageAttribution<'_>,
         target_id: EntityId,
         damage: f32,
         weapon_type: Option<&str>,
@@ -148,7 +182,7 @@ impl World {
 
     fn apply_weapon_damage_oriented(
         &mut self,
-        attribution: DamageAttribution,
+        attribution: DamageAttribution<'_>,
         requested_target_id: EntityId,
         damage: f32,
         weapon_type: Option<&str>,
@@ -198,8 +232,19 @@ impl World {
         let health_before = receiving_target.hitpoints + receiving_target.shields.current;
         let hitpoints_before = receiving_target.hitpoints;
         let target_proto_object = receiving_target.proto_object_name.clone();
+        if let Some(hit) = attribution.weapon_effects {
+            // `BDamageHelper_doDamageWithWeaponType` (`0x1401DE5D0`) dazes before the damage.
+            self.daze_on_hit(hit, attribution.unit_id, receiving_target_id, gameplay);
+        }
         let final_damage = damage * final_multiplier;
         if !final_damage.is_finite() || final_damage <= 0.0 {
+            self.add_damage_over_time(
+                attribution.weapon_effects,
+                (attribution.unit_id, attribution.player_id),
+                receiving_target_id,
+                weapon_modifier,
+                gameplay,
+            );
             return 0.0;
         }
         let damaged = self.damage_weapon_target_and_record_crash(
@@ -209,6 +254,14 @@ impl World {
             gameplay,
             attribution.unit_id,
             Some(attribution.player_id),
+        );
+        // `BUnit_damage` ends with `BUnit_applyDamageOverTimeEffect` (`0x1404D7170`).
+        self.add_damage_over_time(
+            attribution.weapon_effects,
+            (attribution.unit_id, attribution.player_id),
+            receiving_target_id,
+            weapon_modifier,
+            gameplay,
         );
         let reflection = self.reflection_for_damage_event(
             attribution,
@@ -326,7 +379,7 @@ impl World {
 
     fn weapon_death_state(
         &self,
-        attribution: DamageAttribution,
+        attribution: DamageAttribution<'_>,
         weapon_type: Option<&str>,
     ) -> UnitDeathState {
         UnitDeathState::new(
@@ -374,7 +427,7 @@ impl World {
 
     fn reflection_for_damage_event(
         &self,
-        attribution: DamageAttribution,
+        attribution: DamageAttribution<'_>,
         damaged_unit_id: EntityId,
         damage: f32,
         gameplay: Option<&GameplayCatalog>,

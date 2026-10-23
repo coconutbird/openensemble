@@ -26,7 +26,8 @@ use crate::entity::Entity;
 use crate::entity_id::{EntityClass, EntityId};
 use crate::gameplay::{AreaDamageProfile, AttackAnimationAnchor, AttackProfile, GameplayCatalog};
 use crate::player::PlayerId;
-pub(crate) use area_damage::{AttackDamage, AttackThrow};
+pub(crate) use area_damage::{AttackDamage, AttackThrow, ProjectileHit};
+pub(in crate::world) use damage::WeaponEffectHit;
 use fire::{FireEvent, LaunchTuning};
 use glam::Vec3;
 use helpers::{
@@ -287,6 +288,14 @@ impl World {
             };
             let member_ids = squad.unit_ids.clone();
             let range_override = squad.attack_range;
+            if squad.is_attack_blocked() {
+                // `BSquadActionAttack`: a blocked attack ends (2008 `squadactionattack.cpp:342`).
+                if let Some(squad) = self.squads.get_mut(squad_id) {
+                    squad.clear_attack_order();
+                }
+                self.stop_unit_firing(&member_ids);
+                continue;
+            }
             if squad.is_cryo_frozen() {
                 self.stop_unit_firing(&member_ids);
                 continue;
@@ -664,9 +673,25 @@ impl World {
             let knockback = event
                 .knockback
                 .map(|profile| (event.source_id, event.target.id, profile));
+            // `BUnitActionRangedAttack_fireWeapon` (`0x140556850`): the stasis follows them.
+            let stasis = event
+                .weapon_effects
+                .clone()
+                .filter(|effects| effects.stasis.applies())
+                .map(|effects| {
+                    let fired = super::weapon_effects::StasisFire {
+                        source_id: event.source_id,
+                        target_id: event.target.id,
+                        action_name: event.action_name.clone(),
+                    };
+                    (fired, effects)
+                });
             self.resolve_fire_event(event, gameplay);
             if let Some((source_id, target_id, profile)) = knockback {
                 self.do_knockback_attack(source_id, target_id, profile);
+            }
+            if let Some((fired, effects)) = stasis {
+                self.apply_stasis_on_fire(&fired, &effects);
             }
         }
     }
@@ -690,6 +715,8 @@ impl World {
                     death_throw: Some(AttackThrow {
                         profile: event.death_throw,
                         force_origin: event.source_position,
+                        weapon_effects: event.weapon_effects,
+                        projectile: None,
                     }),
                 },
                 Some(gameplay),
@@ -750,6 +777,7 @@ impl World {
         );
         projectile.configure_reactions(event.projectile_reactions);
         projectile.set_death_throw(Some(event.death_throw));
+        projectile.set_weapon_effects(event.weapon_effects);
         self.projectiles.insert(id, projectile);
     }
 

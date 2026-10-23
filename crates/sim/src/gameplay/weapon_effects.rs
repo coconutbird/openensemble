@@ -17,6 +17,8 @@ pub(super) struct WeaponEffectCatalog {
     stasis_fields_to_stop: BTreeMap<String, i32>,
     /// The code proto objects `Stun` and `EMP` (`BDatabase::mOTIDStun`, `mOTIDEmp`).
     daze_effects: [Option<String>; 2],
+    /// `DazeResist` by lowercase proto-squad name, for the squads that set it (default 1).
+    daze_resist: BTreeMap<String, f32>,
 }
 
 impl WeaponEffectCatalog {
@@ -36,6 +38,16 @@ impl WeaponEffectCatalog {
                 super::code_objects::named_proto(database, "Stun"),
                 super::code_objects::named_proto(database, "EMP"),
             ],
+            daze_resist: database
+                .squads
+                .iter()
+                .filter_map(|squad| {
+                    squad
+                        .daze_resist
+                        .filter(|resist| resist.is_finite())
+                        .map(|resist| (squad.name.to_ascii_lowercase(), resist))
+                })
+                .collect(),
         }
     }
 }
@@ -75,9 +87,23 @@ impl GameplayCatalog {
         self.weapon_effects.daze_effects[usize::from(!infantry)].as_deref()
     }
 
+    /// `BProtoSquad::getDazeResist`: the factor of a daze duration on a squad.
+    #[must_use]
+    pub fn daze_resist(&self, proto_squad_name: &str) -> f32 {
+        self.weapon_effects
+            .daze_resist
+            .get(&proto_squad_name.to_ascii_lowercase())
+            .copied()
+            .unwrap_or(1.0)
+    }
+
     /// The stasis bomb of an attack action of a proto object (its `LinkedAction`).
     #[must_use]
-    pub fn stasis_bomb(&self, proto_object_name: &str, action_name: &str) -> Option<StasisBombProfile> {
+    pub fn stasis_bomb(
+        &self,
+        proto_object_name: &str,
+        action_name: &str,
+    ) -> Option<StasisBombProfile> {
         let ranged = self
             .object(proto_object_name)?
             .ranged_actions()
@@ -225,9 +251,10 @@ impl WeaponEffectProfile {
         let damage_over_time = (finite(weapon.dot_rate) > 0.0).then(|| DamageOverTimeProfile {
             rate: finite(weapon.dot_rate),
             duration: finite(weapon.dot_duration),
-            effect: weapon.dot_effect.as_ref().map_or_else(
-                DotEffectProfile::default,
-                |effect| {
+            effect: weapon
+                .dot_effect
+                .as_ref()
+                .map_or_else(DotEffectProfile::default, |effect| {
                     let text = non_empty(Some(effect.default_effect.as_str()));
                     let size = |value: Option<&String>| {
                         value.map_or_else(|| text.clone(), |name| non_empty(Some(name)))
@@ -237,8 +264,7 @@ impl WeaponEffectProfile {
                         medium: size(effect.medium.as_ref()),
                         large: size(effect.large.as_ref()),
                     }
-                },
-            ),
+                }),
         });
         let stasis_smart = weapon
             .stasis

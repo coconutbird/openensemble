@@ -1,13 +1,16 @@
 //! Retail-compatible primary-target and splash-pool damage distribution.
 
-use super::{World, damage::DamageAttribution};
+use super::World;
+use super::damage::{DamageAttribution, WeaponEffectHit};
 use crate::entities::Unit;
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
-use crate::gameplay::{AreaDamageProfile, DeathThrowProfile, GameplayCatalog};
+use crate::gameplay::{AreaDamageProfile, DeathThrowProfile, GameplayCatalog, WeaponEffectProfile};
 use crate::player::{GAIA_PLAYER, PlayerId};
 use crate::world::death_throw::DeathThrowContext;
 use glam::Vec3;
+use std::cell::Cell;
+use std::sync::Arc;
 
 const DAMAGE_EPSILON: f32 = 0.000_001;
 
@@ -25,9 +28,9 @@ pub(crate) struct AttackDamage {
     pub death_throw: Option<AttackThrow>,
 }
 
-/// The physics throw data of a weapon damage (`BDamage::mpDamageInfo` and the
-/// `physicsForceOrigin` of `BDamageHelper::doDamageWithWeaponType`).
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// The weapon data of a weapon damage (`BDamage::mpDamageInfo`) and the
+/// `physicsForceOrigin` and `projectileID` of `BDamageHelper::doDamageWithWeaponType`.
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AttackThrow {
     /// The throw values of the weapon.
     pub profile: DeathThrowProfile,
@@ -35,6 +38,20 @@ pub(crate) struct AttackThrow {
     /// position of the attacker for a hit without a projectile. An area damage uses its
     /// ground zero.
     pub force_origin: Vec3,
+    /// The damage over time, daze and stasis of the weapon.
+    pub weapon_effects: Option<Arc<WeaponEffectProfile>>,
+    /// The projectile of the hit, or `None` for a hit without a projectile.
+    pub projectile: Option<ProjectileHit>,
+}
+
+/// The projectile of a hit. The projectile is gone when its impact damages, so the hit keeps
+/// its `mFlagTargetAlreadyDazed` for the area of the impact.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ProjectileHit {
+    /// The target unit of the projectile (`mTargetObjectID`).
+    pub target_id: EntityId,
+    /// `mFlagTargetAlreadyDazed`.
+    pub target_already_dazed: Cell<bool>,
 }
 
 impl AttackDamage {
@@ -45,15 +62,22 @@ impl AttackDamage {
         damage_position: Vec3,
         direction: Vec3,
         distance_factor: f32,
-    ) -> DamageAttribution {
-        DamageAttribution::combat(self.attacker_id, self.attacker_player_id).with_death_throw(
-            self.death_throw.map(|throw| DeathThrowContext {
+    ) -> DamageAttribution<'_> {
+        DamageAttribution::combat(self.attacker_id, self.attacker_player_id)
+            .with_death_throw(self.death_throw.as_ref().map(|throw| DeathThrowContext {
                 profile: throw.profile,
                 damage_position,
                 direction,
                 distance_factor,
-            }),
-        )
+            }))
+            .with_weapon_effects(self.death_throw.as_ref().and_then(|info| {
+                info.weapon_effects
+                    .as_deref()
+                    .map(|profile| WeaponEffectHit {
+                        profile,
+                        projectile: info.projectile.as_ref(),
+                    })
+            }))
     }
 }
 
@@ -104,6 +128,7 @@ impl World {
             return attack.primary_target_id.map_or(0.0, |target_id| {
                 let force_origin = attack
                     .death_throw
+                    .as_ref()
                     .map_or(attack.ground_zero, |throw| throw.force_origin);
                 self.apply_attributed_directional_weapon_damage(
                     attack.attribution(force_origin, attack.direction, 1.0),

@@ -215,6 +215,7 @@ fn hash_units(checksum: &mut SyncChecksum, units: &EntityManager<Unit>) {
         checksum.hash_f32(unit.join_damage_taken_multiplier());
         checksum.hash_f32(unit.spirit_bond_damage_multiplier());
         unit.hash_cryo_state(checksum);
+        unit.weapon_effects.hash_state(checksum);
         checksum.hash_f32(unit.accuracy_scalar);
         checksum.hash_f32(unit.dodge_scalar);
         checksum.hash_f32(unit.work_rate_scalar);
@@ -377,6 +378,7 @@ fn hash_squads(checksum: &mut SyncChecksum, squads: &EntityManager<Squad>) {
         squad.recovery.hash_state(checksum);
         squad.shields.hash_state(checksum);
         squad.hash_cryo_state(checksum);
+        squad.weapon_effects.hash_state(checksum);
         squad.repair.hash_state(checksum);
         squad.rage.hash_state(checksum);
         checksum.hash_u32(squad.last_damaged_time);

@@ -96,6 +96,7 @@ pub(crate) use selection::ProjectileCollisionTraits;
 pub use selection::{AttackQuery, AttackQueryFlags, TacticRelation};
 pub use spawn_squads::PersistentSpawnSquadProfile;
 pub use spirit_bond::SpiritBondProfile;
+use tactic_files::{canonical_tactics_path, load_tactics};
 pub use tactic_states::{TacticStateId, TacticStateProfile};
 pub use timing::{
     AreaDamageProfile, AttackAccuracyProfile, AttackAmmunition, AttackAnimation,
@@ -109,7 +110,6 @@ pub use weapon_effects::{
     DamageOverTimeProfile, DazeProfile, DotEffectProfile, DotEffectSizes, SmartTargetType,
     StasisBombProfile, StasisProfile, WeaponEffectProfile,
 };
-use tactic_files::{canonical_tactics_path, load_tactics};
 
 /// Gameplay definitions for every proto object with a resolvable tactic file.
 #[derive(Debug, Clone, Default)]
