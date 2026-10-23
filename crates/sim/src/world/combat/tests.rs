@@ -95,6 +95,7 @@ fn combat_catalog(options: CombatCatalogOptions) -> GameplayCatalog {
         area_damage,
         knockback: None,
         death_throw: crate::gameplay::DeathThrowProfile::default(),
+        weapon_effects: None,
         pull: None,
         hardpoint: None,
         orientation: crate::gameplay::AttackOrientationProfile::default(),

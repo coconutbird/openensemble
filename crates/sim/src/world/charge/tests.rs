@@ -203,6 +203,7 @@ fn pull_attack_profile() -> AttackProfile {
         area_damage: None,
         knockback: None,
         death_throw: crate::gameplay::DeathThrowProfile::default(),
+        weapon_effects: None,
         pull: Some(PullAttackProfile {
             max_range: 55.0,
             invalid_targets: vec!["scarab".to_owned()],

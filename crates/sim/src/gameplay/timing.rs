@@ -205,6 +205,8 @@ pub struct AttackProfile {
     pub area_damage: Option<AreaDamageProfile>,
     /// The physics throw values of the weapon (`ThrowUnits` and the `Physics*` values).
     pub death_throw: super::DeathThrowProfile,
+    /// The damage over time, daze and stasis of the weapon, shared by its attack events.
+    pub weapon_effects: Option<std::sync::Arc<super::WeaponEffectProfile>>,
     /// Authored charged squad-pull contract, present only for `PullUnits` weapons.
     pub pull: Option<PullAttackProfile>,
     /// Knockback of an `ApplyKnockback` weapon, applied to the target body at each attack.
@@ -494,6 +496,8 @@ fn build_attack_profile(
         impact_effect: super::ImpactEffectProfile::from_weapon(ranged.weapon),
         area_damage: area_damage_profile(ranged.weapon),
         death_throw: super::DeathThrowProfile::from_weapon(ranged.weapon),
+        weapon_effects: super::WeaponEffectProfile::from_action(ranged.action, ranged.weapon)
+            .map(std::sync::Arc::new),
         pull: pull_attack_profile(ranged.action, ranged.weapon),
         knockback: super::KnockbackProfile::from_weapon(ranged.weapon),
         hardpoint: AttackHardpointProfile::from_weapon(object, ranged.weapon),
@@ -662,7 +666,7 @@ fn projectile_reaction_flags(weapon: &Weapon) -> ProjectileReactionFlags {
     )
 }
 
-fn area_damage_profile(weapon: &Weapon) -> Option<AreaDamageProfile> {
+pub(super) fn area_damage_profile(weapon: &Weapon) -> Option<AreaDamageProfile> {
     let radius = finite_nonnegative(weapon.aoe_radius);
     (radius > 0.0).then(|| AreaDamageProfile {
         radius,

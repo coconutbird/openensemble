@@ -280,6 +280,7 @@ fn move_air_attack_profile() -> AttackProfile {
         area_damage: None,
         knockback: None,
         death_throw: crate::gameplay::DeathThrowProfile::default(),
+        weapon_effects: None,
         pull: None,
         hardpoint: None,
         orientation: crate::gameplay::AttackOrientationProfile::default(),

@@ -296,6 +296,7 @@ fn instant_profile(action_name: &str, max_range: f32) -> AttackProfile {
         area_damage: None,
         knockback: None,
         death_throw: crate::gameplay::DeathThrowProfile::default(),
+        weapon_effects: None,
         pull: None,
         hardpoint: None,
         orientation: crate::gameplay::AttackOrientationProfile::default(),

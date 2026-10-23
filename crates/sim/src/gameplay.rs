@@ -49,11 +49,13 @@ mod scripted_animations;
 mod selection;
 mod spawn_squads;
 mod spirit_bond;
+mod tactic_files;
 mod tactic_states;
 mod timing;
 mod unit_attacks;
 mod veterancy;
 mod wander;
+mod weapon_effects;
 
 pub(crate) use abilities::resolve_database_ability;
 pub use abilities::{AbilityGameplay, AbilityRecoveryStart};
@@ -103,6 +105,11 @@ pub use timing::{
     PullAttackProfile,
 };
 pub use wander::WanderProfile;
+pub use weapon_effects::{
+    DamageOverTimeProfile, DazeProfile, DotEffectProfile, DotEffectSizes, SmartTargetType,
+    StasisBombProfile, StasisProfile, WeaponEffectProfile,
+};
+use tactic_files::{canonical_tactics_path, load_tactics};
 
 /// Gameplay definitions for every proto object with a resolvable tactic file.
 #[derive(Debug, Clone, Default)]
@@ -163,6 +170,7 @@ pub struct GameplayCatalog {
     join_database: join::JoinDatabaseProfiles,
     veterancy: veterancy::VeterancyCatalog,
     referenced_tactic_count: usize,
+    weapon_effects: weapon_effects::WeaponEffectCatalog,
 }
 
 /// One proto object's immutable combat definition.
@@ -277,6 +285,7 @@ impl GameplayCatalog {
             merged_squads: join::MergedSquadProfiles::from_database(database),
             join_database: join::JoinDatabaseProfiles::from_database(database),
             veterancy: veterancy::VeterancyCatalog::from_database(database),
+            weapon_effects: weapon_effects::WeaponEffectCatalog::from_database(database),
             ..Self::default()
         };
         let mut cache = BTreeMap::<String, Result<TacticData, String>>::new();
@@ -968,30 +977,6 @@ fn game_data_nonnegative(
         .and_then(field)
         .filter(|value| value.is_finite() && *value >= 0.0)
         .unwrap_or_default()
-}
-
-fn canonical_tactics_path(tactics_ref: &str) -> String {
-    let tactics_ref = tactics_ref.trim().replace('/', "\\");
-    let tactics_ref = tactics_ref.trim_start_matches('\\');
-    if tactics_ref
-        .to_ascii_lowercase()
-        .starts_with("data\\tactics\\")
-    {
-        tactics_ref.to_owned()
-    } else {
-        format!("data\\tactics\\{tactics_ref}")
-    }
-}
-
-fn load_tactics(
-    source: &mut AssetSource<StdFileProvider>,
-    path: &str,
-) -> Result<TacticData, String> {
-    let document = source
-        .read_xmb(path)
-        .ok_or_else(|| "asset was not found or was not a valid XMB document".to_owned())?;
-    pipeline::database::hw1::tactics::parse(&document)
-        .map_err(|error| format!("failed to parse tactic data: {error}"))
 }
 
 #[cfg(test)]
