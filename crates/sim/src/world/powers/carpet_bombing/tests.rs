@@ -195,6 +195,54 @@ fn profile_and_packed_type_validation_match_the_native_contract() {
     assert!(world.active_carpet_bombing_powers().is_empty());
 }
 
+/// `BPowerCarpetBombing_projectileImpact` (`0x140304CC0`): each damaged unit gets the nudge
+/// `NudgeMultiplier · m · (normalize(dir.xz), 1)` once, at `com − radius·dir`, with the 3D
+/// `dir = normalize(unit − impact)`.
+#[test]
+fn the_bomb_nudges_each_unit_once_at_a_point_behind_its_centre_of_mass() {
+    let database = database();
+    let impact = Vec3::new(-3.0, -4.0, 0.0);
+    let (mut world, target_id) = nudge_world(&database);
+    let mut execution = world.power_manager.carpet_bombing_executions.remove(0);
+    nudge_damaged_units(&mut world, &mut execution, impact, &[target_id, target_id]);
+    nudge_damaged_units(&mut world, &mut execution, impact, &[target_id]);
+
+    let (mut expected, expected_id) = nudge_world(&database);
+    let center = expected.unit_body_center_of_mass(expected_id).unwrap();
+    // `dir` = (0.6, 0.8, 0); obstruction radius 1.5; mass 10; `NudgeMultiplier` 1.5.
+    let point = center - Vec3::new(0.6, 0.8, 0.0) * 1.5;
+    let impulse = Vec3::new(1.0, 1.0, 0.0) * (1.5 * 10.0);
+    assert!(expected.apply_unit_point_impulse(expected_id, impulse, point));
+
+    let velocity = world.unit_body_linear_velocity(target_id).unwrap();
+    let expected_velocity = expected.unit_body_linear_velocity(expected_id).unwrap();
+    assert!(
+        velocity.abs_diff_eq(expected_velocity, 1.0e-5),
+        "{velocity} differs from {expected_velocity}"
+    );
+    let spin = world.unit_body_angular_velocity(target_id).unwrap();
+    let expected_spin = expected.unit_body_angular_velocity(expected_id).unwrap();
+    assert!(
+        spin.abs_diff_eq(expected_spin, 1.0e-5),
+        "{spin} differs from {expected_spin}"
+    );
+}
+
+/// A world with an invoked carpet bombing power and a physical target at the origin with
+/// obstruction radius 1.5.
+fn nudge_world(database: &Database) -> (World, EntityId) {
+    let mut world = test_world(database);
+    let target_id = add_physical_target(&mut world, Vec3::ZERO);
+    world
+        .get_unit_mut(target_id)
+        .unwrap()
+        .obstruction_half_extents = Vec3::new(1.5, 1.0, 1.0);
+    world
+        .invoke_carpet_bombing_power(database, invocation(true, PowerUserId::INVALID))
+        .unwrap();
+    (world, target_id)
+}
+
 fn advance(world: &mut World, database: &Database, gameplay: &GameplayCatalog, ticks: usize) {
     for _ in 0..ticks {
         world.game_time_ms = world.game_time_ms.wrapping_add(100);

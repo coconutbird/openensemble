@@ -6,7 +6,7 @@ use crate::commands::{
 };
 use crate::executor::CommandExecutor;
 use crate::gameplay::{DamagePartProfile, ThrownDamagePart};
-use crate::physics::test_support::{box_template, clamshell_template};
+use crate::physics::test_support::{box_template, clamshell_template, hover_template};
 use crate::player::PowerGrant;
 use crate::spawn::{spawn_squad_at, squad_prototype_id};
 use crate::world::flat_test_terrain;
@@ -439,6 +439,71 @@ fn packed_wave_input_routes_and_owner_profile_validation_match_native_contract()
             .state(),
         WaveGravityBallState::Exploding
     );
+}
+
+/// `BPowerWave_nudgeUnit` (`0x140331720`): `normalize(ball − unit) · NudgeStrength · m` at the
+/// strike location. Only a physics aircraft (`BUnit_isPhysicsAircraft`) gets a quarter of it,
+/// not every flying unit.
+#[test]
+fn the_lightning_nudge_pulls_toward_the_ball_and_a_quarter_only_on_physics_aircraft() {
+    let database = database(0.0, 2);
+    let mut gameplay = gameplay(&database);
+    gameplay.insert_test_physics_info("fragile", hover_template("fragile_air", Vec3::ONE));
+    let strike = Vec3::new(4.0, 1.0, 2.0);
+    let (mut world, execution, unit_ids) = nudge_world(&database);
+    for unit_id in unit_ids {
+        super::combat::nudge_unit(&mut world, Some(&gameplay), &execution, unit_id, strike);
+    }
+
+    let (mut expected, _, expected_ids) = nudge_world(&database);
+    let ball = world
+        .get_unit(execution.ball_object_id())
+        .unwrap()
+        .base
+        .position;
+    for (unit_id, scale) in expected_ids.into_iter().zip([1.0, 0.25]) {
+        let position = expected.get_unit(unit_id).unwrap().base.position;
+        let mass = expected.unit_body_mass(unit_id).unwrap();
+        let impulse = (ball - position).normalize() * (scale * mass);
+        assert!(expected.apply_unit_point_impulse(unit_id, impulse, strike));
+    }
+    for (unit_id, expected_id) in unit_ids.into_iter().zip(expected_ids) {
+        let velocity = world.unit_body_linear_velocity(unit_id).unwrap();
+        let expected_velocity = expected.unit_body_linear_velocity(expected_id).unwrap();
+        assert!(velocity.length() > 0.0);
+        assert!(
+            velocity.abs_diff_eq(expected_velocity, 1.0e-5),
+            "{velocity} differs from {expected_velocity}"
+        );
+        let spin = world.unit_body_angular_velocity(unit_id).unwrap();
+        let expected_spin = expected.unit_body_angular_velocity(expected_id).unwrap();
+        assert!(
+            spin.abs_diff_eq(expected_spin, 1.0e-5),
+            "{spin} differs from {expected_spin}"
+        );
+    }
+}
+
+/// A Wave execution and two flying units with bodies: a target with a box body and no
+/// `PhysicsInfo`, and a fragile unit that the test gameplay makes a physics aircraft.
+fn nudge_world(database: &Database) -> (World, WavePowerExecution, [EntityId; 2]) {
+    let mut world = test_world(database);
+    let owner_id = spawn(&mut world, database, 1, "owner_squad", -Vec3::X * 20.0);
+    let target_id = spawn(&mut world, database, 2, "target_squad", Vec3::X * 5.0);
+    let fragile_id = spawn(&mut world, database, 2, "fragile_squad", Vec3::Z * 6.0);
+    make_physical(&mut world, target_id);
+    let target_unit_id = squad_leader(&world, target_id);
+    let fragile_unit_id = squad_leader(&world, fragile_id);
+    let template = hover_template("fragile_air", Vec3::ONE);
+    assert!(world.create_physics_object(fragile_unit_id, &template, false));
+    for unit_id in [target_unit_id, fragile_unit_id] {
+        world.get_unit_mut(unit_id).unwrap().flying = true;
+    }
+    world
+        .invoke_wave_power(database, invocation(owner_id, true, PowerUserId::INVALID))
+        .unwrap();
+    let execution = world.power_manager.wave_executions.remove(0);
+    (world, execution, [target_unit_id, fragile_unit_id])
 }
 
 fn test_world(database: &Database) -> World {

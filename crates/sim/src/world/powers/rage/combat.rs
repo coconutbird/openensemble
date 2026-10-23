@@ -115,7 +115,7 @@ fn impact_profile(weapon: &Weapon) -> Option<ImpactProfile> {
 /// with a body gets `applyPointImpulse(NudgeMultiplier · m · (normalize(dir.xz), 1), point)`
 /// with `dir = normalize(unit − origin)` and `point = com − (1 / obstruction radius) · 10·dir`.
 /// A unit at the origin gives a NaN impulse, which the DE wrapper replaces with zero.
-fn nudge_units(world: &mut World, ids: &[EntityId], origin: Vec3, multiplier: f32) {
+pub(super) fn nudge_units(world: &mut World, ids: &[EntityId], origin: Vec3, multiplier: f32) {
     for id in ids {
         let (Some(mass), Some(center), Some((position, radius))) = (
             world.unit_body_mass(*id),

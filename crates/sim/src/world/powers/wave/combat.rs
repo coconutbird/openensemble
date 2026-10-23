@@ -237,7 +237,7 @@ fn create_lightning_beam(
 /// `BPowerWave_nudgeUnit` (`0x140331720`, 2008 `powerwave.cpp:1883-1912`): a point impulse at
 /// the strike location toward the ball, `normalize(ball − unit) · NudgeStrength · mass`, a
 /// quarter of that on a physics aircraft. DE drops the unused 2008 nudge location.
-fn nudge_unit(
+pub(super) fn nudge_unit(
     world: &mut World,
     gameplay: Option<&GameplayCatalog>,
     execution: &WavePowerExecution,

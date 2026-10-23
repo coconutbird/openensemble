@@ -9,6 +9,7 @@ use crate::entities::{SquadMode, UnitDataScalar};
 use crate::entity::Entity;
 use crate::executor::CommandExecutor;
 use crate::gameplay::GameplayCatalog;
+use crate::physics::test_support::{box_template, world_with_flat_terrain};
 use crate::player::{PowerGrant, TeamRelation};
 use crate::spawn::{spawn_squad_at, squad_prototype_id};
 use crate::world::powers::test_support::{data, execute_test_command, float_data};
@@ -629,4 +630,51 @@ fn assert_close(actual: f32, expected: f32) {
         (actual - expected).abs() < 0.000_1,
         "{actual} != {expected}"
     );
+}
+
+/// `BPowerRage_projectileImpact` (`0x140321C80`): the nudge
+/// `NudgeMultiplier · m · (normalize(dir.xz), 1)` goes in at
+/// `com − (1 / obstruction radius) · 10·dir`, with the 3D `dir = normalize(unit − origin)`.
+#[test]
+fn the_landing_nudge_pushes_at_a_point_behind_the_centre_of_mass() {
+    let origin = NUDGE_POSITION - Vec3::new(3.0, 2.0, 4.0);
+    let (mut world, unit_id) = nudge_world();
+    super::combat::nudge_units(&mut world, &[unit_id], origin, 3.0);
+
+    let (mut expected, expected_id) = nudge_world();
+    let center = expected.unit_body_center_of_mass(expected_id).unwrap();
+    let direction = Vec3::new(3.0, 2.0, 4.0) / 29.0_f32.sqrt();
+    // Obstruction radius 2, mass 4.
+    let point = center - direction * (10.0 / 2.0);
+    let impulse = Vec3::new(0.6, 1.0, 0.8) * (3.0 * 4.0);
+    assert!(expected.apply_unit_point_impulse(expected_id, impulse, point));
+
+    let velocity = world.unit_body_linear_velocity(unit_id).unwrap();
+    let expected_velocity = expected.unit_body_linear_velocity(expected_id).unwrap();
+    assert!(
+        velocity.abs_diff_eq(expected_velocity, 1.0e-5),
+        "{velocity} differs from {expected_velocity}"
+    );
+    let spin = world.unit_body_angular_velocity(unit_id).unwrap();
+    let expected_spin = expected.unit_body_angular_velocity(expected_id).unwrap();
+    assert!(expected_spin.length() > 0.0);
+    assert!(
+        spin.abs_diff_eq(expected_spin, 1.0e-5),
+        "{spin} differs from {expected_spin}"
+    );
+}
+
+const NUDGE_POSITION: Vec3 = Vec3::new(12.0, 2.0, 14.0);
+
+/// A unit at [`NUDGE_POSITION`] with obstruction radius 2 and a box body of mass 4.
+fn nudge_world() -> (World, EntityId) {
+    let mut world = world_with_flat_terrain();
+    let unit_id = world.create_unit_at(2, NUDGE_POSITION);
+    world
+        .get_unit_mut(unit_id)
+        .unwrap()
+        .obstruction_half_extents = Vec3::new(2.0, 1.0, 1.5);
+    let template = box_template("nudged", Vec3::new(2.0, 1.0, 1.5), 4.0, Vec3::Y);
+    assert!(world.create_physics_object(unit_id, &template, false));
+    (world, unit_id)
 }
