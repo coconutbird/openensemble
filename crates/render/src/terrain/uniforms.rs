@@ -419,7 +419,11 @@ mod tests {
         assert_eq!(&params.blackmap_params2[1..3], &[220.0, 100.0]);
         assert_close(params.blackmap_params1[3], 1.0);
 
+        // A world without sim terrain has no explored map; disabled fog clears the black map.
         world.clear_black_map();
+        params.apply_simulation_state(&world);
+        assert_close(params.blackmap_params1[3], 1.0);
+        world.set_fog_of_war_enabled(false);
         params.apply_simulation_state(&world);
         assert_close(params.blackmap_params1[3], 0.0);
     }

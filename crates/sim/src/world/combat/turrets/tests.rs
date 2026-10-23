@@ -12,6 +12,7 @@ fn secondary_scans_rotate_one_owned_squad_per_player_update() {
     let target = world.create_unit_at(2, Vec3::new(5.0, 0.0, 0.0));
     world.get_unit_mut(target).unwrap().proto_object_name = "test_target".to_owned();
     assert!(world.attach_unit_to_squad(target, target_squad));
+    world.configure_test_visibility_grid();
 
     world.update_entities_with_gameplay(0.05, &gameplay);
 
@@ -35,6 +36,7 @@ fn blocked_state_consumes_its_first_token_and_resumes_through_none() {
         .unwrap()
         .garrison
         .set_container(Some(target));
+    world.configure_test_visibility_grid();
 
     world.update_entities_with_gameplay(0.05, &gameplay);
     assert_eq!(turret_phase(&world, attacker), TurretAttackPhase::Blocked);
@@ -59,6 +61,7 @@ fn gather_order_consumes_a_none_state_scan_token() {
     let target_squad = world.create_squad_at(2, Vec3::new(5.0, 0.0, 0.0));
     let attacker = turret_member(&mut world, squad, Vec3::ZERO);
     let target = target_member(&mut world, target_squad);
+    world.configure_test_visibility_grid();
     world
         .get_unit_mut(attacker)
         .unwrap()
@@ -102,6 +105,7 @@ fn secondary_scan_acquires_before_starting_the_attachment_animation() {
     let target_squad = world.create_squad_at(2, Vec3::new(5.0, 0.0, 0.0));
     let attacker = turret_member(&mut world, squad, Vec3::ZERO);
     let target = target_member(&mut world, target_squad);
+    world.configure_test_visibility_grid();
 
     world.update_entities_with_gameplay(0.05, &gameplay);
     assert_eq!(turret_target(&world, attacker), Some(target));
@@ -123,6 +127,7 @@ fn secondary_scan_uses_the_squad_visible_enemy_list() {
         .unwrap()
         .configure_authored_line_of_sight(4.0);
     let target = target_member(&mut world, target_squad);
+    world.configure_test_visibility_grid();
 
     world.update_entities_with_gameplay(0.05, &gameplay);
     assert_eq!(turret_target(&world, attacker), None);
@@ -130,6 +135,7 @@ fn secondary_scan_uses_the_squad_visible_enemy_list() {
         .get_unit_mut(attacker)
         .unwrap()
         .configure_authored_line_of_sight(6.0);
+    world.update_line_of_sight();
     world.update_entities_with_gameplay(0.05, &gameplay);
     assert_eq!(turret_target(&world, attacker), Some(target));
 }
@@ -143,6 +149,7 @@ fn secondary_scan_rejects_targets_inside_authored_minimum_range() {
     let attacker = turret_member(&mut world, squad, Vec3::ZERO);
     let target = target_member(&mut world, target_squad);
     world.get_unit_mut(target).unwrap().base.position = Vec3::X * 5.9;
+    world.configure_test_visibility_grid();
 
     world.update_entities_with_gameplay(0.05, &gameplay);
     assert_eq!(turret_target(&world, attacker), None);
@@ -159,6 +166,7 @@ fn active_attack_wait_defers_the_change_mode_hit_check() {
     let target_squad = world.create_squad_at(2, Vec3::new(5.0, 0.0, 0.0));
     let attacker = turret_member(&mut world, squad, Vec3::ZERO);
     let target = target_member(&mut world, target_squad);
+    world.configure_test_visibility_grid();
     world.update_entities_with_gameplay(0.05, &gameplay);
     world.update_entities_with_gameplay(0.05, &gameplay);
     assert!(

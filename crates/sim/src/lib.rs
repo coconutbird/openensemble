@@ -127,8 +127,9 @@ pub use world::{
     PresentationRequest, ProductionUpdate, RagePowerError, RagePowerExecution, RagePowerInvocation,
     RagePowerPhase, RepairPowerError, RepairPowerExecution, RepairPowerInvocation, ResearchError,
     ResearchQueueResult, ResearchQuote, RumbleMotor, RumbleRequest, ScenarioScoreInfo,
-    ScreenFadeOverlay, ScreenFadeSequence, TechnologyError, TrainingError, TrainingQueueResult,
-    TrainingQuote, TransportPowerError, TransportPowerExecution, TransportPowerInvocation,
-    WaveCapturedObject, WaveFakeObject, WaveGravityBallState, WavePowerError, WavePowerExecution,
-    WavePowerInvocation, World, power_prototype_id, technology_prototype_id,
+    ScreenFadeOverlay, ScreenFadeSequence, TechnologyError, TileVisibility, TrainingError,
+    TrainingQueueResult, TrainingQuote, TransportPowerError, TransportPowerExecution,
+    TransportPowerInvocation, VisibilityGrid, WaveCapturedObject, WaveFakeObject,
+    WaveGravityBallState, WavePowerError, WavePowerExecution, WavePowerInvocation, World,
+    power_prototype_id, technology_prototype_id,
 };

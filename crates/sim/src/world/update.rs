@@ -81,6 +81,7 @@ impl World {
             self.update_entity_substep(step_duration, database, gameplay);
         }
         self.update_revealers(dt);
+        self.update_line_of_sight();
         self.update_idle_actions(dt);
         if let (Some(database), Some(gameplay)) = (database, gameplay) {
             self.update_auto_repairs(database, gameplay);

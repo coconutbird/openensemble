@@ -28,7 +28,8 @@ pub enum GameCommandType {
     AddResources = 2,
     /// Debug: give population to the player.
     AddPopulation = 3,
-    /// Debug: change the fog of war.
+    /// Debug: change the fog of war. `BGameCommand_execute` (`0x140199690`) of the retail build
+    /// has no case for it, so the command does nothing.
     FogOfWar = 4,
     /// Debug: destroy a squad.
     DestroySquad = 5,
@@ -50,7 +51,8 @@ pub enum GameCommandType {
     ClearBuildingRallyPoint = 13,
     /// Select a leader power.
     SelectPower = 14,
-    /// Debug: reveal the map.
+    /// Debug: reveal the map. `BGameCommand_execute` (`0x140199690`) of the retail build has no
+    /// case for it, so the command does nothing.
     RevealMap = 15,
     /// Debug: create `data2` squads of prototype `data` at `position`.
     CreateSquad = 16,

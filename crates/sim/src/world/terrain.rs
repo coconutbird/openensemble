@@ -99,6 +99,12 @@ impl TerrainSimulation {
         self.terrain.height_tile_scale
     }
 
+    /// Sim data tiles on each side and their world size (`gTerrainSimDataTileCount`,
+    /// `gTerrainSimDataTileScale`).
+    pub(super) const fn data_grid(&self) -> (usize, f32) {
+        (self.terrain.data_axis, self.terrain.data_tile_scale)
+    }
+
     fn height_sample(&self, x: i32, z: i32, clamp: bool) -> Option<f32> {
         let x = checked_grid_coordinate(x, self.terrain.height_axis, clamp)?;
         let z = checked_grid_coordinate(z, self.terrain.height_axis, clamp)?;
@@ -383,6 +389,8 @@ impl World {
             self.physics.set_terrain(heights);
         }
         self.terrain_simulation = Some(simulation);
+        // `BWorld` setup calls `BVisibleMap_initMap` with the data tile count on both axes.
+        self.reset_visibility_grid();
     }
 
     /// Replaces the physics world with an empty one that has the terrain body of the current

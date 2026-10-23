@@ -307,7 +307,6 @@ fn invisible_sim_control_objects_do_not_pollute_the_visual_roster() {
         .expect("revealer");
 
     assert!(world.get_revealer(revealer).is_some());
-    assert!(world.is_position_revealed_to_team(1, Vec3::new(9.0, 0.0, 0.0)));
     assert!(scene.roster_matches(&world));
     assert_eq!(scene.simulation_entity_count(), 0);
     assert_eq!(scene.placement_count(), 0);

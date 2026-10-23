@@ -1,7 +1,6 @@
 //! Authoritative state for retail fog-of-war revealers.
 
 use crate::player::TeamId;
-use glam::Vec3;
 
 const REVEAL_FRACTION_PER_SECOND: f32 = 3.33;
 
@@ -47,6 +46,12 @@ impl Revealer {
         self.los_scalar
     }
 
+    /// `LOS` of the revealer prototype, before the scalar.
+    #[must_use]
+    pub const fn prototype_line_of_sight(&self) -> f32 {
+        self.prototype_line_of_sight
+    }
+
     /// Current gameplay LOS radius, or `-1` for the global revealer.
     #[must_use]
     pub fn line_of_sight(&self) -> f32 {
@@ -70,19 +75,6 @@ impl Revealer {
     #[must_use]
     pub const fn lifespan_expiration_ms(&self) -> Option<u32> {
         self.lifespan_expiration_ms
-    }
-
-    #[must_use]
-    pub(crate) fn covers(&self, origin: Vec3, position: Vec3) -> bool {
-        let line_of_sight = self.line_of_sight();
-        if line_of_sight == Self::GLOBAL_LINE_OF_SIGHT {
-            return true;
-        }
-        if !line_of_sight.is_finite() || line_of_sight <= 0.0 {
-            return line_of_sight.is_infinite() && line_of_sight.is_sign_positive();
-        }
-        let delta = position - origin;
-        delta.x.mul_add(delta.x, delta.z * delta.z) <= line_of_sight * line_of_sight
     }
 
     #[must_use]

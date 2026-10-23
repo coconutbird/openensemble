@@ -1,4 +1,11 @@
-//! Authoritative trigger-revealer state and visibility queries.
+//! Retail fog of war: the visibility map, revealers and visibility queries.
+
+mod grid;
+mod sight;
+mod spans;
+
+pub use grid::{TileVisibility, VisibilityGrid};
+pub(crate) use sight::VisibilityState;
 
 use super::World;
 use crate::entities::{Object, Revealer};
@@ -17,39 +24,77 @@ impl World {
         self.fog_of_war_enabled
     }
 
-    /// Enable or disable gameplay fog of war for every team.
+    /// Enable or disable gameplay fog of war for every team (`BWorld_setFogOfWar`
+    /// `0x1405D2A40`, sim part).
     ///
-    /// Retail explores the entire visibility map when disabled and unexplores
-    /// it again when re-enabled. Exploring the map also permanently removes
-    /// black-map coverage, even after fog is enabled again.
+    /// Disabling explores every tile once more for each team, so every tile is visible and
+    /// explored. Enabling again unexplores every tile once: the tiles stay explored and only
+    /// the tiles of the sight circles stay visible.
     pub fn set_fog_of_war_enabled(&mut self, enabled: bool) {
-        if !enabled {
-            self.black_map_cleared = true;
+        if enabled == self.fog_of_war_enabled {
+            return;
         }
         self.fog_of_war_enabled = enabled;
+        for team_id in self.visibility_team_ids() {
+            if let Some(grid) = &mut self.visibility.grid {
+                if enabled {
+                    grid.unexplore_all(team_id);
+                } else {
+                    grid.explore_all(team_id);
+                }
+            }
+        }
     }
 
-    /// Return whether all teams have explored the whole terrain map.
+    /// Return whether every team has explored every tile of the visibility map.
     ///
-    /// Retail stores this per tile and per team. Until ordinary unit LOS owns
-    /// a tile grid, this flag captures the exact whole-map operations exposed
-    /// by trigger effects 713 and 863.
+    /// A world without sim terrain or without teams has no explored map and returns `false`.
     #[must_use]
-    pub const fn black_map_is_cleared(&self) -> bool {
-        self.black_map_cleared
+    pub fn black_map_is_cleared(&self) -> bool {
+        let mut teams = self.visibility_team_ids();
+        !teams.is_empty()
+            && self
+                .visibility
+                .grid
+                .as_ref()
+                .is_some_and(|grid| teams.all(|team_id| grid.is_fully_explored(team_id)))
     }
 
-    /// Explore the entire terrain map for every team while retaining fog.
+    /// Explore every tile for every team and keep the fog (`BWorld_clearBlackMap`
+    /// `0x1405D2BE0`): a black tile becomes fogged, a visible tile stays visible.
     pub fn clear_black_map(&mut self) {
-        self.black_map_cleared = true;
+        for team_id in self.visibility_team_ids() {
+            if let Some(grid) = &mut self.visibility.grid {
+                grid.explore_and_unexplore_all(team_id);
+            }
+        }
     }
 
-    /// Restore unexplored terrain for every team.
-    ///
-    /// Tiles that are actively visible cannot become black in retail, so a
-    /// disabled fog map remains fully explored.
+    /// Make every fogged tile black again for every team
+    /// (`BTriggerEffect_teResetBlackMap` `0x1404630E0`). A visible tile stays visible.
     pub fn reset_black_map(&mut self) {
-        self.black_map_cleared = !self.fog_of_war_enabled;
+        for team_id in self.visibility_team_ids() {
+            if let Some(grid) = &mut self.visibility.grid {
+                grid.reset_black_map(team_id);
+            }
+        }
+    }
+
+    /// Read-only visibility map of the sim data tiles, for the renderer and the minimap.
+    #[must_use]
+    pub const fn visibility_grid(&self) -> Option<&VisibilityGrid> {
+        self.visibility.grid.as_ref()
+    }
+
+    /// Give a world without sim terrain a 256 by 256 visibility map of 1-unit tiles and mark
+    /// the current sight circles, for tests of the visibility rules of other systems.
+    #[cfg(test)]
+    pub(crate) fn configure_test_visibility_grid(&mut self) {
+        self.visibility = VisibilityState {
+            grid: Some(VisibilityGrid::new(256, 1.0)),
+            ..VisibilityState::default()
+        };
+        self.update_line_of_sight();
     }
 
     /// Create one retail class-0 revealer for a team.
@@ -134,34 +179,35 @@ impl World {
             .filter_map(|(id, object)| object.revealer().map(|revealer| (id, revealer)))
     }
 
-    /// Return whether trigger-created revealers currently cover a world point.
-    ///
-    /// This is deliberately narrower than eventual complete fog-of-war state:
-    /// ordinary unit LOS and persistent explored terrain are separate sources.
+    /// `BVisibleMap::isPositionVisibleToTeam`: a sight circle of the team sees the tile under
+    /// a world point. With fog disabled every point is visible.
     #[must_use]
-    pub fn is_position_revealed_to_team(&self, team_id: TeamId, position: Vec3) -> bool {
+    pub fn is_position_visible_to_team(&self, team_id: TeamId, position: Vec3) -> bool {
         position.is_finite()
             && (!self.fog_of_war_enabled
-                || self.objects.iter().any(|(_, object)| {
-                    object.base.is_alive()
-                        && object.revealer().is_some_and(|revealer| {
-                            revealer.team_id() == team_id
-                                && revealer.covers(object.base.position, position)
-                        })
-                }))
+                || self
+                    .visibility
+                    .grid
+                    .as_ref()
+                    .is_some_and(|grid| grid.is_position_visible(team_id, position)))
     }
 
-    /// Return whether active revealers cover a live entity's current position.
+    /// `BVisibleMap::isPositionExploredToTeam`: the team explored the tile under a world point.
     #[must_use]
-    pub fn is_entity_revealed_to_team(&self, team_id: TeamId, entity_id: EntityId) -> bool {
-        self.entity_position(entity_id)
-            .is_some_and(|position| self.is_position_revealed_to_team(team_id, position))
+    pub fn is_position_explored_to_team(&self, team_id: TeamId, position: Vec3) -> bool {
+        position.is_finite()
+            && self
+                .visibility
+                .grid
+                .as_ref()
+                .is_some_and(|grid| grid.is_position_explored(team_id, position))
     }
 
     /// Return whether one live entity should be presented to a team's UI.
     ///
-    /// A team's own entities remain visible. Other entities are visible when
-    /// fog is disabled, team unit LOS overlaps them, or a revealer covers them.
+    /// A team's own entities remain visible. Other entities are visible when fog is disabled,
+    /// a visible tile of the team is under them (`BObject_getNewVisibility` `0x14029D0C0`) or
+    /// a power forces them visible. An undetected enemy cloak hides them.
     #[must_use]
     pub fn is_entity_visible_to_team(&self, team_id: TeamId, entity_id: EntityId) -> bool {
         let Some(_position) = self.entity_position(entity_id) else {
@@ -178,7 +224,7 @@ impl World {
             .and_then(|player_id| self.get_player(player_id))
             .is_some_and(|player| player.team_id == team_id);
         owned_by_team
-            || self.entity_in_team_sight(team_id, entity_id)
+            || self.entity_on_visible_tile(team_id, entity_id)
             || self.cleansing_forces_entity_visibility(team_id, entity_id)
             || self.wave_forces_entity_visibility(team_id, entity_id)
     }
@@ -225,58 +271,30 @@ impl World {
             .is_some_and(|player| self.is_entity_hidden_by_cloak_to_team(player.team_id, entity_id))
     }
 
-    fn entity_in_team_sight(&self, team_id: TeamId, entity_id: EntityId) -> bool {
+    /// A squad is visible when one of its units is (`BSquad::isVisible`). A unit samples every
+    /// tile under its sim bounding box; another entity samples the tile under its position.
+    fn entity_on_visible_tile(&self, team_id: TeamId, entity_id: EntityId) -> bool {
+        let Some(grid) = &self.visibility.grid else {
+            return false;
+        };
+        let mask = 0x1_0000_u32.checked_shl(u32::from(team_id)).unwrap_or(0);
         match entity_id.class() {
             Some(EntityClass::Squad) => self.squads.get(entity_id).is_some_and(|squad| {
                 squad
                     .unit_ids
                     .iter()
-                    .any(|unit_id| self.entity_in_team_sight(team_id, *unit_id))
+                    .any(|unit_id| self.entity_on_visible_tile(team_id, *unit_id))
             }),
             Some(EntityClass::Unit) => self.units.get(entity_id).is_some_and(|unit| {
-                self.team_sight_overlaps(team_id, unit.base.position, unit.obstruction_radius())
+                let (center, extents) = unit.simulation_bounds();
+                center.is_finite()
+                    && extents.is_finite()
+                    && grid.bits_in_box(center - extents, center + extents) & mask != 0
             }),
-            _ => self
-                .entity_position(entity_id)
-                .is_some_and(|position| self.team_sight_overlaps(team_id, position, 0.0)),
+            _ => self.entity_position(entity_id).is_some_and(|position| {
+                position.is_finite() && grid.bits_in_box(position, position) & mask != 0
+            }),
         }
-    }
-
-    fn team_sight_overlaps(&self, team_id: TeamId, position: Vec3, target_radius: f32) -> bool {
-        if !position.is_finite() {
-            return false;
-        }
-        let target_radius = finite_nonnegative(target_radius);
-        self.objects.iter().any(|(_, object)| {
-            object.base.is_alive()
-                && object.revealer().is_some_and(|revealer| {
-                    revealer.team_id() == team_id
-                        && sight_circles_overlap(
-                            object.base.position,
-                            revealer.line_of_sight(),
-                            position,
-                            target_radius,
-                        )
-                })
-        }) || self.units.iter().any(|(_, observer)| {
-            observer.is_alive()
-                && !observer.is_garrisoned()
-                && !observer.is_physics_replacement()
-                && self
-                    .get_player(observer.base.player_id)
-                    .is_some_and(|player| {
-                        player.team_id == team_id
-                            && sight_circles_overlap(
-                                observer.base.position,
-                                player.technologies.line_of_sight(
-                                    observer.logical_proto_object_name(),
-                                    observer.authored_line_of_sight(),
-                                ) * observer.line_of_sight_scalar,
-                                position,
-                                target_radius,
-                            )
-                    })
-        })
     }
 
     pub(super) fn update_revealers(&mut self, dt: f32) {
@@ -317,26 +335,6 @@ impl World {
         }
         None
     }
-}
-
-fn finite_nonnegative(value: f32) -> f32 {
-    if value.is_finite() {
-        value.max(0.0)
-    } else {
-        0.0
-    }
-}
-
-fn sight_circles_overlap(origin: Vec3, radius: f32, target: Vec3, target_radius: f32) -> bool {
-    if radius == Revealer::GLOBAL_LINE_OF_SIGHT {
-        return true;
-    }
-    if !origin.is_finite() || !radius.is_finite() || radius <= 0.0 {
-        return false;
-    }
-    let range = radius + target_radius;
-    let offset = target - origin;
-    offset.x.mul_add(offset.x, offset.z * offset.z) <= range * range
 }
 
 fn revealer_prototype(database: &Database) -> Option<(i32, &ProtoObject)> {

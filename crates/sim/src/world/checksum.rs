@@ -22,7 +22,7 @@ impl World {
         checksum.hash_u32(self.game_time_ms);
         checksum.hash_u32(u32::from(self.coop));
         checksum.hash_u32(u32::from(self.fog_of_war_enabled));
-        checksum.hash_u32(u32::from(self.black_map_cleared));
+        self.visibility.hash_state(&mut checksum);
         self.scenario_score.hash_state(&mut checksum);
         self.design_objects.hash_state(&mut checksum);
         self.hash_objectives(&mut checksum);

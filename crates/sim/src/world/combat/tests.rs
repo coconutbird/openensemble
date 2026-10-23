@@ -315,6 +315,7 @@ fn automatic_attack_move_skips_targets_inside_authored_minimum_range() {
     let close_target = world.create_unit_at(2, Vec3::X * 6.9);
     world.get_unit_mut(close_target).unwrap().proto_object_name = "test_target".to_owned();
     assert!(world.issue_squad_move_order_to_position(1, squad_id, Vec3::X * 40.0, true, false,));
+    world.configure_test_visibility_grid();
 
     world.update_attack_move_orders(&gameplay);
     assert_eq!(world.get_squad(squad_id).unwrap().attack_target, None);
@@ -346,6 +347,7 @@ fn automatic_attack_move_requires_team_visibility() {
     let target = world.create_unit_at(2, Vec3::X * 6.0);
     world.get_unit_mut(target).unwrap().proto_object_name = "test_target".to_owned();
     assert!(world.issue_squad_move_order_to_position(1, squad_id, Vec3::X * 40.0, true, false));
+    world.configure_test_visibility_grid();
 
     world.update_attack_move_orders(&gameplay);
     assert_eq!(world.get_squad(squad_id).unwrap().attack_target, None);
@@ -353,6 +355,7 @@ fn automatic_attack_move_requires_team_visibility() {
         .get_unit_mut(attacker_id)
         .unwrap()
         .configure_authored_line_of_sight(8.0);
+    world.update_line_of_sight();
     world.update_attack_move_orders(&gameplay);
     assert_eq!(
         world.get_squad(squad_id).unwrap().attack_target,
@@ -604,6 +607,7 @@ fn attack_move_acquires_an_enemy_then_resumes_its_destination() {
     world.get_unit_mut(target_id).unwrap().proto_object_name = "test_target".to_owned();
     let destination = Vec3::new(40.0, 0.0, 0.0);
     assert!(world.issue_squad_move_order_to_position(1, squad_id, destination, true, false,));
+    world.configure_test_visibility_grid();
 
     world.update_entities_with_gameplay(0.05, &gameplay);
     let squad = world.get_squad(squad_id).unwrap();

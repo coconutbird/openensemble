@@ -22,7 +22,7 @@ impl World {
         self.team_relations = team::neutral_team_relations();
         self.coop = false;
         self.fog_of_war_enabled = true;
-        self.black_map_cleared = false;
+        self.reset_visibility_grid();
         self.scenario_score = scoring::ScenarioScoreState::default();
         self.design_objects = design_objects::DesignObjectState::default();
         self.objectives.clear();

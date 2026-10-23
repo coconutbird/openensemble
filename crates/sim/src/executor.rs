@@ -802,6 +802,32 @@ mod tests {
     }
 
     #[test]
+    fn fog_of_war_and_reveal_map_debug_commands_do_nothing_like_retail() {
+        let mut world = World::new();
+        world.init_players(1);
+        let before = world.checksum();
+        let executor = CommandExecutor::new();
+
+        for game_type in [GameCommandType::FogOfWar, GameCommandType::RevealMap] {
+            execute_game_command(
+                &executor,
+                &mut world,
+                GameCommand {
+                    base: Command {
+                        player_id: 1,
+                        ..Command::default()
+                    },
+                    game_type,
+                    ..GameCommand::default()
+                },
+            );
+        }
+
+        assert!(world.fog_of_war_enabled());
+        assert_eq!(world.checksum(), before);
+    }
+
+    #[test]
     fn building_clear_rally_command_is_not_blocked_by_zero_count() {
         let mut world = World::new();
         world.init_players(1);

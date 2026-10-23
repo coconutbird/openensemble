@@ -147,6 +147,7 @@ pub(crate) use transports::{
     TransportGroupPlan, TransportGroupRequest, average_transport_position, plan_transport_groups,
     transport_carrier_spacing,
 };
+pub use visibility::{TileVisibility, VisibilityGrid};
 
 /// Maximum supported players.
 pub const MAX_PLAYERS: usize = 8;
@@ -164,8 +165,8 @@ pub struct World {
     coop: bool,
     /// Whether gameplay fog of war is enabled for every team.
     fog_of_war_enabled: bool,
-    /// Whether every team's whole terrain map has been explored.
-    black_map_cleared: bool,
+    /// Retail visibility map and the sight circles of units and revealers.
+    visibility: visibility::VisibilityState,
     /// Scenario-authored campaign scoring configuration.
     scenario_score: scoring::ScenarioScoreState,
     /// Scenario-authored design spheres and lines (`BWorld+624`).
@@ -254,7 +255,7 @@ impl World {
             team_relations: team::neutral_team_relations(),
             coop: false,
             fog_of_war_enabled: true,
-            black_map_cleared: false,
+            visibility: visibility::VisibilityState::default(),
             scenario_score: scoring::ScenarioScoreState::default(),
             design_objects: design_objects::DesignObjectState::default(),
             objectives: Vec::new(),
