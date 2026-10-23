@@ -170,6 +170,8 @@ impl EffectType {
             | 1054
             | 1061
             | 1065
+            // Campaign end and UI presentation without user input.
+            | 515 | 521 | 533 | 726 | 775 | 805 | 808 | 815 | 923 | 1002 | 1006 | 1030 | 1049
         )
     }
 }

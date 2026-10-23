@@ -1,5 +1,7 @@
 //! Game type and end-of-game state of the world (`BWorld_checkForGameOver`).
 
+use std::collections::BTreeMap;
+
 use super::World;
 use crate::entity::Entity;
 use crate::player::{PlayerId, PlayerState, PlayerStateChange, PlayerType, TeamId};
@@ -54,6 +56,11 @@ pub(super) struct GameEndState {
     result: Option<GameResult>,
     /// `world+1348`: the seconds that the world still updates after the game ended.
     remaining_delay: f32,
+    /// The `MissionResult` (1002) player state of each human player
+    /// (`gUIManager->mScenarioResult` of the user of the player).
+    mission_results: BTreeMap<PlayerId, i32>,
+    /// The achievement names that `GrantAchievement` (1030) reported, in report order.
+    granted_achievements: Vec<String>,
 }
 
 impl GameEndState {
@@ -74,6 +81,15 @@ impl GameEndState {
             checksum.hash_u32(0);
         }
         checksum.hash_f32(self.remaining_delay);
+        checksum.hash_u32(u32::try_from(self.mission_results.len()).unwrap_or(u32::MAX));
+        for (player_id, result) in &self.mission_results {
+            checksum.hash_u32(u32::from(*player_id));
+            checksum.hash_i32(*result);
+        }
+        checksum.hash_u32(u32::try_from(self.granted_achievements.len()).unwrap_or(u32::MAX));
+        for name in &self.granted_achievements {
+            checksum.hash_string(name);
+        }
     }
 }
 
@@ -118,6 +134,41 @@ impl World {
     #[must_use]
     pub const fn is_game_over(&self) -> bool {
         self.game_end.result.is_some()
+    }
+
+    /// Return the mission result that `MissionResult` (1002) set for a human player: the
+    /// gamedata `PlayerStates` index of the state (the [`PlayerState`] numbers, for example 4
+    /// for `Won`). The UI of the player shows the campaign end screen with this result.
+    #[must_use]
+    pub fn mission_result(&self, player_id: PlayerId) -> Option<i32> {
+        self.game_end.mission_results.get(&player_id).copied()
+    }
+
+    /// Return the achievement names that `GrantAchievement` (1030) reported, in report order.
+    #[must_use]
+    pub fn granted_achievements(&self) -> &[String] {
+        &self.game_end.granted_achievements
+    }
+
+    /// `BTriggerEffect_teMissionResult` (`0x14047D510`).
+    ///
+    /// Retail stores the result in the UI manager and shows the end screen, unless the
+    /// primary user does not play any more. Each human player is the primary user on its own
+    /// computer, so the sim stores the result for each human player that still plays.
+    pub(crate) fn set_mission_result(&mut self, result: i32) {
+        for player in &self.players {
+            if player.player_type == PlayerType::Human && player.state == PlayerState::Playing {
+                self.game_end.mission_results.insert(player.id, result);
+            }
+        }
+    }
+
+    /// `BTriggerEffect_teGrantAchievement` (`0x14047FF40`) reports the name for the primary and
+    /// the secondary user. The sim keeps each name once.
+    pub(crate) fn grant_achievement(&mut self, name: String) {
+        if !self.game_end.granted_achievements.contains(&name) {
+            self.game_end.granted_achievements.push(name);
+        }
     }
 
     /// Spend `elapsed_seconds` of the game-over delay like `BTimeManager_getUpdateTime`.

@@ -2,8 +2,8 @@
 
 use super::{
     ControlAction, Database, Effect, EffectOutcome, EffectType, GameplayCatalog, TriggerScript,
-    World, adjust_count, ai, ai_state, ammunition, animations, attachments, carpet_bomb, commands,
-    copy_value, design_lines, economy, entities, entity_flags, entity_visuals, events,
+    World, adjust_count, ai, ai_state, ammunition, animations, attachments, campaign, carpet_bomb,
+    commands, copy_value, design_lines, economy, entities, entity_flags, entity_visuals, events,
     execute_control_effect, filters, fog, forbids, game_state, health, icons, is_copy_effect,
     iterators, list_processing, lists, location_math, math, objectives, orders, ownership, players,
     powers, presentation, proto_data, rally_points, relationships, resources, revealers,
@@ -39,6 +39,9 @@ pub(crate) fn execute_effect(
         return (outcome, None);
     }
     if let Some(outcome) = objectives::execute(effect, script, world) {
+        return (outcome, None);
+    }
+    if let Some(outcome) = campaign::execute(effect, script, world) {
         return (outcome, None);
     }
     if let Some(outcome) = animations::execute(effect, script, world, gameplay) {

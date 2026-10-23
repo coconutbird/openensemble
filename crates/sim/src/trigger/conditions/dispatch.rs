@@ -7,8 +7,9 @@ use super::{
     compare_player_squad_count, compare_player_unit_count, compare_population, compare_string,
     compare_time, contains_garrisoned, events, externals, forbids, game_settings, has_garrisoned,
     hitch, is_attacking, is_garrisoned, is_object_type, is_owned_by, is_proto_object,
-    is_under_attack, iterators, lifecycle, list_selection, player_in_state, player_is_gaia,
-    player_type, player_using_leader, queries, sockets, spatial, tech_status, time_reached, timers,
+    is_under_attack, iterators, lifecycle, list_selection, objectives, player_in_state,
+    player_is_gaia, player_type, player_using_leader, queries, sockets, spatial, tech_status,
+    time_reached, timers,
 };
 
 pub(super) fn evaluate_condition_with_database(
@@ -209,6 +210,9 @@ fn evaluate_query_condition(
         }
         ConditionType::IsForbidden => forbids::is_forbidden(condition, script, world, database),
         ConditionType::IsTimerDone => timers::is_done(condition, script, world),
+        ConditionType::IsObjectiveComplete => {
+            objectives::is_objective_complete(condition, script, world)
+        }
         ConditionType::NextPlayer => iterators::next_player(condition, script),
         ConditionType::NextTeam => iterators::next_team(condition, script),
         ConditionType::NextUnit => iterators::next_unit(condition, script),

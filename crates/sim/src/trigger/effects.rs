@@ -5,6 +5,7 @@ mod ai_state;
 mod ammunition;
 mod animations;
 mod attachments;
+mod campaign;
 mod carpet_bomb;
 mod commands;
 mod design_lines;

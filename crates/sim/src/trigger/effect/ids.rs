@@ -851,6 +851,36 @@ pub enum EffectType {
     /// Locks or unlocks the user of a player.
     LockPlayerUser = 1061,
 
+    // Hints, flares and other UI presentation without user input
+    /// Plays a sound cue on an entity.
+    PlayWorldSoundOnEntity = 515,
+    /// Makes the camera of the users follow an entity.
+    SetFollowCam = 521,
+    /// Animates the scene light from the current lightset to a scenario lightset.
+    LightsetAnimate = 533,
+    /// Closes the power targeting of the user of a player.
+    UITogglePowerOverlay = 726,
+    /// Sets the override tint of objects.
+    SetOverrideTint = 775,
+    /// Shows a hint message to the primary user.
+    HintMessageShow = 805,
+    /// Turns the hint glow of objects on or off.
+    HintGlowToggle = 808,
+    /// Removes the current hint message.
+    HintMessageDestroy = 815,
+    /// Starts or stops the flash of a UI element for a player.
+    FlashUIElement = 923,
+    /// Enables or disables the music manager.
+    EnableMusicManager = 1006,
+    /// Forces chat subtitles on or off.
+    ChatForceSubtitles = 1049,
+
+    // Campaign end
+    /// Shows the campaign end screen with a player state.
+    MissionResult = 1002,
+    /// Reports an achievement for the users.
+    GrantAchievement = 1030,
+
     /// Custom effect for scripting extensions (not in vanilla).
     Custom = 0xFFFF,
 }

@@ -119,7 +119,8 @@ pub use garrison::GarrisonError;
 pub use health::UnitHealth;
 pub use hitch::HitchError;
 pub use object_costs::ObjectCostError;
-pub use objectives::ObjectiveState;
+pub(crate) use objectives::DEFAULT_NOTIFICATION_SECONDS;
+pub use objectives::{ObjectiveNotification, ObjectiveState};
 pub(crate) use orders::SquadMoveContext;
 pub use powers::{
     CarpetBomb, CarpetBombingPhase, CarpetBombingPowerError, CarpetBombingPowerExecution,
@@ -176,8 +177,9 @@ pub struct World {
     scenario_score: scoring::ScenarioScoreState,
     /// Scenario-authored design spheres and lines (`BWorld+624`).
     design_objects: design_objects::DesignObjectState,
-    /// Scenario-authored objectives in their retail manager order.
-    objectives: Vec<ObjectiveState>,
+    /// Scenario-authored objectives in their retail manager order, with their score and
+    /// notifications.
+    objectives: objectives::ObjectiveManager,
     /// Full horizontal terrain extent loaded from the active scenario XTD.
     terrain_bounds: Option<WorldBounds>,
     /// Active scenario-playable subset; `None` uses the full terrain extent.
@@ -265,7 +267,7 @@ impl World {
             visibility: visibility::VisibilityState::default(),
             scenario_score: scoring::ScenarioScoreState::default(),
             design_objects: design_objects::DesignObjectState::default(),
-            objectives: Vec::new(),
+            objectives: objectives::ObjectiveManager::default(),
             terrain_bounds: None,
             playable_bounds: None,
             terrain_simulation: None,

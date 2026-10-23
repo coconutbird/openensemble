@@ -21,6 +21,7 @@ mod hitch;
 mod iterators;
 mod lifecycle;
 mod list_selection;
+mod objectives;
 mod queries;
 mod sockets;
 mod spatial;
