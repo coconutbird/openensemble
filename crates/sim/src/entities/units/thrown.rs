@@ -2,9 +2,13 @@
 
 use super::Unit;
 use crate::EntityId;
+use crate::entities::SquadMode;
+use crate::entity::Entity;
+use crate::gameplay::GameplayCatalog;
 use crate::sync::SyncChecksum;
 use crate::world::World;
 use glam::Vec3;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct UnitThrown {
@@ -101,6 +105,38 @@ impl World {
         unit.thrown
             .begin(thrower_id, release_physics_on_landing, wait_for_landing);
         true
+    }
+
+    /// `BUnit::canBeThrown`: a live unit whose squad is not in lockdown, power or cover mode.
+    pub(crate) fn can_be_thrown(&self, unit_id: EntityId) -> bool {
+        let Some(unit) = self.units.get(unit_id).filter(|unit| unit.is_alive()) else {
+            return false;
+        };
+        unit.squad_id
+            .and_then(|squad_id| self.squads.get(squad_id))
+            .is_some_and(|squad| {
+                !matches!(
+                    squad.mode,
+                    SquadMode::Lockdown | SquadMode::Power | SquadMode::Cover
+                )
+            })
+    }
+
+    /// `BUnitActionThrown`: a unit without a body gets the body of its `PhysicsReplacementInfo`
+    /// for the throw. Returns `Some(true)` for such a temporary body, `Some(false)` for a unit
+    /// that has a body, and `None` for a unit that cannot get one.
+    pub(crate) fn ensure_throw_physics(
+        &mut self,
+        gameplay: Option<&GameplayCatalog>,
+        unit_id: EntityId,
+    ) -> Option<bool> {
+        let unit = self.units.get(unit_id)?;
+        if unit.physics_object.is_some() {
+            return Some(false);
+        }
+        let template = Arc::clone(gameplay?.physics_replacement(&unit.proto_object_name)?);
+        self.create_physics_object(unit_id, &template, false)
+            .then_some(true)
     }
 
     /// Ends the throw of each thrown unit whose body landed in the last physics step (a new

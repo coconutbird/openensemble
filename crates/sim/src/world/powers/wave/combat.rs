@@ -7,8 +7,6 @@ use super::super::projectile::{
 };
 use super::{WaveGravityBallState, WavePowerExecution, ball_position, owner_leader_id};
 use crate::EntityId;
-use crate::entities::SquadMode;
-use crate::entity::Entity;
 use crate::gameplay::GameplayCatalog;
 use crate::math;
 use crate::player::GAIA_PLAYER;
@@ -454,37 +452,19 @@ fn throw_nearby_units(
         })
         .collect::<Vec<_>>();
     for unit_id in units {
-        if unit_id == leader_id || !can_be_thrown(world, unit_id) {
+        if unit_id == leader_id || !world.can_be_thrown(unit_id) {
             continue;
         }
         let Some(position) = world.get_unit(unit_id).map(|unit| unit.base.position) else {
             continue;
         };
         let velocity = thrown_velocity(ball, position, profile.offset_radians, launch_speed);
-        let Some(release_physics) = ensure_throw_physics(world, gameplay, unit_id) else {
+        let Some(release_physics) = world.ensure_throw_physics(gameplay, unit_id) else {
             continue;
         };
         let _started =
             world.begin_unit_throw(unit_id, execution.ball_object_id, velocity, release_physics);
     }
-}
-
-/// `BUnitActionThrown`: a unit without a body gets the body of its `PhysicsReplacementInfo`
-/// for the throw. Returns `Some(true)` for such a temporary body, `Some(false)` for a unit that
-/// has a body, and `None` for a unit that cannot get one.
-fn ensure_throw_physics(
-    world: &mut World,
-    gameplay: Option<&GameplayCatalog>,
-    unit_id: EntityId,
-) -> Option<bool> {
-    let unit = world.get_unit(unit_id)?;
-    if unit.physics_object.is_some() {
-        return Some(false);
-    }
-    let template = std::sync::Arc::clone(gameplay?.physics_replacement(&unit.proto_object_name)?);
-    world
-        .create_physics_object(unit_id, &template, false)
-        .then_some(true)
 }
 
 fn wave_throw_profile(
@@ -497,20 +477,6 @@ fn wave_throw_profile(
         velocity: finite_nonnegative(weapon.throw_velocity),
         offset_radians: finite_or_zero(weapon.throw_offset_angle).to_radians(),
     })
-}
-
-fn can_be_thrown(world: &World, unit_id: EntityId) -> bool {
-    let Some(unit) = world.get_unit(unit_id).filter(|unit| unit.is_alive()) else {
-        return false;
-    };
-    unit.squad_id
-        .and_then(|squad_id| world.get_squad(squad_id))
-        .is_some_and(|squad| {
-            !matches!(
-                squad.mode,
-                SquadMode::Lockdown | SquadMode::Power | SquadMode::Cover
-            )
-        })
 }
 
 fn thrown_velocity(ball: Vec3, unit: Vec3, offset_radians: f32, speed: f32) -> Vec3 {

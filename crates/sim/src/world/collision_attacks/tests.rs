@@ -65,7 +65,11 @@ fn capped_lethal_ram_spends_target_hitpoints_and_fires_retail_event() {
 
 #[test]
 fn physical_rammer_detects_and_bowls_nonphysical_infantry_obstruction() {
-    let (database, gameplay) = ram_gameplay(Some(10_000.0));
+    let (database, mut gameplay) = ram_gameplay(Some(10_000.0));
+    gameplay.insert_test_physics_replacement(
+        "light_target",
+        box_template("light_target", Vec3::splat(0.5), 1.0, Vec3::ZERO),
+    );
     let mut world = World::with_seed(23);
     world.init_players(2);
     world.get_player_mut(1).unwrap().team_id = 1;
@@ -87,7 +91,11 @@ fn physical_rammer_detects_and_bowls_nonphysical_infantry_obstruction() {
     world.update_entities_with_gameplay(0.05, &gameplay);
 
     assert_close(world.get_unit(target_id).unwrap().hitpoints, 800.0);
-    assert!(world.get_squad(target_squad).unwrap().base.position.x > target_position.x);
+    // The bowled unit gets its physics replacement body for the throw (`throwUnit`).
+    let target = world.get_unit(target_id).unwrap();
+    assert!(target.is_thrown());
+    assert_eq!(target.thrown_by(), Some(attacker_id));
+    assert!(target.physics_object.is_some());
     let attacker = world.get_unit(attacker_id).unwrap();
     assert_close(attacker.ammunition.current(), 0.0);
     let squad = world.get_squad(attacker_squad).unwrap();

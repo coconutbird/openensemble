@@ -4,6 +4,7 @@ use super::{GameplayCatalog, ObjectGameplay, TacticStateId};
 use crate::entities::SquadMode;
 use glam::Vec3;
 use pipeline::database::hw1::tactics::{Action, Weapon};
+use pipeline::database::hw1::{Database, GameData};
 
 /// One persistent `CollisionAttack` action joined to its authored Ram weapon.
 #[derive(Debug, Clone, Copy)]
@@ -22,6 +23,34 @@ pub struct CollisionAttackProfile<'gameplay> {
     pub reflect_damage_factor: f32,
     /// Authored state entered while the persistent collision action is active.
     pub new_tactic_state: Option<TacticStateId>,
+    /// The action is an overrun (`Overrun`): the rammer bounces up when it bowls a unit.
+    pub overrun: bool,
+}
+
+/// The overrun bounce of the game data (`OverrunMinVel`, `OverrunJumpForce`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct OverrunTuning {
+    /// The rammer bounces only above this body speed.
+    pub minimum_speed: f32,
+    /// The upward impulse of the bounce.
+    pub jump_force: f32,
+}
+
+impl OverrunTuning {
+    pub(super) fn from_database(database: &Database) -> Self {
+        let value = |read: fn(&GameData) -> Option<f32>| {
+            database
+                .game_data
+                .as_ref()
+                .and_then(read)
+                .filter(|value| value.is_finite())
+                .unwrap_or_default()
+        };
+        Self {
+            minimum_speed: value(|data| data.overrun_min_vel),
+            jump_force: value(|data| data.overrun_jump_force),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -32,6 +61,12 @@ pub(crate) struct CollisionTargetProfile {
 }
 
 impl GameplayCatalog {
+    /// The overrun bounce of the game data.
+    #[must_use]
+    pub const fn overrun_tuning(&self) -> OverrunTuning {
+        self.overrun
+    }
+
     /// Resolve a prototype's first authored collision attack.
     #[must_use]
     pub fn collision_attack(&self, proto_object_name: &str) -> Option<CollisionAttackProfile<'_>> {
@@ -48,6 +83,7 @@ impl GameplayCatalog {
                 .new_tactic_state
                 .as_deref()
                 .and_then(|name| object.tactic_state_id(name)),
+            overrun: action.overrun.unwrap_or(false),
         })
     }
 

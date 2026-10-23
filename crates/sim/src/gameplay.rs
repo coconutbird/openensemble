@@ -64,7 +64,7 @@ pub use bomb::BombActionProfile;
 pub use capture::CaptureActionProfile;
 pub use charge::{ChargeActionProfile, ChargeEffectProfile};
 pub use cloak::CloakProfile;
-pub use collision_attacks::CollisionAttackProfile;
+pub use collision_attacks::{CollisionAttackProfile, OverrunTuning};
 pub use damage_parts::{DamagePartProfile, ThrownDamagePart};
 pub use death_throw::{DeathChance, DeathThrowProfile};
 pub use detonate::{DetonateActionProfile, DetonateDurationProfile, DetonateThrowProfile};
@@ -151,6 +151,7 @@ pub struct GameplayCatalog {
     height_bonus_damage: f32,
     shield_regen_delay: f32,
     shield_regen_time: f32,
+    overrun: collision_attacks::OverrunTuning,
     hero_revival: HeroRevivalProfile,
     plasma_shield_generators: BTreeMap<String, PlasmaShieldGeneratorProfile>,
     plasma_subshields: BTreeMap<String, protection::PlasmaSubshieldProfile>,
@@ -267,6 +268,7 @@ impl GameplayCatalog {
                 .unwrap_or_default(),
             shield_regen_delay: game_data_nonnegative(database, |data| data.shield_regen_delay),
             shield_regen_time: game_data_nonnegative(database, |data| data.shield_regen_time),
+            overrun: collision_attacks::OverrunTuning::from_database(database),
             hero_revival: revival::hero_profile(database),
             plasma_subshields: protection::collect_plasma_subshields(database),
             shield_bubble_types,
@@ -391,6 +393,7 @@ impl GameplayCatalog {
                 .unwrap_or_default(),
             shield_regen_delay: game_data_nonnegative(database, |data| data.shield_regen_delay),
             shield_regen_time: game_data_nonnegative(database, |data| data.shield_regen_time),
+            overrun: collision_attacks::OverrunTuning::from_database(database),
             hero_revival: revival::hero_profile(database),
             plasma_subshields: protection::collect_plasma_subshields(database),
             merged_squads: join::MergedSquadProfiles::from_database(database),

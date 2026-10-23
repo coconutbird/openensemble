@@ -1,5 +1,6 @@
 //! Deterministic contact-driven vehicle Ram resolution.
 
+mod motion;
 mod obstruction;
 
 pub(crate) use obstruction::UnitCollisionContact;
@@ -9,17 +10,9 @@ use crate::entities::{Squad, SquadMode};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::{AbilityRecoveryStart, CollisionAttackProfile, GameplayCatalog};
-use crate::math;
 use crate::player::{GAIA_PLAYER, PlayerId};
 use glam::Vec3;
 use obstruction::obstruction_contacts;
-
-const RAMMER_IMPULSE_ANGLE: f32 = std::f32::consts::FRAC_PI_4;
-const RAMMER_IMPULSE_FORCE: f32 = 10.0;
-const RAMMED_IMPULSE_ANGLE: f32 = std::f32::consts::FRAC_PI_2 * 0.75;
-const RAMMED_IMPULSE_FORCE: f32 = 7.0;
-const RAMMED_MEDIUM_UP_VELOCITY: f32 = 3.0;
-const RAMMED_TOP_UP_VELOCITY: f32 = 6.0;
 
 #[derive(Debug, Clone)]
 struct RammerSnapshot {
@@ -28,6 +21,7 @@ struct RammerSnapshot {
     player_id: PlayerId,
     position: Vec3,
     forward: Vec3,
+    velocity: Vec3,
     proto_object_name: String,
     ordered_target_id: EntityId,
     ability_id: Option<u8>,
@@ -41,11 +35,9 @@ struct RamTargetSnapshot {
     player_id: PlayerId,
     position: Vec3,
     forward: Vec3,
-    velocity: Vec3,
     proto_object_name: String,
     mode: SquadMode,
     hitpoints: f32,
-    obstruction_radius: f32,
     in_cover: bool,
 }
 
@@ -230,7 +222,10 @@ impl World {
         if killed {
             self.fire_ram_kill_event(&attacker, &target);
         } else {
-            self.apply_rammed_target_motion(&target, direction, disposition);
+            self.apply_rammed_target_motion(&attacker, &target, direction, disposition, gameplay);
+        }
+        if disposition == CollisionDisposition::Bowlable && profile.overrun {
+            self.apply_overrun_bounce(attacker_id, gameplay.overrun_tuning());
         }
         self.apply_ram_reflection(&attacker, &target, dealt, tuning, direction, gameplay);
         if dealt > 0.0 {
@@ -256,6 +251,7 @@ impl World {
             player_id: unit.base.player_id,
             position: unit.base.position,
             forward: unit.base.forward,
+            velocity: unit.base.velocity,
             proto_object_name: unit.proto_object_name.clone(),
             ordered_target_id: squad.attack_target?,
             ability_id: squad.attack_ability_id,
@@ -278,11 +274,9 @@ impl World {
             player_id: unit.base.player_id,
             position: unit.base.position,
             forward: unit.base.forward,
-            velocity: unit.base.velocity,
             proto_object_name: unit.proto_object_name.clone(),
             mode,
             hitpoints: unit.hitpoints,
-            obstruction_radius: unit.obstruction_radius(),
             in_cover: mode == SquadMode::Cover,
         })
     }
@@ -392,35 +386,6 @@ impl World {
         self.fire_general_event(&event);
     }
 
-    fn apply_rammed_target_motion(
-        &mut self,
-        target: &RamTargetSnapshot,
-        direction: Vec3,
-        disposition: CollisionDisposition,
-    ) {
-        if let Some(mass) = self.unit_body_mass(target.id) {
-            let impulse = rammed_impulse(direction, mass, target.velocity.y);
-            let _applied = self.apply_unit_impulse(target.id, impulse);
-            return;
-        }
-        if disposition == CollisionDisposition::Bowlable {
-            self.displace_bowlable_target(target, direction);
-        }
-    }
-
-    fn displace_bowlable_target(&mut self, target: &RamTargetSnapshot, direction: Vec3) {
-        let displacement = direction * target.obstruction_radius.max(0.5) * 2.0;
-        if let Some(squad_id) = target.squad_id
-            && let Some(squad) = self.squads.get_mut(squad_id)
-        {
-            squad.base.position += displacement;
-            squad.base.velocity = direction * RAMMED_IMPULSE_FORCE;
-        } else if let Some(unit) = self.units.get_mut(target.id) {
-            unit.base.position += displacement;
-            unit.base.velocity = direction * RAMMED_IMPULSE_FORCE;
-        }
-    }
-
     fn apply_ram_reflection(
         &mut self,
         attacker: &RammerSnapshot,
@@ -486,9 +451,7 @@ impl World {
             squad.clear_attack_order();
             squad.mode = SquadMode::Normal;
         }
-        let mass = self.unit_body_mass(attacker.id).unwrap_or(1.0);
-        let impulse = angled_impulse(-direction, RAMMER_IMPULSE_ANGLE, RAMMER_IMPULSE_FORCE, mass);
-        let _applied = self.apply_unit_impulse(attacker.id, impulse);
+        self.push_rammer_back(attacker.id, attacker.squad_id, direction);
         if let Some(unit) = self.units.get_mut(attacker.id) {
             unit.stop();
             unit.collision_attack.finish();
@@ -513,24 +476,6 @@ fn planar_direction(from: Vec3, to: Vec3, fallback: Vec3) -> Vec3 {
     } else {
         direction
     }
-}
-
-fn rammed_impulse(direction: Vec3, mass: f32, upward_velocity: f32) -> Vec3 {
-    let mut impulse = angled_impulse(direction, RAMMED_IMPULSE_ANGLE, RAMMED_IMPULSE_FORCE, mass);
-    if upward_velocity > RAMMED_TOP_UP_VELOCITY {
-        impulse.y = 0.0;
-    } else if upward_velocity > RAMMED_MEDIUM_UP_VELOCITY {
-        let span = RAMMED_TOP_UP_VELOCITY - RAMMED_MEDIUM_UP_VELOCITY;
-        impulse.y *= 1.0 - (upward_velocity - RAMMED_MEDIUM_UP_VELOCITY) / span;
-    }
-    impulse
-}
-
-fn angled_impulse(direction: Vec3, angle: f32, force: f32, mass: f32) -> Vec3 {
-    let (sin, cos) = math::sin_cos(angle);
-    let mut impulse = direction * cos;
-    impulse.y = sin;
-    impulse * (force * mass.max(0.0))
 }
 
 fn finite_nonnegative(value: f32) -> f32 {
