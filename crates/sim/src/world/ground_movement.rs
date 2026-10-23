@@ -161,7 +161,6 @@ mod tests {
             squad.base.set_forward(Vec3::Z);
             squad.speed = 10.0;
             squad.acceleration = 26.0;
-            squad.turn_rate_degrees = 540.0;
         }
         {
             let unit = world.get_unit_mut(unit_id).unwrap();

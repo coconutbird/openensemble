@@ -680,12 +680,10 @@ fn apply_squad_member_movement_settings(world: &mut World, squad_id: EntityId) {
     };
     let mut speed = first.speed;
     let mut acceleration = first.acceleration;
-    let mut turn_rate_degrees = first.turn_rate_degrees;
     let prototype_non_mobile = !first.base.is_ever_mobile();
     for member in members {
         speed = speed.min(member.speed);
         acceleration = acceleration.min(member.acceleration);
-        turn_rate_degrees = turn_rate_degrees.min(member.turn_rate_degrees);
     }
     if let Some(squad) = world.get_squad_mut(squad_id) {
         squad
@@ -693,7 +691,6 @@ fn apply_squad_member_movement_settings(world: &mut World, squad_id: EntityId) {
             .configure_prototype_mobility(prototype_non_mobile);
         squad.speed = speed;
         squad.acceleration = acceleration;
-        squad.turn_rate_degrees = turn_rate_degrees;
     }
 }
 

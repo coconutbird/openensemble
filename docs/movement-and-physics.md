@@ -584,6 +584,11 @@ scenario terrain for the moving squad center and each ground member. This
 prevents elevation differences from leaving ground squads circling a target
 they can never reach.
 
+The squad move has no turn rate. As `BSquadActionMove_doWorkUpdateInternal_4` (`0x1403C4220`)
+does, each step goes straight toward the target and the squad faces the step. Only the
+turn-radius point of a ground physics vehicle squad turns at a limited rate. A flying join
+follower therefore flies straight to its target and does not circle it.
+
 The complete inspected function set, including Warthog physics and air-move
 comparison functions, is renamed and repeatably commented in the saved IDA
 database beside `xgameFinal.exe`.

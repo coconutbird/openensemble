@@ -68,7 +68,6 @@ pub(crate) use wander::{SquadWander, WanderPhase};
 use super::{BaseEntity, EntityIdle};
 use crate::entity::Entity;
 use crate::entity_id::EntityId;
-use crate::math;
 use crate::player::{PlayerId, PopulationCost};
 use glam::Vec3;
 
@@ -169,8 +168,6 @@ pub struct Squad {
     pub speed: f32,
     /// Squad locomotion acceleration; zero means immediate.
     pub acceleration: f32,
-    /// Squad yaw limit in degrees per second; zero means immediate.
-    pub turn_rate_degrees: f32,
     /// Proto squad ID (type of squad).
     pub proto_squad_id: i32,
     /// Proto-squad name retained for diagnostics and deterministic checksums.
@@ -280,7 +277,6 @@ impl Default for Squad {
             last_attacked_time: 0,
             speed: 10.0, // Default speed
             acceleration: 0.0,
-            turn_rate_degrees: 0.0,
             proto_squad_id: -1,
             proto_squad_name: String::new(),
             ammunition_maximum: 0.0,
@@ -841,17 +837,14 @@ impl Squad {
             return true;
         }
 
+        // `BSquadActionMove_doWorkUpdateInternal_4` (`0x1403C4220`, 2008
+        // `squadactionmove.cpp:2694`) steps straight toward the target and faces the step: the
+        // squad has no turn rate.
         let direction = to_target / distance;
-        let facing = if self.reverse_move {
+        self.base.forward = if self.reverse_move {
             -direction
         } else {
             direction
-        };
-        self.base.forward = turn_toward(self.base.forward, facing, self.turn_rate_degrees, dt);
-        let movement_direction = if self.reverse_move {
-            -self.base.forward
-        } else {
-            self.base.forward
         };
         let current_speed = self.base.velocity.length();
         let maximum_speed = self.speed
@@ -863,7 +856,7 @@ impl Squad {
         let next_speed = approach_speed(current_speed, desired_speed, self.acceleration, dt);
         let move_distance = next_speed * dt;
 
-        if move_distance >= distance && movement_direction.dot(direction) > 0.999 {
+        if move_distance >= distance {
             // Would overshoot, just arrive
             self.base.position = target;
             self.set_leash_position(target, true);
@@ -872,7 +865,7 @@ impl Squad {
         }
 
         // Update position and velocity
-        self.base.velocity = movement_direction * next_speed;
+        self.base.velocity = direction * next_speed;
         self.base.position += self.base.velocity * dt;
         self.set_leash_position(self.base.position, true);
 
@@ -918,29 +911,6 @@ fn approach_speed(current: f32, target: f32, acceleration: f32, dt: f32) -> f32 
     } else {
         (current - delta).max(target)
     }
-}
-
-fn turn_toward(current: Vec3, desired: Vec3, degrees_per_second: f32, dt: f32) -> Vec3 {
-    if degrees_per_second <= 0.0 {
-        return desired;
-    }
-    let current = Vec3::new(current.x, 0.0, current.z).normalize_or_zero();
-    let current = if current == Vec3::ZERO {
-        Vec3::Z
-    } else {
-        current
-    };
-    let desired = Vec3::new(desired.x, 0.0, desired.z).normalize_or_zero();
-    let dot = current.dot(desired).clamp(-1.0, 1.0);
-    let cross_y = current.z.mul_add(desired.x, -current.x * desired.z);
-    let angle = math::atan2(cross_y, dot);
-    let limit = degrees_per_second.to_radians() * dt;
-    let (sin, cos) = math::sin_cos(angle.clamp(-limit, limit));
-    Vec3::new(
-        current.x.mul_add(cos, current.z * sin),
-        0.0,
-        (-current.x).mul_add(sin, current.z * cos),
-    )
 }
 
 pub(crate) fn formation_offset_to_world(forward: Vec3, offset: Vec3) -> Vec3 {

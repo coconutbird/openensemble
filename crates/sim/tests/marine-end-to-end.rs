@@ -111,7 +111,6 @@ fn scenario_builds_stock_marine_unit_and_squad_profiles() {
     assert_eq!(squad.unit_ids.len(), squad_spec.member_count);
     assert_close(squad.speed, unit_spec.max_speed);
     assert_close(squad.acceleration, unit_spec.acceleration);
-    assert_close(squad.turn_rate_degrees, unit_spec.turn_rate_degrees);
     assert_close(squad.aggro_distance, squad_spec.aggro_distance);
     assert_close(squad.leash_distance, squad_spec.leash_distance);
 

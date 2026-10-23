@@ -349,7 +349,6 @@ fn hash_squads(checksum: &mut SyncChecksum, squads: &EntityManager<Squad>) {
         checksum.hash_u32(squad.formation as u32);
         checksum.hash_f32(squad.speed);
         checksum.hash_f32(squad.acceleration);
-        checksum.hash_f32(squad.turn_rate_degrees);
         checksum.hash_i32(squad.proto_squad_id);
         checksum.hash_string(&squad.proto_squad_name);
         checksum.hash_f32(squad.ammunition_maximum());

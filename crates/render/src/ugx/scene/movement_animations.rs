@@ -197,7 +197,6 @@ mod tests {
             let squad = world.get_squad_mut(squad_id).unwrap();
             squad.speed = 10.0;
             squad.acceleration = 26.0;
-            squad.turn_rate_degrees = 540.0;
             squad.move_to(Vec3::X * 30.0);
         }
         {
