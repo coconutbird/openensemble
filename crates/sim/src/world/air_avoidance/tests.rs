@@ -343,6 +343,33 @@ fn hover_action_aircraft_takes_only_the_read_back_pose() {
 }
 
 #[test]
+fn the_squad_move_of_a_hover_action_aircraft_keeps_the_squad_height() {
+    // A move order to a ground point: `calcMovement` arrives on X/Z only, and the hover flight
+    // action owns the squad height (2008 `physicshoverflightaction.cpp:99-101`). The squad and
+    // its leash do not drop to the ground at the arrival.
+    let gameplay = air_gameplay();
+    let (mut world, squad_id, unit_id) = hover_action_world(44, Vec3::new(3.0, 20.0, 3.0));
+    world.configure_flat_test_terrain(4.0);
+    let ground_target = Vec3::new(3.2, 4.0, 3.0);
+    world
+        .get_squad_mut(squad_id)
+        .unwrap()
+        .move_to(ground_target);
+
+    world.update_entities_with_gameplay(STEP, &gameplay);
+
+    let squad = world.get_squad(squad_id).unwrap();
+    assert!(
+        squad.move_target.is_none(),
+        "the move arrives in one update"
+    );
+    let height = world.get_unit(unit_id).unwrap().base.position.y;
+    assert!(height > 15.0, "the aircraft hovers at {height}");
+    assert_eq!(squad.base.position.y, height);
+    assert_eq!(squad.leash_position(), Vec3::new(3.2, 20.0, 3.0));
+}
+
+#[test]
 fn crashing_hover_action_aircraft_is_not_moved_by_the_crash_update() {
     let gameplay = air_gameplay();
     let start = Vec3::new(0.0, 20.0, 0.0);

@@ -795,13 +795,18 @@ impl Squad {
     ///
     /// Returns true if the squad reached its destination.
     pub fn update_movement(&mut self, dt: f32) -> bool {
-        self.update_movement_with_speed_limit(dt, None)
+        self.update_movement_with_speed_limit(dt, None, false)
     }
 
+    /// `keeps_height` is for a squad whose unit has the hover flight action: the action owns
+    /// the squad height (2008 `physicshoverflightaction.cpp:99-101`), and the arrival of
+    /// `BSquadActionMove::calcMovement` moves the squad on X/Z only (2008
+    /// `squadactionmove.cpp:2693-2731`).
     pub(crate) fn update_movement_with_speed_limit(
         &mut self,
         dt: f32,
         speed_limit: Option<f32>,
+        keeps_height: bool,
     ) -> bool {
         const ARRIVAL_THRESHOLD: f32 = 0.5;
 
@@ -809,9 +814,12 @@ impl Squad {
             self.base.velocity = Vec3::ZERO;
             return false;
         }
-        let Some(target) = self.move_target else {
+        let Some(mut target) = self.move_target else {
             return false;
         };
+        if keeps_height {
+            target.y = self.base.position.y;
+        }
 
         let to_target = Vec3::new(
             target.x - self.base.position.x,
@@ -866,7 +874,12 @@ impl Squad {
         false
     }
 
-    pub(crate) fn update_with_speed_limit(&mut self, dt: f32, speed_limit: Option<f32>) {
+    pub(crate) fn update_with_speed_limit(
+        &mut self,
+        dt: f32,
+        speed_limit: Option<f32>,
+        keeps_height: bool,
+    ) {
         if self.is_cryo_frozen() {
             self.base.velocity = Vec3::ZERO;
             return;
@@ -877,7 +890,7 @@ impl Squad {
             && (self.state == SquadState::Moving
                 || (self.state == SquadState::Attacking && self.move_target.is_some()))
         {
-            self.update_movement_with_speed_limit(dt, speed_limit);
+            self.update_movement_with_speed_limit(dt, speed_limit, keeps_height);
         }
     }
 }
@@ -953,7 +966,7 @@ impl Entity for Squad {
     }
 
     fn update(&mut self, dt: f32) {
-        self.update_with_speed_limit(dt, None);
+        self.update_with_speed_limit(dt, None, false);
     }
 
     fn is_alive(&self) -> bool {

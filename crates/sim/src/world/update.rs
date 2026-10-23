@@ -5,6 +5,7 @@
 //! substeps of the physics world with the full update length.
 
 use super::World;
+use crate::entities::Unit;
 use crate::entities::squads::formation_offset_to_world;
 use crate::entity::Entity;
 use crate::gameplay::GameplayCatalog;
@@ -137,9 +138,18 @@ impl World {
         self.update_squad_pulls(dt);
         let hardpoint_yaw_targets = self.capture_hardpoint_yaw_targets();
         self.update_transport_fly_ins(dt);
+        let units = &self.units;
         for (_, squad) in self.squads.iter_mut() {
             squad.update_recovery(dt);
-            squad.update_with_speed_limit(dt, air_speed_limits.get(&squad.base.id).copied());
+            let keeps_height = squad
+                .unit_ids
+                .iter()
+                .any(|&unit_id| units.get(unit_id).is_some_and(Unit::has_hover_action));
+            squad.update_with_speed_limit(
+                dt,
+                air_speed_limits.get(&squad.base.id).copied(),
+                keeps_height,
+            );
         }
         self.update_physics_vehicle_squads();
         // `BSquad::update` (`0x140397DE0`) calls `BSquad_updateTurning` (`0x1403A70E0`) after
