@@ -74,7 +74,9 @@ gives it the scenario ID maps and the scenario-layered `Database`.
 - Object-type variables keep their authored names. Retail uses ordinals into `objects.xml`
   followed by `objecttypes.xml`. A name gives the same membership test without database
   ordinals. Like `BProtoObject_load`, a proto keeps only the types that `objecttypes.xml`
-  declares, so `IsObjectType("Icon")` is false (`Icon` is not declared).
+  declares, so `IsObjectType("Icon")` is false (`Icon` is not declared). Icon objects
+  (`CreateIconObject`, attachments and placed objects) use the type that the gamedata code
+  object type `Icon` names (`_Icon`), as retail v2 `sub_140469A50` does.
 - Placed Unit, Building and Squad prototype objects follow retail `createEntity`. Each one
   becomes a one-member squad, also when `IsSquad=false`, unless it is a physics replacement.
   Trigger variables therefore resolve to squads, as in Blood Gulch.

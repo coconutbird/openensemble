@@ -109,6 +109,9 @@ descriptive names in `xgameFinal.exe.i64` before it was saved.
   incoming flight, unload and rally at the destination, and remove the carrier
   after its outgoing flight. Missing transport data falls back to ordinary
   ground birth.
+- A leader `StartingSquad` with `FlyIn` uses the same civilization transport path at game
+  start (`BScenario_createStartingUnits` @ `0x140384760`), unless the `NoBirthAnims` config is
+  defined. No retail leader sets `FlyIn`.
 - `InstantTrainWithRecharge` completes accepted items immediately, bypasses the
   shared worker, and applies a checksummed per-building command recharge.
   Linear and exponential object-cost escalation use live plus future roster

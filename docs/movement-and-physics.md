@@ -491,7 +491,11 @@ corners `position ± 1.25 right ± 2.25 forward`. These constants are the same f
 setup code (`0x1403E0130`, `0x1404DCC80`) ties a new unit unless that bit is set.
 `BScenario_loadObject` also reads `NoTieToGround` on a scenario object. Retail calls the tie
 after a position change, for example in `BSquad_setPositionAndSyncChildren` (`0x14039FC30`) for
-the squad and each member without `mFlagPhysicsControl`.
+the squad and each member without `mFlagPhysicsControl`. At scenario load, only squads take
+the terrain height (`BSquad::settle`). A class-zero object keeps its authored height, because
+`BEntity_update` ties an entity only while it moves. The scenario flag `IncludeInSimRep` only
+sets the `appearsBelowDecals` create parameter (`0x14037DE9F`), a render decal order, so it
+has no simulation effect.
 
 In the shipped `objects.xml`, all ground vehicles have `OrientUnitWithGround` (Warthog, Ghost,
 Scorpion, Wraith, Cobra, Grizzly, Wolverine, Elephant, Chopper, Gremlin, Locust). Infantry and
