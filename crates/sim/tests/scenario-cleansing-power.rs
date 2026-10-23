@@ -97,7 +97,9 @@ fn shipped_cleansing_profile_uses_scenario_layered_database_and_tactics() {
     assert_eq!(projectile.proto_object_name, PROJECTILE);
     assert_close(projectile.damage, 330.0);
 
-    advance(&mut loaded, 1);
+    // The power runs after the projectile updates (retail `BWorld::updatePostAsync`), so the
+    // projectile of the first damage tick moves only from the next update on.
+    advance(&mut loaded, 2);
     assert!(total_health(&loaded.simulation.world, &target_units) < health_before);
     assert!(loaded.simulation.world.submit_cleansing_power_input(
         &loaded.content.database,

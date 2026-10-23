@@ -77,6 +77,22 @@ fn shipped_cryo_profile_executes_against_the_scenario_layered_database() {
                 &loaded.simulation.gameplay,
             );
     }
+    assert_eq!(
+        loaded.simulation.world.active_cryo_powers()[0].ticks_remaining(),
+        15
+    );
+    // The power runs after the unit updates (retail `BWorld::updatePostAsync`), so the unit
+    // that the first cryo tick kills goes in the unit update of the next update. That update
+    // also runs the second cryo tick.
+    loaded.simulation.world.game_time_ms = loaded
+        .simulation
+        .world
+        .game_time_ms
+        .wrapping_add(sim::MS_PER_TICK);
+    loaded
+        .simulation
+        .world
+        .update_entities_with_database_and_gameplay(0.05, database, &loaded.simulation.gameplay);
 
     assert!(
         loaded.simulation.world.get_squad(target_squad).is_none(),
@@ -96,7 +112,7 @@ fn shipped_cryo_profile_executes_against_the_scenario_layered_database() {
     );
     assert_eq!(
         loaded.simulation.world.active_cryo_powers()[0].ticks_remaining(),
-        15
+        14
     );
     let execution = &loaded.simulation.world.active_cryo_powers()[0];
     assert_eq!(

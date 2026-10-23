@@ -139,9 +139,11 @@ fn shipped_wave_profile_uses_scenario_layered_database_and_tactics() {
     advance(&mut loaded, 1);
     let execution = &loaded.simulation.world.active_wave_powers()[0];
     assert_eq!(execution.state(), WaveGravityBallState::Exploding);
+    // The explosion projectile also starts after the projectile updates and hits next update.
+    advance(&mut loaded, 1);
     assert!(total_health(&loaded.simulation.world, &target_units) < health_after_lightning);
 
-    advance(&mut loaded, 16);
+    advance(&mut loaded, 15);
     assert!(loaded.simulation.world.active_wave_powers().is_empty());
     assert!(loaded.simulation.world.get_unit(ball_id).is_none());
     assert_eq!(
@@ -284,13 +286,16 @@ fn begin_shipped_marine_throw(loaded: &mut sim::LoadedGameScenario) -> ShippedMa
         .unit_ids
         .clone();
     assert_eq!(captured_units.len(), 4);
+    // `captureUnit` takes a live unit at or below `HealthToCapture` like a dead one. The power
+    // runs after the unit updates (retail `BWorld_update`), where a killed unit would already
+    // be gone in this sim.
     for unit_id in captured_units {
         loaded
             .simulation
             .world
             .get_unit_mut(unit_id)
             .unwrap()
-            .kill();
+            .hitpoints = 0.0;
     }
     for squad_id in [bank_id, target_id] {
         for unit_id in loaded
@@ -514,10 +519,17 @@ fn assert_launched_marine_debris(
             .initial_position()
             .abs_diff_eq(captured.center, 0.000_1)
     );
+    // The power runs after the projectile updates, so the debris has not moved or felt
+    // gravity yet: its velocity is the body velocity plus the explosion force.
     let inherited_velocity = captured.velocity + captured.radial * 15.0;
-    assert_close(debris.base.velocity.x, inherited_velocity.x);
-    assert_close(debris.base.velocity.z, inherited_velocity.z);
-    assert!(debris.base.velocity.y < inherited_velocity.y);
+    assert!(
+        debris
+            .base
+            .velocity
+            .abs_diff_eq(inherited_velocity, 0.000_1),
+        "debris velocity {} differs from {inherited_velocity}",
+        debris.base.velocity
+    );
     assert!(debris.base.forward.abs_diff_eq(captured.forward, 0.000_1));
     assert!(debris.affected_by_gravity);
     assert_close(

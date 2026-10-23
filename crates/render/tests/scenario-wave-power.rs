@@ -119,7 +119,10 @@ fn renderer_projects_captured_marine_visual_from_debris_sim_state() {
     );
     let target_id = spawn_named_squad(&mut simulation.world, &content.database, 2, MARINES, center);
     let marine_id = simulation.world.get_squad(target_id).unwrap().unit_ids[0];
-    simulation.world.get_unit_mut(marine_id).unwrap().kill();
+    // `captureUnit` takes a live unit at or below `HealthToCapture` like a dead one. The power
+    // runs after the unit updates (retail `BWorld_update`), where a killed unit would already
+    // be gone in this sim.
+    simulation.world.get_unit_mut(marine_id).unwrap().hitpoints = 0.0;
     let power_id = power_prototype_id(&content.database, WAVE_POWER).expect("shipped Wave power");
     let execution_id = simulation
         .world
