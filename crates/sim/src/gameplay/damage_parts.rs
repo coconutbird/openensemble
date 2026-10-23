@@ -33,6 +33,8 @@ pub struct ThrownDamagePart {
 #[derive(Debug, Clone, Default)]
 pub(super) struct DamagePartCatalog {
     profiles: BTreeMap<String, DamagePartProfile>,
+    /// The model space position of the rocket spin bone of each `RocketOnDeath` proto object.
+    head_bones: BTreeMap<String, Vec3>,
 }
 
 #[derive(Default)]
@@ -54,13 +56,25 @@ impl DamagePartCatalog {
         library: &PhysicsLibrary,
     ) -> Self {
         let mut profiles = BTreeMap::new();
+        let mut head_bones = BTreeMap::new();
         let mut cache = AssetCache::default();
         for object in &database.objects {
             if let Some(profile) = load_object_profile(object, source, library, &mut cache) {
                 profiles.insert(object.name.to_ascii_lowercase(), profile);
             }
+            if object
+                .flags
+                .iter()
+                .any(|flag| flag.trim().eq_ignore_ascii_case("RocketOnDeath"))
+                && let Some(position) = load_head_bone(object, source, &mut cache)
+            {
+                head_bones.insert(object.name.to_ascii_lowercase(), position);
+            }
         }
-        Self { profiles }
+        Self {
+            profiles,
+            head_bones,
+        }
     }
 
     #[cfg(test)]
@@ -86,6 +100,18 @@ impl GameplayCatalog {
         profile: DamagePartProfile,
     ) {
         self.damage_parts.insert(proto_object_name, profile);
+    }
+
+    /// The model space position of `Bip01 Head`, or else `BoneBubble02`, in the bind pose of
+    /// the default model of a `RocketOnDeath` proto object: the point of the rocket spin
+    /// impulse (`BUnitActionPhysics_update`, `0x1405481D4`). The sim has no animated skeleton,
+    /// so the bind pose stands in for the pose of the rocket animation.
+    #[must_use]
+    pub fn rocket_head_bone(&self, proto_object_name: &str) -> Option<Vec3> {
+        self.damage_parts
+            .head_bones
+            .get(&proto_object_name.to_ascii_lowercase())
+            .copied()
     }
 }
 
@@ -184,6 +210,25 @@ fn load_object_profile(
         .map(|impact| parse_final_throw_part(impact, &geometry, library))
         .collect();
     Some(DamagePartProfile { impact_points })
+}
+
+fn load_head_bone(
+    object: &ProtoObject,
+    source: &mut AssetSource<StdFileProvider>,
+    cache: &mut AssetCache,
+) -> Option<Vec3> {
+    let visual = load_visual(object.visual.as_deref()?, source, cache)?;
+    let asset = default_model_asset(&visual)?;
+    let model_path = canonical_art_path(asset.file.as_deref()?, None);
+    let geometry = load_geometry(&model_path, source, cache)?;
+    ["Bip01 Head", "BoneBubble02"].iter().find_map(|name| {
+        let bone = geometry
+            .granny_bones
+            .iter()
+            .find(|bone| bone.name.eq_ignore_ascii_case(name))?;
+        let world = bone.inverse_world_matrix.inverse()?;
+        Some(transform_point(&world, Vec3::ZERO))
+    })
 }
 
 fn load_visual(

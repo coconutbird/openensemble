@@ -165,6 +165,11 @@ impl World {
         self.update_move_air(dt);
         self.prepare_squad_ground_moves();
         self.read_back_physics();
+        self.update_death_physics(dt);
+        // `explode(methane)` and `setLifespan(0)` of a rocket death: the unit goes.
+        for unit_id in self.finished_rocket_deaths() {
+            let _removed = self.remove_unit(unit_id);
+        }
         self.finish_unit_throws();
         for (_, unit) in self.units.iter_mut() {
             unit.update(dt);

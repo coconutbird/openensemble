@@ -12,6 +12,7 @@
 
 mod access;
 mod bodies;
+pub(crate) mod death;
 mod readback;
 mod shape;
 mod state;
@@ -24,6 +25,7 @@ mod unit;
 pub(crate) mod vehicle_actions;
 mod vehicle_hull;
 
+pub use death::ClamshellAnimation;
 pub use state::SimPhysics;
 pub use template::{ObjectPhysicsTemplates, PhysicsBlueprintBody, PhysicsTemplate};
 pub(crate) use terrain::terrain_height_field;

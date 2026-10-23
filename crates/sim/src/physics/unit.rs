@@ -7,6 +7,7 @@ use glam::Vec3;
 
 use ::physics::{BodyId, ConstraintId};
 
+use super::death::{ClamshellAnimation, DeathPhysics};
 use super::vehicle_actions::VehicleAction;
 use crate::sync::SyncChecksum;
 
@@ -37,6 +38,8 @@ pub struct UnitPhysics {
     pub(crate) flags: UnitPhysicsFlags,
     /// What the contact listener saw since the last readback.
     pub(crate) contacts: UnitPhysicsContacts,
+    /// The clamshell, rocket and thrown part state of `BUnitActionPhysics`.
+    pub(crate) death: DeathPhysics,
 }
 
 /// The extra bodies of a clamshell (`BClamshellPhysicsObject`).
@@ -86,6 +89,8 @@ pub(crate) struct UnitPhysicsContacts {
     /// A new terrain contact point while the body moved down (`projectedVelocity < 0`, the
     /// landing test of `BUnitActionThrown`).
     pub(crate) landed: bool,
+    /// The number of new contact points of the body (any other body or the terrain).
+    pub(crate) new_points: u16,
 }
 
 /// One recorded contact (`BPhysicsCollisionData`).
@@ -117,6 +122,7 @@ impl UnitPhysics {
             action_order: 0,
             flags: UnitPhysicsFlags::default(),
             contacts: UnitPhysicsContacts::default(),
+            death: DeathPhysics::default(),
         }
     }
 
@@ -170,6 +176,19 @@ impl UnitPhysics {
             .map(|clamshell| [clamshell.upper, clamshell.lower])
     }
 
+    /// The animation of a clamshell body (`None` for other bodies).
+    #[must_use]
+    pub const fn clamshell_animation(&self) -> Option<ClamshellAnimation> {
+        self.death.clamshell_animation
+    }
+
+    /// The animation position (0 to 1) that the last clamshell readback took from the hinge
+    /// value.
+    #[must_use]
+    pub const fn clamshell_animation_position(&self) -> f32 {
+        self.death.clamshell_animation_position
+    }
+
     /// Adds the state to a checksum.
     pub(crate) fn hash_state(&self, checksum: &mut SyncChecksum) {
         checksum.hash_u32(self.body.raw());
@@ -198,5 +217,6 @@ impl UnitPhysics {
         ] {
             checksum.hash_u32(u32::from(flag));
         }
+        self.death.hash_state(checksum);
     }
 }

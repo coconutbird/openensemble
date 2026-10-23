@@ -85,6 +85,7 @@ fn record_contact(contacts: &mut UnitPhysicsContacts, record: CollisionRecord) {
     if contacts.first_collision.is_none() {
         contacts.first_collision = Some(record);
     }
+    contacts.new_points = contacts.new_points.saturating_add(1);
     if record.other.is_some() {
         contacts.body_contacts = contacts.body_contacts.saturating_add(1);
         contacts.body_impact_speed = contacts.body_impact_speed.max(-record.projected_velocity);

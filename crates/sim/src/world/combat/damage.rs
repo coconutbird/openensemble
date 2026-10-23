@@ -7,12 +7,16 @@ use crate::entity::Entity;
 use crate::entity_id::EntityId;
 use crate::gameplay::GameplayCatalog;
 use crate::player::PlayerId;
+use crate::world::death_throw::DeathThrowContext;
 use glam::Vec3;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct DamageAttribution {
     unit_id: Option<EntityId>,
     player_id: PlayerId,
+    /// The weapon throw values of a weapon damage (`BDamage::mpDamageInfo` and the force
+    /// origin, direction and distance factor).
+    death_throw: Option<DeathThrowContext>,
 }
 
 impl DamageAttribution {
@@ -20,6 +24,7 @@ impl DamageAttribution {
         Self {
             unit_id: Some(unit_id),
             player_id,
+            death_throw: None,
         }
     }
 
@@ -27,6 +32,7 @@ impl DamageAttribution {
         Self {
             unit_id: None,
             player_id,
+            death_throw: None,
         }
     }
 
@@ -35,6 +41,7 @@ impl DamageAttribution {
         Self {
             unit_id: None,
             player_id,
+            death_throw: None,
         }
     }
 }
@@ -236,6 +243,7 @@ impl World {
                 receiving_target_id,
                 death,
                 target_proto_object,
+                attribution.death_throw.as_ref(),
                 gameplay,
             );
         }
@@ -272,7 +280,13 @@ impl World {
                 gameplay,
             );
         }
-        self.finish_credited_unit_death(target_id, death, target_proto_object, Some(gameplay));
+        self.finish_credited_unit_death(
+            target_id,
+            death,
+            target_proto_object,
+            None,
+            Some(gameplay),
+        );
     }
 
     fn finish_credited_unit_death(
@@ -280,6 +294,7 @@ impl World {
         target_id: EntityId,
         death: UnitDeathState,
         target_proto_object: String,
+        death_throw: Option<&DeathThrowContext>,
         gameplay: Option<&GameplayCatalog>,
     ) {
         let killer_entity_id = death.killer_entity_id();
@@ -287,9 +302,15 @@ impl World {
         if let Some(target) = self.units.get_mut(target_id) {
             target.record_death(death);
         }
+        let thrown = gameplay.zip(death_throw).and_then(|(gameplay, context)| {
+            self.throw_killed_unit(target_id, context, killer_entity_id, gameplay)
+        });
         if let (Some(gameplay), Some(killer_player_id)) = (gameplay, killer_player_id) {
-            let _replacement =
-                self.create_physics_detonate_replacement(target_id, killer_player_id, gameplay);
+            let _replacement = self.create_physics_detonate_replacement(
+                thrown.unwrap_or(target_id),
+                killer_player_id,
+                gameplay,
+            );
         }
         if let Some(attacker_id) = killer_entity_id {
             self.notify_ambient_life_killed_unit(attacker_id, target_id);

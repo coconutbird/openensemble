@@ -35,6 +35,9 @@ impl World {
             checksum.hash_u32(0);
         }
         self.physics.hash_state(&mut checksum);
+        if let Some(chance) = self.rocket_death_chance {
+            checksum.hash_f32(chance);
+        }
         hash_config_symbols(&mut checksum, self.config_symbols());
         checksum.hash_u32(u32::from(self.scenario_allows_veterancy()));
         checksum.hash_u32(u32::from(self.veterancy_enabled()));

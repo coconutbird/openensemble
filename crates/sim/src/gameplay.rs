@@ -28,6 +28,7 @@ mod code_objects;
 mod collision_attacks;
 mod damage_parts;
 mod damage_types;
+mod death_throw;
 mod detonate;
 mod energy_shields;
 mod gather;
@@ -65,6 +66,7 @@ pub use charge::{ChargeActionProfile, ChargeEffectProfile};
 pub use cloak::CloakProfile;
 pub use collision_attacks::CollisionAttackProfile;
 pub use damage_parts::{DamagePartProfile, ThrownDamagePart};
+pub use death_throw::{DeathChance, DeathThrowProfile};
 pub use detonate::{DetonateActionProfile, DetonateDurationProfile, DetonateThrowProfile};
 pub use energy_shields::{EnergyShieldActionProfile, EnergyShieldVisualProfile};
 pub use gather::GatherActionProfile;
@@ -118,6 +120,7 @@ pub struct GameplayCatalog {
     neutral_objects: BTreeSet<String>,
     physics: physics_data::PhysicsCatalog,
     damage_parts: damage_parts::DamagePartCatalog,
+    death_throws: death_throw::DeathThrowCatalog,
     projectile_profiles: BTreeMap<String, ProjectileProfile>,
     projectile_defenses: BTreeMap<String, ProjectileDefenseProfile>,
     air_avoidance_actions: BTreeMap<String, Vec<AirAvoidanceActionProfile>>,
@@ -242,6 +245,7 @@ impl GameplayCatalog {
             neutral_objects: collect_neutral_objects(database),
             physics: physics_data::PhysicsCatalog::load(database, &physics_library),
             damage_parts: damage_parts::DamagePartCatalog::load(database, source, &physics_library),
+            death_throws: death_throw::DeathThrowCatalog::from_database(database),
             projectile_profiles: projectiles::collect_projectile_profiles(database),
             projectile_gravity: database
                 .game_data
@@ -366,6 +370,7 @@ impl GameplayCatalog {
             scn07_scarab: code_objects::named_proto(database, "Scn07Scarab"),
             neutral_objects: collect_neutral_objects(database),
             projectile_profiles: projectiles::collect_projectile_profiles(database),
+            death_throws: death_throw::DeathThrowCatalog::from_database(database),
             projectile_gravity: database
                 .game_data
                 .as_ref()

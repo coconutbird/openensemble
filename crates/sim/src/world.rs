@@ -33,6 +33,7 @@ mod cryo;
 mod custom_commands;
 mod death_replacements;
 mod death_spawns;
+pub(crate) mod death_throw;
 mod design_objects;
 mod detonate;
 mod events;
@@ -202,6 +203,9 @@ pub struct World {
     pub rng: Random,
     /// Retail synchronized random-manager stream used by trigger operations.
     sim_rng: SimRandom,
+    /// `BDeathSpecial::mCurrentChance` of the rocket death. `None` until the first roll, which
+    /// starts from `MaxChance`.
+    rocket_death_chance: Option<f32>,
     /// Damage scalar applied to targets that have not completed construction.
     construction_damage_multiplier: f32,
     /// Concrete and abstract object types keyed by proto object ID (load-order index).
@@ -270,6 +274,7 @@ impl World {
             game_time_ms: 0,
             rng: Random::new(),
             sim_rng: SimRandom::new(),
+            rocket_death_chance: None,
             construction_damage_multiplier: 1.0,
             prototype_object_types: BTreeMap::new(),
             prototype_squads: BTreeMap::new(),
