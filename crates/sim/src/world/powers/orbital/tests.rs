@@ -5,6 +5,8 @@ use crate::commands::{
     PowerCommand, PowerCommandType, PowerInputCommand, PowerInputCommandType, power_command_flags,
 };
 use crate::executor::CommandExecutor;
+use crate::gameplay::{DamagePartProfile, ThrownDamagePart};
+use crate::physics::test_support::box_template;
 use crate::player::PowerGrant;
 use crate::world::powers::test_support::{data, execute_test_command, float_data, int_data};
 use pipeline::database::hw1::gamedata::{PopsWrapper, ResourceDef, ResourcesWrapper};
@@ -18,8 +20,13 @@ const POWER_TYPE: u32 = 2;
 #[test]
 fn paid_cast_defers_payment_moves_beam_restarts_recharge_and_throws_debris() {
     let database = database();
-    let gameplay =
+    let mut gameplay =
         GameplayCatalog::from_tactics(&database, [("orbital_source".to_owned(), tactics())]);
+    for rock in ["rock_small", "rock_medium", "rock_large"] {
+        let template = box_template(rock, Vec3::splat(0.5), 50.0, Vec3::ZERO);
+        let part = ThrownDamagePart::new(vec!["rock_a".to_owned()], template, 1.0).unwrap();
+        gameplay.insert_test_damage_parts(rock, DamagePartProfile::new(vec![Some(part)]));
+    }
     let mut world = paid_world(&database);
     let target_id = add_physical_target(&mut world, Vec3::ZERO);
     let used_power = world.subscribe_general_event(GeneralEventType::UsedPower, Some(1), false);
@@ -83,14 +90,18 @@ fn paid_cast_defers_payment_moves_beam_restarts_recharge_and_throws_debris() {
     assert_eq!(count_objects(&world, "orbital_effect"), 2);
     let debris_ids = orbital_debris_ids(&world);
     assert!((26..=46).contains(&debris_ids.len()));
-    assert!(debris_ids.iter().all(|id| {
+    // Each rock is a thrown part: a body with the damage-template impulse, which the
+    // readback of the next update moves.
+    let bodies = debris_ids
+        .iter()
+        .map(|id| world.physics_state(*id).expect("the rock body").body())
+        .collect::<Vec<_>>();
+    assert!(bodies.iter().all(|body| {
         world
-            .get_object(*id)
-            .unwrap()
-            .base
-            .velocity
-            .length_squared()
-            > 0.0
+            .physics()
+            .world()
+            .linear_velocity(*body)
+            .is_some_and(|velocity| velocity.y > 0.0)
     }));
     let debris_id = debris_ids[0];
     let old_position = world.get_object(debris_id).unwrap().base.position;

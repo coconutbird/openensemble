@@ -7,7 +7,6 @@ use super::{
 };
 use crate::EntityId;
 use crate::sync::SyncChecksum;
-use glam::Vec3;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct PowerVisualLifetime {
@@ -18,7 +17,6 @@ pub(super) struct PowerVisualLifetime {
 #[derive(Debug, Clone, Copy)]
 pub(super) struct PowerDebris {
     pub object_id: EntityId,
-    pub velocity: Vec3,
     pub expires_at_ms: u32,
 }
 
@@ -132,7 +130,6 @@ impl PowerManagerState {
         checksum.hash_u32(u32::try_from(self.debris.len()).unwrap_or(u32::MAX));
         for debris in &self.debris {
             checksum.hash_u32(debris.object_id.as_u32());
-            checksum.hash_vec3(debris.velocity.x, debris.velocity.y, debris.velocity.z);
             checksum.hash_u32(debris.expires_at_ms);
         }
     }

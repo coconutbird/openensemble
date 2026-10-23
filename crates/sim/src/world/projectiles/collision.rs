@@ -457,6 +457,7 @@ impl World {
                 .collect::<Vec<_>>();
             self.notify_power_projectile_impact(
                 database,
+                gameplay,
                 execution_id,
                 impact.projectile_id,
                 impact.position,

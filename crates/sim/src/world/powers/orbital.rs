@@ -554,7 +554,7 @@ pub(super) fn update(
     if !dt.is_finite() || dt <= 0.0 {
         return;
     }
-    debris::update(world, dt);
+    debris::update(world);
     let mut active = std::mem::take(&mut world.power_manager.orbital_executions);
     let mut remaining = Vec::with_capacity(active.len());
     for mut execution in active.drain(..) {
@@ -714,6 +714,7 @@ fn reconcile_missing_projectiles(world: &World, execution: &mut OrbitalPowerExec
 pub(super) fn notify_projectile_impact(
     world: &mut World,
     database: Option<&Database>,
+    gameplay: Option<&GameplayCatalog>,
     execution_id: u32,
     projectile_id: EntityId,
     position: Vec3,
@@ -733,7 +734,7 @@ pub(super) fn notify_projectile_impact(
         .retain(|active| *active != projectile_id);
     execution.impacts_to_process = execution.impacts_to_process.saturating_sub(1);
     if let Some(database) = database {
-        debris::spawn_impact(world, database, &execution, position, direction);
+        debris::spawn_impact(world, database, gameplay, &execution, position, direction);
     }
     world
         .power_manager

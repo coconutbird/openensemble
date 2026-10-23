@@ -643,6 +643,7 @@ impl World {
     pub(in crate::world) fn notify_power_projectile_impact(
         &mut self,
         database: Option<&Database>,
+        gameplay: Option<&GameplayCatalog>,
         execution_id: u32,
         projectile_id: EntityId,
         position: Vec3,
@@ -659,6 +660,7 @@ impl World {
         orbital::notify_projectile_impact(
             self,
             database,
+            gameplay,
             execution_id,
             projectile_id,
             position,
