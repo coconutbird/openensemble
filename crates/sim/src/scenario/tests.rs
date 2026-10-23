@@ -33,8 +33,16 @@ fn load_into_world_applies_allow_veterancy() {
             .world
             .checksum()
     };
-    assert!(ScenarioData::from_xml_str(&allowed).unwrap().allow_veterancy);
-    assert!(!ScenarioData::from_xml_str(SAMPLE_SCENARIO).unwrap().allow_veterancy);
+    assert!(
+        ScenarioData::from_xml_str(&allowed)
+            .unwrap()
+            .allow_veterancy
+    );
+    assert!(
+        !ScenarioData::from_xml_str(SAMPLE_SCENARIO)
+            .unwrap()
+            .allow_veterancy
+    );
     assert_ne!(checksum(&allowed), checksum(SAMPLE_SCENARIO));
 }
 

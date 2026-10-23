@@ -198,6 +198,69 @@ fn pitch_only_hit_alignment_uses_retails_flattened_forward_test() {
     ));
 }
 
+#[test]
+fn can_orient_matches_an_orient_on_a_copy_and_keeps_the_state() {
+    let separate = profile(Some("turret"), Some("gun"));
+    let mut capped = profile(Some("turret"), Some("gun"));
+    capped.yaw_left = -FRAC_PI_4;
+    capped.yaw_right = FRAC_PI_4;
+    let mut single_bone = profile(Some("spine"), None);
+    single_bone.set_uses_single_bone_ik(true);
+    let pitch_only = profile(None, Some("gun"));
+    let chained = AttackAnimationAnchor {
+        links: vec![
+            AttackAttachmentPose {
+                child_component: "turret".to_owned(),
+                to_bone: Some(Mat4::from_translation(Vec3::Y)),
+                from_bone: Some(Mat4::IDENTITY),
+                disregard_orientation: false,
+            },
+            AttackAttachmentPose {
+                child_component: "gun".to_owned(),
+                to_bone: Some(Mat4::from_translation(Vec3::Z)),
+                from_bone: Some(Mat4::IDENTITY),
+                disregard_orientation: false,
+            },
+        ],
+        bone_to_component: Some(Mat4::IDENTITY),
+        single_bone_poses: Vec::new(),
+    };
+    let targets = [
+        Vec3::new(10.0, 3.0, 10.0),
+        Vec3::X * 10.0,
+        Vec3::NEG_Z * 10.0,
+        Vec3::new(-4.0, -2.0, 1.0),
+        Vec3::new(0.0, 1.0, 5.0),
+    ];
+    let mut checked = 0;
+    for profile in [&separate, &capped, &single_bone, &pitch_only] {
+        for start in [0.0, 0.3, FRAC_PI_2, PI] {
+            let mut state = UnitHardpointState::default();
+            state.set_attachment_rotation("turret", Quat::from_rotation_y(start));
+            state.set_attachment_rotation("gun", Quat::from_rotation_x(-start / 2.0));
+            state.set_bone_rotation("spine", Quat::from_rotation_y(-start));
+            let mut before = SyncChecksum::new();
+            state.hash_state(&mut before);
+            for target in targets {
+                let unit_world = Mat4::from_rotation_y(start / 3.0);
+                let mut copy = state.clone();
+                let expected = copy
+                    .orient(profile, Some(&chained), unit_world, target, 0.0)
+                    .can_face;
+                let actual = state.can_orient(profile, Some(&chained), unit_world, target);
+                assert_eq!(actual, expected, "{} {start} {target}", profile.name);
+                if !actual {
+                    checked += 1;
+                }
+            }
+            let mut after = SyncChecksum::new();
+            state.hash_state(&mut after);
+            assert_eq!(after.value(), before.value());
+        }
+    }
+    assert!(checked > 0, "some targets are out of reach");
+}
+
 fn profile(yaw: Option<&str>, pitch: Option<&str>) -> AttackHardpointProfile {
     AttackHardpointProfile::for_test(yaw, pitch)
 }

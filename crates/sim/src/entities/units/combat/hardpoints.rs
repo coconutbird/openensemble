@@ -8,6 +8,10 @@ use crate::gameplay::{AttackAnimationAnchor, AttackHardpointProfile};
 use crate::math;
 use crate::sync::SyncChecksum;
 
+mod pose;
+
+use pose::{HardpointPose, PoseProbe};
+
 const AUTO_CENTER_DELAY_SECONDS: f32 = 5.0;
 const DIRECTION_TOLERANCE: f32 = 0.9999;
 const ROTATION_EPSILON: f32 = 1.0e-6;
@@ -78,24 +82,7 @@ impl UnitHardpointState {
         if profile.uses_angles_as_tolerance() {
             return self.tolerance_coverage(profile, anchor, unit_world, target_world);
         }
-        if !target_world.is_finite() || !valid_transform(unit_world) {
-            return HardpointAim::HANDLED;
-        }
-        if profile.uses_single_bone_ik() {
-            return self.orient_single_bone(profile, anchor, unit_world, target_world, elapsed);
-        }
-        let Some(anchor) = anchor else {
-            return if profile.yaw_attachment.is_none() && profile.pitch_attachment.is_none() {
-                HardpointAim::HANDLED
-            } else {
-                HardpointAim::BODY_HANDLED
-            };
-        };
-        if profile.is_combined() {
-            self.orient_combined(profile, anchor, unit_world, target_world, elapsed)
-        } else {
-            self.orient_separate(profile, anchor, unit_world, target_world, elapsed)
-        }
+        self.orient_target(profile, anchor, unit_world, target_world, elapsed)
     }
 
     pub(super) fn is_oriented(
@@ -153,13 +140,16 @@ impl UnitHardpointState {
         unit_world: Mat4,
         target_world: Vec3,
     ) -> bool {
-        let mut probe = self.clone();
-        let aim = probe.orient(profile, anchor, unit_world, target_world, 0.0);
         if profile.uses_angles_as_tolerance() {
-            aim.oriented
-        } else {
-            aim.can_face
+            return self
+                .tolerance_coverage(profile, anchor, unit_world, target_world)
+                .oriented;
         }
+        // The probe records the proposed transforms over the unchanged state, so a
+        // later step reads them as `orient` does, without a copy of the state.
+        PoseProbe::new(self)
+            .orient_target(profile, anchor, unit_world, target_world, 0.0)
+            .can_face
     }
 
     pub(super) fn orient_pitch_only(
@@ -245,7 +235,8 @@ impl UnitHardpointState {
             return;
         }
         let controlled = self.controlled_names();
-        let mut ready = Vec::new();
+        // Centering changes only the transforms, so it can run in the same
+        // key-ordered pass that counts down the other controllers.
         for (key, controller) in &mut self.controllers {
             if self.active_controllers.contains(key)
                 || controller.centered
@@ -257,11 +248,14 @@ impl UnitHardpointState {
                 controller.auto_center_delay -= elapsed;
                 continue;
             }
-            ready.push((key.clone(), controller.profile.clone()));
-        }
-        for (key, profile) in ready {
-            let centered = self.center_profile(&profile, elapsed, &controlled);
-            if centered && let Some(controller) = self.controllers.get_mut(&key) {
+            let centered = center_profile(
+                &mut self.attachment_transforms,
+                &mut self.bone_transforms,
+                &controller.profile,
+                elapsed,
+                &controlled,
+            );
+            if centered {
                 controller.centered = true;
                 controller.auto_center_delay = 0.0;
             }
@@ -412,51 +406,6 @@ impl UnitHardpointState {
             .or_insert_with(|| HardpointController::active(profile, anchor));
     }
 
-    fn orient_separate(
-        &mut self,
-        profile: &AttackHardpointProfile,
-        anchor: &AttackAnimationAnchor,
-        unit_world: Mat4,
-        target_world: Vec3,
-        elapsed: f32,
-    ) -> HardpointAim {
-        let yaw = profile
-            .yaw_attachment
-            .as_deref()
-            .map_or(HardpointAim::HANDLED, |component| {
-                self.orient_yaw(
-                    profile,
-                    anchor,
-                    component,
-                    unit_world,
-                    target_world,
-                    elapsed,
-                )
-            });
-        let pitch =
-            profile
-                .pitch_attachment
-                .as_deref()
-                .map_or(HardpointAim::HANDLED, |component| {
-                    self.orient_pitch(
-                        profile,
-                        anchor,
-                        component,
-                        unit_world,
-                        target_world,
-                        elapsed,
-                    )
-                });
-        HardpointAim {
-            can_face: yaw.can_face && pitch.can_face,
-            oriented: if profile.yaw_attachment.is_some() {
-                yaw.oriented
-            } else {
-                pitch.oriented
-            },
-        }
-    }
-
     fn tolerance_coverage(
         &self,
         profile: &AttackHardpointProfile,
@@ -507,208 +456,6 @@ impl UnitHardpointState {
         }
     }
 
-    fn orient_yaw(
-        &mut self,
-        profile: &AttackHardpointProfile,
-        anchor: &AttackAnimationAnchor,
-        component: &str,
-        unit_world: Mat4,
-        target_world: Vec3,
-        elapsed: f32,
-    ) -> HardpointAim {
-        let Some(base) = self.component_base(anchor, component) else {
-            return HardpointAim::BODY_HANDLED;
-        };
-        let Some(mut target) = target_in_base(unit_world * base, target_world) else {
-            return HardpointAim::HANDLED;
-        };
-        target.y = 0.0;
-        let Some(actual_direction) = target.try_normalize() else {
-            return HardpointAim::HANDLED;
-        };
-        let desired_angle = math::atan2(actual_direction.x, actual_direction.z);
-        let clamped_angle = desired_angle.clamp(profile.yaw_left, profile.yaw_right);
-        let capped = (desired_angle - clamped_angle).abs() > ROTATION_EPSILON;
-        let goal = math::quat_from_rotation_y(clamped_angle);
-        let current = self.attachment_rotation(component);
-        if (current * Vec3::Z).dot(actual_direction) >= DIRECTION_TOLERANCE {
-            return HardpointAim::HANDLED;
-        }
-        let desired_direction = goal * Vec3::Z;
-        let next = turn_toward(current, goal, desired_direction, profile.yaw_rate, elapsed);
-        self.set_attachment_rotation(component, next);
-        HardpointAim {
-            can_face: !capped,
-            oriented: (next * Vec3::Z).dot(actual_direction) >= DIRECTION_TOLERANCE,
-        }
-    }
-
-    fn orient_pitch(
-        &mut self,
-        profile: &AttackHardpointProfile,
-        anchor: &AttackAnimationAnchor,
-        component: &str,
-        unit_world: Mat4,
-        target_world: Vec3,
-        elapsed: f32,
-    ) -> HardpointAim {
-        let Some(base) = self.component_base(anchor, component) else {
-            return HardpointAim::BODY_HANDLED;
-        };
-        let Some(target) = target_in_base(unit_world * base, target_world) else {
-            return HardpointAim::HANDLED;
-        };
-        let planar = math::hypot(target.x, target.z);
-        let desired_angle = math::atan2(target.y, planar);
-        let clamped_angle = desired_angle.clamp(profile.pitch_min, profile.pitch_max);
-        let capped = (desired_angle - clamped_angle).abs() > ROTATION_EPSILON;
-        let actual_direction = Vec3::new(0.0, target.y, planar)
-            .try_normalize()
-            .unwrap_or(Vec3::Z);
-        let goal = math::quat_from_rotation_x(-clamped_angle);
-        let current = self.attachment_rotation(component);
-        if (current * Vec3::Z).dot(actual_direction) >= DIRECTION_TOLERANCE {
-            return HardpointAim::HANDLED;
-        }
-        let desired_direction = goal * Vec3::Z;
-        let next = turn_toward(
-            current,
-            goal,
-            desired_direction,
-            profile.pitch_rate,
-            elapsed,
-        );
-        self.set_attachment_rotation(component, next);
-        HardpointAim {
-            can_face: !capped || !profile.has_hard_pitch_limits(),
-            oriented: (next * Vec3::Z).dot(actual_direction) >= DIRECTION_TOLERANCE,
-        }
-    }
-
-    fn orient_combined(
-        &mut self,
-        profile: &AttackHardpointProfile,
-        anchor: &AttackAnimationAnchor,
-        unit_world: Mat4,
-        target_world: Vec3,
-        elapsed: f32,
-    ) -> HardpointAim {
-        let Some(component) = profile.yaw_attachment.as_deref() else {
-            return HardpointAim::HANDLED;
-        };
-        let Some(base) = self.component_base(anchor, component) else {
-            return HardpointAim::BODY_HANDLED;
-        };
-        let Some(target) = target_in_base(unit_world * base, target_world) else {
-            return HardpointAim::HANDLED;
-        };
-        let Some(actual_direction) = target.try_normalize() else {
-            return HardpointAim::HANDLED;
-        };
-        let (desired_direction, capped) = combined_target(profile, actual_direction);
-        let goal = direction_orientation(desired_direction);
-        let current = self.attachment_rotation(component);
-        if (current * Vec3::Z).dot(actual_direction) >= DIRECTION_TOLERANCE {
-            return HardpointAim::HANDLED;
-        }
-        let next = turn_toward(current, goal, desired_direction, profile.yaw_rate, elapsed);
-        self.set_attachment_rotation(component, next);
-        HardpointAim {
-            can_face: !capped,
-            oriented: (next * Vec3::Z).dot(actual_direction) >= DIRECTION_TOLERANCE,
-        }
-    }
-
-    fn orient_single_bone(
-        &mut self,
-        profile: &AttackHardpointProfile,
-        anchor: Option<&AttackAnimationAnchor>,
-        unit_world: Mat4,
-        target_world: Vec3,
-        elapsed: f32,
-    ) -> HardpointAim {
-        let Some(bone) = single_bone_name(profile) else {
-            return HardpointAim::HANDLED;
-        };
-        let base_world = unit_world * single_bone_base(profile, anchor);
-        let Some(mut target) = target_in_base(base_world, target_world) else {
-            return HardpointAim::HANDLED;
-        };
-        target.y = 0.0;
-        let Some(actual_direction) = target.try_normalize() else {
-            return HardpointAim::HANDLED;
-        };
-        let desired_angle = math::atan2(actual_direction.x, actual_direction.z);
-        let clamped_angle = desired_angle.clamp(profile.yaw_left, profile.yaw_right);
-        let capped = (desired_angle - clamped_angle).abs() > ROTATION_EPSILON;
-        let goal = math::quat_from_rotation_y(clamped_angle);
-        let current = self.bone_rotation(bone);
-        if (current * Vec3::Z).dot(actual_direction) >= DIRECTION_TOLERANCE {
-            return HardpointAim::HANDLED;
-        }
-        let next = turn_toward(current, goal, goal * Vec3::Z, profile.yaw_rate, elapsed);
-        self.set_bone_rotation(bone, next);
-        HardpointAim {
-            can_face: !capped,
-            oriented: (next * Vec3::Z).dot(actual_direction) >= DIRECTION_TOLERANCE,
-        }
-    }
-
-    fn component_base(&self, anchor: &AttackAnimationAnchor, component: &str) -> Option<Mat4> {
-        let mut parent = Mat4::IDENTITY;
-        for link in &anchor.links {
-            if link.child_component.eq_ignore_ascii_case(component) {
-                return Some(parent * link.to_bone.unwrap_or(Mat4::IDENTITY));
-            }
-            parent *= motion::transformed_attachment_transform(
-                link.to_bone,
-                link.from_bone,
-                self.attachment_transform(&link.child_component),
-                link.disregard_orientation,
-            );
-        }
-        None
-    }
-
-    fn center_profile(
-        &mut self,
-        profile: &AttackHardpointProfile,
-        elapsed: f32,
-        controlled: &BTreeSet<String>,
-    ) -> bool {
-        if profile.uses_single_bone_ik() {
-            return single_bone_name(profile).is_none_or(|bone| {
-                center_named_rotation(
-                    &mut self.bone_transforms,
-                    bone,
-                    profile.yaw_rate,
-                    elapsed,
-                    controlled,
-                )
-            });
-        }
-        let yaw_done = profile.yaw_attachment.as_deref().is_none_or(|component| {
-            center_named_rotation(
-                &mut self.attachment_transforms,
-                component,
-                profile.yaw_rate,
-                elapsed,
-                controlled,
-            )
-        });
-        let pitch_done = profile.is_combined()
-            || profile.pitch_attachment.as_deref().is_none_or(|component| {
-                center_named_rotation(
-                    &mut self.attachment_transforms,
-                    component,
-                    profile.pitch_rate,
-                    elapsed,
-                    controlled,
-                )
-            });
-        yaw_done && pitch_done
-    }
-
     fn controlled_names(&self) -> BTreeSet<String> {
         let mut names = BTreeSet::new();
         for key in &self.active_controllers {
@@ -729,33 +476,6 @@ impl UnitHardpointState {
             }
         }
         names
-    }
-
-    fn attachment_rotation(&self, name: &str) -> Quat {
-        rotation_of(self.attachment_transform(name).unwrap_or(Mat4::IDENTITY))
-    }
-
-    fn bone_rotation(&self, name: &str) -> Quat {
-        rotation_of(
-            self.bone_transforms
-                .get(&canonical_name(name))
-                .copied()
-                .unwrap_or(Mat4::IDENTITY),
-        )
-    }
-
-    fn set_attachment_rotation(&mut self, name: &str, rotation: Quat) {
-        self.attachment_transforms.insert(
-            canonical_name(name),
-            Mat4::from_quat(normalized_or_identity(rotation)),
-        );
-    }
-
-    fn set_bone_rotation(&mut self, name: &str, rotation: Quat) {
-        self.bone_transforms.insert(
-            canonical_name(name),
-            Mat4::from_quat(normalized_or_identity(rotation)),
-        );
     }
 
     fn begin_auto_center(&mut self, key: &str) {
@@ -840,6 +560,40 @@ fn turn_toward(
     }
     let maximum = (rate.max(0.0) * elapsed.max(0.0)).max(0.0);
     math::quat_slerp(current, goal, (maximum / angle).clamp(0.0, 1.0))
+}
+
+fn center_profile(
+    attachment_transforms: &mut BTreeMap<String, Mat4>,
+    bone_transforms: &mut BTreeMap<String, Mat4>,
+    profile: &AttackHardpointProfile,
+    elapsed: f32,
+    controlled: &BTreeSet<String>,
+) -> bool {
+    if profile.uses_single_bone_ik() {
+        return single_bone_name(profile).is_none_or(|bone| {
+            center_named_rotation(bone_transforms, bone, profile.yaw_rate, elapsed, controlled)
+        });
+    }
+    let yaw_done = profile.yaw_attachment.as_deref().is_none_or(|component| {
+        center_named_rotation(
+            attachment_transforms,
+            component,
+            profile.yaw_rate,
+            elapsed,
+            controlled,
+        )
+    });
+    let pitch_done = profile.is_combined()
+        || profile.pitch_attachment.as_deref().is_none_or(|component| {
+            center_named_rotation(
+                attachment_transforms,
+                component,
+                profile.pitch_rate,
+                elapsed,
+                controlled,
+            )
+        });
+    yaw_done && pitch_done
 }
 
 fn center_named_rotation(
