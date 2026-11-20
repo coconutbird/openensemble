@@ -196,7 +196,7 @@ impl LoadedUnit {
 /// Halo Wars visual files describe wheels, turrets, passengers, and similar
 /// parts as separate models. Their placement is driven by a parent `tobone`
 /// and optional child `frombone`, rather than by one flattened mesh.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Unit {
     instances: Vec<UnitInstance>,
     attachments: Vec<UnitAttachment>,

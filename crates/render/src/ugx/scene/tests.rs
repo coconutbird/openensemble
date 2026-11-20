@@ -1,7 +1,8 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use glam::Vec3;
-use pipeline::database::hw1::{Database, GameData, ProtoObject};
+use glam::{Mat4, Vec3};
+use pipeline::database::hw1::{Database, GameData, ProtoObject, Visual};
 use pipeline::source::{AssetSource, StdFileProvider};
 
 use crate::ugx::unit::AuxiliaryAnimationRequest;
@@ -339,4 +340,104 @@ fn flash_projection_reads_only_authoritative_sim_state() {
     assert_eq!(flash.expires_at_ms(), Some(3_000));
     assert_eq!(flash.scroll_speed().to_bits(), (-4.0_f32).to_bits());
     assert_eq!(flash.intensity().to_bits(), 80.0_f32.to_bits());
+}
+
+#[test]
+fn a_failed_visual_decode_is_retained_across_syncs() {
+    let mut source = AssetSource::with_provider(StdFileProvider);
+    let mut world = sim::World::new();
+    let broken = world.create_unit(0);
+    world
+        .get_unit_mut(broken)
+        .expect("broken unit")
+        .proto_object_name = "broken_visual".to_owned();
+    let mut visuals = HashMap::new();
+    visuals.insert(
+        "broken_visual".to_owned(),
+        Visual {
+            default_model: Some("missing_model".to_owned()),
+            ..Visual::default()
+        },
+    );
+    let proto_objects = Vec::new();
+    let mut scene = super::UnitScene::load_world(&mut source, &world, &visuals, &proto_objects);
+    assert_eq!(scene.placement_count(), 0);
+    assert_eq!(scene.issues().len(), 1);
+
+    // A roster change must reuse the failed decode, not decode and report it again.
+    world.create_unit(0);
+    assert!(scene.sync_world(&mut source, &world, &visuals, &proto_objects));
+    assert_eq!(scene.issues().len(), 0);
+    assert!(scene.decoded_visuals.values().any(Option::is_none));
+}
+
+#[test]
+fn scene_sync_rebuilds_only_the_changed_placement() {
+    let mut source = AssetSource::with_provider(StdFileProvider);
+    let mut world = sim::World::new();
+    let mut visuals = HashMap::new();
+    visuals.insert(
+        "broken_visual".to_owned(),
+        Visual {
+            default_model: Some("missing_model".to_owned()),
+            ..Visual::default()
+        },
+    );
+    let proto_objects = Vec::new();
+    let stable = world.create_unit(0);
+    let changing = world.create_unit(0);
+    for entity in [stable, changing] {
+        world.get_unit_mut(entity).expect("unit").proto_object_name = "broken_visual".to_owned();
+    }
+    let stable_transform = simulation_entity_transform(&world, stable).expect("stable transform");
+    let changing_transform =
+        simulation_entity_transform(&world, changing).expect("changing transform");
+    let mut scene = super::UnitScene {
+        simulation_entity_states: super::simulation_entity_states(&world, None).collect(),
+        simulation_entity_count: 2,
+        placements: vec![
+            test_placement(stable, stable_transform),
+            test_placement(changing, changing_transform),
+        ],
+        ..super::UnitScene::default()
+    };
+    world
+        .get_unit_mut(stable)
+        .expect("stable unit")
+        .base
+        .position = Vec3::new(9.0, 0.0, 9.0);
+    world
+        .get_unit_mut(changing)
+        .expect("changing unit")
+        .base
+        .position = Vec3::new(7.0, 0.0, 7.0);
+    assert!(world.play_entity_animation(changing, "Death".to_owned(), None, 1_000));
+
+    assert!(scene.sync_world(&mut source, &world, &visuals, &proto_objects));
+    assert_eq!(scene.placement_count(), 1);
+    assert_eq!(scene.placements()[0].entity_id(), stable);
+    // The renderer reads the live sim transform every frame, so a retained placement
+    // keeps the transform captured when it was built.
+    assert!(
+        scene.placements()[0]
+            .transform()
+            .abs_diff_eq(stable_transform, 1.0e-6)
+    );
+    // The changed placement was rebuilt with the new animation, then failed to load.
+    assert!(
+        scene
+            .animation_selections
+            .get(&changing)
+            .is_some_and(|(identity, _)| identity.contains("death"))
+    );
+    assert!(!scene.sync_world(&mut source, &world, &visuals, &proto_objects));
+}
+
+fn test_placement(entity_id: sim::EntityId, transform: Mat4) -> super::UnitPlacement {
+    super::UnitPlacement {
+        entity_id,
+        transform,
+        unit: Arc::new(super::Unit::default()),
+        ..super::UnitPlacement::default()
+    }
 }

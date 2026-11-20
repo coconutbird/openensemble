@@ -8,8 +8,8 @@ use pipeline::source::{AssetSource, StdFileProvider};
 use sim::World as SimWorld;
 
 use super::{
-    ImpactDecalAssets, ImpactVisualAssets, LightAssets, ParticleAssets, SimulationVisual,
-    TerrainEffectAssets, UnitPlacement, UnitScene, UnitSceneIssue,
+    ImpactDecalAssets, ImpactVisualAssets, LightAssets, ParticleAssets, SimulationEntityState,
+    SimulationVisual, TerrainEffectAssets, UnitPlacement, UnitScene, UnitSceneIssue,
     combat_animations::{
         active_auxiliary_combat_animations as active_turret_animations, active_combat_animation,
     },
@@ -56,112 +56,224 @@ struct PlacementAnimation<'animation> {
     movement_track: Option<MovementAnimation>,
 }
 
+/// Lowercase visual and proto lookups shared by the placements of one scene build.
+struct PlacementLookup<'lookup> {
+    visual_names: HashMap<String, &'lookup str>,
+    proto_objects: HashMap<String, &'lookup ProtoObject>,
+    no_render_objects: HashSet<String>,
+}
+
+impl<'lookup> PlacementLookup<'lookup> {
+    fn new(inputs: SceneInputs<'lookup>) -> Self {
+        Self {
+            visual_names: visual_name_lookup(inputs.visuals),
+            proto_objects: inputs
+                .proto_objects
+                .iter()
+                .map(|proto| (proto.name.to_ascii_lowercase(), proto))
+                .collect(),
+            no_render_objects: hidden_proto_names(inputs.proto_objects),
+        }
+    }
+}
+
 pub(super) fn load_placements(
     scene: &mut UnitScene,
     source: &mut AssetSource<StdFileProvider>,
     inputs: SceneInputs<'_>,
     units: &mut HashMap<String, Option<Arc<Unit>>>,
 ) {
+    let lookup = PlacementLookup::new(inputs);
     let mut asset_cache = UnitAssetCache::default();
-    let visual_names = visual_name_lookup(inputs.visuals);
-    let proto_objects = inputs
-        .proto_objects
-        .iter()
-        .map(|proto| (proto.name.to_ascii_lowercase(), proto))
-        .collect::<HashMap<_, _>>();
-    let no_render_objects = hidden_proto_names(inputs.proto_objects);
-    let mut used_visuals = HashSet::new();
+    let mut placements = Vec::new();
     for entity in simulation_visuals(inputs.world) {
-        let proto_name = entity.proto_name.trim();
-        if proto_name.is_empty() {
-            scene.missing_proto_count += 1;
-            continue;
-        }
-        let lookup_name = proto_name.to_ascii_lowercase();
-        if no_render_objects.contains(&lookup_name) {
-            scene.skipped_no_render_count += 1;
-            continue;
-        }
-        let Some(&visual_name) = visual_names.get(&lookup_name) else {
-            scene.missing_visual_count += 1;
-            continue;
-        };
-        let visual = &inputs.visuals[visual_name];
-        let Some(transform) = entity.transform else {
-            scene.invalid_transform_count += 1;
-            continue;
-        };
-        let proto = proto_objects.get(&lookup_name).copied();
-        let movement_profile = inputs
-            .world
-            .get_unit(entity.id)
-            .and(proto)
-            .map(MovementAnimationProfile::from_proto);
-        let ik_profile = proto.map(UnitIkProfile::from_proto).unwrap_or_default();
-        let animation = select_placement_animation(inputs, &entity, movement_profile);
-        let selection_identity = animation_selection_identity(
-            animation.animation_type,
-            animation.animation_asset,
-            animation.uses_simulation_clock,
-            animation.revision,
-        );
-        let main_animation_roll =
-            retained_animation_roll(inputs, &entity, animation, &selection_identity);
-        let movement_animation_roll = animation
-            .movement_track
-            .map_or(0, |movement| movement_roll(entity.id, movement));
-        let auxiliary_animations =
-            active_turret_animations(inputs.world, inputs.gameplay, entity.id);
-        let auxiliary_requests = auxiliary_animation_requests(entity.id, &auxiliary_animations);
-        let animation_revision =
-            animation.revision ^ auxiliary_animation_revision(&auxiliary_animations);
-        record_animation_selection(scene, entity.id, selection_identity, main_animation_roll);
-        let unit = load_cached_unit(
+        if let Some(placement) = load_placement(
+            scene,
             source,
-            visual,
-            &lookup_name,
-            entity.visual_variation_index,
-            UnitAnimationRequest {
-                animation_type: animation.animation_type,
-                animation_asset: animation.animation_asset,
-                uses_simulation_clock: animation.uses_simulation_clock,
-                animation_roll: main_animation_roll,
-                movement_animation_type: animation.movement_track.map(MovementAnimation::as_str),
-                movement_animation_roll,
-                auxiliary_animations: &auxiliary_requests,
-            },
-            &mut asset_cache,
+            inputs,
+            &lookup,
+            &entity,
             units,
-        );
-        let unit = match unit {
-            Ok(unit) => unit,
-            Err(reason) => {
-                record_load_failure(scene, proto_name, reason);
-                continue;
-            }
-        };
-        scene.placements.push(UnitPlacement {
-            entity_id: entity.id,
-            proto_name: proto_name.to_owned(),
-            visual_variation_index: entity.visual_variation_index,
-            animation_type: animation.animation_type.map(str::to_owned),
-            animation_asset: animation.animation_asset.map(str::to_owned),
-            animation_uses_simulation_clock: animation.uses_simulation_clock,
-            animation_revision,
-            combat_animation_duration: animation.combat_duration,
-            movement_animation: animation.movement,
-            movement_track_animation: animation.movement_track,
-            movement_profile,
-            ik_profile,
-            visual_mesh_mask: entity.visual_mesh_mask.cloned().unwrap_or_default(),
-            visual_opacity: entity.visual_opacity,
-            transform,
-            secondary_transform: simulation_entity_secondary_transform(inputs.world, entity.id),
-            unit,
-        });
-        used_visuals.insert(lookup_name);
+            &mut asset_cache,
+        ) {
+            placements.push(placement);
+        }
     }
-    scene.unique_visual_count = used_visuals.len();
+    store_placements(scene, placements);
+}
+
+/// Rebuild only the placements whose sim state or movement animation changed.
+///
+/// The caller must pass a state list whose entity ids match the current scene.
+pub(super) fn sync_changed_placements(
+    scene: &mut UnitScene,
+    source: &mut AssetSource<StdFileProvider>,
+    inputs: SceneInputs<'_>,
+    states: Vec<SimulationEntityState>,
+) {
+    let lookup = PlacementLookup::new(inputs);
+    let mut asset_cache = UnitAssetCache::default();
+    // The aggregate counters and issues describe the last full build. A sync that
+    // rebuilds single placements does not change them.
+    let missing_proto_count = scene.missing_proto_count;
+    let skipped_no_render_count = scene.skipped_no_render_count;
+    let missing_visual_count = scene.missing_visual_count;
+    let invalid_transform_count = scene.invalid_transform_count;
+    let load_failure_count = scene.load_failure_count;
+    let issue_count = scene.issues.len();
+    let mut units = std::mem::take(&mut scene.decoded_visuals);
+    let old_states = std::mem::take(&mut scene.simulation_entity_states);
+    let mut old_placements = std::mem::take(&mut scene.placements)
+        .into_iter()
+        .map(|placement| (placement.entity_id, placement))
+        .collect::<HashMap<_, _>>();
+    let mut placements = Vec::with_capacity(states.len());
+    for ((entity, state), old_state) in simulation_visuals(inputs.world)
+        .zip(&states)
+        .zip(&old_states)
+    {
+        let state_changed = old_state != state;
+        let old_placement = old_placements.remove(&entity.id);
+        let movement_changed = old_placement
+            .as_ref()
+            .is_some_and(|placement| !placement.movement_animation_is_current(inputs.world));
+        if !state_changed && !movement_changed {
+            if let Some(placement) = old_placement {
+                placements.push(placement);
+            }
+            continue;
+        }
+        scene.animation_selections.remove(&entity.id);
+        if let Some(placement) = load_placement(
+            scene,
+            source,
+            inputs,
+            &lookup,
+            &entity,
+            &mut units,
+            &mut asset_cache,
+        ) {
+            placements.push(placement);
+        }
+    }
+    store_placements(scene, placements);
+    scene.decoded_visuals = units;
+    scene.simulation_entity_count = states.len();
+    scene.simulation_entity_states = states;
+    scene.missing_proto_count = missing_proto_count;
+    scene.skipped_no_render_count = skipped_no_render_count;
+    scene.missing_visual_count = missing_visual_count;
+    scene.invalid_transform_count = invalid_transform_count;
+    scene.load_failure_count = load_failure_count;
+    scene.issues.truncate(issue_count);
+    load_attachment_assets(scene, source);
+}
+
+fn store_placements(scene: &mut UnitScene, placements: Vec<UnitPlacement>) {
+    scene.placements = placements;
+    scene.unique_visual_count = scene
+        .placements
+        .iter()
+        .map(|placement| placement.proto_name.to_ascii_lowercase())
+        .collect::<HashSet<_>>()
+        .len();
+}
+
+fn load_placement(
+    scene: &mut UnitScene,
+    source: &mut AssetSource<StdFileProvider>,
+    inputs: SceneInputs<'_>,
+    lookup: &PlacementLookup<'_>,
+    entity: &SimulationVisual<'_>,
+    units: &mut HashMap<String, Option<Arc<Unit>>>,
+    asset_cache: &mut UnitAssetCache,
+) -> Option<UnitPlacement> {
+    let proto_name = entity.proto_name.trim();
+    if proto_name.is_empty() {
+        scene.missing_proto_count += 1;
+        return None;
+    }
+    let lookup_name = proto_name.to_ascii_lowercase();
+    if lookup.no_render_objects.contains(&lookup_name) {
+        scene.skipped_no_render_count += 1;
+        return None;
+    }
+    let Some(&visual_name) = lookup.visual_names.get(&lookup_name) else {
+        scene.missing_visual_count += 1;
+        return None;
+    };
+    let visual = &inputs.visuals[visual_name];
+    let Some(transform) = entity.transform else {
+        scene.invalid_transform_count += 1;
+        return None;
+    };
+    let proto = lookup.proto_objects.get(&lookup_name).copied();
+    let movement_profile = inputs
+        .world
+        .get_unit(entity.id)
+        .and(proto)
+        .map(MovementAnimationProfile::from_proto);
+    let ik_profile = proto.map(UnitIkProfile::from_proto).unwrap_or_default();
+    let animation = select_placement_animation(inputs, entity, movement_profile);
+    let selection_identity = animation_selection_identity(
+        animation.animation_type,
+        animation.animation_asset,
+        animation.uses_simulation_clock,
+        animation.revision,
+    );
+    let main_animation_roll =
+        retained_animation_roll(inputs, entity, animation, &selection_identity);
+    let movement_animation_roll = animation
+        .movement_track
+        .map_or(0, |movement| movement_roll(entity.id, movement));
+    let auxiliary_animations = active_turret_animations(inputs.world, inputs.gameplay, entity.id);
+    let auxiliary_requests = auxiliary_animation_requests(entity.id, &auxiliary_animations);
+    let animation_revision =
+        animation.revision ^ auxiliary_animation_revision(&auxiliary_animations);
+    record_animation_selection(scene, entity.id, selection_identity, main_animation_roll);
+    let unit = load_cached_unit(
+        source,
+        visual,
+        &lookup_name,
+        entity.visual_variation_index,
+        UnitAnimationRequest {
+            animation_type: animation.animation_type,
+            animation_asset: animation.animation_asset,
+            uses_simulation_clock: animation.uses_simulation_clock,
+            animation_roll: main_animation_roll,
+            movement_animation_type: animation.movement_track.map(MovementAnimation::as_str),
+            movement_animation_roll,
+            auxiliary_animations: &auxiliary_requests,
+        },
+        asset_cache,
+        units,
+    );
+    let unit = match unit {
+        Ok(unit) => unit,
+        Err(reason) => {
+            record_load_failure(scene, proto_name, reason);
+            return None;
+        }
+    };
+    Some(UnitPlacement {
+        entity_id: entity.id,
+        proto_name: proto_name.to_owned(),
+        visual_variation_index: entity.visual_variation_index,
+        animation_type: animation.animation_type.map(str::to_owned),
+        animation_asset: animation.animation_asset.map(str::to_owned),
+        animation_uses_simulation_clock: animation.uses_simulation_clock,
+        animation_revision,
+        combat_animation_duration: animation.combat_duration,
+        movement_animation: animation.movement,
+        movement_track_animation: animation.movement_track,
+        movement_profile,
+        ik_profile,
+        visual_mesh_mask: entity.visual_mesh_mask.cloned().unwrap_or_default(),
+        visual_opacity: entity.visual_opacity,
+        transform,
+        secondary_transform: simulation_entity_secondary_transform(inputs.world, entity.id),
+        unit,
+    })
 }
 
 fn record_animation_selection(

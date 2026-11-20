@@ -26,7 +26,9 @@ use combat_animations::{SimulationEntityState, simulation_entity_states};
 use impact_decals::ImpactDecalAssets;
 use impact_visuals::ImpactVisualAssets;
 use lights::LightAssets;
-use loading::{SceneAssets, SceneInputs, load_attachment_assets, load_placements};
+use loading::{
+    SceneAssets, SceneInputs, load_attachment_assets, load_placements, sync_changed_placements,
+};
 use movement_animations::{MovementAnimation, MovementAnimationProfile};
 use particles::ParticleAssets;
 use terrain_effects::TerrainEffectAssets;
@@ -37,7 +39,7 @@ pub use renderer::{
 };
 
 /// One decoded visual bound to an entity in the simulation world.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct UnitPlacement {
     entity_id: EntityId,
     proto_name: String,
@@ -139,6 +141,18 @@ impl UnitPlacement {
     #[must_use]
     pub fn unit(&self) -> &Unit {
         &self.unit
+    }
+
+    /// Return whether the movement animation selection is still current.
+    fn movement_animation_is_current(&self, world: &SimWorld) -> bool {
+        let Some(profile) = self.movement_profile else {
+            return true;
+        };
+        let Some(unit) = world.get_unit(self.entity_id) else {
+            return false;
+        };
+        let previous = self.movement_animation.unwrap_or_default();
+        profile.select(unit, previous) == previous
     }
 }
 
@@ -275,26 +289,29 @@ impl UnitScene {
         if self.roster_matches_projection(world, gameplay) {
             return false;
         }
-        let previous_movement = self
-            .placements
-            .iter()
-            .filter_map(|placement| {
-                placement
-                    .movement_animation
-                    .map(|animation| (placement.entity_id, animation))
-            })
-            .collect::<HashMap<_, _>>();
+        let states = simulation_entity_states(world, gameplay).collect::<Vec<_>>();
+        let previous_movement = self.movement_animations();
         let previous_animation_selections = self.animation_selections.clone();
+        let inputs = SceneInputs {
+            world,
+            gameplay,
+            visuals,
+            proto_objects,
+            previous_movement: Some(&previous_movement),
+            previous_animation_selections: Some(&previous_animation_selections),
+        };
+        let same_ids = self
+            .simulation_entity_states
+            .iter()
+            .map(|state| state.id)
+            .eq(states.iter().map(|state| state.id));
+        if same_ids {
+            sync_changed_placements(self, source, inputs, states);
+            return true;
+        }
         *self = Self::load_world_reusing(
             source,
-            SceneInputs {
-                world,
-                gameplay,
-                visuals,
-                proto_objects,
-                previous_movement: Some(&previous_movement),
-                previous_animation_selections: Some(&previous_animation_selections),
-            },
+            inputs,
             SceneAssets {
                 units: self.decoded_visuals.clone(),
                 lights: self.light_assets.clone(),
@@ -307,6 +324,18 @@ impl UnitScene {
             },
         );
         true
+    }
+
+    /// Return the movement animation of each placement that has one.
+    fn movement_animations(&self) -> HashMap<EntityId, MovementAnimation> {
+        self.placements
+            .iter()
+            .filter_map(|placement| {
+                placement
+                    .movement_animation
+                    .map(|animation| (placement.entity_id, animation))
+            })
+            .collect()
     }
 
     /// Return whether this presentation roster matches all live sim visuals.
@@ -334,16 +363,10 @@ impl UnitScene {
             .iter()
             .cloned()
             .eq(simulation_entity_states(world, gameplay))
-            && self.placements.iter().all(|placement| {
-                let Some(profile) = placement.movement_profile else {
-                    return true;
-                };
-                let Some(unit) = world.get_unit(placement.entity_id) else {
-                    return false;
-                };
-                let previous = placement.movement_animation.unwrap_or_default();
-                profile.select(unit, previous) == previous
-            })
+            && self
+                .placements
+                .iter()
+                .all(|placement| placement.movement_animation_is_current(world))
     }
 
     fn load_world_reusing(
@@ -368,11 +391,7 @@ impl UnitScene {
         load_placements(&mut scene, source, inputs, &mut assets.units);
 
         load_attachment_assets(&mut scene, source);
-        scene.decoded_visuals = assets
-            .units
-            .into_iter()
-            .filter(|(_, decoded)| decoded.is_some())
-            .collect();
+        scene.decoded_visuals = assets.units;
         scene
     }
 
